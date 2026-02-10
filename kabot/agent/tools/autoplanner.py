@@ -8,6 +8,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from kabot.agent.tools.registry import ToolRegistry
+from kabot.bus.events import OutboundMessage
+from kabot.bus.queue import MessageBus
+from loguru import logger
+
 # Tool name constants
 TOOL_READ_FILE = "read_file"
 TOOL_SHELL = "shell"
@@ -64,6 +69,16 @@ class AutoPlanner:
     - Execute steps sequentially using existing tools
     - Handle errors and report progress
     """
+
+    def __init__(self, tool_registry: ToolRegistry = None, message_bus: MessageBus = None):
+        """Initialize the AutoPlanner.
+
+        Args:
+            tool_registry: Optional ToolRegistry for executing tools
+            message_bus: Optional MessageBus for progress reporting
+        """
+        self.registry = tool_registry
+        self.bus = message_bus
 
     async def create_plan(self, goal: str) -> Plan:
         """Create a plan from a natural language goal.
@@ -201,10 +216,41 @@ class AutoPlanner:
         Returns:
             ExecutionResult with success/failure status
         """
-        # For now, just return success - actual execution will be implemented later
+        if not plan.steps:
+            return ExecutionResult(
+                success=True,
+                output="No steps to execute",
+                retry_count=0
+            )
+
+        # Report plan start
+        await self._report_progress(f"Starting plan execution with {len(plan.steps)} steps", 0, len(plan.steps))
+
+        for i, step in enumerate(plan.steps):
+            # Report step start
+            await self._report_progress(f"Executing step {i+1}/{len(plan.steps)}: {step.tool}", i+1, len(plan.steps))
+
+            # Execute step
+            result = await self.execute_step(step)
+
+            if not result.success:
+                # Report failure
+                await self._report_progress(f"Step {i+1} failed: {result.error}", i+1, len(plan.steps))
+                return ExecutionResult(
+                    success=False,
+                    error=result.error,
+                    retry_count=result.retry_count
+                )
+
+            # Report step completion
+            await self._report_progress(f"Step {i+1} completed successfully", i+1, len(plan.steps))
+
+        # Report plan completion
+        await self._report_progress("Plan execution completed successfully", len(plan.steps), len(plan.steps))
+
         return ExecutionResult(
             success=True,
-            output="Plan execution not yet implemented",
+            output=f"Successfully executed {len(plan.steps)} steps",
             retry_count=0
         )
 
@@ -217,9 +263,52 @@ class AutoPlanner:
         Returns:
             ExecutionResult with success/failure status
         """
-        # For now, just return success - actual execution will be implemented later
-        return ExecutionResult(
-            success=True,
-            output=f"Would execute {step.tool} with params {step.params}",
-            retry_count=0
-        )
+        if not self.registry:
+            return ExecutionResult(
+                success=False,
+                error="No tool registry available",
+                retry_count=0
+            )
+
+        # Look up tool in registry
+        tool = self.registry.get(step.tool)
+        if not tool:
+            return ExecutionResult(
+                success=False,
+                error=f"Tool '{step.tool}' not found in registry",
+                retry_count=0
+            )
+
+        try:
+            # Execute tool with step parameters
+            result = await tool.execute(**step.params)
+            return ExecutionResult(
+                success=True,
+                output=str(result),
+                retry_count=0
+            )
+        except Exception as e:
+            logger.error(f"Error executing tool {step.tool}: {e}")
+            return ExecutionResult(
+                success=False,
+                error=str(e),
+                retry_count=0
+            )
+
+    async def _report_progress(self, message: str, current_step: int, total_steps: int) -> None:
+        """Report progress via message bus if available.
+
+        Args:
+            message: Progress message to report
+            current_step: Current step number
+            total_steps: Total number of steps
+        """
+        if self.bus:
+            progress_msg = f"Step {current_step}/{total_steps}: {message}"
+            outbound_msg = OutboundMessage(
+                channel="autoplanner",
+                chat_id="autoplanner",
+                content=progress_msg,
+                metadata={"current_step": current_step, "total_steps": total_steps}
+            )
+            await self.bus.publish_outbound(outbound_msg)
