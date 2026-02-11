@@ -214,6 +214,11 @@ Your workspace is at: {workspace_path}
 - Daily notes: {workspace_path}/memory/YYYY-MM-DD.md
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
 
+## Communication Style
+- **Be Responsive**: Don't just do things silently. Tell the user what you have done after finishing a task.
+- **Narrate Actions**: When performing multi-step tasks (like downloading then sending), briefly mention the completion of each step.
+- **Confirm Completion**: Always end task-based interactions with a clear confirmation.
+
 IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
 Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).
 For normal conversation, just respond with text - do not call the message tool.
