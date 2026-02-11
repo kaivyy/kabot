@@ -1,13 +1,18 @@
 """Skills loader for agent capabilities."""
 
 import json
+import logging
 import os
 import re
 import shutil
 from pathlib import Path
 
+from kabot.utils.skill_validator import validate_skill
+
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
+logger = logging.getLogger(__name__)
 
 
 class SkillsLoader:
@@ -23,34 +28,52 @@ class SkillsLoader:
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
     
-    def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
+    def list_skills(self, filter_unavailable: bool = True) -> list[dict]:
         """
         List all available skills.
-        
+
         Args:
             filter_unavailable: If True, filter out skills with unmet requirements.
-        
+
         Returns:
-            List of skill info dicts with 'name', 'path', 'source'.
+            List of skill info dicts with 'name', 'path', 'source', 'valid'.
         """
         skills = []
-        
+
         # Workspace skills (highest priority)
         if self.workspace_skills.exists():
             for skill_dir in self.workspace_skills.iterdir():
                 if skill_dir.is_dir():
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists():
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "workspace"})
-        
+                        errors = validate_skill(skill_dir)
+                        if errors:
+                            logger.warning(f"Skill validation failed for {skill_dir.name}: {errors}")
+
+                        skills.append({
+                            "name": skill_dir.name,
+                            "path": str(skill_file),
+                            "source": "workspace",
+                            "valid": len(errors) == 0
+                        })
+
         # Built-in skills
         if self.builtin_skills and self.builtin_skills.exists():
             for skill_dir in self.builtin_skills.iterdir():
                 if skill_dir.is_dir():
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
-        
+                        errors = validate_skill(skill_dir)
+                        if errors:
+                            logger.warning(f"Skill validation failed for {skill_dir.name}: {errors}")
+
+                        skills.append({
+                            "name": skill_dir.name,
+                            "path": str(skill_file),
+                            "source": "builtin",
+                            "valid": len(errors) == 0
+                        })
+
         # Filter by requirements
         if filter_unavailable:
             return [s for s in skills if self._check_requirements(self._get_skill_meta(s["name"]))]
