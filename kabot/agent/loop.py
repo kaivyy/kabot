@@ -169,6 +169,28 @@ class AgentLoop:
             elif tool_name == "spawn":
                 agent_type = args.get("agent_type")
                 return f"🤖 Memanggil sub-agent `{agent_type}`..."
+            elif tool_name == "save_memory":
+                return "💾 Menyimpan ingatan..."
+            elif tool_name == "get_memory":
+                return "🧠 Mengingat kembali..."
+            elif tool_name == "list_reminders":
+                return "📋 Mengecek pengingat..."
+            elif tool_name == "weather":
+                location = args.get("location")
+                return f"🌤️ Mengecek cuaca di {location}..."
+            elif tool_name == "stock":
+                symbol = args.get("symbol")
+                return f"📈 Mengecek saham {symbol}..."
+            elif tool_name == "crypto":
+                coin = args.get("coin")
+                return f"₿ Mengecek harga {coin}..."
+            elif tool_name == "stock_analysis":
+                symbol = args.get("symbol")
+                return f"📊 Menganalisis saham {symbol}..."
+            elif tool_name == "cron":
+                return "⏰ Mengatur jadwal..."
+            elif tool_name in ("download-manager", "download_manager"):
+                return "📥 Mengunduh file..."
             return None
         except Exception:
             return None
