@@ -23,6 +23,21 @@ It is designed to be your **24/7 Pair Programmer** and **DevOps Assistant**, acc
 
 ### 🔥 Core Capabilities
 
+#### 👁️ Vision & 🗣️ Voice (New in v0.2.0)
+Kabot is now multi-modal.
+- **Vision**: Send screenshots of errors or UI mockups, and Kabot will analyze them using GPT-4o or Claude 3.5 Sonnet.
+- **Voice**: Send voice notes on Telegram/WhatsApp, and Kabot will listen (Whisper) and reply with spoken audio (TTS).
+
+#### 🔄 Autonomous Loop
+Self-healing execution mode. If a task fails, Kabot automatically analyzes the error, attempts a fix, and retries up to 5 times before asking for help.
+```bash
+python kabot/skills/autonomous-task/scripts/run_loop.py --goal "Fix the bug"
+```
+
+#### 🛡️ Docker Sandbox
+Enterprise-grade security. Run all shell commands inside an isolated Docker container to prevent accidental system damage.
+*(Requires Docker Desktop)*
+
 #### 🧠 Hybrid Resilient Memory
 Solves the "amnesia" problem inherent in LLMs.
 - **Dual-Layer Storage**: Combines **ChromaDB** (Semantic/Vector) for fuzzy concept retrieval with **SQLite** (Structured) for exact fact retention.

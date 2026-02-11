@@ -16,7 +16,8 @@
       "Bash(git branch:*)",
       "Bash(git remote:*)",
       "Bash(git push:*)",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "Bash(gh release create:*)"
     ]
   }
 }

@@ -20,10 +20,12 @@ class ExecTool(Tool):
         allow_patterns: list[str] | None = None,
         restrict_to_workspace: bool = False,
         read_only_mode: bool = False,
+        docker_config: Any | None = None,
     ):
         self.timeout = timeout
         self.working_dir = working_dir
         self.read_only_mode = read_only_mode
+        self.docker_config = docker_config
         self.deny_patterns = deny_patterns or [
             r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
             r"\bdel\s+/[fq]\b",              # del /f, del /q
@@ -79,13 +81,36 @@ class ExecTool(Tool):
                  return "Error: High-risk command blocked. Please execute this manually or add to allow_patterns."
 
         try:
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-            )
-            
+            # Docker Sandbox Execution
+            if self.docker_config and self.docker_config.enabled:
+                cwd_path = Path(cwd).resolve()
+                docker_cmd = f"docker run --rm -v \"{cwd_path}:/app\" -w /app"
+
+                if self.docker_config.network_disabled:
+                    docker_cmd += " --network none"
+
+                if self.docker_config.memory_limit:
+                    docker_cmd += f" --memory {self.docker_config.memory_limit}"
+
+                # Escape command for shell execution inside docker
+                safe_cmd = command.replace('"', '\\"')
+                docker_cmd += f" {self.docker_config.image} sh -c \"{safe_cmd}\""
+
+                # Execute the docker wrapper command
+                process = await asyncio.create_subprocess_shell(
+                    docker_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                # Standard Local Execution
+                process = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                )
+
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(),

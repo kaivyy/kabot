@@ -172,9 +172,19 @@ class WebToolsConfig(BaseModel):
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
+class DockerConfig(BaseModel):
+    """Docker sandbox configuration."""
+    enabled: bool = False
+    image: str = "python:3.11-alpine"
+    memory_limit: str = "512m"
+    cpu_limit: float = 0.5
+    network_disabled: bool = False
+
+
 class ExecToolConfig(BaseModel):
     """Shell exec tool configuration."""
     timeout: int = 60
+    docker: DockerConfig = Field(default_factory=DockerConfig)
 
 
 class ToolsConfig(BaseModel):
