@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m kabot gateway:*)",
+      "Bash(python kabot/skills/download-manager/download.py:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd /c start python -m kabot gateway)",
+      "Bash(git config:*)"
+    ]
+  }
+}

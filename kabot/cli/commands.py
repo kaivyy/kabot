@@ -221,6 +221,53 @@ def onboard():
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/kabot#-chat-apps[/dim]")
 
 
+@app.command()
+def setup(
+    interactive: bool = typer.Option(True, "--interactive/--no-interactive", help="Run interactive setup wizard"),
+):
+    """Interactive setup wizard for configuring kabot."""
+    from kabot.config.loader import get_config_path, save_config
+    from kabot.utils.helpers import get_workspace_path
+
+    config_path = get_config_path()
+
+    if interactive:
+        try:
+            from kabot.cli.setup_wizard import run_interactive_setup
+        except ImportError:
+            # Fallback if wizard file is missing
+            console.print("[yellow]Setup wizard module not found. Falling back to default onboard.[/yellow]")
+            onboard()
+            return
+
+        console.print(f"\n{__logo__} [bold cyan]Welcome to Kabot Setup![/bold cyan]\n")
+
+        if config_path.exists():
+            console.print(f"[yellow]Config already exists at {config_path}[/yellow]")
+            if not typer.confirm("Run setup wizard to reconfigure?"):
+                raise typer.Exit()
+
+        # Run interactive wizard
+        config = run_interactive_setup()
+
+        # Save configuration
+        save_config(config)
+        console.print(f"\n[green]✓ Configuration saved to {config_path}[/green]")
+
+        # Create workspace and templates
+        workspace = get_workspace_path()
+        _create_workspace_templates(workspace)
+        console.print(f"[green]✓ Workspace ready at {workspace}[/green]")
+
+        # Show next steps
+        console.print(f"\n{__logo__} Kabot is configured!\n")
+        console.print("[bold]Next steps:[/bold]")
+        console.print("  1. Start gateway: [cyan]kabot gateway[/cyan]")
+        console.print("  2. Test agent: [cyan]kabot agent -m 'Hello!'[/cyan]")
+        console.print("  3. Auto-start: [cyan]See deployment/README.md[/cyan]\n")
+    else:
+        # Fallback to old onboard behavior
+        onboard()
 
 
 def _create_workspace_templates(workspace: Path):

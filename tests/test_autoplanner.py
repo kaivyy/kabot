@@ -163,10 +163,37 @@ async def test_autoplanner_complex_shell_command():
 # Execution Method Tests
 # ============================================================================
 
+class MockTool:
+    """Mock tool for testing."""
+    def __init__(self, name, return_value="mock result"):
+        self.name = name
+        self.return_value = return_value
+
+    async def execute(self, **kwargs):
+        return self.return_value
+
+
+class MockToolRegistry:
+    """Mock tool registry for testing."""
+    def __init__(self):
+        self._tools = {}
+
+    def register(self, tool):
+        self._tools[tool.name] = tool
+
+    def get(self, name):
+        return self._tools.get(name)
+
+
 @pytest.mark.asyncio
 async def test_execute_plan_returns_result():
     """Test that execute_plan returns an ExecutionResult."""
-    planner = AutoPlanner()
+    # Create mock registry with a tool
+    mock_registry = MockToolRegistry()
+    mock_tool = MockTool("read_file", return_value="file content")
+    mock_registry.register(mock_tool)
+
+    planner = AutoPlanner(tool_registry=mock_registry)
     plan = Plan(steps=[
         Step(tool="read_file", params={"path": "test.txt"}, description="Read file")
     ])
@@ -180,11 +207,16 @@ async def test_execute_plan_returns_result():
 @pytest.mark.asyncio
 async def test_execute_step_returns_result():
     """Test that execute_step returns an ExecutionResult."""
-    planner = AutoPlanner()
+    # Create mock registry with a tool
+    mock_registry = MockToolRegistry()
+    mock_tool = MockTool("read_file", return_value="file content")
+    mock_registry.register(mock_tool)
+
+    planner = AutoPlanner(tool_registry=mock_registry)
     step = Step(tool="read_file", params={"path": "test.txt"}, description="Read file")
 
     result = await planner.execute_step(step)
 
     assert isinstance(result, ExecutionResult)
     assert result.success is True
-    assert "read_file" in result.output
+    assert "file content" in result.output

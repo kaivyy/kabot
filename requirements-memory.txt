@@ -1,0 +1,21 @@
+# Memory System Requirements for Kabot
+# Prevents amnesia and hallucination issues like OpenClaw
+
+# Vector Database
+chromadb>=0.4.18
+
+# Sentence-Transformers for local embeddings (recommended)
+# Pure Python, no external services needed
+sentence-transformers>=2.2.0
+
+# Alternative: Ollama for local embeddings (optional)
+# Install Ollama separately from: https://ollama.com
+
+# SQLite already included in Python standard library
+
+# HTTP client
+httpx>=0.25.0
+
+# Optional: Faster vector operations
+numpy>=1.24.0
+torch>=2.0.0

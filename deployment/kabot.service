@@ -1,0 +1,17 @@
+[Unit]
+Description=Kabot AI Assistant Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i
+Environment="PATH=/home/%i/.kabot/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/%i/.kabot/venv/bin/python -m kabot gateway
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

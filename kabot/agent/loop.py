@@ -139,6 +139,40 @@ class AgentLoop:
         )
         self.tools.register(autoplanner)
 
+    def _get_tool_status_message(self, tool_name: str, args: dict) -> str | None:
+        """Generate a user-friendly status message for a tool call."""
+        try:
+            if tool_name == "read_file":
+                path = args.get("path") or args.get("file_path")
+                return f"📖 Membaca file `{path}`..."
+            elif tool_name == "write_file":
+                path = args.get("path") or args.get("file_path")
+                return f"📝 Menulis file `{path}`..."
+            elif tool_name == "edit_file":
+                path = args.get("path") or args.get("file_path")
+                return f"✏️ Mengedit file `{path}`..."
+            elif tool_name == "list_dir":
+                path = args.get("path") or "."
+                return f"📂 Mengecek folder `{path}`..."
+            elif tool_name == "exec":
+                cmd = args.get("command")
+                return f"💻 Menjalankan: `{cmd}`..."
+            elif tool_name == "web_search":
+                query = args.get("query")
+                return f"🔍 Searching: '{query}'..."
+            elif tool_name == "web_fetch":
+                url = args.get("url")
+                return f"🌐 Mengunduh konten dari {url}..."
+            elif tool_name == "autoplanner":
+                goal = args.get("goal")
+                return f"🧠 Merencanakan: '{goal}'..."
+            elif tool_name == "spawn":
+                agent_type = args.get("agent_type")
+                return f"🤖 Memanggil sub-agent `{agent_type}`..."
+            return None
+        except Exception:
+            return None
+
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
         self._running = True
@@ -309,6 +343,18 @@ class AgentLoop:
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
+
+                    # BROADCAST STATUS UPDATE (Live Feedback)
+                    # Send a short "Thinking..." message to the user before executing the tool
+                    status_message = self._get_tool_status_message(tool_call.name, tool_call.arguments)
+                    if status_message:
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content=f"_{status_message}_", # Italic for status
+                            metadata={"type": "status_update"}
+                        ))
+
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
 
                     # Truncate result for LLM context if too long (prevents 400 Bad Request)

@@ -17,7 +17,7 @@ from loguru import logger
 
 # Tool name constants
 TOOL_READ_FILE = "read_file"
-TOOL_SHELL = "shell"
+TOOL_SHELL = "exec"
 TOOL_COUNT_LINES = "count_lines"
 TOOL_ECHO = "echo"
 
