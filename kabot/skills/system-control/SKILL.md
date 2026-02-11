@@ -1,27 +1,27 @@
----
-metadata:
-  kabot:
-    emoji: 🧩
-    description: Manage system lifecycle (restart/shutdown)
-    created_with: skill-creator
----
+# System Control Skill
 
-# System-Control Skill
+This skill allows the agent to restart or shut down the bot.
 
-## Overview
-Manage system lifecycle (restart/shutdown)
+## Commands
 
-## Capabilities
-- Restart the system (Exit code 42)
-- Shutdown the system (Exit code 0)
-
-## Usage
 ### Restart
+Restart the bot. This is useful when the bot needs to reload code, clear memory, or recover from an unstable state.
+The bot will exit with code 42, which should be handled by the supervisor/watchdog to trigger a restart.
+
+Usage:
 ```bash
-python kabot/skills/system-control/scripts/restart.py
+python -m kabot.skills.system-control.restart --chat-id <CHAT_ID> --message "I'm back!" --channel <telegram|discord>
 ```
 
+Arguments:
+- `--chat-id`: The ID of the chat where the bot should send a message after restarting.
+- `--message`: The text message to send after restart.
+- `--channel`: The platform channel (e.g., 'telegram', 'discord').
+
 ### Shutdown
+Shut down the bot completely.
+
+Usage:
 ```bash
-python kabot/skills/system-control/scripts/shutdown.py
+python -m kabot.skills.system-control.shutdown
 ```
