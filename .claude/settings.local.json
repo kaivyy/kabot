@@ -12,7 +12,11 @@
       "Bash(powershell -Command:*)",
       "Bash(taskkill:*)",
       "Bash(cmd /c start python -m kabot gateway)",
-      "Bash(git config:*)"
+      "Bash(git config:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)",
+      "Bash(git tag:*)"
     ]
   }
 }

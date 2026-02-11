@@ -81,16 +81,50 @@ iwr -useb https://raw.githubusercontent.com/kaivyy/kabot/main/install.ps1 | iex
 
 ### 🛠️ Configuration
 
-Initialize your environment with the interactive wizard:
-
+#### 1. Interactive Wizard (Recommended)
+The easiest way to configure Kabot is using the setup wizard:
 ```bash
 kabot setup
 ```
+This will guide you through provider selection, API keys, and channel setup.
 
-The wizard will guide you through:
-- Selecting an AI provider
-- Securely entering API keys
-- Configuring chat channels (Telegram, Discord, etc.)
+#### 2. Manual Configuration (`config.json`)
+You can also edit the configuration file manually at `~/.kabot/config.json`.
+
+**Example Config:**
+```json
+{
+  "agents": {
+    "defaults": {
+      "model": "openrouter/anthropic/claude-3.5-sonnet",
+      "max_tokens": 8192,
+      "temperature": 0.7
+    },
+    "models": {
+      "custom": {
+        "my-local-model": {
+          "context_window": 32000
+        }
+      }
+    }
+  },
+  "providers": {
+    "openrouter": {
+      "api_key": "sk-or-v1-..."
+    },
+    "openai": {
+      "api_key": "sk-..."
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token": "123456:ABC-DEF...",
+      "allow_from": ["123456789"]
+    }
+  }
+}
+```
 
 ### 🚀 Running
 
