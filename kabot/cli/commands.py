@@ -457,33 +457,53 @@ def gateway(
     
     # Create channel manager
     channels = ChannelManager(config, bus, session_manager=session_manager)
-    
+
+    # Check for restart recovery
+    from kabot.utils.restart import RestartManager
+    restart_mgr = RestartManager(config.workspace_path / "RESTART_PENDING.json")
+    recovery_data = restart_mgr.check_and_recover()
+
     if channels.enabled_channels:
         console.print(f"[green]*[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
     else:
         console.print("[yellow]Warning: No channels enabled[/yellow]")
-    
+
     cron_status = cron.status()
     if cron_status["jobs"] > 0:
         console.print(f"[green]*[/green] Cron: {cron_status['jobs']} scheduled jobs")
-    
+
     console.print(f"[green]*[/green] Heartbeat: every 30m")
-    
+
     async def run():
         try:
             await cron.start()
             await heartbeat.start()
-            await asyncio.gather(
+
+            tasks = [
                 agent.run(),
                 channels.start_all(),
-            )
+            ]
+
+            if recovery_data:
+                async def _recover():
+                    await asyncio.sleep(5)
+                    from kabot.bus.events import OutboundMessage
+                    await bus.publish_outbound(OutboundMessage(
+                        chat_id=recovery_data["chat_id"],
+                        channel=recovery_data["channel"],
+                        content=recovery_data["message"]
+                    ))
+                    console.print("[green]✓[/green] Restored pending conversation")
+                tasks.append(_recover())
+
+            await asyncio.gather(*tasks)
         except KeyboardInterrupt:
             console.print("\nShutting down...")
             heartbeat.stop()
             cron.stop()
             agent.stop()
             await channels.stop_all()
-    
+
     asyncio.run(run())
 
 
