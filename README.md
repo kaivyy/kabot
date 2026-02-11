@@ -141,10 +141,24 @@ You can also edit the configuration file manually at `~/.kabot/config.json`.
 }
 ```
 
-### 🚀 Running
+### 🚀 Running (Production)
 
-Start the gateway server (for 24/7 operation):
+To enable **Auto-Restart** and **Crash Recovery**, use the provided watchdog scripts instead of running Python directly.
 
+**Windows:**
+```powershell
+.\start_kabot.bat
+```
+
+**Linux / macOS:**
+```bash
+./start_kabot.sh
+```
+
+*(These scripts will automatically restart Kabot if it crashes or if you use the `/restart` command)*
+
+### 🚀 Running (Manual)
+For debugging or development:
 ```bash
 kabot gateway
 ```
