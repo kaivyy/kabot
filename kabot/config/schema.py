@@ -129,6 +129,7 @@ class AgentDefaults(BaseModel):
 class AgentsConfig(BaseModel):
     """Agent configuration."""
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    enable_hybrid_memory: bool = True
 
 
 class ProviderConfig(BaseModel):

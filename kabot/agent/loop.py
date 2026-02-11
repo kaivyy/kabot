@@ -53,6 +53,7 @@ class AgentLoop:
         cron_service: "CronService | None" = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
+        enable_hybrid_memory: bool = True,
     ):
         from kabot.config.schema import ExecToolConfig
         from kabot.cron.service import CronService
@@ -65,10 +66,13 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
-        
+
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
-        self.memory = ChromaMemoryManager(workspace / "memory_db")
+        self.memory = ChromaMemoryManager(
+            workspace / "memory_db",
+            enable_hybrid_memory=enable_hybrid_memory
+        )
         self.router = IntentRouter(provider)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(

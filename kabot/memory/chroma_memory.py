@@ -31,9 +31,10 @@ class ChromaMemoryManager:
     """
 
     def __init__(self, workspace: Path, embedding_provider: str = "sentence",
-                 embedding_model: str | None = None):
+                 embedding_model: str | None = None, enable_hybrid_memory: bool = True):
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
+        self.enable_hybrid_memory = enable_hybrid_memory
 
         # Initialize embedding provider (sentence-transformers or ollama)
         if embedding_provider == "sentence":
@@ -54,7 +55,11 @@ class ChromaMemoryManager:
         self.bm25 = None
         self.bm25_documents = []
         self.bm25_ids = []  # List of (type, id) tuples
-        self._build_bm25_index()
+
+        if self.enable_hybrid_memory:
+            self._build_bm25_index()
+        else:
+            logger.info("Hybrid memory (BM25) disabled via config")
 
         # ChromaDB will be initialized lazily
         self._chroma_client = None
@@ -168,7 +173,8 @@ class ChromaMemoryManager:
             await self._index_message(session_id, message_id, content, metadata)
 
             # 3. Update BM25 index
-            self._build_bm25_index()
+            if self.enable_hybrid_memory:
+                self._build_bm25_index()
 
             return True
 
@@ -375,7 +381,9 @@ class ChromaMemoryManager:
                             vector_results.append(item)
 
             # 2. Run BM25 Search
-            bm25_results = self._perform_bm25_search(query, limit=limit)
+            bm25_results = []
+            if self.enable_hybrid_memory:
+                bm25_results = self._perform_bm25_search(query, limit=limit)
 
             # Filter BM25 results by session_id if needed
             if session_id:
@@ -398,25 +406,26 @@ class ChromaMemoryManager:
                 fused_scores[item_id]['item']['vector_rank'] = rank + 1
 
             # Process BM25 Results
-            for rank, item in enumerate(bm25_results):
-                item_id = item.get('message_id') or item.get('fact_id')
-                if not item_id: continue
+            if self.enable_hybrid_memory:
+                for rank, item in enumerate(bm25_results):
+                    item_id = item.get('message_id') or item.get('fact_id')
+                    if not item_id: continue
 
-                if item_id not in fused_scores:
-                    fused_scores[item_id] = {'item': item, 'score': 0.0}
+                    if item_id not in fused_scores:
+                        fused_scores[item_id] = {'item': item, 'score': 0.0}
 
-                # If item was already in vector results, this updates the score
-                # Note: We merge fields if needed, but here we assume items are similar enough
-                # or we just keep the one we have (usually the first one encountered is fine,
-                # but merging metadata might be better if they differ).
-                # Since both fetch from SQLite, they should be identical.
+                    # If item was already in vector results, this updates the score
+                    # Note: We merge fields if needed, but here we assume items are similar enough
+                    # or we just keep the one we have (usually the first one encountered is fine,
+                    # but merging metadata might be better if they differ).
+                    # Since both fetch from SQLite, they should be identical.
 
-                fused_scores[item_id]['score'] += 1.0 / (k + rank + 1)
-                fused_scores[item_id]['item']['bm25_rank'] = rank + 1
+                    fused_scores[item_id]['score'] += 1.0 / (k + rank + 1)
+                    fused_scores[item_id]['item']['bm25_rank'] = rank + 1
 
-                # Ensure BM25 score is preserved if it wasn't there
-                if 'bm25_score' in item:
-                    fused_scores[item_id]['item']['bm25_score'] = item['bm25_score']
+                    # Ensure BM25 score is preserved if it wasn't there
+                    if 'bm25_score' in item:
+                        fused_scores[item_id]['item']['bm25_score'] = item['bm25_score']
 
             # Sort by fused score
             final_results = sorted(fused_scores.values(), key=lambda x: x['score'], reverse=True)
@@ -522,7 +531,8 @@ class ChromaMemoryManager:
                 )
 
                 # Update BM25 index
-                self._build_bm25_index()
+                if self.enable_hybrid_memory:
+                    self._build_bm25_index()
 
             return success
 
