@@ -1,4 +1,4 @@
-"""
+﻿"""
 Provider Registry — single source of truth for LLM provider metadata.
 
 Adding a new provider:
@@ -13,7 +13,8 @@ Every entry writes out all fields so you can copy-paste as a template.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Dict, List, Optional
+from kabot.providers.models import ModelMetadata
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,7 @@ class ProviderSpec:
 
     # model prefixing
     litellm_prefix: str = ""                 # "dashscope" → model becomes "dashscope/{model}"
-    skip_prefixes: tuple[str, ...] = ()      # don't prefix if model already starts with these
+    skip_prefixes: tuple[str, ...] = ()      # don't prefix if model already starts with these 
 
     # extra env vars, e.g. (("ZHIPUAI_API_KEY", "{api_key}"),)
     env_extras: tuple[tuple[str, str], ...] = ()
@@ -54,6 +55,40 @@ class ProviderSpec:
     @property
     def label(self) -> str:
         return self.display_name or self.name.title()
+
+
+class ModelRegistry:
+    """Central registry for all AI models and their metadata."""
+    
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ModelRegistry, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self._models: Dict[str, ModelMetadata] = {}
+        self._initialized = True
+
+    def register(self, metadata: ModelMetadata):
+        """Register a new model."""
+        self._models[metadata.id] = metadata
+
+    def get_model(self, model_id: str) -> Optional[ModelMetadata]:
+        """Retrieve model metadata by ID."""
+        return self._models.get(model_id)
+
+    def list_models(self) -> List[ModelMetadata]:
+        """Return a list of all registered models."""
+        return list(self._models.values())
+
+    def clear(self):
+        """Clear all registered models."""
+        self._models = {}
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +269,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         is_local=False,
         detect_by_key_prefix="",
         detect_by_base_keyword="",
-        default_api_base="https://api.moonshot.ai/v1",   # intl; use api.moonshot.cn for China
+        default_api_base="https://api.moonshot.ai/v1",   # intl; use api.moonshot.cn for China 
         strip_model_prefix=False,
         model_overrides=(
             ("kimi-k2.5", {"temperature": 1.0}),
@@ -283,7 +318,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # === Auxiliary (not a primary LLM provider) ============================
 
     # Groq: mainly used for Whisper voice transcription, also usable for LLM.
-    # Needs "groq/" prefix for LiteLLM routing. Placed last — it rarely wins fallback.
+    # Needs "groq/" prefix for LiteLLM routing. Placed last — it rarely wins fallback.       
     ProviderSpec(
         name="groq",
         keywords=("groq",),
