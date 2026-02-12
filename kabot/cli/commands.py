@@ -394,6 +394,7 @@ def gateway(
     from kabot.cron.service import CronService
     from kabot.cron.types import CronJob
     from kabot.heartbeat.service import HeartbeatService
+    from kabot.gateway.webhook_server import WebhookServer
     
     if verbose:
         import logging
@@ -456,6 +457,9 @@ def gateway(
         enabled=True
     )
     
+    # Create webhook server
+    webhook_server = WebhookServer(bus)
+    
     # Create channel manager
     channels = ChannelManager(config, bus, session_manager=session_manager)
 
@@ -474,11 +478,17 @@ def gateway(
         console.print(f"[green]*[/green] Cron: {cron_status['jobs']} scheduled jobs")
 
     console.print(f"[green]*[/green] Heartbeat: every 30m")
+    console.print(f"[green]*[/green] Webhooks: listening on port {port}")
 
     async def run():
         try:
             await cron.start()
             await heartbeat.start()
+            
+            # Start webhook server (using same port as gateway for simplicity in this phase)
+            # In a real production setup, we might want separate ports or a reverse proxy
+            # But here we are integrating into the main event loop
+            webhook_runner = await webhook_server.start(port=port)
 
             tasks = [
                 agent.run(),
@@ -504,6 +514,8 @@ def gateway(
             cron.stop()
             agent.stop()
             await channels.stop_all()
+            if 'webhook_runner' in locals():
+                await webhook_runner.cleanup()
 
     asyncio.run(run())
 
