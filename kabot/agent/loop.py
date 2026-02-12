@@ -427,9 +427,11 @@ class AgentLoop:
         )
 
         # Also save to legacy session for compatibility
-        session.add_message("user", msg.content)
-        session.add_message("assistant", final_content)
-        self.sessions.save(session)
+        # Skip if this is a background task (isolated session)
+        if not msg.session_key.startswith("background:"):
+            session.add_message("user", msg.content)
+            session.add_message("assistant", final_content)
+            self.sessions.save(session)
 
         return OutboundMessage(
             channel=msg.channel,
@@ -573,8 +575,10 @@ class AgentLoop:
             channel=channel,
             sender_id="user",
             chat_id=chat_id,
-            content=content
+            content=content,
+            _session_key=session_key
         )
-        
+
         response = await self._process_message(msg)
+        
         return response.content if response else ""
