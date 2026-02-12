@@ -1,17 +1,12 @@
 ﻿"""
 Provider Registry — single source of truth for LLM provider metadata.
-
-Adding a new provider:
-  1. Add a ProviderSpec to PROVIDERS below.
-  2. Add a field to ProvidersConfig in config/schema.py.
-  Done. Env vars, prefixing, config matching, status display all derive from here.
-
-Order matters — it controls match priority and fallback. Gateways first.
-Every entry writes out all fields so you can copy-paste as a template.
 """
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from kabot.providers.models import ModelMetadata
@@ -19,13 +14,6 @@ from kabot.providers.models import ModelMetadata
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    """One LLM provider's metadata. See PROVIDERS below for real examples.
-
-    Placeholders in env_extras values:
-      {api_key}  — the user's API key
-      {api_base} — api_base from config, or this spec's default_api_base
-    """
-
     # identity
     name: str                       # config field name, e.g. "dashscope"
     keywords: tuple[str, ...]       # model-name keywords for matching (lowercase)
@@ -36,20 +24,20 @@ class ProviderSpec:
     litellm_prefix: str = ""                 # "dashscope" → model becomes "dashscope/{model}"
     skip_prefixes: tuple[str, ...] = ()      # don't prefix if model already starts with these 
 
-    # extra env vars, e.g. (("ZHIPUAI_API_KEY", "{api_key}"),)
+    # extra env vars
     env_extras: tuple[tuple[str, str], ...] = ()
 
     # gateway / local detection
-    is_gateway: bool = False                 # routes any model (OpenRouter, AiHubMix)
-    is_local: bool = False                   # local deployment (vLLM, Ollama)
-    detect_by_key_prefix: str = ""           # match api_key prefix, e.g. "sk-or-"
-    detect_by_base_keyword: str = ""         # match substring in api_base URL
-    default_api_base: str = ""               # fallback base URL
+    is_gateway: bool = False
+    is_local: bool = False
+    detect_by_key_prefix: str = ""
+    detect_by_base_keyword: str = ""
+    default_api_base: str = ""
 
     # gateway behavior
-    strip_model_prefix: bool = False         # strip "provider/" before re-prefixing
+    strip_model_prefix: bool = False
 
-    # per-model param overrides, e.g. (("kimi-k2.5", {"temperature": 1.0}),)
+    # per-model param overrides
     model_overrides: tuple[tuple[str, dict[str, Any]], ...] = ()
 
     @property
@@ -73,6 +61,35 @@ class ModelRegistry:
             return
         self._models: Dict[str, ModelMetadata] = {}
         self._initialized = True
+        self.load_catalog()
+        self.load_plugins()
+
+    def load_catalog(self):
+        """Load the static catalog into the registry."""
+        try:
+            from kabot.providers.catalog import populate_registry
+            populate_registry(self)
+        except ImportError:
+            pass
+
+    def load_plugins(self):
+        """Automatically discover and load plugins from kabot.providers.plugins."""
+        import kabot.providers.plugins as plugins_pkg
+        
+        # Get the path to the plugins package
+        pkg_path = os.path.dirname(plugins_pkg.__file__)
+        
+        for _, name, is_pkg in pkgutil.iter_modules([pkg_path]):
+            if is_pkg:
+                module_name = f"kabot.providers.plugins.{name}"
+                try:
+                    module = importlib.import_module(module_name)
+                    # Look for a register function in the plugin
+                    if hasattr(module, "register"):
+                        module.register(self)
+                except Exception as e:
+                    # Log error or handle gracefully
+                    pass
 
     def register(self, metadata: ModelMetadata):
         """Register a new model."""
@@ -80,7 +97,15 @@ class ModelRegistry:
 
     def get_model(self, model_id: str) -> Optional[ModelMetadata]:
         """Retrieve model metadata by ID."""
-        return self._models.get(model_id)
+        # Try full ID first
+        if model_id in self._models:
+            return self._models[model_id]
+        
+        # Try short ID (e.g. "gpt-4o" matches "openai/gpt-4o")
+        for metadata in self._models.values():
+            if metadata.short_id == model_id:
+                return metadata
+        return None
 
     def list_models(self) -> List[ModelMetadata]:
         """Return a list of all registered models."""
@@ -92,259 +117,118 @@ class ModelRegistry:
 
 
 # ---------------------------------------------------------------------------
-# PROVIDERS — the registry. Order = priority. Copy any entry as template.
+# PROVIDERS — the registry. Order = priority.
 # ---------------------------------------------------------------------------
 
 PROVIDERS: tuple[ProviderSpec, ...] = (
-
-    # === Gateways (detected by api_key / api_base, not model name) =========
-    # Gateways can route any model, so they win in fallback.
-
-    # OpenRouter: global gateway, keys start with "sk-or-"
     ProviderSpec(
         name="openrouter",
         keywords=("openrouter",),
         env_key="OPENROUTER_API_KEY",
         display_name="OpenRouter",
-        litellm_prefix="openrouter",        # claude-3 → openrouter/claude-3
-        skip_prefixes=(),
-        env_extras=(),
+        litellm_prefix="openrouter",
         is_gateway=True,
-        is_local=False,
         detect_by_key_prefix="sk-or-",
         detect_by_base_keyword="openrouter",
         default_api_base="https://openrouter.ai/api/v1",
-        strip_model_prefix=False,
-        model_overrides=(),
     ),
-
-    # AiHubMix: global gateway, OpenAI-compatible interface.
-    # strip_model_prefix=True: it doesn't understand "anthropic/claude-3",
-    # so we strip to bare "claude-3" then re-prefix as "openai/claude-3".
     ProviderSpec(
         name="aihubmix",
         keywords=("aihubmix",),
-        env_key="OPENAI_API_KEY",           # OpenAI-compatible
+        env_key="OPENAI_API_KEY",
         display_name="AiHubMix",
-        litellm_prefix="openai",            # → openai/{model}
-        skip_prefixes=(),
-        env_extras=(),
+        litellm_prefix="openai",
         is_gateway=True,
-        is_local=False,
-        detect_by_key_prefix="",
         detect_by_base_keyword="aihubmix",
         default_api_base="https://aihubmix.com/v1",
-        strip_model_prefix=True,            # anthropic/claude-3 → claude-3 → openai/claude-3
-        model_overrides=(),
+        strip_model_prefix=True,
     ),
-
-    # === Standard providers (matched by model-name keywords) ===============
-
-    # Anthropic: LiteLLM recognizes "claude-*" natively, no prefix needed.
     ProviderSpec(
         name="anthropic",
         keywords=("anthropic", "claude"),
         env_key="ANTHROPIC_API_KEY",
         display_name="Anthropic",
-        litellm_prefix="",
-        skip_prefixes=(),
-        env_extras=(),
-        is_gateway=False,
-        is_local=False,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="",
-        default_api_base="",
-        strip_model_prefix=False,
-        model_overrides=(),
     ),
-
-    # OpenAI: LiteLLM recognizes "gpt-*" natively, no prefix needed.
     ProviderSpec(
         name="openai",
         keywords=("openai", "gpt"),
         env_key="OPENAI_API_KEY",
         display_name="OpenAI",
-        litellm_prefix="",
-        skip_prefixes=(),
-        env_extras=(),
-        is_gateway=False,
-        is_local=False,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="",
-        default_api_base="",
-        strip_model_prefix=False,
-        model_overrides=(),
     ),
-
-    # DeepSeek: needs "deepseek/" prefix for LiteLLM routing.
     ProviderSpec(
         name="deepseek",
         keywords=("deepseek",),
         env_key="DEEPSEEK_API_KEY",
         display_name="DeepSeek",
-        litellm_prefix="deepseek",          # deepseek-chat → deepseek/deepseek-chat
-        skip_prefixes=("deepseek/",),       # avoid double-prefix
-        env_extras=(),
-        is_gateway=False,
-        is_local=False,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="",
-        default_api_base="",
-        strip_model_prefix=False,
-        model_overrides=(),
+        litellm_prefix="deepseek",
+        skip_prefixes=("deepseek/",),
     ),
-
-    # Gemini: needs "gemini/" prefix for LiteLLM.
     ProviderSpec(
         name="gemini",
         keywords=("gemini",),
         env_key="GEMINI_API_KEY",
         display_name="Gemini",
-        litellm_prefix="gemini",            # gemini-pro → gemini/gemini-pro
-        skip_prefixes=("gemini/",),         # avoid double-prefix
-        env_extras=(),
-        is_gateway=False,
-        is_local=False,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="",
-        default_api_base="",
-        strip_model_prefix=False,
-        model_overrides=(),
+        litellm_prefix="gemini",
+        skip_prefixes=("gemini/",),
     ),
-
-    # Zhipu: LiteLLM uses "zai/" prefix.
-    # Also mirrors key to ZHIPUAI_API_KEY (some LiteLLM paths check that).
-    # skip_prefixes: don't add "zai/" when already routed via gateway.
     ProviderSpec(
         name="zhipu",
         keywords=("zhipu", "glm", "zai"),
         env_key="ZAI_API_KEY",
         display_name="Zhipu AI",
-        litellm_prefix="zai",              # glm-4 → zai/glm-4
+        litellm_prefix="zai",
         skip_prefixes=("zhipu/", "zai/", "openrouter/", "hosted_vllm/"),
-        env_extras=(
-            ("ZHIPUAI_API_KEY", "{api_key}"),
-        ),
-        is_gateway=False,
-        is_local=False,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="",
-        default_api_base="",
-        strip_model_prefix=False,
-        model_overrides=(),
+        env_extras=(("ZHIPUAI_API_KEY", "{api_key}"),),
     ),
-
-    # DashScope: Qwen models, needs "dashscope/" prefix.
     ProviderSpec(
         name="dashscope",
         keywords=("qwen", "dashscope"),
         env_key="DASHSCOPE_API_KEY",
         display_name="DashScope",
-        litellm_prefix="dashscope",         # qwen-max → dashscope/qwen-max
+        litellm_prefix="dashscope",
         skip_prefixes=("dashscope/", "openrouter/"),
-        env_extras=(),
-        is_gateway=False,
-        is_local=False,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="",
-        default_api_base="",
-        strip_model_prefix=False,
-        model_overrides=(),
     ),
-
-    # Moonshot: Kimi models, needs "moonshot/" prefix.
-    # LiteLLM requires MOONSHOT_API_BASE env var to find the endpoint.
-    # Kimi K2.5 API enforces temperature >= 1.0.
     ProviderSpec(
         name="moonshot",
         keywords=("moonshot", "kimi"),
         env_key="MOONSHOT_API_KEY",
         display_name="Moonshot",
-        litellm_prefix="moonshot",          # kimi-k2.5 → moonshot/kimi-k2.5
+        litellm_prefix="moonshot",
         skip_prefixes=("moonshot/", "openrouter/"),
-        env_extras=(
-            ("MOONSHOT_API_BASE", "{api_base}"),
-        ),
-        is_gateway=False,
-        is_local=False,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="",
-        default_api_base="https://api.moonshot.ai/v1",   # intl; use api.moonshot.cn for China 
-        strip_model_prefix=False,
-        model_overrides=(
-            ("kimi-k2.5", {"temperature": 1.0}),
-        ),
+        env_extras=(("MOONSHOT_API_BASE", "{api_base}"),),
+        default_api_base="https://api.moonshot.ai/v1",
+        model_overrides=(("kimi-k2.5", {"temperature": 1.0}),),
     ),
-
-    # Letta: Stateful agents with memory (via kabot.providers.letta_provider)
     ProviderSpec(
         name="letta",
         keywords=("letta",),
         env_key="LETTA_API_KEY",
         display_name="Letta",
-        litellm_prefix="",
-        skip_prefixes=(),
-        env_extras=(),
         is_gateway=True,
         is_local=True,
-        detect_by_key_prefix="",
         detect_by_base_keyword="letta",
         default_api_base="http://localhost:8283",
-        strip_model_prefix=False,
-        model_overrides=(),
     ),
-
-    # === Local deployment (matched by config key, NOT by api_base) =========
-
-    # vLLM / any OpenAI-compatible local server.
-    # Detected when config key is "vllm" (provider_name="vllm").
     ProviderSpec(
         name="vllm",
         keywords=("vllm",),
         env_key="HOSTED_VLLM_API_KEY",
         display_name="vLLM/Local",
-        litellm_prefix="hosted_vllm",      # Llama-3-8B → hosted_vllm/Llama-3-8B
-        skip_prefixes=(),
-        env_extras=(),
-        is_gateway=False,
+        litellm_prefix="hosted_vllm",
         is_local=True,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="",
-        default_api_base="",                # user must provide in config
-        strip_model_prefix=False,
-        model_overrides=(),
     ),
-
-    # === Auxiliary (not a primary LLM provider) ============================
-
-    # Groq: mainly used for Whisper voice transcription, also usable for LLM.
-    # Needs "groq/" prefix for LiteLLM routing. Placed last — it rarely wins fallback.       
     ProviderSpec(
         name="groq",
         keywords=("groq",),
         env_key="GROQ_API_KEY",
         display_name="Groq",
-        litellm_prefix="groq",              # llama3-8b-8192 → groq/llama3-8b-8192
-        skip_prefixes=("groq/",),           # avoid double-prefix
-        env_extras=(),
-        is_gateway=False,
-        is_local=False,
-        detect_by_key_prefix="",
-        detect_by_base_keyword="",
-        default_api_base="",
-        strip_model_prefix=False,
-        model_overrides=(),
+        litellm_prefix="groq",
+        skip_prefixes=("groq/",),
     ),
 )
 
 
-# ---------------------------------------------------------------------------
-# Lookup helpers
-# ---------------------------------------------------------------------------
-
 def find_by_model(model: str) -> ProviderSpec | None:
-    """Match a standard provider by model-name keyword (case-insensitive).
-    Skips gateways/local — those are matched by api_key/api_base instead."""
     model_lower = model.lower()
     for spec in PROVIDERS:
         if spec.is_gateway or spec.is_local:
@@ -359,34 +243,19 @@ def find_gateway(
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> ProviderSpec | None:
-    """Detect gateway/local provider.
-
-    Priority:
-      1. provider_name — if it maps to a gateway/local spec, use it directly.
-      2. api_key prefix — e.g. "sk-or-" → OpenRouter.
-      3. api_base keyword — e.g. "aihubmix" in URL → AiHubMix.
-
-    A standard provider with a custom api_base (e.g. DeepSeek behind a proxy)
-    will NOT be mistaken for vLLM — the old fallback is gone.
-    """
-    # 1. Direct match by config key
     if provider_name:
         spec = find_by_name(provider_name)
         if spec and (spec.is_gateway or spec.is_local):
             return spec
-
-    # 2. Auto-detect by api_key prefix / api_base keyword
     for spec in PROVIDERS:
         if spec.detect_by_key_prefix and api_key and api_key.startswith(spec.detect_by_key_prefix):
             return spec
         if spec.detect_by_base_keyword and api_base and spec.detect_by_base_keyword in api_base:
             return spec
-
     return None
 
 
 def find_by_name(name: str) -> ProviderSpec | None:
-    """Find a provider spec by config field name, e.g. "dashscope"."""
     for spec in PROVIDERS:
         if spec.name == name:
             return spec
