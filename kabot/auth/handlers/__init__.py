@@ -4,6 +4,7 @@ from kabot.auth.handlers.base import AuthHandler
 from kabot.auth.handlers.openai_key import OpenAIKeyHandler
 from kabot.auth.handlers.openai_oauth import OpenAIOAuthHandler
 from kabot.auth.handlers.anthropic_key import AnthropicKeyHandler
+from kabot.auth.handlers.anthropic_token import AnthropicTokenHandler
 from kabot.auth.handlers.google_key import GoogleKeyHandler
 from kabot.auth.handlers.google_oauth import GoogleOAuthHandler
 from kabot.auth.handlers.ollama_url import OllamaURLHandler
@@ -17,6 +18,7 @@ __all__ = [
     "OpenAIKeyHandler",
     "OpenAIOAuthHandler",
     "AnthropicKeyHandler",
+    "AnthropicTokenHandler",
     "GoogleKeyHandler",
     "GoogleOAuthHandler",
     "OllamaURLHandler",
