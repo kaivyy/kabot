@@ -744,6 +744,118 @@ def channels_login():
 
 
 # ============================================================================
+# Auth Commands
+# ============================================================================
+
+auth_app = typer.Typer(help="Manage authentication")
+app.add_typer(auth_app, name="auth")
+
+
+@auth_app.command("list")
+def auth_list():
+    """List supported authentication providers."""
+    from kabot.auth.manager import AuthManager
+    from kabot.auth.menu import AUTH_PROVIDERS
+    from rich.table import Table
+
+    table = Table(title="Supported Providers")
+    table.add_column("ID", style="cyan")
+    table.add_column("Name", style="green")
+    table.add_column("Methods", style="yellow")
+
+    for pid, meta in AUTH_PROVIDERS.items():
+        methods = ", ".join(meta["methods"].keys())
+        table.add_row(pid, meta["name"], methods)
+
+    console.print(table)
+
+
+@auth_app.command("login")
+def auth_login(
+    provider: str = typer.Argument(None, help="Provider ID (e.g., openai, anthropic)"),
+    method: str = typer.Option(None, "--method", "-m", help="Auth method (e.g., oauth, api_key)"),
+):
+    """Login to a provider with optional method selection."""
+    from kabot.auth.manager import AuthManager
+    from kabot.auth.menu import get_auth_choices, AUTH_PROVIDERS
+    from rich.prompt import Prompt
+
+    manager = AuthManager()
+
+    # If no provider, show provider selection
+    if not provider:
+        choices = get_auth_choices()
+        console.print("\n[bold]Select a provider to configure:[/bold]\n")
+
+        for idx, choice in enumerate(choices, 1):
+            console.print(f"  [{idx}] {choice['name']}")
+
+        console.print()
+        try:
+            choice_idx = Prompt.ask(
+                "Select option",
+                choices=[str(i) for i in range(1, len(choices)+1)]
+            )
+            provider = choices[int(choice_idx)-1]['value']
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled.[/yellow]")
+            raise typer.Exit(0)
+
+    # Execute login with optional method
+    success = manager.login(provider, method_id=method)
+
+    if success:
+        console.print(f"\n[green]✓ Successfully configured {provider}![/green]")
+    else:
+        console.print(f"\n[red]✗ Authentication failed[/red]")
+        raise typer.Exit(1)
+
+
+@auth_app.command("methods")
+def auth_methods(
+    provider: str = typer.Argument(..., help="Provider ID"),
+):
+    """List available authentication methods for a provider."""
+    from kabot.auth.menu import AUTH_PROVIDERS
+    from rich.table import Table
+
+    if provider not in AUTH_PROVIDERS:
+        console.print(f"[red]Provider '{provider}' not found[/red]")
+        console.print("\nAvailable providers:")
+        for pid in AUTH_PROVIDERS.keys():
+            console.print(f"  - {pid}")
+        raise typer.Exit(1)
+
+    provider_info = AUTH_PROVIDERS[provider]
+    methods = provider_info["methods"]
+
+    table = Table(title=f"{provider_info['name']} - Authentication Methods")
+    table.add_column("Method ID", style="cyan")
+    table.add_column("Label", style="green")
+    table.add_column("Description", style="dim")
+
+    for method_id, method_info in methods.items():
+        table.add_row(
+            method_id,
+            method_info["label"],
+            method_info["description"]
+        )
+
+    console.print("\n")
+    console.print(table)
+    console.print("\n")
+    console.print(f"[dim]Usage: kabot auth login {provider} --method <method_id>[/dim]")
+
+
+@auth_app.command("status")
+def auth_status():
+    """Show authentication status."""
+    from kabot.auth.manager import AuthManager
+    manager = AuthManager()
+    manager.get_status()
+
+
+# ============================================================================
 # Cron Commands
 # ============================================================================
 
