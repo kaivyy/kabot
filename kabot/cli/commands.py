@@ -1064,5 +1064,36 @@ def status():
                 console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
 
 
+@app.command("security-audit")
+def security_audit():
+    """Run a security audit on the workspace."""
+    from kabot.config.loader import load_config
+    from kabot.utils.security_audit import SecurityAuditor
+    from rich.table import Table
+
+    config = load_config()
+    auditor = SecurityAuditor(config.workspace_path)
+    
+    with console.status("[bold cyan]Running security audit..."):
+        findings = auditor.run_audit()
+
+    if not findings:
+        console.print("\n[bold green]✓ No security issues found![/bold green]")
+        return
+
+    table = Table(title=f"Security Audit Results ({len(findings)} findings)")
+    table.add_column("Type", style="bold red")
+    table.add_column("Severity", style="magenta")
+    table.add_column("File", style="cyan")
+    table.add_column("Detail", style="white")
+
+    for f in findings:
+        table.add_row(f["type"], f["severity"], f["file"], f["detail"])
+
+    console.print("\n")
+    console.print(table)
+    console.print("\n[yellow]⚠️ Please review the findings above and secure your workspace.[/yellow]")
+
+
 if __name__ == "__main__":
     app()
