@@ -9,7 +9,7 @@ import pkgutil
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-from kabot.providers.models import ModelMetadata
+from kabot.providers.models import ModelMetadata, ModelPricing
 
 
 @dataclass(frozen=True)
@@ -50,19 +50,53 @@ class ModelRegistry:
     
     _instance = None
     
-    def __new__(cls):
+    def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super(ModelRegistry, cls).__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
+    def __init__(self, db=None):
         if self._initialized:
             return
         self._models: Dict[str, ModelMetadata] = {}
+        self._aliases: Dict[str, str] = {} # Alias -> Full ID
+        self._db = db
         self._initialized = True
         self.load_catalog()
+        if self._db:
+            self.load_scanned_models()
         self.load_plugins()
+
+    def register_alias(self, alias: str, model_id: str):
+        """Register a model alias."""
+        self._aliases[alias] = model_id
+
+    def resolve(self, name: str, user_aliases: Optional[Dict[str, str]] = None) -> str:
+        """
+        Resolve a name (alias, short ID, or full ID) to a full model ID.
+        
+        Priority:
+        1. User-defined aliases (from config)
+        2. Registry aliases (from plugins/catalog)
+        3. Registry short ID lookup
+        4. Return as-is (Full ID or unknown)
+        """
+        # 1. User aliases
+        if user_aliases and name in user_aliases:
+            return user_aliases[name]
+            
+        # 2. Registry aliases
+        if name in self._aliases:
+            return self._aliases[name]
+            
+        # 3. Registry short ID
+        model = self.get_model(name)
+        if model:
+            return model.id
+            
+        # 4. Fallback
+        return name
 
     def load_catalog(self):
         """Load the static catalog into the registry."""
@@ -71,6 +105,28 @@ class ModelRegistry:
             populate_registry(self)
         except ImportError:
             pass
+
+    def load_scanned_models(self):
+        """Load scanned models from the database."""
+        if not self._db:
+            return
+        
+        scanned = self._db.get_scanned_models()
+        for m in scanned:
+            metadata = ModelMetadata(
+                id=m["id"],
+                name=m["name"],
+                provider=m["provider"],
+                context_window=m["context_window"],
+                max_output=m["max_output"],
+                pricing=ModelPricing(
+                    input_1m=m["pricing_input"],
+                    output_1m=m["pricing_output"]
+                ),
+                capabilities=m["capabilities"],
+                is_premium=bool(m["is_premium"])
+            )
+            self.register(metadata)
 
     def load_plugins(self):
         """Automatically discover and load plugins from kabot.providers.plugins."""

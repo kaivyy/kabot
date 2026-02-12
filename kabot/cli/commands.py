@@ -529,8 +529,8 @@ def gateway(
 
 @app.command()
 def agent(
-    message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
-    session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),
+    message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"), 
+    session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),       
     markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
     logs: bool = typer.Option(False, "--logs/--no-logs", help="Show kabot runtime logs during chat"),
 ):
@@ -539,9 +539,9 @@ def agent(
     from kabot.bus.queue import MessageBus
     from kabot.agent.loop import AgentLoop
     from loguru import logger
-    
+
     config = load_config()
-    
+
     bus = MessageBus()
     provider = _make_provider(config)
 
@@ -549,7 +549,7 @@ def agent(
         logger.enable("kabot")
     else:
         logger.disable("kabot")
-    
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
@@ -559,7 +559,7 @@ def agent(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         enable_hybrid_memory=config.agents.enable_hybrid_memory,
     )
-    
+
     # Show spinner when logs are off (no output to miss); skip when logs are on
     def _thinking_ctx():
         if logs:
@@ -573,7 +573,7 @@ def agent(
             with _thinking_ctx():
                 response = await agent_loop.process_direct(message, session_id)
             _print_agent_response(response, render_markdown=markdown)
-        
+
         asyncio.run(run_once())
     else:
         # Interactive mode
@@ -589,7 +589,7 @@ def agent(
             os._exit(0)
 
         signal.signal(signal.SIGINT, _exit_on_sigint)
-        
+
         async def run_interactive():
             while True:
                 try:
@@ -604,9 +604,9 @@ def agent(
                         _restore_terminal()
                         console.print("\nGoodbye!")
                         break
-                    
+
                     with _thinking_ctx():
-                        response = await agent_loop.process_direct(user_input, session_id)
+                        response = await agent_loop.process_direct(user_input, session_id)     
                     _print_agent_response(response, render_markdown=markdown)
                 except KeyboardInterrupt:
                     _save_history()
@@ -618,9 +618,118 @@ def agent(
                     _restore_terminal()
                     console.print("\nGoodbye!")
                     break
-        
+
         asyncio.run(run_interactive())
 
+
+# ============================================================================
+# Model Commands
+# ============================================================================
+
+models_app = typer.Typer(help="Manage AI models and metadata")
+app.add_typer(models_app, name="models")
+
+
+@models_app.command("list")
+def models_list(
+    provider: str = typer.Option(None, "--provider", "-p", help="Filter by provider"),
+    premium: bool = typer.Option(False, "--premium", help="Show only premium models"),
+):
+    """List all available models with pricing and capabilities."""
+    from kabot.providers.registry import ModelRegistry
+    from kabot.memory.sqlite_store import SQLiteMetadataStore
+    from kabot.config.loader import get_data_dir
+
+    db_path = get_data_dir() / "metadata.db"
+    db = SQLiteMetadataStore(db_path)
+    registry = ModelRegistry(db=db)
+    
+    models = registry.list_models()
+    
+    if provider:
+        models = [m for m in models if m.provider == provider]
+    if premium:
+        models = [m for m in models if m.is_premium]
+
+    if not models:
+        console.print("No models found. Try running [cyan]kabot models scan[/cyan].")
+        return
+
+    table = Table(title="Available AI Models")
+    table.add_column("ID", style="cyan")
+    table.add_column("Name", style="green")
+    table.add_column("Provider", style="magenta")
+    table.add_column("Pricing (In/Out)", style="yellow")
+    table.add_column("Context", style="blue")
+    table.add_column("Capabilities", style="dim")
+
+    # Sort models: premium first, then by ID
+    models.sort(key=lambda x: (not x.is_premium, x.id))
+
+    for m in models:
+        pricing = f"${m.pricing.input_1m}/${m.pricing.output_1m}"
+        caps = ", ".join(m.capabilities) if m.capabilities else "-"
+        ctx = f"{m.context_window:,}" if m.context_window else "Unknown"
+        
+        name = m.name
+        if m.is_premium:
+            name = f"[bold]{name}[/bold] [yellow]â˜…[/yellow]"
+
+        table.add_row(m.id, name, m.provider, pricing, ctx, caps)
+
+    console.print(table)
+
+
+@models_app.command("scan")
+def models_scan():
+    """Scan provider APIs to discover available models."""
+    from kabot.providers.registry import ModelRegistry
+    from kabot.providers.scanner import ModelScanner
+    from kabot.memory.sqlite_store import SQLiteMetadataStore
+    from kabot.config.loader import load_config, get_data_dir
+
+    config = load_config()
+    db_path = get_data_dir() / "metadata.db"
+    db = SQLiteMetadataStore(db_path)
+    registry = ModelRegistry(db=db)
+    scanner = ModelScanner(registry, db=db)
+    
+    with console.status("[bold cyan]Scanning providers for models..."):
+        count = scanner.scan_all(config.providers)
+        
+    console.print(f"\n[green]âœ“[/green] Scan complete! Found and registered [bold]{count}[/bold] models.")
+    console.print("[dim]Use `kabot models list` to see them.[/dim]")
+
+
+@models_app.command("info")
+def models_info(
+    model_id: str = typer.Argument(..., help="Model ID or short name"),
+):
+    """Show detailed metadata for a specific model."""
+    from kabot.providers.registry import ModelRegistry
+    from kabot.memory.sqlite_store import SQLiteMetadataStore
+    from kabot.config.loader import get_data_dir
+
+    db_path = get_data_dir() / "metadata.db"
+    db = SQLiteMetadataStore(db_path)
+    registry = ModelRegistry(db=db)
+    
+    m = registry.get_model(model_id)
+    if not m:
+        console.print(f"[red]Error: Model '{model_id}' not found.[/red]")
+        raise typer.Exit(1)
+
+    console.print(Panel(
+        f"[bold]ID:[/bold] {m.id}\n"
+        f"[bold]Name:[/bold] {m.name}\n"
+        f"[bold]Provider:[/bold] {m.provider}\n"
+        f"[bold]Context Window:[/bold] {m.context_window:,} tokens\n"
+        f"[bold]Pricing (1M tokens):[/bold] Input: ${m.pricing.input_1m}, Output: ${m.pricing.output_1m}\n"
+        f"[bold]Capabilities:[/bold] {', '.join(m.capabilities) if m.capabilities else 'None'}\n"
+        f"[bold]Status:[/bold] {'Premium [yellow]â˜…[/yellow]' if m.is_premium else 'Standard'}",
+        title=f"Model Info: {m.short_id}",
+        border_style="cyan"
+    ))
 
 # ============================================================================
 # Channel Commands
@@ -818,6 +927,41 @@ def auth_login(
 
     if success:
         console.print(f"\n[green]✓ Successfully configured {provider}![/green]")
+        
+        # --- Task 5: Semi-Auto Model Configuration ---
+        from kabot.providers.registry import ModelRegistry
+        from kabot.config.loader import load_config, save_config, get_data_dir
+        from kabot.memory.sqlite_store import SQLiteMetadataStore
+        
+        db_path = get_data_dir() / "metadata.db"
+        db = SQLiteMetadataStore(db_path)
+        registry = ModelRegistry(db=db)
+        
+        # Find premium models for this provider
+        available_models = [m for m in registry.list_models() if m.provider == provider and m.is_premium]
+        
+        if available_models:
+            console.print(f"\n[bold]Suggested premium models for {provider}:[/bold]\n")
+            for idx, m in enumerate(available_models, 1):
+                console.print(f"  [{idx}] {m.name} ({m.short_id}) - Context: {m.context_window:,}")
+            
+            console.print(f"  [0] Skip (Keep current default)")
+            
+            try:
+                choice = Prompt.ask(
+                    "\nSelect a model to set as default",
+                    choices=[str(i) for i in range(len(available_models) + 1)],
+                    default="0"
+                )
+                
+                if choice != "0":
+                    selected = available_models[int(choice)-1]
+                    config = load_config()
+                    config.agents.defaults.model = selected.id
+                    save_config(config)
+                    console.print(f"\n[green]✓ Default model set to: [bold]{selected.id}[/bold][/green]")
+            except (KeyboardInterrupt, EOFError):
+                pass
     else:
         console.print(f"\n[red]✗ Authentication failed[/red]")
         raise typer.Exit(1)

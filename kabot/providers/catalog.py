@@ -82,3 +82,13 @@ def populate_registry(registry):
     """Populate the registry with the static catalog."""
     for metadata in STATIC_MODEL_CATALOG:
         registry.register(metadata)
+        
+    # Register some common default aliases
+    registry.register_alias("sonnet", "anthropic/claude-3-5-sonnet-20240620")
+    registry.register_alias("opus", "anthropic/claude-3-opus-20240229")
+    registry.register_alias("gpt4", "openai/gpt-4o")
+    registry.register_alias("gpt4o", "openai/gpt-4o")
+    registry.register_alias("o1", "openai/o1-preview")
+    registry.register_alias("gemini", "google/gemini-1.5-pro")
+    registry.register_alias("kimi", "moonshot/kimi-k2.5")
+    registry.register_alias("minimax", "minimax/MiniMax-M2.1")

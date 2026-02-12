@@ -86,6 +86,22 @@ class SQLiteMetadataStore:
                 )
             """)
 
+            # Models table (scanned from APIs)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS models (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    context_window INTEGER,
+                    max_output INTEGER,
+                    pricing_input REAL,
+                    pricing_output REAL,
+                    capabilities TEXT,
+                    is_premium INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Create indexes for performance
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_id)")
@@ -333,3 +349,47 @@ class SQLiteMetadataStore:
         except Exception as e:
             logger.error(f"Error getting stats: {e}")
             return {}
+
+    def save_model(self, model_data: dict) -> bool:
+        """Save or update scanned model metadata."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO models
+                       (id, name, provider, context_window, max_output,
+                        pricing_input, pricing_output, capabilities, is_premium, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                    (
+                        model_data["id"],
+                        model_data["name"],
+                        model_data["provider"],
+                        model_data.get("context_window"),
+                        model_data.get("max_output"),
+                        model_data.get("pricing_input"),
+                        model_data.get("pricing_output"),
+                        json.dumps(model_data.get("capabilities", [])),
+                        1 if model_data.get("is_premium") else 0
+                    )
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error saving model: {e}")
+            return False
+
+    def get_scanned_models(self) -> list[dict]:
+        """Get all scanned models from the database."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute("SELECT * FROM models")
+                rows = cursor.fetchall()
+                models = []
+                for row in rows:
+                    m = dict(row)
+                    if m.get("capabilities"):
+                        m["capabilities"] = json.loads(m["capabilities"])
+                    models.append(m)
+                return models
+        except Exception as e:
+            logger.error(f"Error getting scanned models: {e}")
+            return []

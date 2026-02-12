@@ -28,6 +28,7 @@ from kabot.agent.subagent import SubagentManager
 from kabot.agent.router import IntentRouter
 from kabot.session.manager import SessionManager
 from kabot.memory.chroma_memory import ChromaMemoryManager
+from kabot.providers.registry import ModelRegistry
 
 
 class AgentLoop:
@@ -61,7 +62,12 @@ class AgentLoop:
         self.bus = bus
         self.provider = provider
         self.workspace = workspace
-        self.model = model or provider.get_default_model()
+        
+        # Resolve model ID using the registry
+        self.registry = ModelRegistry()
+        raw_model = model or provider.get_default_model()
+        self.model = self.registry.resolve(raw_model)
+        
         self.max_iterations = max_iterations
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
