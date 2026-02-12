@@ -1,0 +1,42 @@
+"""Google Gemini API Key authentication handler."""
+
+from typing import Dict, Any
+import os
+from rich.prompt import Prompt
+from rich.console import Console
+from kabot.auth.handlers.base import AuthHandler
+from kabot.auth.utils import secure_input
+
+console = Console()
+
+
+class GoogleKeyHandler(AuthHandler):
+    """Handler for Google Gemini API Key authentication."""
+
+    @property
+    def name(self) -> str:
+        return "Google Gemini (API Key)"
+
+    def authenticate(self) -> Dict[str, Any]:
+        """Execute API key authentication flow."""
+        console.print("\n[bold]Google Gemini API Key Setup[/bold]")
+        console.print("Get your API key from: https://aistudio.google.com/app/apikey\n")
+
+        # Check env var first
+        env_key = os.environ.get("GEMINI_API_KEY")
+        if env_key:
+            use_env = Prompt.ask(
+                f"Found GEMINI_API_KEY in environment ({env_key[:8]}...). Use this?",
+                choices=["y", "n"],
+                default="y"
+            )
+            if use_env == "y":
+                return {"providers": {"gemini": {"api_key": env_key}}}
+
+        # Manual input
+        api_key = secure_input("Enter Gemini API Key")
+
+        if not api_key:
+            return None
+
+        return {"providers": {"gemini": {"api_key": api_key}}}
