@@ -29,56 +29,52 @@ class SetupWizard:
         return self.config
     
     def _setup_provider(self):
-        console.print("
-[bold yellow]Step 1: Select AI Provider[/bold yellow]
-")
-        providers = {
-            "1": ("OpenRouter", "openrouter", "Free models available"),
-            "2": ("Anthropic", "anthropic", "Claude models"),
-            "3": ("OpenAI", "openai", "GPT models"),
-            "4": ("Groq", "groq", "Fast inference"),
-            "5": ("DeepSeek", "deepseek", "Reasoning models"),
-            "6": ("Gemini", "gemini", "Google models"),
-            "7": ("Local vLLM", "vllm", "Run locally"),
-            "8": ("Skip", None, "Manual config"),
-        }
-        
+        from kabot.auth.manager import AuthManager
+        from kabot.auth.menu import get_auth_choices
+        from kabot.config.loader import load_config
+
+        console.print("\n[bold yellow]Step 1: Select AI Provider[/bold yellow]\n")
+
+        manager = AuthManager()
+        choices = get_auth_choices()
+
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("#", style="cyan", width=3)
         table.add_column("Provider", style="green")
-        table.add_column("Description", style="dim")
-        for k, (n, _, d) in providers.items():
-            table.add_row(k, n, d)
+
+        for idx, choice in enumerate(choices, 1):
+            table.add_row(str(idx), choice['name'])
+
+        table.add_row(str(len(choices)+1), "Skip (Manual config)")
+
         console.print(table)
-        
-        choice = Prompt.ask("
-[bold]Select provider[/bold]", choices=list(providers.keys()), default="1")
-        _, provider_key, _ = providers[choice]
-        
-        if not provider_key:
+
+        valid_choices = [str(i) for i in range(1, len(choices) + 2)]
+        choice_idx = Prompt.ask("\n[bold]Select provider[/bold]", choices=valid_choices, default="1")
+
+        if choice_idx == str(len(choices) + 1):
             console.print("[yellow]Skipped. Edit ~/.kabot/config.json manually[/yellow]")
             return
-        
-        if provider_key == "vllm":
-            api_base = Prompt.ask("API base URL", default="http://localhost:8000/v1")
-            setattr(self.config.providers, provider_key, ProviderConfig(api_key="dummy", api_base=api_base))
-            console.print("[dim]Using 'dummy' as API key for local models[/dim]")
-        else:
-            urls = {"openrouter": "https://openrouter.ai/keys", "anthropic": "https://console.anthropic.com/settings/keys",
-                    "openai": "https://platform.openai.com/api-keys", "groq": "https://console.groq.com/keys",
-                    "deepseek": "https://platform.deepseek.com/api_keys", "gemini": "https://aistudio.google.com/app/apikey"}
-            console.print(f"[dim]Get key: [cyan]{urls.get(provider_key)}[/cyan][/dim]
-")
-            api_key = Prompt.ask("Enter API key", password=True)
-            if api_key.strip():
-                setattr(self.config.providers, provider_key, ProviderConfig(api_key=api_key.strip()))
-                console.print("[green]Provider configured[/green]")
-        
-        models = {"openrouter": "openrouter/pony-alpha", "anthropic": "anthropic/claude-opus-4-5",
-                  "openai": "gpt-4o", "groq": "groq/llama-3.3-70b-versatile", "deepseek": "deepseek/deepseek-r1",
-                  "gemini": "gemini/gemini-2.0-flash-exp", "vllm": "local-model"}
-        model = Prompt.ask("Default model", default=models.get(provider_key, ""))
-        self.config.agents.defaults.model = model
+
+        provider_val = choices[int(choice_idx)-1]['value']
+
+        if manager.login(provider_val):
+            # Reload config to get the changes made by manager
+            self.config = load_config()
+
+            # Set default model suggestions
+            models = {
+                "openrouter": "openrouter/anthropic/claude-3.5-sonnet",
+                "anthropic": "anthropic/claude-3-5-sonnet-20240620",
+                "openai": "openai/gpt-4o",
+                "google": "gemini/gemini-1.5-pro",
+                "ollama": "vllm/llama3",
+            }
+
+            default_model = models.get(provider_val, "")
+            model = Prompt.ask("Default model", default=default_model)
+            if model:
+                self.config.agents.defaults.model = model
     
     def _setup_channels(self):
         console.print("
