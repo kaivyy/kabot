@@ -49,6 +49,11 @@ AUTH_PROVIDERS: Dict[str, Dict[str, Any]] = {
                 "label": "Browser Login (OAuth)",
                 "description": "Google account login",
                 "handler": "kabot.auth.handlers.google_oauth.GoogleOAuthHandler"
+            },
+            "gemini_cli": {
+                "label": "Google Gemini CLI OAuth",
+                "description": "Official CLI integration (Auto-extract secrets)",
+                "handler": "kabot.auth.handlers.google_gemini_cli.GoogleGeminiCLIHandler"
             }
         }
     },
