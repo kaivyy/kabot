@@ -1,8 +1,11 @@
 """Configuration loading utilities."""
 
 import json
+import time
+import os
 from pathlib import Path
 from typing import Any
+from contextlib import contextmanager
 
 from kabot.config.schema import Config
 
@@ -43,24 +46,62 @@ def load_config(config_path: Path | None = None) -> Config:
     return Config()
 
 
+import time
+import os
+from contextlib import contextmanager
+
+@contextmanager
+def file_lock(path: Path, timeout: int = 10):
+    """Simple file-based lock for atomic config updates."""
+    lock_path = path.with_suffix(".lock")
+    start_time = time.time()
+    
+    while True:
+        try:
+            # Try to create the lock file exclusively
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            try:
+                yield
+                break
+            finally:
+                os.close(fd)
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    pass
+        except FileExistsError:
+            if time.time() - start_time > timeout:
+                raise TimeoutError(f"Could not acquire lock on {path} after {timeout}s")
+            time.sleep(0.1)
+
 def save_config(config: Config, config_path: Path | None = None) -> None:
     """
-    Save configuration to file.
-    
+    Save configuration to file with atomic locking.
+
     Args:
         config: Configuration to save.
         config_path: Optional path to save to. Uses default if not provided.
     """
     path = config_path or get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Convert to camelCase format
     data = config.model_dump()
     data = convert_to_camel(data)
-    
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
 
+    with file_lock(path):
+        # Write to temp file first for atomic replacement
+        temp_path = path.with_suffix(".tmp")
+        with open(temp_path, "w") as f:
+            json.dump(data, f, indent=2)
+        
+        # Atomic rename (replace existing if possible)
+        if os.name == 'nt': # Windows
+            if path.exists():
+                os.remove(path)
+            os.rename(temp_path, path)
+        else: # Unix
+            os.replace(temp_path, path)
 
 def _migrate_config(data: dict) -> dict:
     """Migrate old config formats to current."""

@@ -18,9 +18,9 @@ class IntentRouter:
     Classifies user messages into specific intents using a fast LLM.
     """
 
-    def __init__(self, provider: LLMProvider, model: str = "groq/llama-3.1-8b-instant"):
+    def __init__(self, provider: LLMProvider, model: str | None = None):
         self.provider = provider
-        self.model = model
+        self.model = model or provider.get_default_model()
 
     async def classify(self, content: str) -> IntentType:
         """

@@ -19,13 +19,14 @@ class AuthManager:
         """Return a list of supported provider IDs."""
         return list(AUTH_PROVIDERS.keys())
 
-    def login(self, provider_id: str, method_id: str = None) -> bool:
+    def login(self, provider_id: str, method_id: str = None, profile_id: str = "default") -> bool:
         """
-        Execute login flow with method selection.
+        Execute login flow with method and profile selection.
 
         Args:
             provider_id: Provider (e.g., "openai")
             method_id: Optional method (e.g., "oauth"). If None, show menu.
+            profile_id: Optional profile ID (e.g., "work"). Defaults to "default".
 
         Returns:
             True if authentication successful, False otherwise
@@ -86,7 +87,7 @@ class AuthManager:
             return False
 
         # 7. Save credentials
-        return self._save_credentials(auth_data)
+        return self._save_credentials(auth_data, profile_id=profile_id)
 
     def _load_handler(self, provider_id: str, method_id: str):
         """Dynamically load handler class from string path."""
@@ -147,40 +148,57 @@ class AuthManager:
 
         return False
 
-    def _save_credentials(self, auth_data: Dict[str, Any]) -> bool:
-        """Save credentials to config."""
-        try:
-            current_config = load_config()
-
-            if "providers" in auth_data:
-                for prov_name, prov_data in auth_data["providers"].items():
-                    # Get or create provider config
-                    provider_config_obj = getattr(current_config.providers, prov_name, None)
-
-                    if provider_config_obj is None:
-                        console.print(f"[yellow]Warning: Provider '{prov_name}' not in config schema[/yellow]")
-                        continue
-
-                    # Update fields
-                    for key, value in prov_data.items():
-                        if hasattr(provider_config_obj, key):
-                            setattr(provider_config_obj, key, value)
-
-            save_config(current_config)
-            return True
-
-        except Exception as e:
-            console.print(f"[bold red]Error saving config:[/bold red] {e}")
-            return False
-
-    def get_status(self):
-        """Print the current status of configured providers."""
+        def _save_credentials(self, auth_data: Dict[str, Any], profile_id: str = "default") -> bool:
+            """Save credentials to config using AuthProfiles."""
+            from kabot.config.schema import AuthProfile
+            try:
+                current_config = load_config()
+    
+                if "providers" in auth_data:
+                    for prov_name, prov_data in auth_data["providers"].items():
+                        # Get or create provider config
+                        provider_config_obj = getattr(current_config.providers, prov_name, None)   
+    
+                        if provider_config_obj is None:
+                            console.print(f"[yellow]Warning: Provider '{prov_name}' not in config schema[/yellow]")
+                            continue
+    
+                        # Multi-profile logic: update legacy fields AND profile list
+                        # This ensures backward compatibility while adding multi-account power
+                        
+                        # 1. Update or create the profile
+                        if profile_id not in provider_config_obj.profiles:
+                            provider_config_obj.profiles[profile_id] = AuthProfile(name=profile_id)
+                        
+                        profile = provider_config_obj.profiles[profile_id]
+                        
+                        # 2. Update legacy top-level fields for safety
+                        for key, value in prov_data.items():
+                            if hasattr(provider_config_obj, key):
+                                setattr(provider_config_obj, key, value)
+                            
+                            # 3. Update profile-specific fields
+                            if hasattr(profile, key):
+                                setattr(profile, key, value)
+                        
+                        # 4. Mark this profile as active
+                        provider_config_obj.active_profile = profile_id
+    
+                save_config(current_config)
+                return True
+    
+            except Exception as e:
+                console.print(f"[bold red]Error saving config:[/bold red] {e}")
+                return False
+        def get_status(self):
+        """Print the current status of configured providers and profiles."""
         config = load_config()
 
         table = Table(title="Auth Status")
         table.add_column("Provider", style="cyan")
         table.add_column("Status", style="green")
-        table.add_column("Key Preview", style="dim")
+        table.add_column("Active Profile", style="yellow")
+        table.add_column("Profiles", style="dim")
 
         # Provider ID to config field mapping
         config_mapping = {
@@ -188,7 +206,7 @@ class AuthManager:
             "anthropic": "anthropic",
             "google": "gemini",
             "ollama": "vllm",
-            "kimi": "kimi",
+            "kimi": "moonshot",
             "minimax": "minimax"
         }
 
@@ -197,17 +215,29 @@ class AuthManager:
             provider_cfg = getattr(config.providers, config_field, None)
 
             status = "[red]Not Configured[/red]"
-            preview = ""
+            active_profile = "-"
+            profile_list = "-"
 
             if provider_cfg:
-                api_key = getattr(provider_cfg, "api_key", None)
-                if api_key:
+                # Check for any valid credential (legacy or profiles)
+                has_legacy = bool(provider_cfg.api_key)
+                has_profiles = len(provider_cfg.profiles) > 0
+                
+                if has_legacy or has_profiles:
                     status = "[green]Configured[/green]"
-                    if len(api_key) > 8:
-                        preview = f"{api_key[:4]}...{api_key[-4:]}"
-                    else:
-                        preview = "***"
+                    active_profile = provider_cfg.active_profile
+                    
+                    if provider_cfg.profiles:
+                        p_names = []
+                        for name in provider_cfg.profiles.keys():
+                            if name == provider_cfg.active_profile:
+                                p_names.append(f"[bold yellow]{name}[/bold yellow]")
+                            else:
+                                p_names.append(name)
+                        profile_list = ", ".join(p_names)
+                    elif has_legacy:
+                        profile_list = "legacy"
 
-            table.add_row(meta["name"], status, preview)
+            table.add_row(meta["name"], status, active_profile, profile_list)
 
         console.print(table)

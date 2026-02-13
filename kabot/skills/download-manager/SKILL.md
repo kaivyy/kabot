@@ -1,3 +1,8 @@
+---
+name: download-manager
+description: Mengunduh file dari URL ke direktori workspace lokal kabot dengan verifikasi hash dan indexing memory.
+---
+
 Deskripsi:
 - Download file dari URL ke direktori workspace lokal Kabot.
 - Opsi verifikasi hash, penentuan nama file/destinasi, dan indexing metadata ke memory.

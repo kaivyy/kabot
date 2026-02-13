@@ -49,6 +49,7 @@ class AgentLoop:
         provider: LLMProvider,
         workspace: Path,
         model: str | None = None,
+        fallbacks: list[str] | None = None,
         max_iterations: int = 20,
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
@@ -63,12 +64,25 @@ class AgentLoop:
         self.provider = provider
         self.workspace = workspace
         
-        # Resolve model ID using the registry
-        self.registry = ModelRegistry()
-        raw_model = model or provider.get_default_model()
-        self.model = self.registry.resolve(raw_model)
+                # Resolve model ID using the registry
         
-        self.max_iterations = max_iterations
+                self.registry = ModelRegistry()
+        
+                raw_model = model or provider.get_default_model()
+        
+                self.model = self.registry.resolve(raw_model)
+        
+                
+        
+                # Resolve fallbacks
+        
+                self.fallbacks = [self.registry.resolve(f) for f in (fallbacks or [])]
+        
+                
+        
+                self.max_iterations = max_iterations
+        
+        
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
@@ -80,7 +94,7 @@ class AgentLoop:
             workspace / "memory_db",
             enable_hybrid_memory=enable_hybrid_memory
         )
-        self.router = IntentRouter(provider)
+        self.router = IntentRouter(provider, model=self.model)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
             provider=provider,
@@ -245,211 +259,164 @@ class AgentLoop:
         logger.info("Agent loop stopping")
 
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
-        """
-        Process a single inbound message.
-
-        Args:
-            msg: The inbound message to process.
-
-        Returns:
-            The response message, or None if no response needed.
-        """
-        # Handle system messages (subagent announces)
-        # The chat_id contains the original "channel:chat_id" to route back to
+        """Process a single inbound message."""
         if msg.channel == "system":
             return await self._process_system_message(msg)
+        
+        # 1. Initialize session and memory
+        session = await self._init_session(msg)
 
-        preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
-        logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
-
-        # Get or create session
-        session = self.sessions.get_or_create(msg.session_key)
-
-        # Initialize memory session
-        self.memory.create_session(
-            session_id=msg.session_key,
-            channel=msg.channel,
-            chat_id=msg.chat_id,
-            user_id=msg.sender_id
-        )
-
-        # Store user message in memory
-        await self.memory.add_message(
-            session_id=msg.session_key,
-            role="user",
-            content=msg.content
-        )
-
-        # Update tool contexts
-        message_tool = self.tools.get("message")
-        if isinstance(message_tool, MessageTool):
-            message_tool.set_context(msg.channel, msg.chat_id)
-
-        spawn_tool = self.tools.get("spawn")
-        if isinstance(spawn_tool, SpawnTool):
-            spawn_tool.set_context(msg.channel, msg.chat_id)
-
-        cron_tool = self.tools.get("cron")
-        if isinstance(cron_tool, CronTool):
-            cron_tool.set_context(msg.channel, msg.chat_id)
-
-        # Update memory tool contexts for session tracking
-        save_memory_tool = self.tools.get("save_memory")
-        if save_memory_tool:
-            save_memory_tool.set_context(msg.session_key)
-
-        get_memory_tool = self.tools.get("get_memory")
-        if get_memory_tool:
-            get_memory_tool.set_context(msg.session_key)
-
-        list_reminders_tool = self.tools.get("list_reminders")
-        if list_reminders_tool:
-            list_reminders_tool.set_context(msg.session_key)
-
-        # Get conversation context from memory manager (prevents amnesia)
-        conversation_history = self.memory.get_conversation_context(
-            session_id=msg.session_key,
-            max_messages=30
-        )
-
-        # Classify intent
+        # 2. Get history and classify intent
+        conversation_history = self.memory.get_conversation_context(msg.session_key, max_messages=30)
         intent = await self.router.classify(msg.content)
-        logger.info(f"Detected intent for {msg.session_key}: {intent}")
-
-        # Build initial messages
+        
+        # 3. Build messages
         messages = self.context.build_messages(
             history=conversation_history,
             current_message=msg.content,
-            media=msg.media if msg.media else None,
+            media=msg.media,
             channel=msg.channel,
             chat_id=msg.chat_id,
             profile=intent,
         )
 
-        # Agent loop
+        # 4. Main Agent Loop
+        final_content = await self._run_agent_loop(msg, messages)
+
+        # 5. Finalize and Save
+        return await self._finalize_session(msg, session, final_content)
+
+    async def _init_session(self, msg: InboundMessage) -> Any:
+        """Prepare session and store initial user message."""
+        logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {msg.content[:80]}...")
+        session = self.sessions.get_or_create(msg.session_key)
+        
+        self.memory.create_session(msg.session_key, msg.channel, msg.chat_id, msg.sender_id)
+        await self.memory.add_message(msg.session_key, "user", msg.content)
+
+        # Update tool contexts
+        for tool_name in ["message", "spawn", "cron"]:
+            tool = self.tools.get(tool_name)
+            if hasattr(tool, "set_context"):
+                tool.set_context(msg.channel, msg.chat_id)
+
+        for tool_name in ["save_memory", "get_memory", "list_reminders"]:
+            tool = self.tools.get(tool_name)
+            if hasattr(tool, "set_context"):
+                tool.set_context(msg.session_key)
+        
+        return session
+
+    async def _run_agent_loop(self, msg: InboundMessage, messages: list) -> str | None:
+        """Run the iterative LLM + Tool execution loop."""
         iteration = 0
         final_content = None
+        has_sent_ack = False
+        models_to_try = [self.model] + self.fallbacks
 
         while iteration < self.max_iterations:
             iteration += 1
+            
+            # Call LLM with fallback
+            response, error = await self._call_llm_with_fallback(messages, models_to_try)
+            if not response:
+                return f"Sorry, all available models failed. Last error: {str(error)}"
 
-            # Call LLM
-            response = await self.provider.chat(
-                messages=messages,
-                tools=self.tools.get_definitions(),
-                model=self.model
-            )
+            # Handle immediate text response (Conversational)
+            if response.content:
+                await self.bus.publish_outbound(OutboundMessage(
+                    channel=msg.channel, chat_id=msg.chat_id, content=response.content
+                ))
+                messages = self.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
+                if not response.has_tool_calls:
+                    return response.content
 
-            # Handle tool calls
+            # Handle Tool Calls
             if response.has_tool_calls:
-                # Add assistant message with tool calls
-                tool_call_dicts = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments)  # Must be JSON string
-                        }
-                    }
-                    for tc in response.tool_calls
-                ]
-                messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts,
-                    reasoning_content=response.reasoning_content,
-                )
-
-                # Store assistant message with tool calls in memory
-                # Manually convert ToolCallRequest dataclass to dict to avoid 'model_dump' error
-                tool_calls_data = []
-                for tc in response.tool_calls:
-                    tool_calls_data.append({
-                        "id": tc.id,
-                        "name": tc.name,
-                        "arguments": tc.arguments
-                    })
-
-                await self.memory.add_message(
-                    session_id=msg.session_key,
-                    role="assistant",
-                    content=response.content or "",
-                    tool_calls=tool_calls_data
-                )
-
-                # Execute tools
-                for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-
-                    # BROADCAST STATUS UPDATE (Live Feedback)
-                    # Send a short "Thinking..." message to the user before executing the tool
-                    status_message = self._get_tool_status_message(tool_call.name, tool_call.arguments)   
-                    if status_message:
-                        await self.bus.publish_outbound(OutboundMessage(
-                            channel=msg.channel,
-                            chat_id=msg.chat_id,
-                            content=f"_{status_message}_", # Italic for status
-                            metadata={"type": "status_update"}
-                        ))
-
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
-
-                    # Truncate result for LLM context if too long (prevents 400 Bad Request)
-                    # Limit to ~2000 chars to be ultra-safe for free models with small context
-                    result_str = str(result)
-                    MAX_TOOL_OUTPUT = 2000
-                    if len(result_str) > MAX_TOOL_OUTPUT:
-                        result_for_llm = result_str[:MAX_TOOL_OUTPUT] + f"\n... (truncated, {len(result_str) - MAX_TOOL_OUTPUT} more characters)"
-                    else:
-                        result_for_llm = result_str
-
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result_for_llm
-                    )
-
-                    # Store tool result in memory (prevents amnesia - unlike OpenClaw!)
-                    await self.memory.add_message(
-                        session_id=msg.session_key,
-                        role="tool",
-                        content=str(result),
-                        tool_results=[{
-                            "tool_call_id": tool_call.id,
-                            "name": tool_call.name,
-                            "result": str(result)[:1000]  # Limit size but keep full context
-                        }]
-                    )
+                messages = await self._process_tool_calls(msg, messages, response)
             else:
-                # No tool calls, we're done
-                final_content = response.content
-                break
+                return response.content
+        
+        return "I've completed processing but have no response to give."
 
-        if final_content is None:
-            final_content = "I've completed processing but have no response to give."
+    async def _call_llm_with_fallback(self, messages: list, models: list) -> tuple[Any | None, Exception | None]:
+        """Try multiple models in sequence until one succeeds."""
+        last_error = None
+        for current_model in models:
+            try:
+                response = await self.provider.chat(
+                    messages=messages,
+                    tools=self.tools.get_definitions(),
+                    model=current_model
+                )
+                return response, None
+            except Exception as e:
+                logger.warning(f"Model {current_model} failed: {e}")
+                last_error = e
+        return None, last_error
 
-        # Log response preview
-        preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
+    async def _process_tool_calls(self, msg: InboundMessage, messages: list, response: Any) -> list:
+        """Execute tool calls and update context/memory."""
+        tool_call_dicts = [
+            {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
+            for tc in response.tool_calls
+        ]
+        
+        if not response.content:
+            messages = self.context.add_assistant_message(messages, None, tool_call_dicts, reasoning_content=response.reasoning_content)
 
-        # Save to memory manager (prevents amnesia - full context preserved!)
-        await self.memory.add_message(
-            session_id=msg.session_key,
-            role="assistant",
-            content=final_content
-        )
+        # Store in memory
+        tc_data = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in response.tool_calls]
+        await self.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data)
 
-        # Also save to legacy session for compatibility
-        # Skip if this is a background task (isolated session)
+        # Execution
+        for tc in response.tool_calls:
+            status = self._get_tool_status_message(tc.name, tc.arguments)
+            if status:
+                await self.bus.publish_outbound(OutboundMessage(
+                    channel=msg.channel, chat_id=msg.chat_id, content=f"_{status}_", metadata={"type": "status_update"}
+                ))
+
+            result = await self.tools.execute(tc.name, tc.arguments)
+            
+            # Smart Truncation & Hints
+            result_for_llm = self._format_tool_result(result)
+            messages = self.context.add_tool_result(messages, tc.id, tc.name, result_for_llm)
+
+            await self.memory.add_message(
+                msg.session_key, "tool", str(result),
+                tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": str(result)[:1000]}]
+            )
+        
+        return messages
+
+    def _format_tool_result(self, result: Any) -> str:
+        """Apply smart truncation and error hints to tool output."""
+        res_str = str(result)
+        limit = 4000
+        if len(res_str) > limit:
+            keep = limit // 2
+            res_str = res_str[:keep] + f"\n\n... [TRUNCATED] ...\n\n" + res_str[-keep:]
+        
+        if res_str.startswith("Error"):
+            if "not found" in res_str.lower():
+                res_str += "\n\nHINT: Use 'list_dir' to verify the path."
+            elif "denied" in res_str.lower():
+                res_str += "\n\nHINT: Permission issue or restricted path."
+        return res_str
+
+    async def _finalize_session(self, msg: InboundMessage, session: Any, final_content: str | None) -> None:
+        """Finalize memory and legacy session storage."""
+        if final_content and not final_content.startswith("I've completed"):
+            await self.memory.add_message(msg.session_key, "assistant", final_content)
+
         if not msg.session_key.startswith("background:"):
             session.add_message("user", msg.content)
-            session.add_message("assistant", final_content)
+            if final_content:
+                session.add_message("assistant", final_content)
             self.sessions.save(session)
-
-        return OutboundMessage(
-            channel=msg.channel,
-            chat_id=msg.chat_id,
-            content=final_content,
-            metadata=msg.metadata or {},  # Pass through for channel-specific needs (e.g. Slack thread_ts)
-        )
+        
+        return None
 
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
         """

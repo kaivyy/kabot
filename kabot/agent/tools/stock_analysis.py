@@ -40,27 +40,33 @@ Example analysis you should provide:
                 "description": "Stock ticker symbol (e.g., 'BBCA.JK', 'TLKM.JK', 'ASII', 'BBRI')"
             },
             "days": {
-                "type": "integer",
+                "type": "string",
                 "description": "Number of days of historical data to fetch (default: 30 days)",
-                "default": 30
+                "default": "30"
             }
         },
         "required": ["symbol"]
     }
 
-    async def execute(self, symbol: str, days: int = 30, **kwargs: Any) -> str:
+    async def execute(self, symbol: str, days: str | int = "30", **kwargs: Any) -> str:
         """
         Fetch comprehensive stock data for AI analysis.
 
         Args:
             symbol: Stock ticker symbol
-            days: Days of historical data
+            days: Days of historical data (can be string or int)
 
         Returns:
             Comprehensive stock data for AI analysis
         """
         try:
             clean_symbol = symbol.upper().strip()
+            
+            # Convert days to int safely
+            try:
+                days_int = int(days)
+            except (ValueError, TypeError):
+                days_int = 30
 
             # Fetch current data
             current_data = await self._fetch_stock_data(clean_symbol)
@@ -68,7 +74,7 @@ Example analysis you should provide:
                 return f"Error: Could not fetch data for {symbol}"
 
             # Fetch historical data
-            historical = await self._fetch_historical(clean_symbol, days)
+            historical = await self._fetch_historical(clean_symbol, days_int)
 
             # Calculate basic metrics
             metrics = self._calculate_metrics(current_data, historical)

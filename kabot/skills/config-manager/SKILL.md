@@ -1,3 +1,8 @@
+---
+name: config-manager
+description: Allows kabot to safely read and update its own configuration.
+---
+
 # Config-Manager Skill
 
 ## Overview

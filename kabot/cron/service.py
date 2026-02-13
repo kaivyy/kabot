@@ -235,15 +235,17 @@ class CronService:
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = _now_ms()
         
-        # Handle one-shot jobs
-        if job.schedule.kind == "at":
+        # Handle one-shot jobs or jobs marked for deletion
+        if job.delete_after_run or job.schedule.kind == "at":
             if job.delete_after_run:
+                logger.info(f"Cron: deleting job '{job.name}' after successful run")
                 self._store.jobs = [j for j in self._store.jobs if j.id != job.id]
             else:
+                logger.info(f"Cron: disabling one-shot job '{job.name}'")
                 job.enabled = False
                 job.state.next_run_at_ms = None
         else:
-            # Compute next run
+            # Compute next run for recurring jobs
             job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
     
     # ========== Public API ==========

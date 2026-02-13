@@ -1,3 +1,8 @@
+---
+name: system-control
+description: Allows the agent to restart or shut down the bot.
+---
+
 # System Control Skill
 
 This skill allows the agent to restart or shut down the bot.

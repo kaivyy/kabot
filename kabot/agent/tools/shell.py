@@ -131,6 +131,9 @@ class ExecTool(Tool):
                     output_parts.append(f"STDERR:\n{stderr_text}")
             
             if process.returncode != 0:
+                hint = self._get_error_hint(command, stderr_text)
+                if hint:
+                    output_parts.append(f"\nHINT: {hint}")
                 output_parts.append(f"\nExit code: {process.returncode}")
             
             result = "\n".join(output_parts) if output_parts else "(no output)"
@@ -144,6 +147,43 @@ class ExecTool(Tool):
             
         except Exception as e:
             return f"Error executing command: {str(e)}"
+
+    def _get_error_hint(self, command: str, stderr: str) -> str | None:
+        """Provide helpful suggestions based on failed command and platform."""
+        import platform
+        is_windows = platform.system() == "Windows"
+        cmd = command.lower().split()[0] if command.strip() else ""
+        
+        # OS Mismatch Hints
+        if is_windows:
+            if cmd in ["ls", "grep", "cat", "touch", "rm", "cp", "mv"]:
+                mapping = {
+                    "ls": "dir",
+                    "grep": "findstr",
+                    "cat": "type",
+                    "touch": "New-Item",
+                    "rm": "del",
+                    "cp": "copy",
+                    "mv": "move"
+                }
+                return f"You are on Windows. Try using '{mapping.get(cmd)}' instead of '{cmd}'."
+        else:
+            if cmd in ["dir", "findstr", "type", "del", "copy", "move"]:
+                mapping = {
+                    "dir": "ls",
+                    "findstr": "grep",
+                    "type": "cat",
+                    "del": "rm",
+                    "copy": "cp",
+                    "move": "mv"
+                }
+                return f"You are on Linux/macOS. Try using '{mapping.get(cmd)}' instead of '{cmd}'."
+        
+        # Common Path Errors
+        if "not recognized" in stderr or "not found" in stderr:
+            return f"The command '{cmd}' was not found. Check if it's installed and in your PATH."
+            
+        return None
 
     def _guard_command(self, command: str, cwd: str) -> str | None:
         """Best-effort safety guard for potentially destructive commands."""

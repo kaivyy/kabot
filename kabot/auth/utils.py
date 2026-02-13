@@ -2,12 +2,31 @@
 import webbrowser
 import asyncio
 import re
-from typing import Optional
+from typing import Optional, Dict
+from urllib.parse import urlparse, parse_qs
 from rich.prompt import Prompt
 from rich.console import Console
 from kabot.auth.oauth_callback import OAuthCallbackServer
 
 console = Console()
+
+def parse_redirect_url(input_text: str) -> Optional[str]:
+    """
+    Extract authorization code from a full URL if provided, 
+    otherwise return the input as-is (assuming it's the raw code).
+    """
+    input_text = input_text.strip()
+    if input_text.startswith("http"):
+        try:
+            parsed = urlparse(input_text)
+            params = parse_qs(parsed.query)
+            # Try 'code' (standard) or 'token'
+            code = params.get('code') or params.get('token')
+            if code:
+                return code[0]
+        except Exception:
+            pass
+    return input_text
 
 def is_vps() -> bool:
     """
@@ -59,21 +78,23 @@ def run_oauth_flow(auth_url: str, port: int = 8765) -> Optional[str]:
     Returns:
         OAuth token/code
     """
+    server = OAuthCallbackServer(port=port)
+    # Generate full URL with state and redirect_uri early
+    full_url = server.get_auth_url(auth_url, {})
+
     if is_vps():
         # VPS mode: Manual flow
-        console.print("\n[yellow]VPS Environment Detected[/yellow]")
-        console.print("\n[bold]Please open this URL in your browser:[/bold]")
-        console.print(f"[cyan]{auth_url}[/cyan]\n")
+        console.print("\n[bold yellow]VPS Environment Detected[/bold yellow]")
+        console.print("\n[bold]1. Please open this URL in your browser:[/bold]")
+        console.print(f"[cyan]{full_url}[/cyan]")
+        console.print("\n[bold]2. Complete the login and you will reach a 'Site Can't Be Reached' page.[/bold]")
+        console.print("[bold]3. Copy the ENTIRE URL from your browser's address bar and paste it below.[/bold]")
 
-        token = secure_input("Paste the authorization code/token")
+        raw_input = secure_input("\nPaste the Redirect URL or Code")
+        token = parse_redirect_url(raw_input)
         return token
     else:
         # Local mode: Automatic flow
-        server = OAuthCallbackServer(port=port)
-        
-        # Build full URL with server instance (includes state)
-        full_url = server.get_auth_url(auth_url, {})
-        
         console.print("[dim]Opening browser for authentication...[/dim]")
         try:
             webbrowser.open(full_url)
@@ -91,7 +112,6 @@ def run_oauth_flow(auth_url: str, port: int = 8765) -> Optional[str]:
             return None
         finally:
             loop.close()
-
 def validate_api_key(key: str, pattern: str = None) -> bool:
     """
     Validate API key format.

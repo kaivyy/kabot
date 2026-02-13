@@ -57,6 +57,10 @@ class CronTool(Tool):
                 "job_id": {
                     "type": "string",
                     "description": "Job ID (for remove)"
+                },
+                "one_shot": {
+                    "type": "boolean",
+                    "description": "If true, the job will be deleted after running once (default: false for recurring, true for at_time)"
                 }
             },
             "required": ["action"]
@@ -70,21 +74,25 @@ class CronTool(Tool):
             every_seconds: int | None = None,
             cron_expr: str | None = None,
             job_id: str | None = None,
+            one_shot: bool | None = None,
             **kwargs: Any
     ) -> str:
         if action == "add":
-            return self._add_job(message, at_time, every_seconds, cron_expr)
+            return self._add_job(message, at_time, every_seconds, cron_expr, one_shot)
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
             return self._remove_job(job_id)
         return f"Unknown action: {action}"
     
-    def _add_job(self, message: str, at_time: str, every_seconds: int | None, cron_expr: str | None) -> str:
+    def _add_job(self, message: str, at_time: str, every_seconds: int | None, cron_expr: str | None, one_shot: bool | None = None) -> str:
         if not message:
             return "Error: message is required for add"
         if not self._channel or not self._chat_id:
             return "Error: no session context (channel/chat_id)"
+
+        # Default one_shot behavior
+        delete_after_run = one_shot if one_shot is not None else (True if at_time else False)
 
         # Build schedule
         if at_time:
@@ -113,6 +121,7 @@ class CronTool(Tool):
             deliver=True,
             channel=self._channel,
             to=self._chat_id,
+            delete_after_run=delete_after_run,
         )
         return f"Created job '{job.name}' (id: {job.id})"
     

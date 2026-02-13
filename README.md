@@ -34,6 +34,13 @@ Self-healing execution mode. If a task fails, Kabot automatically analyzes the e
 python kabot/skills/autonomous-task/scripts/run_loop.py --goal "Fix the bug"
 ```
 
+#### 🔐 Multi-Method Authentication (New in v1.0.0)
+Kabot supports flexible authentication beyond simple API keys.
+- **OAuth (Browser Login)**: Securely login via your browser for OpenAI and Google accounts.
+- **Setup Tokens**: Use tokens from provider-specific CLIs (e.g., Anthropic).
+- **Subscription Plans**: Dedicated support for Kimi Code and MiniMax Coding subscriptions.
+- **VPS Ready**: Built-in support for remote/headless environments.
+
 #### 🛡️ Docker Sandbox
 Enterprise-grade security. Run all shell commands inside an isolated Docker container to prevent accidental system damage.
 *(Requires Docker Desktop)*
@@ -41,6 +48,12 @@ Enterprise-grade security. Run all shell commands inside an isolated Docker cont
 #### 🧠 Hybrid Resilient Memory
 Solves the "amnesia" problem inherent in LLMs.
 - **Dual-Layer Storage**: Combines **ChromaDB** (Semantic/Vector) for fuzzy concept retrieval with **SQLite** (Structured) for exact fact retention.
+
+#### ⏰ Smart Cron & Reminders
+Enhanced scheduling with automatic cleanup to prevent infinite loops.
+- **One-shot Reminders**: Use the `one_shot` flag to automatically delete jobs after execution.
+- **Improved Reliability**: Service-level synchronization prevents memory-to-disk overwrite bugs.
+- **Chat Command**: "Bangunkan saya dalam 5 menit (sekali saja)" → Kabot sets a one-shot task.
 - **Context Awareness**: Intelligently manages token budgets to preserve critical memories while discarding noise.
 
 #### 🧭 Structured "Guided Workflow"
@@ -96,8 +109,15 @@ iwr -useb https://raw.githubusercontent.com/kaivyy/kabot/main/install.ps1 | iex
 
 ### 🛠️ Configuration
 
-#### 1. Interactive Wizard (Recommended)
-The easiest way to configure Kabot is using the setup wizard:
+#### 1. Authentication via CLI (Preferred)
+The most secure and flexible way to configure your AI providers:
+```bash
+kabot auth login <provider>
+```
+Supported providers include `openai`, `anthropic`, `google`, `kimi`, `minimax`, and `ollama`. See [Authentication Guide](docs/authentication.md) for details.
+
+#### 2. Interactive Wizard
+Alternatively, run the full setup wizard for models and channels:
 ```bash
 kabot setup
 ```

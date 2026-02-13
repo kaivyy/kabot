@@ -411,12 +411,15 @@ def gateway(
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
     
+    p = config.get_provider()
+    
     # Create agent with cron service
     agent = AgentLoop(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
         model=config.agents.defaults.model,
+        fallbacks=p.fallbacks if p else None,
         max_iterations=config.agents.defaults.max_tool_iterations,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
@@ -550,10 +553,14 @@ def agent(
     else:
         logger.disable("kabot")
 
+    p = config.get_provider()
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
+        model=config.agents.defaults.model,
+        fallbacks=p.fallbacks if p else None,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
@@ -670,16 +677,33 @@ def models_list(
         pricing = f"${m.pricing.input_1m}/${m.pricing.output_1m}"
         caps = ", ".join(m.capabilities) if m.capabilities else "-"
         ctx = f"{m.context_window:,}" if m.context_window else "Unknown"
-        
-        name = m.name
-        if m.is_premium:
-            name = f"[bold]{name}[/bold] [yellow]â˜…[/yellow]"
 
-        table.add_row(m.id, name, m.provider, pricing, ctx, caps)
+        # Highlighting logic
+        name = m.name
+        row_id = m.id
+        
+        # Resolve current config for highlighting
+        from kabot.config.loader import load_config
+        cfg = load_config()
+        current_primary = cfg.agents.defaults.model
+        p_cfg = cfg.get_provider()
+        current_fallbacks = p_cfg.fallbacks if p_cfg else []
+
+        if m.id == current_primary:
+            name = f"[bold green]{name}[/bold green] [bold cyan](Primary)[/bold cyan]"
+            row_id = f"[bold green]{row_id}[/bold green]"
+        elif m.id in current_fallbacks:
+            name = f"[green]{name}[/green] [dim](Fallback)[/dim]"
+            row_id = f"[green]{row_id}[/green]"
+            
+        if m.is_premium:
+            name = f"{name} [yellow]â˜…[/yellow]"
+
+        table.add_row(row_id, name, m.provider, pricing, ctx, caps)
 
     console.print(table)
-
-
+    console.print("\n[dim]Legend: [yellow]â˜…[/yellow] Premium model, [bold green]Primary[/bold green] Active model, [green]Fallback[/green] Backup model[/dim]")
+    
 @models_app.command("scan")
 def models_scan():
     """Scan provider APIs to discover available models."""
@@ -730,6 +754,31 @@ def models_info(
         title=f"Model Info: {m.short_id}",
         border_style="cyan"
     ))
+
+
+@models_app.command("set")
+def models_set(
+    model_name: str = typer.Argument(..., help="Model ID or Alias"),
+):
+    """Set the primary model for the agent."""
+    from kabot.providers.registry import ModelRegistry
+    from kabot.config.loader import load_config, save_config, get_data_dir
+    from kabot.memory.sqlite_store import SQLiteMetadataStore
+
+    db_path = get_data_dir() / "metadata.db"
+    db = SQLiteMetadataStore(db_path)
+    registry = ModelRegistry(db=db)
+    
+    # Resolve alias/short-id
+    resolved_id = registry.resolve(model_name)
+    
+    config = load_config()
+    config.agents.defaults.model = resolved_id
+    save_config(config)
+    
+    console.print(f"\n[green]âœ“ Primary model set to: [bold]{resolved_id}[/bold][/green]")
+    if resolved_id != model_name:
+        console.print(f"[dim](Resolved from '{model_name}')[/dim]")
 
 # ============================================================================
 # Channel Commands
@@ -893,16 +942,16 @@ def auth_list():
 
 @auth_app.command("login")
 def auth_login(
-    provider: str = typer.Argument(None, help="Provider ID (e.g., openai, anthropic)"),
+    provider: str = typer.Argument(None, help="Provider ID (e.g., openai, anthropic)"),        
     method: str = typer.Option(None, "--method", "-m", help="Auth method (e.g., oauth, api_key)"),
+    profile: str = typer.Option("default", "--profile", "-p", help="Profile name (e.g., work, personal)"),
 ):
-    """Login to a provider with optional method selection."""
+    """Login to a provider with optional method and profile selection."""
     from kabot.auth.manager import AuthManager
     from kabot.auth.menu import get_auth_choices, AUTH_PROVIDERS
     from rich.prompt import Prompt
 
     manager = AuthManager()
-
     # If no provider, show provider selection
     if not provider:
         choices = get_auth_choices()
@@ -922,8 +971,8 @@ def auth_login(
             console.print("\n[yellow]Cancelled.[/yellow]")
             raise typer.Exit(0)
 
-    # Execute login with optional method
-    success = manager.login(provider, method_id=method)
+    # Execute login with optional method and profile
+    success = manager.login(provider, method_id=method, profile_id=profile)
 
     if success:
         console.print(f"\n[green]✓ Successfully configured {provider}![/green]")

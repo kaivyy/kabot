@@ -35,7 +35,7 @@ class KimiKeyHandler(AuthHandler):
             if use_env == "y":
                 return {
                     "providers": {
-                        "kimi": {
+                        "moonshot": {
                             "api_key": env_key,
                             "api_base": self.API_BASE
                         }
@@ -50,7 +50,7 @@ class KimiKeyHandler(AuthHandler):
 
         return {
             "providers": {
-                "kimi": {
+                "moonshot": {
                     "api_key": api_key,
                     "api_base": self.API_BASE
                 }

@@ -125,7 +125,23 @@ class GetMemoryTool(Tool):
             )
 
             if not memories:
-                return f"Tidak ada memori ditemukan untuk: {query}"
+                # FALLBACK: Provide helpful hints if nothing found
+                hint = f"Tidak ada memori ditemukan untuk: '{query}'.\n"
+                
+                # Try to list available categories to help the AI refine
+                try:
+                    facts = self.memory.metadata.get_facts(limit=10)
+                    if facts:
+                        categories = sorted(list(set(f.get('category', 'fact') for f in facts)))
+                        hint += f"HINT: Coba cari dengan kategori berikut: {', '.join(categories)}\n"
+                    
+                    recent = self.memory.metadata.get_message_chain(limit=5)
+                    if recent:
+                        hint += "HINT: Periksa kembali kata kunci Anda atau gunakan 'list_reminders' jika mencari jadwal."
+                except Exception:
+                    pass
+                    
+                return hint
 
             # Format results
             results = []

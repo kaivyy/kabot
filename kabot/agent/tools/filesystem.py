@@ -144,7 +144,17 @@ class EditFileTool(Tool):
             content = file_path.read_text(encoding="utf-8")
             
             if old_text not in content:
-                return f"Error: old_text not found in file. Make sure it matches exactly."
+                # Check for common whitespace issues
+                if old_text.strip() in content:
+                    return f"Error: old_text not found exactly. Found a similar string but with different leading/trailing whitespace. Please be exact."
+                
+                # Provide a snippet of the file to help the AI find the right context
+                snippet = content[:500] + "..." if len(content) > 500 else content
+                return (
+                    f"Error: old_text not found in {path}. It must match EXACTLY, including indentation.\n\n"
+                    f"FILE CONTENT PREVIEW:\n---\n{snippet}\n---\n"
+                    "HINT: Use 'read_file' to get the full content and copy the exact block you want to replace."
+                )
             
             # Count occurrences
             count = content.count(old_text)

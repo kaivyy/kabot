@@ -18,11 +18,16 @@ class TokenBudget:
 
     def __init__(self, model: str = "gpt-4", max_context: int = 128000):
         # Use tiktoken for accurate token counting
+        self.encoder = None
         try:
             self.encoder = tiktoken.encoding_for_model(model.split("/")[-1])
-        except KeyError:
-            # Fallback to cl100k_base for unknown models
-            self.encoder = tiktoken.get_encoding("cl100k_base")
+        except Exception as e:
+            logger.warning(f"Could not load tiktoken encoding for model {model}: {e}")
+            try:
+                # Fallback to cl100k_base for unknown models
+                self.encoder = tiktoken.get_encoding("cl100k_base")
+            except Exception as e2:
+                logger.error(f"Failed to load fallback cl100k_base encoding: {e2}. Token counting will be estimated.")
 
         self.max_context = max_context
         # Reserve 20% for response + safety margin
@@ -41,7 +46,14 @@ class TokenBudget:
         """Count tokens in text."""
         if not text:
             return 0
-        return len(self.encoder.encode(text, disallowed_special=()))
+        if self.encoder:
+            try:
+                return len(self.encoder.encode(text, disallowed_special=()))
+            except Exception:
+                pass
+        
+        # Fallback to estimation: ~4 chars per token for English
+        return len(text) // 4 + 1
 
     def get_budget(self, component: Literal["system", "memory", "skills", "history", "current"]) -> int:
         """Get token budget for a component."""
@@ -50,15 +62,28 @@ class TokenBudget:
     def truncate_to_budget(self, text: str, component: str) -> tuple[str, bool]:
         """Truncate text to fit budget. Returns (truncated_text, was_truncated)."""
         budget = self.get_budget(component) # type: ignore
-        tokens = self.encoder.encode(text, disallowed_special=())
+        
+        if self.encoder:
+            try:
+                tokens = self.encoder.encode(text, disallowed_special=())
+                if len(tokens) <= budget:
+                    return text, False
+                # Truncate with ellipsis
+                truncated_tokens = tokens[:budget - 10]  # Reserve space for message
+                truncated_text = self.encoder.decode(truncated_tokens)
+                return f"{truncated_text}\n\n[... truncated {len(tokens) - len(truncated_tokens)} tokens to fit budget ...]", True
+            except Exception:
+                pass
 
-        if len(tokens) <= budget:
+        # Fallback truncation based on estimation
+        estimated_tokens = self.count_tokens(text)
+        if estimated_tokens <= budget:
             return text, False
-
-        # Truncate with ellipsis
-        truncated_tokens = tokens[:budget - 10]  # Reserve space for message
-        truncated_text = self.encoder.decode(truncated_tokens)
-        return f"{truncated_text}\n\n[... truncated {len(tokens) - len(truncated_tokens)} tokens to fit budget ...]", True
+        
+        # Approximate truncation by characters
+        keep_chars = budget * 4
+        truncated_text = text[:keep_chars]
+        return f"{truncated_text}\n\n[... truncated (estimated) {estimated_tokens - budget} tokens to fit budget ...]", True
 
     def truncate_history(self, messages: list[dict], budget: int) -> list[dict]:
         """Truncate conversation history to fit budget, keeping most recent."""
@@ -95,17 +120,34 @@ class ContextBuilder:
 
     PROFILES = {
         "CODING": """# Role: Senior Software Engineer
-You are an expert software engineer. Focus on code quality, correctness, and best practices.
-- When writing code, ensure it is production-ready, typed, and documented.
-- Prefer editing existing files over creating new ones.
-- Use the ReadFileTool to inspect code before modifying it.
+You are an expert software engineer. You follow a STRICT MULTI-TURN workflow:
+
+PHASE 1: ACKNOWLEDGMENT
+- Respond immediately with: "Baik, saya akan buatkan/perbaiki [nama tugas], mohon ditunggu sebentar..."
+- Do not perform any edits yet.
+
+PHASE 2: PLANNING & PROPOSAL
+- Analyze the requirements and provide a detailed plan.
+- List which files will be created/edited.
+- Explain the logic/flow.
+- END your response with: "Apakah Anda setuju dengan rencana ini? (Setuju/Tidak)"
+- STOP and wait for user input.
+
+PHASE 3: IMPLEMENTATION (Only after user says "Setuju")
+- Say: "Baik, akan saya implementasikan, mohon ditunggu..."
+- Execute the tools (write_file, edit_file, exec).
+- Verify the results.
+
+PHASE 4: FINAL REPORT
+- Provide a summary of what was done.
+- List the directories and files created.
+- Show the results of the execution/tests.
 
 GUIDED WORKFLOW:
-If the user asks to build a complex application or feature from scratch (e.g. "Create a Todo App"):
-1. DO NOT start writing code immediately.
-2. OFFER to start with the **Brainstorming** phase to clarify requirements.
-3. EXPLAIN the workflow: Brainstorm -> Design -> Plan -> Execute.
-4. LOAD the relevant skill file (e.g., `kabot/skills/brainstorming/SKILL.md`) using `read_file`.""",
+If the user asks to build a complex application or feature:
+1. USE the 'brainstorming' skill first.
+2. USE the 'writing-plans' skill to document the plan.
+3. ALWAYS wait for approval before touching any code.""",
 
         "CHAT": """# Role: Friendly Assistant
 You are a warm, engaging AI assistant. Focus on conversation and personality.
@@ -229,8 +271,16 @@ For normal conversation, just respond with text - do not call the message tool.
 
 Always be helpful, accurate, and concise.
 CRITICAL: If you need to use a tool (like downloading files, checking weather, etc.), use the tool IMMEDIATELY in your first response.
-DO NOT send a text-only response saying "I will do this" without actually calling the tool.
-You can include explanatory text alongside the tool call in the same response."""
+DO NOT send a text-only response saying "I will do this" or "Pemeriksaan sedang berlangsung" without actually calling the tool. 
+
+SKILL DISCOVERY:
+If the user asks for a specific task (e.g. "Order food", "Control lights", "Check stars") and you don't have a direct tool for it:
+1. SCAN the 'Skills' section in this prompt.
+2. If a matching skill exists, use 'read_file' on its 'location' immediately.
+3. Follow the instructions inside that SKILL.md to complete the task.
+4. NEVER say you can't do something without checking the skills directory first.
+
+If you are performing a multi-step task, start the first step NOW."""
     
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""

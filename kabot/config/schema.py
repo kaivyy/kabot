@@ -132,13 +132,26 @@ class AgentsConfig(BaseModel):
     enable_hybrid_memory: bool = True
 
 
+class AuthProfile(BaseModel):
+    """Authentication profile for a specific account."""
+    name: str = "default"
+    api_key: str = ""
+    oauth_token: str | None = None
+    setup_token: str | None = None
+    api_base: str | None = None
+    extra_headers: dict[str, str] | None = None
+
+
 class ProviderConfig(BaseModel):
     """LLM provider configuration."""
-    api_key: str = ""
+    api_key: str = ""  # Legacy/Primary key
     api_base: str | None = None
-    extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
+    extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix) 
     fallbacks: list[str] = Field(default_factory=list)
-
+    
+    # Multi-profile support
+    profiles: dict[str, AuthProfile] = Field(default_factory=dict)
+    active_profile: str = "default"
 
 class ProvidersConfig(BaseModel):
     """Configuration for LLM providers."""
@@ -152,6 +165,7 @@ class ProvidersConfig(BaseModel):
     vllm: ProviderConfig = Field(default_factory=ProviderConfig)
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
+    minimax: ProviderConfig = Field(default_factory=ProviderConfig)
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
     letta: ProviderConfig = Field(default_factory=ProviderConfig)  # Letta stateful agent platform
 
@@ -236,26 +250,44 @@ class Config(BaseSettings):
         _, name = self._match_provider(model)
         return name
 
-    def get_api_key(self, model: str | None = None) -> str | None:
-        """Get API key for the given model. Falls back to first available key."""
-        p = self.get_provider(model)
-        return p.api_key if p else None
+        def get_api_key(self, model: str | None = None) -> str | None:
+            """Get API key for the given model. Supports profiles with legacy fallback."""
+            p = self.get_provider(model)
+            if not p:
+                return None
+                
+            # Try active profile first
+            if p.active_profile in p.profiles:
+                profile = p.profiles[p.active_profile]
+                if profile.api_key:
+                    return profile.api_key
+                if profile.oauth_token:
+                    return profile.oauth_token
+                    
+            # Legacy fallback
+            return p.api_key
     
-    def get_api_base(self, model: str | None = None) -> str | None:
-        """Get API base URL for the given model. Applies default URLs for known gateways."""
-        from kabot.providers.registry import find_by_name
-        p, name = self._match_provider(model)
-        if p and p.api_base:
-            return p.api_base
-        # Only gateways get a default api_base here. Standard providers
-        # (like Moonshot) set their base URL via env vars in _setup_env
-        # to avoid polluting the global litellm.api_base.
-        if name:
-            spec = find_by_name(name)
-            if spec and spec.is_gateway and spec.default_api_base:
-                return spec.default_api_base
-        return None
-    
-    class Config:
+        def get_api_base(self, model: str | None = None) -> str | None:
+            """Get API base URL for the given model. Supports profiles."""
+            from kabot.providers.registry import find_by_name
+            p, name = self._match_provider(model)
+            if not p:
+                return None
+                
+            # Try active profile first
+            if p.active_profile in p.profiles:
+                profile = p.profiles[p.active_profile]
+                if profile.api_base:
+                    return profile.api_base
+                    
+            if p.api_base:
+                return p.api_base
+                
+            if name:
+                spec = find_by_name(name)
+                if spec and spec.is_gateway and spec.default_api_base:
+                    return spec.default_api_base
+            return None
+        class Config:
         env_prefix = "NANOBOT_"
         env_nested_delimiter = "__"

@@ -256,6 +256,16 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         model_overrides=(("kimi-k2.5", {"temperature": 1.0}),),
     ),
     ProviderSpec(
+        name="minimax",
+        keywords=("minimax", "abab"),
+        env_key="MINIMAX_API_KEY",
+        display_name="MiniMax",
+        litellm_prefix="minimax",
+        skip_prefixes=("minimax/", "openrouter/"),
+        env_extras=(("MINIMAX_API_BASE", "{api_base}"),),
+        default_api_base="https://api.minimax.chat/v1",
+    ),
+    ProviderSpec(
         name="letta",
         keywords=("letta",),
         env_key="LETTA_API_KEY",
