@@ -1,134 +1,244 @@
-"""Interactive setup wizard for kabot."""
+﻿"""Modular, interactive setup wizard for kabot (v2.0)."""
 
+import sys
+import os
 from pathlib import Path
+from typing import Dict, Any, List, Optional
+
 from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
 from rich.prompt import Prompt, Confirm
 from rich.table import Table
+from rich import box
 
-from kabot.config.schema import (
-    Config, ProviderConfig, TelegramConfig, DiscordConfig, SlackConfig, EmailConfig
-)
+from kabot import __version__, __logo__
+from kabot.config.schema import Config, AuthProfile
+from kabot.config.loader import load_config, save_config
+from kabot.utils.network import probe_gateway
+from kabot.providers.registry import ModelRegistry
 
 console = Console()
 
+class ClackUI:
+    """Helper to draw OpenClaw/Clack style UI components."""
+    
+    @staticmethod
+    def header():
+        logo = """
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+██░▄▄▄░██░▄▄░██░▄▄▄██░▀██░██░▄▄▀██░████░▄▄▀██░███░██
+██░███░██░▀▀░██░▄▄▄██░█░█░██░█████░████░▀▀░██░█░█░██
+██░▀▀▀░██░█████░▀▀▀██░██▄░██░▀▀▄██░▀▀░█░██░██▄▀▄▀▄██
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+"""
+        console.print(f"[bold cyan]{logo}[/bold cyan]")
+        console.print(f"  🐈 [bold]kabot {__version__}[/bold] — Light footprint, heavy punch.")
+        console.print()
+
+    @staticmethod
+    def section_start(title: str):
+        console.print(f"┌  [bold cyan]{title}[/bold cyan]")
+
+    @staticmethod
+    def section_end():
+        console.print("└")
+
+    @staticmethod
+    def summary_box(config: Config):
+        current_model = config.agents.defaults.model
+        gateway_host = config.gateway.host
+        gateway_port = config.gateway.port
+        
+        reachable = probe_gateway(gateway_host, gateway_port)
+        status_text = "[green]reachable[/green]" if reachable else "[red]not detected[/red]"
+        
+        content = Text()
+        content.append(f" model: {current_model}\n", style="dim")
+        content.append(f" gateway: http://{gateway_host}:{gateway_port} ({status_text})", style="dim")
+        
+        panel = Panel(
+            content,
+            title=" Existing config detected ",
+            title_align="left",
+            border_style="dim",
+            box=box.ROUNDED,
+            padding=(1, 2)
+        )
+        
+        console.print("│")
+        console.print(f"◇  {panel}")
+        console.print("│")
+
 class SetupWizard:
     def __init__(self):
-        self.config = Config()
-    
+        self.config = load_config()
+        self.registry = ModelRegistry()
+        self.ran_section = False
+
     def run(self) -> Config:
-        console.print("
-[bold cyan]🚀 kabot Interactive Setup Wizard[/bold cyan]
-")
-        self._setup_provider()
-        if Confirm.ask("
-[bold]Configure chat channels?[/bold]", default=False):
-            self._setup_channels()
-        if Confirm.ask("
-[bold]Configure advanced settings?[/bold]", default=False):
-            self._setup_advanced()
+        ClackUI.header()
+        ClackUI.summary_box(self.config)
+        
+        ClackUI.section_start("Environment")
+        console.print("│")
+        mode = Prompt.ask(
+            "◇  Where will the Gateway run?",
+            choices=["local", "remote"],
+            default="local"
+        )
+        ClackUI.section_end()
+        
+        while True:
+            choice = self._main_menu()
+            if choice == "finish":
+                break
+            
+            if choice == "workspace":
+                self._configure_workspace()
+            elif choice == "model":
+                self._configure_model()
+            elif choice == "tools":
+                self._configure_tools()
+            elif choice == "gateway":
+                self._configure_gateway()
+            elif choice == "channels":
+                self._configure_channels()
+            
+            self.ran_section = True
+            
         return self.config
-    
-    def _setup_provider(self):
-        from kabot.auth.manager import AuthManager
+
+    def _main_menu(self) -> str:
+        ClackUI.section_start("Sections")
+        console.print("│")
+        
+        options = [
+            ("workspace", "Workspace (Set path + sessions)"),
+            ("model", "Model / Auth (Providers, Keys, OAuth)"),
+            ("tools", "Web tools (Search, Browser, Shell)"),
+            ("gateway", "Gateway (Port, Host, Bindings)"),
+            ("channels", "Channels (Telegram, WhatsApp, Slack)"),
+            ("finish", "Continue & Finish")
+        ]
+        
+        for idx, (val, label) in enumerate(options, 1):
+            prefix = "●" if idx == 1 and not self.ran_section else "○"
+            console.print(f"│  {prefix} {label}")
+            
+        console.print("│")
+        choice_idx = Prompt.ask(
+            "◆  Select section to configure",
+            choices=[str(i) for i in range(1, len(options) + 1)],
+            default=str(len(options))
+        )
+        ClackUI.section_end()
+        return options[int(choice_idx)-1][0]
+
+    def _configure_workspace(self):
+        ClackUI.section_start("Workspace")
+        path = Prompt.ask("│  Workspace directory", default=self.config.agents.defaults.workspace)
+        self.config.agents.defaults.workspace = path
+        ClackUI.section_end()
+
+    def _configure_model(self):
+        ClackUI.section_start("Model & Auth")
         from kabot.auth.menu import get_auth_choices
-        from kabot.config.loader import load_config
-
-        console.print("\n[bold yellow]Step 1: Select AI Provider[/bold yellow]\n")
-
+        from kabot.auth.manager import AuthManager
+        
         manager = AuthManager()
         choices = get_auth_choices()
-
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("#", style="cyan", width=3)
-        table.add_column("Provider", style="green")
-
-        for idx, choice in enumerate(choices, 1):
-            table.add_row(str(idx), choice['name'])
-
-        table.add_row(str(len(choices)+1), "Skip (Manual config)")
-
-        console.print(table)
-
-        valid_choices = [str(i) for i in range(1, len(choices) + 2)]
-        choice_idx = Prompt.ask("\n[bold]Select provider[/bold]", choices=valid_choices, default="1")
-
-        if choice_idx == str(len(choices) + 1):
-            console.print("[yellow]Skipped. Edit ~/.kabot/config.json manually[/yellow]")
-            return
-
-        provider_val = choices[int(choice_idx)-1]['value']
-
-        if manager.login(provider_val):
-            # Reload config to get the changes made by manager
-            self.config = load_config()
-
-            # Set default model suggestions
-            models = {
-                "openrouter": "openrouter/anthropic/claude-3.5-sonnet",
-                "anthropic": "anthropic/claude-3-5-sonnet-20240620",
-                "openai": "openai/gpt-4o",
-                "google": "gemini/gemini-1.5-pro",
-                "ollama": "vllm/llama3",
-            }
-
-            default_model = models.get(provider_val, "")
-            model = Prompt.ask("Default model", default=default_model)
-            if model:
-                self.config.agents.defaults.model = model
-    
-    def _setup_channels(self):
-        console.print("
-[bold yellow]Configure Channels[/bold yellow]
-")
+        
         while True:
-            choice = Prompt.ask("[1]Telegram [2]Discord [3]Slack [4]Email [5]Done", choices=["1","2","3","4","5"], default="5")
-            if choice == "5": break
-            if choice == "1": self._setup_telegram()
-            elif choice == "2": self._setup_discord()
-            elif choice == "3": self._setup_slack()
-            elif choice == "4": self._setup_email()
-            if not Confirm.ask("Configure another?", default=False): break
-    
-    def _setup_telegram(self):
-        console.print("[dim]Get token from @BotFather, ID from @userinfobot[/dim]")
-        token, user_id = Prompt.ask("Bot token"), Prompt.ask("User ID")
-        if token and user_id:
-            self.config.channels.telegram = TelegramConfig(enabled=True, token=token.strip(), allow_from=[user_id.strip()])
-            console.print("[green]Telegram configured[/green]")
-    
-    def _setup_discord(self):
-        console.print("[dim]Get from discord.com/developers/applications[/dim]")
-        token, user_id = Prompt.ask("Bot token"), Prompt.ask("User ID")
-        if token and user_id:
-            self.config.channels.discord = DiscordConfig(enabled=True, token=token.strip(), allow_from=[user_id.strip()])
-            console.print("[green]Discord configured[/green]")
-    
-    def _setup_slack(self):
-        app_token, bot_token = Prompt.ask("App token (xapp-)"), Prompt.ask("Bot token (xoxb-)")
-        if app_token and bot_token:
-            self.config.channels.slack = SlackConfig(enabled=True, app_token=app_token.strip(), bot_token=bot_token.strip(), mode="socket")
-            console.print("[green]Slack configured[/green]")
-    
-    def _setup_email(self):
-        if not Confirm.ask("[yellow]Email requires mailbox access. Consent?[/yellow]", default=False): return
-        imap_host = Prompt.ask("IMAP host", default="imap.gmail.com")
-        imap_user = Prompt.ask("IMAP user")
-        imap_pass = Prompt.ask("IMAP pass", password=True)
-        smtp_host = Prompt.ask("SMTP host", default="smtp.gmail.com")
-        if imap_host and imap_user:
-            self.config.channels.email = EmailConfig(enabled=True, consent_granted=True, imap_host=imap_host, imap_username=imap_user, 
-                                                       imap_password=imap_pass, smtp_host=smtp_host, smtp_username=imap_user, 
-                                                       smtp_password=imap_pass, from_address=imap_user)
-            console.print("[green]Email configured[/green]")
-    
-    def _setup_advanced(self):
-        console.print("
-[bold yellow]Advanced Settings[/bold yellow]
-")
-        self.config.agents.defaults.max_tokens = int(Prompt.ask("Max tokens", default="8192"))
-        self.config.agents.defaults.temperature = float(Prompt.ask("Temperature", default="0.7"))
-        self.config.tools.restrict_to_workspace = Confirm.ask("Restrict to workspace?", default=False)
-        console.print("[green]Advanced configured[/green]")
+            console.print("│")
+            console.print("│  Select an option:")
+            console.print("│  ● [1] Provider Login (Setup API Keys/OAuth)")
+            console.print("│  ○ [2] Select Default Model (Browse Registry)")
+            console.print("│  ○ [3] Back")
+            
+            choice = Prompt.ask("│\n◆  Choice", choices=["1", "2", "3"], default="1")
+            
+            if choice == "3":
+                break
+            
+            if choice == "1":
+                console.print("│")
+                for idx, c in enumerate(choices, 1):
+                    console.print(f"│  ○ {idx}. {c['name']}")
+                
+                valid = [str(i) for i in range(1, len(choices) + 1)]
+                idx = Prompt.ask("│\n◆  Select provider to login", choices=valid)
+                provider_val = choices[int(idx)-1]['value']
+                if manager.login(provider_val):
+                    self._model_picker(provider_val)
+            
+            elif choice == "2":
+                self._model_picker()
+        
+        ClackUI.section_end()
+
+    def _model_picker(self, provider_id: Optional[str] = None):
+        if not provider_id:
+            providers = self.registry.get_providers()
+            sorted_providers = sorted(providers.items())
+            console.print("│")
+            console.print("│  Filter models by provider:")
+            console.print(f"│  ○ 0. All providers ({len(self.registry.list_models())} models)")
+            for idx, (p_name, count) in enumerate(sorted_providers, 1):
+                console.print(f"│  ○ {idx}. {p_name} ({count} models)")
+            p_choices = [str(i) for i in range(len(sorted_providers) + 1)]
+            p_idx = int(Prompt.ask("│\n◆  Select provider", choices=p_choices, default="0"))
+            if p_idx > 0:
+                provider_id = sorted_providers[p_idx-1][0]
+
+        all_models = self.registry.list_models()
+        if provider_id:
+            models = [m for m in all_models if m.provider == provider_id]
+        else:
+            models = all_models
+        models.sort(key=lambda x: (not x.is_premium, x.id))
+
+        console.print("│")
+        console.print(f"│  Default model (Current: {self.config.agents.defaults.model})")
+        console.print("│  ● 0. Keep current")
+        console.print("│  ○ 1. Enter model manually")
+        for idx, m in enumerate(models, 2):
+            name = m.name
+            if m.is_premium: name = f"{name} [yellow]★[/yellow]"
+            console.print(f"│  ○ {idx}. {m.id} ({name})")
+        
+        m_choices = [str(i) for i in range(len(models) + 2)]
+        m_idx = int(Prompt.ask("│\n◆  Select model", choices=m_choices, default="0"))
+        if m_idx == 0: return
+        elif m_idx == 1:
+            manual = Prompt.ask("│  Enter Model ID")
+            if manual: self.config.agents.defaults.model = manual
+        else:
+            selected = models[m_idx-2]
+            self.config.agents.defaults.model = selected.id
+            console.print(f"│  [green]✓ Set to {selected.id}[/green]")
+
+    def _configure_tools(self):
+        ClackUI.section_start("Web Tools")
+        self.config.tools.web.search.api_key = Prompt.ask("│  Brave Search API Key", default=self.config.tools.web.search.api_key)
+        self.config.tools.restrict_to_workspace = Confirm.ask("│  Restrict to workspace?", default=self.config.tools.restrict_to_workspace)
+        ClackUI.section_end()
+
+    def _configure_gateway(self):
+        ClackUI.section_start("Gateway")
+        self.config.gateway.host = Prompt.ask("│  Bind Host", default=self.config.gateway.host)
+        self.config.gateway.port = int(Prompt.ask("│  Port", default=str(self.config.gateway.port)))
+        ClackUI.section_end()
+
+    def _configure_channels(self):
+        ClackUI.section_start("Channels")
+        console.print("│  [dim]Configure external chat platforms[/dim]")
+        if Confirm.ask("│  Configure Telegram?", default=False):
+            token = Prompt.ask("│  Bot Token")
+            if token:
+                self.config.channels.telegram.token = token
+                self.config.channels.telegram.enabled = True
+        ClackUI.section_end()
 
 def run_interactive_setup() -> Config:
     return SetupWizard().run()
