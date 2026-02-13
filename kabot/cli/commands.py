@@ -218,7 +218,7 @@ def onboard():
     console.print("  1. Add your API key to [cyan]~/.kabot/config.json[/cyan]")
     console.print("     Get one at: https://openrouter.ai/keys")
     console.print("  2. Chat: [cyan]kabot agent -m \"Hello!\"[/cyan]")
-    console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/kabot#-chat-apps[/dim]")
+    console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/kaivyy/kabot#-chat-apps[/dim]")
 
 
 @app.command()
@@ -772,11 +772,17 @@ def models_set(
     # Resolve alias/short-id
     resolved_id = registry.resolve(model_name)
     
+    # Check if the resolved ID is known
+    if not registry.get_model(resolved_id):
+        console.print(f"[yellow]Warning: '{resolved_id}' is not in the model registry.[/yellow]")
+        if not typer.confirm("Set it anyway?"):
+            raise typer.Exit()
+    
     config = load_config()
     config.agents.defaults.model = resolved_id
     save_config(config)
     
-    console.print(f"\n[green]âœ“ Primary model set to: [bold]{resolved_id}[/bold][/green]")
+    console.print(f"\n[green]✓ Primary model set to: [bold]{resolved_id}[/bold][/green]")
     if resolved_id != model_name:
         console.print(f"[dim](Resolved from '{model_name}')[/dim]")
 
@@ -1242,10 +1248,15 @@ def status():
         console.print(f"Model: {config.agents.defaults.model}")
         
         # Check API keys from registry
+        from kabot.providers.registry import PROVIDERS
         for spec in PROVIDERS:
-            p = getattr(config.providers, spec.name, None)
+            # Map registry name to config field if different
+            config_field = spec.name
+            p = getattr(config.providers, config_field, None)
+            
             if p is None:
                 continue
+                
             if spec.is_local:
                 # Local deployments show api_base instead of api_key
                 if p.api_base:
@@ -1254,7 +1265,8 @@ def status():
                     console.print(f"{spec.label}: [dim]not set[/dim]")
             else:
                 has_key = bool(p.api_key)
-                console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
+                status_icon = "[green]✓[/green]" if has_key else "[dim]not set[/dim]"
+                console.print(f"{spec.label}: {status_icon}")
 
 
 @app.command("security-audit")

@@ -167,6 +167,13 @@ class ModelRegistry:
         """Return a list of all registered models."""
         return list(self._models.values())
 
+    def get_providers(self) -> Dict[str, int]:
+        """Return a dictionary of provider names and their model counts."""
+        providers = {}
+        for m in self._models.values():
+            providers[m.provider] = providers.get(m.provider, 0) + 1
+        return providers
+
     def clear(self):
         """Clear all registered models."""
         self._models = {}

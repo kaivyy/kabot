@@ -1,4 +1,4 @@
-﻿"""Modular, interactive setup wizard for kabot (v2.0)."""
+"""Modular, interactive setup wizard for kabot (v2.1)."""
 
 import sys
 import os
@@ -21,16 +21,19 @@ from kabot.providers.registry import ModelRegistry
 console = Console()
 
 class ClackUI:
-    """Helper to draw OpenClaw/Clack style UI components."""
+    """Helper to draw Kabot/Clack style UI components."""
     
     @staticmethod
     def header():
-        logo = """
-▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
-██░▄▄▄░██░▄▄░██░▄▄▄██░▀██░██░▄▄▀██░████░▄▄▀██░███░██
-██░███░██░▀▀░██░▄▄▄██░█░█░██░█████░████░▀▀░██░█░█░██
-██░▀▀▀░██░█████░▀▀▀██░██▄░██░▀▀▄██░▀▀░█░██░██▄▀▄▀▄██
-▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+        logo = r"""
+███            █████  █████      █████████      ██████████      █████████    ███████████ 
+░░░███         ░░███  ░░███     ░░███░░░███    ░░███░░░░░███   ░░███░░░░░███ ░░░░███░░░░ 
+  ░░░███        ░███ ░███      ░███   ░███    ░███    ░███   ░███    ░███    ░███     
+    ░░░███      ░██████        ░███████████   ░██████████    ░███    ░███    ░███     
+     ███░       ░███░░███      ░███░░░░░███   ░███░░░░░███   ░███    ░███    ░███     
+   ███░         ░███  ░░███    ░███    ░███   ░███    ░███   ░███    ░███    ░███     
+ ███░          █████  █████   █████   █████  ███████████    ███████████     █████    
+░░░            ░░░░░   ░░░░░   ░░░░░   ░░░░░  ░░░░░░░░░░░    ░░░░░░░░░░░     ░░░░░    
 """
         console.print(f"[bold cyan]{logo}[/bold cyan]")
         console.print(f"  🐈 [bold]kabot {__version__}[/bold] — Light footprint, heavy punch.")
@@ -82,7 +85,15 @@ class SetupWizard:
         
         ClackUI.section_start("Environment")
         console.print("│")
-        mode = Prompt.ask(
+        
+        reachable = probe_gateway(self.config.gateway.host, self.config.gateway.port)
+        local_hint = "(Gateway reachable)" if reachable else "(No gateway detected)"
+        
+        console.print(f"│  ● Local (this machine) [dim]{local_hint}[/dim]")
+        console.print("│  ○ Remote (info-only)")
+        console.print("│")
+        
+        mode_raw = Prompt.ask(
             "◇  Where will the Gateway run?",
             choices=["local", "remote"],
             default="local"
@@ -104,6 +115,8 @@ class SetupWizard:
                 self._configure_gateway()
             elif choice == "channels":
                 self._configure_channels()
+            elif choice == "doctor":
+                self._run_doctor()
             
             self.ran_section = True
             
@@ -119,6 +132,7 @@ class SetupWizard:
             ("tools", "Web tools (Search, Browser, Shell)"),
             ("gateway", "Gateway (Port, Host, Bindings)"),
             ("channels", "Channels (Telegram, WhatsApp, Slack)"),
+            ("doctor", "Health Check (Run system diagnostic)"),
             ("finish", "Continue & Finish")
         ]
         
@@ -127,18 +141,22 @@ class SetupWizard:
             console.print(f"│  {prefix} {label}")
             
         console.print("│")
-        choice_idx = Prompt.ask(
+        choice_idx_raw = Prompt.ask(
             "◆  Select section to configure",
             choices=[str(i) for i in range(1, len(options) + 1)],
             default=str(len(options))
         )
+        choice_idx = int(str(choice_idx_raw))
         ClackUI.section_end()
-        return options[int(choice_idx)-1][0]
+        return options[choice_idx-1][0]
 
     def _configure_workspace(self):
         ClackUI.section_start("Workspace")
         path = Prompt.ask("│  Workspace directory", default=self.config.agents.defaults.workspace)
         self.config.agents.defaults.workspace = path
+        # Ensure directory exists
+        os.makedirs(os.path.expanduser(path), exist_ok=True)
+        console.print(f"│  [green]✓ Workspace path set.[/green]")
         ClackUI.section_end()
 
     def _configure_model(self):
@@ -156,7 +174,8 @@ class SetupWizard:
             console.print("│  ○ [2] Select Default Model (Browse Registry)")
             console.print("│  ○ [3] Back")
             
-            choice = Prompt.ask("│\n◆  Choice", choices=["1", "2", "3"], default="1")
+            choice_raw = Prompt.ask("│\n◆  Choice", choices=["1", "2", "3"], default="1")
+            choice = str(choice_raw)
             
             if choice == "3":
                 break
@@ -167,8 +186,9 @@ class SetupWizard:
                     console.print(f"│  ○ {idx}. {c['name']}")
                 
                 valid = [str(i) for i in range(1, len(choices) + 1)]
-                idx = Prompt.ask("│\n◆  Select provider to login", choices=valid)
-                provider_val = choices[int(idx)-1]['value']
+                idx_raw = Prompt.ask("│\n◆  Select provider to login", choices=valid)
+                idx = int(str(idx_raw))
+                provider_val = choices[idx-1]['value']
                 if manager.login(provider_val):
                     self._model_picker(provider_val)
             
@@ -187,7 +207,8 @@ class SetupWizard:
             for idx, (p_name, count) in enumerate(sorted_providers, 1):
                 console.print(f"│  ○ {idx}. {p_name} ({count} models)")
             p_choices = [str(i) for i in range(len(sorted_providers) + 1)]
-            p_idx = int(Prompt.ask("│\n◆  Select provider", choices=p_choices, default="0"))
+            p_idx_raw = Prompt.ask("│\n◆  Select provider", choices=p_choices, default="0")
+            p_idx = int(str(p_idx_raw))
             if p_idx > 0:
                 provider_id = sorted_providers[p_idx-1][0]
 
@@ -208,7 +229,8 @@ class SetupWizard:
             console.print(f"│  ○ {idx}. {m.id} ({name})")
         
         m_choices = [str(i) for i in range(len(models) + 2)]
-        m_idx = int(Prompt.ask("│\n◆  Select model", choices=m_choices, default="0"))
+        m_idx_raw = Prompt.ask("│\n◆  Select model", choices=m_choices, default="0")
+        m_idx = int(str(m_idx_raw))
         if m_idx == 0: return
         elif m_idx == 1:
             manual = Prompt.ask("│  Enter Model ID")
@@ -239,6 +261,12 @@ class SetupWizard:
                 self.config.channels.telegram.token = token
                 self.config.channels.telegram.enabled = True
         ClackUI.section_end()
+
+    def _run_doctor(self):
+        from kabot.utils.doctor import KabotDoctor
+        doc = KabotDoctor()
+        doc.render_report()
+        Prompt.ask("│\n◆  Press Enter to return to menu")
 
 def run_interactive_setup() -> Config:
     return SetupWizard().run()

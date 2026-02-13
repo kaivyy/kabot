@@ -97,6 +97,27 @@ AUTH_PROVIDERS: Dict[str, Dict[str, Any]] = {
                 "label": "Coding Plan (Subscription)",
                 "description": "Unlimited monthly subscription",
                 "handler": "kabot.auth.handlers.minimax_coding.MiniMaxCodingHandler"
+            },
+            "oauth": {
+                "label": "Browser Login (OAuth)",
+                "description": "MiniMax portal login",
+                "handler": "kabot.auth.handlers.minimax_oauth.MiniMaxOAuthHandler"
+            }
+        }
+    },
+    "dashscope": {
+        "name": "Qwen (DashScope)",
+        "description": "Alibaba Cloud Qwen models",
+        "methods": {
+            "api_key": {
+                "label": "API Key (Manual)",
+                "description": "Standard DashScope API key",
+                "handler": "kabot.auth.handlers.openai_key.OpenAIKeyHandler"
+            },
+            "oauth": {
+                "label": "Browser Login (OAuth)",
+                "description": "Qwen Portal OAuth",
+                "handler": "kabot.auth.handlers.qwen_oauth.QwenOAuthHandler"
             }
         }
     }

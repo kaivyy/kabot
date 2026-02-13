@@ -190,7 +190,8 @@ class AuthManager:
             except Exception as e:
                 console.print(f"[bold red]Error saving config:[/bold red] {e}")
                 return False
-        def get_status(self):
+
+    def get_status(self):
         """Print the current status of configured providers and profiles."""
         config = load_config()
 

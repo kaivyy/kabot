@@ -69,9 +69,9 @@ class SaveMemoryTool(Tool):
             )
 
             if success:
-                return f"[OK] {category.title()} tersimpan: {content[:100]}..."
+                return f"[OK] {category.title()} saved: {content[:100]}..."
             else:
-                return f"[ERROR] Gagal menyimpan {category}"
+                return f"[ERROR] Failed to save {category}"
 
         except Exception as e:
             logger.error(f"Error saving memory: {e}")
@@ -79,7 +79,7 @@ class SaveMemoryTool(Tool):
 
 
 class GetMemoryTool(Tool):
-    """Tool untuk mengambil memori pribadi."""
+    """Tool to retrieve personal memories."""
 
     name = "get_memory"
     description = "Retrieve personal memories, diary entries, or facts"
@@ -126,18 +126,18 @@ class GetMemoryTool(Tool):
 
             if not memories:
                 # FALLBACK: Provide helpful hints if nothing found
-                hint = f"Tidak ada memori ditemukan untuk: '{query}'.\n"
+                hint = f"No memories found for: '{query}'.\n"
                 
                 # Try to list available categories to help the AI refine
                 try:
                     facts = self.memory.metadata.get_facts(limit=10)
                     if facts:
                         categories = sorted(list(set(f.get('category', 'fact') for f in facts)))
-                        hint += f"HINT: Coba cari dengan kategori berikut: {', '.join(categories)}\n"
+                        hint += f"HINT: Try searching with categories: {', '.join(categories)}\n"
                     
                     recent = self.memory.metadata.get_message_chain(limit=5)
                     if recent:
-                        hint += "HINT: Periksa kembali kata kunci Anda atau gunakan 'list_reminders' jika mencari jadwal."
+                        hint += "HINT: Check your keywords or use 'list_reminders' for schedules."
                 except Exception:
                     pass
                     
@@ -179,19 +179,19 @@ class ListRemindersTool(Tool):
         """List all reminders."""
         try:
             if not self.cron or not self.cron._store:
-                return "Tidak ada pengingat aktif"
+                return "No active reminders"
 
             jobs = [j for j in self.cron._store.jobs if j.enabled]
 
             if not jobs:
-                return "Tidak ada pengingat aktif"
+                return "No active reminders"
 
             results = []
             for job in jobs:
                 schedule_str = self._format_schedule(job.schedule)
                 results.append(f"• {job.name}: {schedule_str}")
 
-            return "[LIST] Pengingat aktif:\n\n" + "\n".join(results)
+            return "[LIST] Active reminders:\n\n" + "\n".join(results)
 
         except Exception as e:
             logger.error(f"Error listing reminders: {e}")
@@ -204,7 +204,7 @@ class ListRemindersTool(Tool):
             return dt.strftime("%Y-%m-%d %H:%M")
         elif schedule.kind == "every":
             minutes = schedule.every_ms / (1000 * 60)
-            return f"setiap {int(minutes)} menit"
+            return f"every {int(minutes)} minutes"
         elif schedule.kind == "cron":
             return f"cron: {schedule.expr}"
         return "unknown"
