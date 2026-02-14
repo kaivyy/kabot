@@ -256,16 +256,26 @@ class Config(BaseSettings):
         from kabot.providers.registry import PROVIDERS
         model_lower = (model or self.agents.defaults.model).lower()
 
+        def has_credentials(p: "ProviderConfig") -> bool:
+            """Check if provider has any credentials (api_key or profiles with tokens)."""
+            if p.api_key:
+                return True
+            # Check if any profile has credentials
+            for profile in p.profiles.values():
+                if profile.api_key or profile.oauth_token:
+                    return True
+            return False
+
         # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
-            if p and any(kw in model_lower for kw in spec.keywords) and p.api_key:
+            if p and any(kw in model_lower for kw in spec.keywords) and has_credentials(p):
                 return p, spec.name
 
         # Fallback: gateways first, then others (follows registry order)
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
-            if p and p.api_key:
+            if p and has_credentials(p):
                 return p, spec.name
         return None, None
 
@@ -284,17 +294,64 @@ class Config(BaseSettings):
         p = self.get_provider(model)
         if not p:
             return None
-            
+
         # Try active profile first
         if p.active_profile in p.profiles:
             profile = p.profiles[p.active_profile]
+
+            # If OAuth token is expired, log a warning (sync path can't refresh)
+            if profile.is_expired():
+                from loguru import logger
+                logger.warning(f"OAuth token for {p.active_profile} is expired. "
+                              "Use async get_api_key_async() for auto-refresh.")
+
             if profile.api_key:
                 return profile.api_key
             if profile.oauth_token:
                 return profile.oauth_token
-                
+
         # Legacy fallback
         return p.api_key
+
+    async def get_api_key_async(self, model: str | None = None) -> str | None:
+        """Async version of get_api_key with OAuth auto-refresh."""
+        from kabot.auth.refresh import TokenRefreshService
+
+        p = self.get_provider(model)
+        if not p:
+            return None
+
+        if p.active_profile in p.profiles:
+            profile = p.profiles[p.active_profile]
+
+            # Auto-refresh expired OAuth tokens
+            if profile.is_expired() and profile.refresh_token:
+                provider_name = self._provider_name_for(model) or ""
+                service = TokenRefreshService()
+                updated = await service.refresh(provider_name, profile)
+                if updated:
+                    # Update in-memory config
+                    p.profiles[p.active_profile] = updated
+                    profile = updated
+
+            if profile.api_key:
+                return profile.api_key
+            if profile.oauth_token:
+                return profile.oauth_token
+
+        # Legacy fallback
+        return p.api_key
+
+    def _provider_name_for(self, model: str | None) -> str | None:
+        """Extract provider name from model string."""
+        if not model:
+            return None
+        # Handle "provider/model" format
+        if "/" in model:
+            return model.split("/")[0]
+        # Try to match against known providers
+        _, name = self._match_provider(model)
+        return name
 
     def get_api_base(self, model: str | None = None) -> str | None:
         """Get API base URL for the given model. Supports profiles."""
