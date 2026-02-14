@@ -138,9 +138,20 @@ class AuthProfile(BaseModel):
     name: str = "default"
     api_key: str = ""
     oauth_token: str | None = None
+    refresh_token: str | None = None       # NEW: for auto-refresh
+    expires_at: int | None = None          # NEW: ms since epoch
+    token_type: str | None = None          # NEW: "oauth" | "api_key" | "token"
+    client_id: str | None = None           # NEW: OAuth client ID
     setup_token: str | None = None
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None
+
+    def is_expired(self) -> bool:
+        """Check if the OAuth token has expired."""
+        if self.token_type != "oauth" or not self.expires_at:
+            return False  # API keys don't expire
+        import time
+        return int(time.time() * 1000) >= self.expires_at
 
 
 class ProviderConfig(BaseModel):
