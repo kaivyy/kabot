@@ -614,3 +614,44 @@ FEEDBACK: <one sentence explaining the score>"""
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content, _session_key=session_key)
         response = await self._process_message(msg)
         return response.content if response else ""
+
+    async def process_isolated(
+        self, content: str,
+        channel: str = "cli",
+        chat_id: str = "direct",
+        job_id: str = ""
+    ) -> str:
+        """Process a message in a fully isolated session.
+
+        Unlike process_direct, this:
+        - Does NOT load conversation history
+        - Does NOT save to conversation memory
+        - Uses a temporary session that's discarded after execution
+        """
+        import time
+        session_key = f"isolated:cron:{job_id}" if job_id else f"isolated:{int(time.time())}"
+        msg = InboundMessage(
+            channel=channel, sender_id="system",
+            chat_id=chat_id, content=content,
+            _session_key=session_key
+        )
+
+        # Set context for tools without loading history
+        for tool_name in ["message", "spawn", "cron"]:
+            tool = self.tools.get(tool_name)
+            if hasattr(tool, "set_context"):
+                tool.set_context(channel, chat_id)
+
+        # Build messages without history — fresh context
+        messages = self.context.build_messages(
+            history=[],  # No history for isolated sessions
+            current_message=content,
+            channel=channel,
+            chat_id=chat_id,
+            profile="GENERAL",
+            tool_names=self.tools.tool_names,
+        )
+
+        # Run simple response (no planning for isolated jobs)
+        final_content = await self._run_agent_loop(msg, messages)
+        return final_content or ""
