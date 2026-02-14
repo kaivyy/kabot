@@ -7,6 +7,38 @@ from kabot.cron.service import CronService
 from kabot.cron.types import CronSchedule
 
 
+REMINDER_CONTEXT_MARKER = "\n\nRecent context:\n"
+MAX_CONTEXT_PER_MESSAGE = 220
+MAX_CONTEXT_TOTAL = 700
+
+
+def build_reminder_context(
+    history: list[dict],
+    max_messages: int = 10,
+    max_per_message: int = MAX_CONTEXT_PER_MESSAGE,
+    max_total: int = MAX_CONTEXT_TOTAL
+) -> str:
+    """Build context summary from recent messages to attach to reminder."""
+    recent = [m for m in history[-max_messages:] if m.get("role") in ("user", "assistant")]
+    if not recent:
+        return ""
+
+    lines = []
+    total = 0
+    for msg in recent:
+        label = "User" if msg["role"] == "user" else "Assistant"
+        text = msg.get("content", "")[:max_per_message]
+        if len(msg.get("content", "")) > max_per_message:
+            text += "..."
+        line = f"- {label}: {text}"
+        total += len(line)
+        if total > max_total:
+            break
+        lines.append(line)
+
+    return REMINDER_CONTEXT_MARKER + "\n".join(lines) if lines else ""
+
+
 class CronTool(Tool):
     """Tool to schedule reminders and recurring tasks."""
     
@@ -14,11 +46,14 @@ class CronTool(Tool):
         self._cron = cron_service
         self._channel = ""
         self._chat_id = ""
-    
-    def set_context(self, channel: str, chat_id: str) -> None:
+        self._history: list[dict] = []  # For context messages
+
+    def set_context(self, channel: str, chat_id: str, history: list[dict] | None = None) -> None:
         """Set the current session context for delivery."""
         self._channel = channel
         self._chat_id = chat_id
+        if history is not None:
+            self._history = history
     
     @property
     def name(self) -> str:
@@ -61,6 +96,12 @@ class CronTool(Tool):
                 "one_shot": {
                     "type": "boolean",
                     "description": "If true, the job will be deleted after running once (default: false for recurring, true for at_time)"
+                },
+                "context_messages": {
+                    "type": "integer",
+                    "description": "Number of recent messages (0-10) to attach as context to the reminder",
+                    "minimum": 0,
+                    "maximum": 10
                 }
             },
             "required": ["action"]
@@ -75,11 +116,12 @@ class CronTool(Tool):
             cron_expr: str | None = None,
             job_id: str | None = None,
             one_shot: bool | None = None,
+            context_messages: int = 0,
             **kwargs: Any
     ) -> str:
         match action:
             case "add":
-                return self._add_job(message, at_time, every_seconds, cron_expr, one_shot)
+                return self._add_job(message, at_time, every_seconds, cron_expr, one_shot, context_messages)
             case "list":
                 return self._list_jobs()
             case "remove":
@@ -95,11 +137,17 @@ class CronTool(Tool):
             case _:
                 return f"Unknown action: {action}"
     
-    def _add_job(self, message: str, at_time: str, every_seconds: int | None, cron_expr: str | None, one_shot: bool | None = None) -> str:
+    def _add_job(self, message: str, at_time: str, every_seconds: int | None, cron_expr: str | None, one_shot: bool | None = None, context_messages: int = 0) -> str:
         if not message:
             return "Error: message is required for add"
         if not self._channel or not self._chat_id:
             return "Error: no session context (channel/chat_id)"
+
+        # Attach context if requested
+        if context_messages > 0 and self._history:
+            context = build_reminder_context(self._history, max_messages=context_messages)
+            if context:
+                message = message + context
 
         # Default one_shot behavior
         delete_after_run = one_shot if one_shot is not None else (True if at_time else False)
