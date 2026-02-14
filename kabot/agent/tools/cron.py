@@ -61,7 +61,32 @@ class CronTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Schedule reminders and recurring tasks. Actions: add, list, remove."
+        return """Manage scheduled cron jobs (reminders, recurring tasks, timed events).
+
+ACTIONS:
+- status: Check cron scheduler status
+- list: List all scheduled jobs
+- add: Create a new scheduled job (requires message + schedule)
+- update: Modify an existing job (requires job_id)
+- remove: Delete a job (requires job_id)
+- run: Execute a job immediately (requires job_id)
+- runs: Get job run history (requires job_id)
+
+SCHEDULE TYPES (use ONE of these):
+- at_time: One-shot at specific time (ISO-8601: "2026-02-15T10:00:00+07:00")
+- every_seconds: Recurring interval (e.g. 3600 for every hour)
+- cron_expr: Cron expression (e.g. "0 9 * * *" for daily 9am)
+
+IMPORTANT RULES:
+- For reminders, ALWAYS set action="add" with a message and at_time
+- Use context_messages (0-10) to attach recent chat context to the reminder
+- one_shot defaults to true for at_time, false for recurring
+- Times without timezone are treated as LOCAL TIME
+
+EXAMPLES:
+- Reminder: action="add", message="Waktunya meeting!", at_time="2026-02-15T10:00:00+07:00"
+- Daily task: action="add", message="Backup database", cron_expr="0 2 * * *"
+- Every hour: action="add", message="Check inbox", every_seconds=3600"""
     
     @property
     def parameters(self) -> dict[str, Any]:
