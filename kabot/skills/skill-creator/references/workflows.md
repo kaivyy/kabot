@@ -1,35 +1,50 @@
 # Skill Creation Workflow
 
-This document outlines the standard workflow for creating high-quality skills in Kabot using the Progressive Disclosure pattern.
+Standard workflow for creating high-quality skills in Kabot.
 
-## Phase 1: Analysis
-- **Goal**: Understand the user's need and the problem domain.
+## Phase 1: Discovery (Interactive — REQUIRED)
+- **Goal**: Fully understand the user's need through Q&A.
 - **Actions**:
-  - Brainstorm required capabilities.
-  - Identify necessary inputs and expected outputs.
-  - Determine if external tools or libraries are needed.
-  - Define the skill's scope and boundaries.
+  - ASK user about use case, scope, and expected outcomes.
+  - ASK about external APIs, auth methods, and credentials.
+  - ASK about dependencies and preferences.
+  - Clarify edge cases and limitations.
+  - DO NOT proceed until all questions are answered.
 
-## Phase 2: Structure
-- **Goal**: Set up the file system organization.
+## Phase 2: Planning (Requires Approval — REQUIRED)
+- **Goal**: Create a detailed plan and get user sign-off.
 - **Actions**:
-  - Create a directory for the skill: `kabot/skills/<skill-name>/`.
-  - Create standard subdirectories:
-    - `scripts/`: For Python logic and complex operations.
-    - `references/`: For documentation, templates, and large context files.
+  - Write implementation plan covering:
+    - Folder structure
+    - File list with descriptions
+    - API endpoints and auth flow (if applicable)
+    - Dependencies
+  - Present plan to user and ask for approval.
+  - Iterate if user requests changes.
 
-## Phase 3: Drafting
-- **Goal**: Create the interface and instructions.
+## Phase 3: Execution (After Approval Only)
+- **Goal**: Build the skill according to the approved plan.
 - **Actions**:
-  - Write `SKILL.md` in the root of the skill directory.
-  - Keep `SKILL.md` concise (aim for < 500 lines).
-  - Use clear headings and bullet points.
-  - Define the persona and high-level goals.
-  - Reference detailed documentation in `references/` instead of cluttering the main file.
+  - Run `init_skill.py` to scaffold the directory structure.
+  - Write `SKILL.md` — keep concise (< 100 lines if possible).
+  - Implement scripts in `scripts/` with `argparse` CLI interfaces (if needed).
+  - Add documentation in `references/` for complex APIs (if needed).
+  - Install any required dependencies.
 
-## Phase 4: Packaging
-- **Goal**: Implement robust logic and clean up.
+## Phase 4: Verification
+- **Goal**: Confirm the skill works and is discoverable.
 - **Actions**:
-  - Move complex logic, data processing, or large prompts into Python scripts in `scripts/`.
-  - Ensure scripts use `argparse` for clear CLI interfaces.
-  - distinct separation of concerns: `SKILL.md` handles orchestration and LLM interaction, while `scripts/*.py` handle deterministic execution.
+  - Run scripts with `--help` to verify CLI interface.
+  - Test core functionality.
+  - Confirm `SkillsLoader` detects the new skill.
+  - Show results to user.
+
+## Directory Convention
+
+Skills are created in the builtin skills directory:
+```
+kabot/skills/<skill-name>/
+```
+
+The `SkillsLoader` scans this directory automatically.
+New skills are immediately available after creation.

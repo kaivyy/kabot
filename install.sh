@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Kabot Installation Script
-# Usage: curl -fsSL https://raw.githubusercontent.com/kaivyy/kabot/main/install.sh | bash  
+# Usage: curl -fsSL https://github.com/kaivyy/kabot/main/install.sh | bash  
 
 KABOT_VERSION="${KABOT_VERSION:-latest}"
 INSTALL_DIR="${KABOT_INSTALL_DIR:-$HOME/.kabot}"
@@ -48,41 +48,31 @@ find_python() {
 }
 
 main() {
-    # Print Logo (Ultra-High Fidelity Gemini Shaded)
+    # Print Logo
     echo -e "${GREEN}"
     cat << "EOF"
-███            █████  █████      █████████      ██████████      █████████    ███████████ 
-░░░███         ░░███  ░░███     ░░███░░░███    ░░███░░░░░███   ░░███░░░░░███ ░░░░███░░░░ 
-  ░░░███        ░███ ░███      ░███   ░███    ░███    ░███   ░███    ░███    ░███     
-    ░░░███      ░██████        ░███████████   ░██████████    ░███    ░███    ░███     
-     ███░       ░███░░███      ░███░░░░░███   ░███░░░░░███   ░███    ░███    ░███     
-   ███░         ░███  ░░███    ░███    ░███   ░███    ░███   ░███    ░███    ░███     
- ███░          █████  █████   █████   █████  ███████████    ███████████     █████    
-░░░            ░░░░░   ░░░░░   ░░░░░   ░░░░░  ░░░░░░░░░░░    ░░░░░░░░░░░     ░░░░░    
+    _  __    _    ____   ____  _______ 
+   | |/ /   / \  | __ ) / __ \|__   __|
+   | ' /   / _ \  |  _ \| |  | |  | |   
+   |  <    / ___ \ | |_) | |__| |  | |   
+   | . \  / /   \ \|____/ \____/   |_|   
+   |_|\_\/_/     \_\                     
 EOF
     echo -e "${NC}"
     log_info "Installing Kabot AI Agent..."
 
     # Check for Python
-    log_info "Checking for Python >= $MIN_PYTHON_VERSION..."
     if ! PYTHON_CMD=$(find_python); then
-        log_error "Python $MIN_PYTHON_VERSION or higher is required but not found."
-        log_error "Please install Python from https://www.python.org/downloads/"
+        log_error "Python $MIN_PYTHON_VERSION or higher is required."
         exit 1
     fi
 
-    PYTHON_VERSION=$("$PYTHON_CMD" -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
-    log_info "Found Python $PYTHON_VERSION at $(command -v "$PYTHON_CMD")"
-
     # Create installation directory
-    log_info "Creating installation directory at $INSTALL_DIR..."
     mkdir -p "$INSTALL_DIR"
     mkdir -p "$BIN_DIR"
 
     # Create virtual environment
-    log_info "Creating virtual environment..."
     if [ -d "$VENV_DIR" ]; then
-        log_warn "Virtual environment already exists. Removing old installation..."
         rm -rf "$VENV_DIR"
     fi
     "$PYTHON_CMD" -m venv "$VENV_DIR"
@@ -91,19 +81,18 @@ EOF
     source "$VENV_DIR/bin/activate"
 
     # Upgrade pip
-    log_info "Upgrading pip..."
-    pip install --upgrade pip setuptools wheel > /dev/null 2>&1
+    pip install --upgrade pip setuptools wheel
 
-    # Install Kabot
-    log_info "Installing kabot-ai package..."
-    if [ "$KABOT_VERSION" = "latest" ]; then
-        pip install kabot-ai
+    # Install Kabot from LOCAL source if available
+    if [ -f "pyproject.toml" ]; then
+        log_info "Installing from local source..."
+        pip install -e .
     else
-        pip install "kabot-ai==$KABOT_VERSION"
+        log_info "Installing from PyPI..."
+        pip install kabot-ai
     fi
 
     # Create wrapper script
-    log_info "Creating kabot command wrapper..."
     cat > "$BIN_DIR/kabot" << 'WRAPPER'
 #!/usr/bin/env bash
 VENV_DIR="$HOME/.kabot/venv"
@@ -111,42 +100,15 @@ exec "$VENV_DIR/bin/python" -m kabot "$@"
 WRAPPER
     chmod +x "$BIN_DIR/kabot"
 
-    # Add to PATH if not already there
-    SHELL_RC=""
-    if [ -n "${BASH_VERSION:-}" ]; then
-        SHELL_RC="$HOME/.bashrc"
-    elif [ -n "${ZSH_VERSION:-}" ]; then
-        SHELL_RC="$HOME/.zshrc"
-    fi
+    # Run doctor and setup
+    log_info "Running system health check (doctor)..."
+    "$VENV_DIR/bin/python" -m kabot doctor --fix
 
-    if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ]; then
-        if ! grep -q "export PATH=\"\$HOME/.local/bin:\$PATH\"" "$SHELL_RC"; then
-            log_info "Adding $BIN_DIR to PATH in $SHELL_RC..."
-            echo '' >> "$SHELL_RC"
-            echo '# Added by Kabot installer' >> "$SHELL_RC"
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
-            log_warn "Please run: source $SHELL_RC"
-        fi
-    fi
-
-    # Run setup wizard (TUI)
     log_info "Launching interactive setup wizard..."
     "$VENV_DIR/bin/python" -m kabot setup
 
     echo ""
     log_info "Installation complete!"
-    echo ""
-    echo "Next steps:"
-    echo "  1. Login to a provider: kabot auth login"
-    echo "  2. Explore models: kabot models list"
-    echo "  3. Configure everything: kabot setup"
-    echo "  4. Start the gateway: kabot gateway"
-    echo "  5. Or chat directly: kabot agent -m 'Hello!'"
-    echo ""
-    echo "Documentation: https://github.com/kaivyy/kabot"
-    echo ""
-    echo "To use kabot immediately in this session, run:"
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
     echo ""
     read -p "Press Enter to exit..."
 }

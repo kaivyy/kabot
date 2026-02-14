@@ -1,4 +1,8 @@
-"""Kimi (Moonshot AI) API Key authentication handler."""
+"""Kimi (Moonshot AI) API Key authentication handler.
+
+Supports both international (.ai) and China (.cn) endpoints,
+matching OpenClaw's moonshot-api-key and moonshot-api-key-cn options.
+"""
 
 from typing import Dict, Any
 import os
@@ -9,11 +13,15 @@ from kabot.auth.utils import secure_input
 
 console = Console()
 
+# Moonshot API endpoints (from OpenClaw onboard-auth.models.ts)
+ENDPOINTS = {
+    "international": "https://api.moonshot.ai/v1",
+    "china": "https://api.moonshot.cn/v1",
+}
+
 
 class KimiKeyHandler(AuthHandler):
     """Handler for Kimi general API Key authentication."""
-
-    API_BASE = "https://api.moonshot.cn/v1"
 
     @property
     def name(self) -> str:
@@ -23,6 +31,15 @@ class KimiKeyHandler(AuthHandler):
         """Execute API key authentication flow."""
         console.print("\n[bold]Kimi (Moonshot AI) API Key Setup[/bold]")
         console.print("Get your API key from: https://platform.moonshot.cn/console/api-keys\n")
+
+        # Endpoint selection
+        region = Prompt.ask(
+            "Select endpoint",
+            choices=["international", "china"],
+            default="international",
+        )
+        api_base = ENDPOINTS[region]
+        console.print(f"[dim]Using endpoint: {api_base}[/dim]\n")
 
         # Check env var first
         env_key = os.environ.get("MOONSHOT_API_KEY") or os.environ.get("KIMI_API_KEY")
@@ -37,7 +54,7 @@ class KimiKeyHandler(AuthHandler):
                     "providers": {
                         "moonshot": {
                             "api_key": env_key,
-                            "api_base": self.API_BASE
+                            "api_base": api_base,
                         }
                     }
                 }
@@ -52,7 +69,7 @@ class KimiKeyHandler(AuthHandler):
             "providers": {
                 "moonshot": {
                     "api_key": api_key,
-                    "api_base": self.API_BASE
+                    "api_base": api_base,
                 }
             }
         }

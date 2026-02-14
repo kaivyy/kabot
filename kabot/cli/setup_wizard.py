@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
+import questionary
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -26,14 +27,12 @@ class ClackUI:
     @staticmethod
     def header():
         logo = r"""
-███            █████  █████      █████████      ██████████      █████████    ███████████ 
-░░░███         ░░███  ░░███     ░░███░░░███    ░░███░░░░░███   ░░███░░░░░███ ░░░░███░░░░ 
-  ░░░███        ░███ ░███      ░███   ░███    ░███    ░███   ░███    ░███    ░███     
-    ░░░███      ░██████        ░███████████   ░██████████    ░███    ░███    ░███     
-     ███░       ░███░░███      ░███░░░░░███   ░███░░░░░███   ░███    ░███    ░███     
-   ███░         ░███  ░░███    ░███    ░███   ░███    ░███   ░███    ░███    ░███     
- ███░          █████  █████   █████   █████  ███████████    ███████████     █████    
-░░░            ░░░░░   ░░░░░   ░░░░░   ░░░░░  ░░░░░░░░░░░    ░░░░░░░░░░░     ░░░░░    
+    _  __    _    ____   ____  _______ 
+   | |/ /   / \  | __ ) / __ \|__   __|
+   | ' /   / _ \ |  _ \| |  | |  | |   
+   |  <   / ___ \| |_) | |__| |  | |   
+   | . \ / /   \ \____/ \____/   |_|   
+   |_|\_/_/     \_\                    
 """
         console.print(f"[bold cyan]{logo}[/bold cyan]")
         console.print(f"  🐈 [bold]kabot {__version__}[/bold] — Light footprint, heavy punch.")
@@ -49,20 +48,60 @@ class ClackUI:
 
     @staticmethod
     def summary_box(config: Config):
-        current_model = config.agents.defaults.model
-        gateway_host = config.gateway.host
-        gateway_port = config.gateway.port
+        c = config
+        lines = []
         
-        reachable = probe_gateway(gateway_host, gateway_port)
-        status_text = "[green]reachable[/green]" if reachable else "[red]not detected[/red]"
+        # Model
+        lines.append(f"model: {c.agents.defaults.model}")
         
-        content = Text()
-        content.append(f" model: {current_model}\n", style="dim")
-        content.append(f" gateway: http://{gateway_host}:{gateway_port} ({status_text})", style="dim")
+        # Gateway
+        mode = "local" # Default/Placeholder until we have remote support
+        lines.append(f"gateway.mode: {mode}")
+        lines.append(f"gateway.port: {c.gateway.port}")
+        
+        # Gateway Bind
+        bind = c.gateway.host or "loopback"
+        if bind == "127.0.0.1" or bind == "localhost": bind = "loopback"
+        elif bind == "0.0.0.0": bind = "all interfaces"
+        lines.append(f"gateway.bind: {bind}")
+
+        # Auth
+        auth_status = "configured" if c.gateway.auth_token else "none"
+        lines.append(f"gateway.auth: {auth_status}")
+
+        # Channels
+        active_channels = []
+        if c.channels.telegram.enabled: active_channels.append("telegram")
+        if c.channels.whatsapp.enabled: active_channels.append("whatsapp")
+        if c.channels.discord.enabled: active_channels.append("discord")
+        if c.channels.slack.enabled: active_channels.append("slack")
+        if c.channels.email.enabled: active_channels.append("email")
+        if c.channels.dingtalk.enabled: active_channels.append("dingtalk")
+        if c.channels.qq.enabled: active_channels.append("qq")
+        if c.channels.feishu.enabled: active_channels.append("feishu")
+        
+        if active_channels:
+            lines.append(f"channels: {', '.join(active_channels)}")
+
+        # Tools
+        tools = []
+        if c.tools.web.search.api_key: tools.append("web_search")
+        if c.tools.exec.docker.enabled: tools.append("docker_sandbox")
+        if tools:
+            lines.append(f"tools: {', '.join(tools)}")
+
+        # Workspace (Shorten user home?)
+        ws_path = str(c.workspace_path)
+        home = os.path.expanduser("~")
+        if ws_path.startswith(home):
+            ws_path = "~" + ws_path[len(home):]
+        lines.append(f"workspace: {ws_path}")
+
+        content = "\n".join(lines)
         
         panel = Panel(
             content,
-            title=" Existing config detected ",
+            title="Existing config detected",
             title_align="left",
             border_style="dim",
             box=box.ROUNDED,
@@ -70,8 +109,32 @@ class ClackUI:
         )
         
         console.print("│")
-        console.print(f"◇  {panel}")
+        # Use a grid to put the diamond and panel side-by-side
+        grid = Table.grid(padding=(0, 1))
+        grid.add_row(Text("◇ "), panel)
+        console.print(grid)
         console.print("│")
+
+    @staticmethod
+    def clack_select(message: str, choices: List[Any], default: Any = None) -> str:
+        """A questionary select styled with Clack vertical lines."""
+        console.print("│")
+        result = questionary.select(
+            f"◇  {message}",
+            choices=choices,
+            default=default,
+            style=questionary.Style([
+                ('qmark', 'fg:cyan bold'),
+                ('question', 'bold'),
+                ('pointer', 'fg:cyan bold'),
+                ('highlighted', 'fg:cyan bold'),
+                ('selected', 'fg:green'),
+            ])
+        ).ask()
+        if result is None:
+            console.print("│  [yellow]Cancelled[/yellow]")
+            return None
+        return result
 
 class SetupWizard:
     def __init__(self):
@@ -84,25 +147,22 @@ class SetupWizard:
         ClackUI.summary_box(self.config)
         
         ClackUI.section_start("Environment")
-        console.print("│")
         
-        reachable = probe_gateway(self.config.gateway.host, self.config.gateway.port)
-        local_hint = "(Gateway reachable)" if reachable else "(No gateway detected)"
-        
-        console.print(f"│  ● Local (this machine) [dim]{local_hint}[/dim]")
-        console.print("│  ○ Remote (info-only)")
-        console.print("│")
-        
-        mode_raw = Prompt.ask(
-            "◇  Where will the Gateway run?",
-            choices=["local", "remote"],
+        mode = ClackUI.clack_select(
+            "Where will the Gateway run?",
+            choices=[
+                questionary.Choice("Local (this machine)", value="local"),
+                questionary.Choice("Remote (info-only)", value="remote"),
+            ],
             default="local"
         )
         ClackUI.section_end()
         
+        if mode is None: return self.config
+
         while True:
             choice = self._main_menu()
-            if choice == "finish":
+            if choice == "finish" or choice is None:
                 break
             
             if choice == "workspace":
@@ -115,6 +175,10 @@ class SetupWizard:
                 self._configure_gateway()
             elif choice == "channels":
                 self._configure_channels()
+            elif choice == "skills":
+                self._configure_skills()
+            elif choice == "logging":
+                self._configure_logging()
             elif choice == "doctor":
                 self._run_doctor()
             
@@ -122,39 +186,33 @@ class SetupWizard:
             
         return self.config
 
+
+
     def _main_menu(self) -> str:
-        ClackUI.section_start("Sections")
-        console.print("│")
+        ClackUI.summary_box(self.config)
+        
+        ClackUI.section_start("Configuration Menu")
         
         options = [
-            ("workspace", "Workspace (Set path + sessions)"),
-            ("model", "Model / Auth (Providers, Keys, OAuth)"),
-            ("tools", "Web tools (Search, Browser, Shell)"),
-            ("gateway", "Gateway (Port, Host, Bindings)"),
-            ("channels", "Channels (Telegram, WhatsApp, Slack)"),
-            ("doctor", "Health Check (Run system diagnostic)"),
-            ("finish", "Continue & Finish")
+            questionary.Choice("Workspace (Set path + sessions)", value="workspace"),
+            questionary.Choice("Model / Auth (Providers, Keys, OAuth)", value="model"),
+            questionary.Choice("Tools & Sandbox (Search, Docker, Shell)", value="tools"),
+            questionary.Choice("Gateway (Port, Host, Bindings)", value="gateway"),
+            questionary.Choice("Skills (Install & Configure)", value="skills"),
+            questionary.Choice("Channels (Telegram, WhatsApp, Slack)", value="channels"),
+            questionary.Choice("Logging & Debugging", value="logging"),
+            questionary.Choice("Health Check (Run system diagnostic)", value="doctor"),
+            questionary.Choice("Continue & Finish", value="finish")
         ]
         
-        for idx, (val, label) in enumerate(options, 1):
-            prefix = "●" if idx == 1 and not self.ran_section else "○"
-            console.print(f"│  {prefix} {label}")
-            
-        console.print("│")
-        choice_idx_raw = Prompt.ask(
-            "◆  Select section to configure",
-            choices=[str(i) for i in range(1, len(options) + 1)],
-            default=str(len(options))
-        )
-        choice_idx = int(str(choice_idx_raw))
+        choice = ClackUI.clack_select("Select section to configure", choices=options)
         ClackUI.section_end()
-        return options[choice_idx-1][0]
+        return choice
 
     def _configure_workspace(self):
         ClackUI.section_start("Workspace")
         path = Prompt.ask("│  Workspace directory", default=self.config.agents.defaults.workspace)
         self.config.agents.defaults.workspace = path
-        # Ensure directory exists
         os.makedirs(os.path.expanduser(path), exist_ok=True)
         console.print(f"│  [green]✓ Workspace path set.[/green]")
         ClackUI.section_end()
@@ -165,34 +223,29 @@ class SetupWizard:
         from kabot.auth.manager import AuthManager
         
         manager = AuthManager()
-        choices = get_auth_choices()
+        auth_choices = get_auth_choices()
         
         while True:
-            console.print("│")
-            console.print("│  Select an option:")
-            console.print("│  ● [1] Provider Login (Setup API Keys/OAuth)")
-            console.print("│  ○ [2] Select Default Model (Browse Registry)")
-            console.print("│  ○ [3] Back")
+            choice = ClackUI.clack_select(
+                "Select an option:",
+                choices=[
+                    questionary.Choice("Provider Login (Setup API Keys/OAuth)", value="login"),
+                    questionary.Choice("Select Default Model (Browse Registry)", value="picker"),
+                    questionary.Choice("Back", value="back"),
+                ]
+            )
             
-            choice_raw = Prompt.ask("│\n◆  Choice", choices=["1", "2", "3"], default="1")
-            choice = str(choice_raw)
-            
-            if choice == "3":
+            if choice == "back" or choice is None:
                 break
             
-            if choice == "1":
-                console.print("│")
-                for idx, c in enumerate(choices, 1):
-                    console.print(f"│  ○ {idx}. {c['name']}")
+            if choice == "login":
+                p_options = [questionary.Choice(c['name'], value=c['value']) for c in auth_choices]
+                provider_val = ClackUI.clack_select("Select provider to login", choices=p_options)
                 
-                valid = [str(i) for i in range(1, len(choices) + 1)]
-                idx_raw = Prompt.ask("│\n◆  Select provider to login", choices=valid)
-                idx = int(str(idx_raw))
-                provider_val = choices[idx-1]['value']
-                if manager.login(provider_val):
+                if provider_val and manager.login(provider_val):
                     self._model_picker(provider_val)
             
-            elif choice == "2":
+            elif choice == "picker":
                 self._model_picker()
         
         ClackUI.section_end()
@@ -201,16 +254,14 @@ class SetupWizard:
         if not provider_id:
             providers = self.registry.get_providers()
             sorted_providers = sorted(providers.items())
-            console.print("│")
-            console.print("│  Filter models by provider:")
-            console.print(f"│  ○ 0. All providers ({len(self.registry.list_models())} models)")
-            for idx, (p_name, count) in enumerate(sorted_providers, 1):
-                console.print(f"│  ○ {idx}. {p_name} ({count} models)")
-            p_choices = [str(i) for i in range(len(sorted_providers) + 1)]
-            p_idx_raw = Prompt.ask("│\n◆  Select provider", choices=p_choices, default="0")
-            p_idx = int(str(p_idx_raw))
-            if p_idx > 0:
-                provider_id = sorted_providers[p_idx-1][0]
+            
+            p_choices = [questionary.Choice(f"All providers ({len(self.registry.list_models())} models)", value="all")]
+            for p_name, count in sorted_providers:
+                p_choices.append(questionary.Choice(f"{p_name} ({count} models)", value=p_name))
+            
+            p_val = ClackUI.clack_select("Filter models by provider", choices=p_choices)
+            if p_val == "all": provider_id = None
+            else: provider_id = p_val
 
         all_models = self.registry.list_models()
         if provider_id:
@@ -219,47 +270,428 @@ class SetupWizard:
             models = all_models
         models.sort(key=lambda x: (not x.is_premium, x.id))
 
-        console.print("│")
-        console.print(f"│  Default model (Current: {self.config.agents.defaults.model})")
-        console.print("│  ● 0. Keep current")
-        console.print("│  ○ 1. Enter model manually")
-        for idx, m in enumerate(models, 2):
-            name = m.name
-            if m.is_premium: name = f"{name} [yellow]★[/yellow]"
-            console.print(f"│  ○ {idx}. {m.id} ({name})")
+        m_choices = [
+            questionary.Choice(f"Keep current ({self.config.agents.defaults.model})", value="keep"),
+            questionary.Choice("Enter model ID manually", value="manual"),
+        ]
+        for m in models:
+            label = f"{m.id} ({m.name})"
+            if m.is_premium: label += " ★"
+            m_choices.append(questionary.Choice(label, value=m.id))
         
-        m_choices = [str(i) for i in range(len(models) + 2)]
-        m_idx_raw = Prompt.ask("│\n◆  Select model", choices=m_choices, default="0")
-        m_idx = int(str(m_idx_raw))
-        if m_idx == 0: return
-        elif m_idx == 1:
+        selected_model = ClackUI.clack_select("Select default model", choices=m_choices)
+        
+        if selected_model == "keep" or selected_model is None:
+            return
+        elif selected_model == "manual":
             manual = Prompt.ask("│  Enter Model ID")
             if manual: self.config.agents.defaults.model = manual
         else:
-            selected = models[m_idx-2]
-            self.config.agents.defaults.model = selected.id
-            console.print(f"│  [green]✓ Set to {selected.id}[/green]")
+            self.config.agents.defaults.model = selected_model
+            console.print(f"│  [green]✓ Set to {selected_model}[/green]")
 
     def _configure_tools(self):
-        ClackUI.section_start("Web Tools")
+        ClackUI.section_start("Tools & Sandbox")
+        
+        # Web Search
+        console.print("│  [bold]Web Search[/bold]")
         self.config.tools.web.search.api_key = Prompt.ask("│  Brave Search API Key", default=self.config.tools.web.search.api_key)
-        self.config.tools.restrict_to_workspace = Confirm.ask("│  Restrict to workspace?", default=self.config.tools.restrict_to_workspace)
+        self.config.tools.web.search.max_results = int(Prompt.ask("│  Max Search Results", default=str(self.config.tools.web.search.max_results)))
+        
+        # Execution
+        console.print("│  [bold]Execution Policy[/bold]")
+        self.config.tools.restrict_to_workspace = Confirm.ask("│  Restrict FS usage to workspace?", default=self.config.tools.restrict_to_workspace)
+        self.config.tools.exec.timeout = int(Prompt.ask("│  Command Timeout (s)", default=str(self.config.tools.exec.timeout)))
+        
+        # Docker Sandbox
+        console.print("│  [bold]Docker Sandbox[/bold]")
+        if Confirm.ask("│  Enable Docker Sandbox?", default=self.config.tools.exec.docker.enabled):
+            self.config.tools.exec.docker.enabled = True
+            self.config.tools.exec.docker.image = Prompt.ask("│  Docker Image", default=self.config.tools.exec.docker.image)
+            self.config.tools.exec.docker.memory_limit = Prompt.ask("│  Memory Limit", default=self.config.tools.exec.docker.memory_limit)
+            self.config.tools.exec.docker.cpu_limit = float(Prompt.ask("│  CPU Limit", default=str(self.config.tools.exec.docker.cpu_limit)))
+            self.config.tools.exec.docker.network_disabled = Confirm.ask("│  Disable Network in Sandbox?", default=self.config.tools.exec.docker.network_disabled)
+        else:
+            self.config.tools.exec.docker.enabled = False
+            
         ClackUI.section_end()
 
     def _configure_gateway(self):
         ClackUI.section_start("Gateway")
-        self.config.gateway.host = Prompt.ask("│  Bind Host", default=self.config.gateway.host)
+        
+        # Bind Mode
+        modes = [
+            questionary.Choice("Loopback (Localhost only) [Secure]", value="loopback"),
+            questionary.Choice("Local Network (LAN)", value="local"),
+            questionary.Choice("Public (0.0.0.0) [Unsafe without Auth]", value="public"),
+            questionary.Choice("Tailscale (Private VPN)", value="tailscale"),
+        ]
+        bind_val = ClackUI.clack_select("Bind Mode", choices=modes, default=self.config.gateway.bind_mode)
+        if bind_val:
+            self.config.gateway.bind_mode = bind_val
+            if bind_val == "loopback": self.config.gateway.host = "127.0.0.1"
+            elif bind_val == "local": self.config.gateway.host = "0.0.0.0" # Simplification, or prompt for specific IP? usually 0.0.0.0 is fine for LAN
+            elif bind_val == "public": self.config.gateway.host = "0.0.0.0"
+            elif bind_val == "tailscale": 
+                self.config.gateway.host = "127.0.0.1"
+                self.config.gateway.tailscale = True
+        
         self.config.gateway.port = int(Prompt.ask("│  Port", default=str(self.config.gateway.port)))
+        
+        # Auth Config
+        auth_mode = ClackUI.clack_select("Authentication", choices=[
+            questionary.Choice("Token (Bearer)", value="token"),
+            questionary.Choice("None (Testing only)", value="none"),
+        ], default="token" if self.config.gateway.auth_token else "none")
+
+        if auth_mode == "token":
+            import secrets
+            current = self.config.gateway.auth_token
+            default_token = current if current else secrets.token_hex(16)
+            token = Prompt.ask("│  Auth Token", default=default_token)
+            self.config.gateway.auth_token = token
+        else:
+            self.config.gateway.auth_token = ""
+            
+        # Tailscale explicit toggle if not selected in bind mode
+        if bind_val != "tailscale":
+             self.config.gateway.tailscale = Confirm.ask("│  Enable Tailscale Funnel?", default=self.config.gateway.tailscale)
+
+        ClackUI.section_end()
+
+    def _configure_skills(self):
+        ClackUI.section_start("Skills")
+        from kabot.agent.skills import SkillsLoader
+        loader = SkillsLoader(self.config.workspace_path)
+        
+        skills = loader.list_skills(filter_unavailable=False)
+        eligible = len([s for s in skills if s['valid']])
+        
+        console.print(f"│  Found {len(skills)} skills ({eligible} valid)")
+        
+        if not Confirm.ask("│  Configure skills config?", default=True):
+            ClackUI.section_end()
+            return
+
+        for s in skills:
+            name = s['name']
+            meta = loader._get_skill_meta(name)
+            requires = meta.get("requires", {})
+    def _configure_skills(self):
+        ClackUI.section_start("Skills")
+        from kabot.agent.skills import SkillsLoader
+        loader = SkillsLoader(self.config.workspace_path)
+        
+        # 1. Load all skills with detailed status
+        all_skills = loader.list_skills(filter_unavailable=False)
+        
+        eligible = [s for s in all_skills if s['eligible']]
+        missing_reqs = [s for s in all_skills if not s['eligible'] and not s['missing']['os']]
+        unsupported = [s for s in all_skills if s['missing']['os']]
+        blocked = [] # Future feature
+        
+        # 2. Status Board
+        console.print("│")
+        console.print("◇  Skills status ─────────────╮")
+        console.print("│                             │")
+        console.print(f"│  Eligible: {len(eligible):<17}│")
+        console.print(f"│  Missing requirements: {len(missing_reqs):<5}│")
+        console.print(f"│  Unsupported on this OS: {len(unsupported):<3}│")
+        console.print(f"│  Blocked by allowlist: {len(blocked):<5}│")
+        console.print("│                             │")
+        console.print("├─────────────────────────────╯")
+        console.print("│")
+
+        # 3. Configure/Install Prompt
+        if not Confirm.ask("◇  Configure skills now? (recommended)", default=True):
+            ClackUI.section_end()
+            return
+
+        # 4. Installation Flow (Missing Binaries/Deps)
+        installable = [s for s in missing_reqs if s['missing']['bins'] or s['install']]
+        
+        if installable:
+            choices = [questionary.Choice("Skip for now", value="skip")]
+            for s in installable:
+                missing_str = ", ".join(s['missing']['bins'])
+                label = f"{s['name']}"
+                if missing_str:
+                    label += f" (missing: {missing_str})"
+                choices.append(questionary.Choice(label, value=s['name']))
+            
+            console.print("│")
+            console.print("◆  Install missing skill dependencies")
+            selected_names = questionary.checkbox(
+                "Select skills to install dependencies for",
+                choices=choices,
+                style=questionary.Style([
+                    ('qmark', 'fg:cyan bold'),
+                    ('question', 'bold'),
+                    ('pointer', 'fg:cyan bold'),
+                    ('highlighted', 'fg:cyan bold'),
+                    ('selected', 'fg:green'),
+                ])
+            ).ask()
+            
+            if selected_names and "skip" not in selected_names:
+                for name in selected_names:
+                    skill = next((s for s in installable if s['name'] == name), None)
+                    if not skill: continue
+                    
+                    console.print(f"│  [cyan]Installing dependencies for {name}...[/cyan]")
+                    
+                    # Check for install metadata
+                    install_meta = skill.get("install", {})
+                    
+                    if install_meta and "cmd" in install_meta:
+                        import subprocess
+                        cmd = install_meta["cmd"]
+                        console.print(f"│  Running: [dim]{cmd}[/dim]")
+                        try:
+                            # Run the command
+                            result = subprocess.run(
+                                cmd, 
+                                shell=True, 
+                                capture_output=True, 
+                                text=True,
+                                cwd=self.config.workspace_path
+                            )
+                            if result.returncode == 0:
+                                console.print(f"│  [green]✓ Installed successfully[/green]")
+                            else:
+                                console.print(f"│  [red]✗ Install failed (exit {result.returncode})[/red]")
+                                console.print(f"│    {result.stderr.strip()[:200]}") # Show partial error
+                        except Exception as e:
+                            console.print(f"│  [red]✗ Error executing command: {e}[/red]")
+                    
+                    # Show manual instructions if we can't auto-install (or if checks still fail after install)
+                    if skill['missing']['bins'] and (not install_meta or not install_meta.get("cmd")):
+                        console.print(f"│  [yellow]Please install the following binaries manually:[/yellow]")
+                        for b in skill['missing']['bins']:
+                            console.print(f"│    - {b}")
+                    
+                    console.print(f"│  [dim]Finished processing {name}[/dim]")
+
+        # 5. Environment Variable Configuration (for Eligible + Newly Installed)
+        console.print("│")
+        
+        # Filter for skills that need keys (iterate ALL skills again to catch those fixed by install)
+        # We focus on `primaryEnv` or missing envs
+        needs_env = []
+        for s in all_skills:
+            # Refresh status if needed, but for now use existing.
+            # If we just installed deps, 'missing.bins' might be stale in this list unless we reload.
+            # But 'missing.env' is what we care about here.
+            if s['missing']['env']:
+                needs_env.append(s)
+        
+        if needs_env:
+            # console.print("◆  Configure Environment Variables") # OpenClaw doesn't have this header, it just asks
+            
+            for s in needs_env:
+                primary_env = s.get('primaryEnv')
+                if not primary_env: continue # Should not happen if missing['env'] is set due to our logic
+                
+                # Ask if user wants to configure this skill
+                if not Confirm.ask(f"◇  Set {primary_env} for [cyan]{s['name']}[/cyan]?", default=True):
+                    console.print("│")
+                    continue
+                
+                current_val = os.environ.get(primary_env)
+                val = Prompt.ask(f"│  Enter {primary_env}", default=current_val or "", password=True)
+                
+                if val:
+                    if s['name'] not in self.config.skills:
+                        self.config.skills[s['name']] = {"env": {}}
+                    if "env" not in self.config.skills[s['name']]:
+                        self.config.skills[s['name']]["env"] = {}
+                        
+                    self.config.skills[s['name']]["env"][primary_env] = val
+                    os.environ[primary_env] = val
+                    console.print(f"│  [green]✓ Saved[/green]")
+                console.print("│")
+
         ClackUI.section_end()
 
     def _configure_channels(self):
-        ClackUI.section_start("Channels")
-        console.print("│  [dim]Configure external chat platforms[/dim]")
-        if Confirm.ask("│  Configure Telegram?", default=False):
-            token = Prompt.ask("│  Bot Token")
-            if token:
-                self.config.channels.telegram.token = token
-                self.config.channels.telegram.enabled = True
+        while True:
+            ClackUI.section_start("Channels")
+            
+            # Build choices based on current config status
+            c = self.config.channels
+            
+            def status(enabled: bool):
+                return "[green]ON[/green]" if enabled else "[dim]OFF[/dim]"
+
+            options = [
+                questionary.Choice(f"Telegram  [{status(c.telegram.enabled)}]", value="telegram"),
+                questionary.Choice(f"WhatsApp  [{status(c.whatsapp.enabled)}]", value="whatsapp"),
+                questionary.Choice(f"Discord   [{status(c.discord.enabled)}]", value="discord"),
+                questionary.Choice(f"Slack     [{status(c.slack.enabled)}]", value="slack"),
+                questionary.Choice(f"Feishu    [{status(c.feishu.enabled)}]", value="feishu"),
+                questionary.Choice(f"DingTalk  [{status(c.dingtalk.enabled)}]", value="dingtalk"),
+                questionary.Choice(f"QQ        [{status(c.qq.enabled)}]", value="qq"),
+                questionary.Choice(f"Email     [{status(c.email.enabled)}]", value="email"),
+                questionary.Choice("Back", value="back"),
+            ]
+            
+            choice = ClackUI.clack_select("Select channel to configure", choices=options)
+            
+            if choice == "back" or choice is None:
+                ClackUI.section_end()
+                break
+                
+            if choice == "telegram":
+                if Confirm.ask("│  Enable Telegram?", default=c.telegram.enabled):
+                    token = Prompt.ask("│  Bot Token", default=c.telegram.token)
+                    if token:
+                        c.telegram.token = token
+                        c.telegram.enabled = True
+                        console.print("│  [green]✓ Telegram configured[/green]")
+                else:
+                    c.telegram.enabled = False
+
+            elif choice == "whatsapp":
+                self._configure_whatsapp()
+
+            elif choice == "discord":
+                if Confirm.ask("│  Enable Discord?", default=c.discord.enabled):
+                    token = Prompt.ask("│  Bot Token", default=c.discord.token)
+                    if token:
+                        c.discord.token = token
+                        c.discord.enabled = True
+                    
+                    # Optional advanced fields
+                    if Confirm.ask("│  Configure Gateway/Intents (Advanced)?"):
+                        c.discord.gateway_url = Prompt.ask("│  Gateway URL", default=c.discord.gateway_url)
+                        intents_str = Prompt.ask("│  Intents (comma separated)", default=",".join([str(i) for i in c.discord.intents or []]))
+                        if intents_str:
+                            try:
+                                c.discord.intents = [int(i.strip()) for i in intents_str.split(",") if i.strip()]
+                            except ValueError:
+                                console.print("│  [red]Invalid intents format[/red]")
+                else:
+                    c.discord.enabled = False
+
+            elif choice == "slack":
+                if Confirm.ask("│  Enable Slack?", default=c.slack.enabled):
+                    bot_token = Prompt.ask("│  Bot Token (xoxb-...)", default=c.slack.bot_token)
+                    app_token = Prompt.ask("│  App Token (xapp-...)", default=c.slack.app_token)
+                    if bot_token and app_token:
+                        c.slack.bot_token = bot_token
+                        c.slack.app_token = app_token
+                        c.slack.enabled = True
+                else:
+                    c.slack.enabled = False
+
+            elif choice == "feishu":
+                if Confirm.ask("│  Enable Feishu?", default=c.feishu.enabled):
+                    app_id = Prompt.ask("│  App ID", default=c.feishu.app_id)
+                    app_secret = Prompt.ask("│  App Secret", default=c.feishu.app_secret)
+                    if app_id and app_secret:
+                        c.feishu.app_id = app_id
+                        c.feishu.app_secret = app_secret
+                        c.feishu.enabled = True
+                else:
+                    c.feishu.enabled = False
+
+            elif choice == "dingtalk":
+                if Confirm.ask("│  Enable DingTalk?", default=c.dingtalk.enabled):
+                    c.dingtalk.client_id = Prompt.ask("│  Client ID (AppKey)", default=c.dingtalk.client_id)
+                    c.dingtalk.client_secret = Prompt.ask("│  Client Secret (AppSecret)", default=c.dingtalk.client_secret)
+                    c.dingtalk.enabled = True
+                else:
+                    c.dingtalk.enabled = False
+
+            elif choice == "qq":
+                if Confirm.ask("│  Enable QQ?", default=c.qq.enabled):
+                    c.qq.app_id = Prompt.ask("│  App ID", default=c.qq.app_id)
+                    c.qq.secret = Prompt.ask("│  App Secret", default=c.qq.secret)
+                    c.qq.enabled = True
+                else:
+                    c.qq.enabled = False
+
+            elif choice == "email":
+                if Confirm.ask("│  Enable Email Channel?", default=c.email.enabled):
+                    console.print("│  [bold]IMAP (Incoming)[/bold]")
+                    c.email.imap_host = Prompt.ask("│  IMAP Host", default=c.email.imap_host)
+                    c.email.imap_username = Prompt.ask("│  IMAP User", default=c.email.imap_username)
+                    if Confirm.ask("│  Update IMAP Password?"):
+                        c.email.imap_password = Prompt.ask("│  IMAP Password", password=True)
+                    
+                    console.print("│  [bold]SMTP (Outgoing)[/bold]")
+                    c.email.smtp_host = Prompt.ask("│  SMTP Host", default=c.email.smtp_host)
+                    c.email.smtp_username = Prompt.ask("│  SMTP User", default=c.email.smtp_username)
+                    if Confirm.ask("│  Update SMTP Password?"):
+                        c.email.smtp_password = Prompt.ask("│  SMTP Password", password=True)
+                    
+                    c.email.from_address = Prompt.ask("│  Sender Address (From)", default=c.email.from_address)
+                    c.email.enabled = True
+                else:
+                    c.email.enabled = False
+
+
+            ClackUI.section_end()
+
+    def _configure_whatsapp(self):
+        """Special flow for WhatsApp Bridge."""
+         # Check if we should enable/disable first
+        if not Confirm.ask("│  Enable WhatsApp?", default=self.config.channels.whatsapp.enabled):
+            self.config.channels.whatsapp.enabled = False
+            return
+
+        self.config.channels.whatsapp.enabled = True
+        
+        # Bridge setup logic
+        try:
+            from kabot.cli.bridge_utils import get_bridge_dir, run_bridge_login
+            import shutil
+            
+            # Check/Install Bridge
+            with console.status("│  Checking WhatsApp Bridge..."):
+                bridge_dir = get_bridge_dir()
+            
+            console.print("│  [green]✓ Bridge installed[/green]")
+            
+            if Confirm.ask("│  Connect now? (Show QR Code)"):
+                console.print("│")
+                console.print("│  [yellow]starting bridge... Press Ctrl+C to stop/return after scanning.[/yellow]")
+                console.print("│")
+                try:
+                    run_bridge_login()
+                except KeyboardInterrupt:
+                    console.print("\n│  [yellow]Returned to wizard.[/yellow]")
+                except Exception as e:
+                     console.print(f"│  [red]Error running bridge: {e}[/red]")
+        except ImportError:
+             console.print("│  [red]Could not load CLI commands. Please install dependencies.[/red]")
+        except Exception as e:
+             console.print(f"│  [red]Bridge setup failed: {e}[/red]")
+
+    def _configure_logging(self):
+        ClackUI.section_start("Logging & Debugging")
+        
+        # Log Level
+        level = ClackUI.clack_select("Log Level", choices=[
+            questionary.Choice("DEBUG (Verbose)", value="DEBUG"),
+            questionary.Choice("INFO (Standard)", value="INFO"),
+            questionary.Choice("WARNING (Issues only)", value="WARNING"),
+            questionary.Choice("ERROR (Critical only)", value="ERROR"),
+        ], default=self.config.logging.level)
+        self.config.logging.level = level
+        
+        # File Retention
+        retention = Prompt.ask("│  File Retention (e.g. '7 days', '1 week')", default=self.config.logging.retention)
+        self.config.logging.retention = retention
+        
+        # DB Retention
+        db_days = Prompt.ask("│  Database Retention (days)", default=str(self.config.logging.db_retention_days))
+        try:
+            self.config.logging.db_retention_days = int(db_days)
+        except ValueError:
+            console.print("│  [red]Invalid number, keeping default.[/red]")
+            
+        console.print("│  [green]✓ Logging configured[/green]")
         ClackUI.section_end()
 
     def _run_doctor(self):

@@ -149,13 +149,15 @@ If the user asks to build a complex application or feature:
 2. USE the 'writing-plans' skill to document the plan.
 3. ALWAYS wait for approval before touching any code.""",
 
-        "CHAT": """# Role: Friendly Assistant
-You are a warm, engaging AI assistant. Focus on conversation and personality.
-- Be concise but friendly.
-- You don't need to be overly technical unless asked.
-- Feel free to use a more casual tone.
-- Speak naturally like a friend.
-- Use emojis sparingly to convey emotion.""",
+        "CHAT": """# Role: Conversational Companion
+You are a warm, natural conversationalist — like a reliable friend who happens to be really capable.
+- Talk like a real person. No templates, no "Very well, I will..." formulas.
+- Match the user's energy: if they're casual, you're casual. If they're serious, you're focused.
+- Speak naturally. Example: "Got it!" instead of "I will process your request immediately."
+- Emojis are fine but sparingly — max 1-2 per message, only when it feels genuine.
+- NEVER narrate your internal process ("I am processing...", "Checking in progress...").
+- When you USE a tool, just do it. Let the result speak. Don't announce it first.
+- Keep responses SHORT for casual chat. Long answers only when the topic demands it.""",
 
         "RESEARCH": """# Role: Research Analyst
 You are a thorough researcher. Focus on accuracy, citations, and comprehensive answers.
@@ -166,9 +168,16 @@ You are a thorough researcher. Focus on accuracy, citations, and comprehensive a
         "GENERAL": """# Role: General Assistant
 You are a helpful AI assistant capable of handling various tasks.
 - Maintain a professional but approachable tone.
-- Confirm requests before execution if they are significant.
+- For tool-based tasks (reminders, weather, stocks, file ops), ACT IMMEDIATELY. Do NOT ask for confirmation.
+- For complex tasks (building apps, writing code), use the brainstorming workflow below.
 
-GUIDED WORKFLOW:
+IMMEDIATE ACTION TASKS (use tool right away, no confirmation needed):
+- Reminders/scheduling → use 'cron' tool immediately
+- Weather/temperature → use 'weather' tool immediately
+- Stock/crypto → use 'stock'/'crypto' tool immediately
+- File operations → use 'read_file'/'write_file' immediately
+
+GUIDED WORKFLOW (only for building complex features from scratch):
 If the user asks to build a complex application or feature from scratch:
 1. DO NOT start writing code immediately.
 2. OFFER to start with the **Brainstorming** phase to clarify requirements.
@@ -181,13 +190,15 @@ If the user asks to build a complex application or feature from scratch:
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
     
-    def build_system_prompt(self, skill_names: list[str] | None = None, profile: str = "GENERAL") -> str:
+    def build_system_prompt(self, skill_names: list[str] | None = None, profile: str = "GENERAL", tool_names: list[str] | None = None, current_message: str | None = None) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
 
         Args:
             skill_names: Optional list of skills to include.
             profile: The active personality profile (CODING, CHAT, RESEARCH, GENERAL).
+            tool_names: List of available tool names.
+            current_message: Current user message (for auto skill matching).
 
         Returns:
             Complete system prompt.
@@ -211,6 +222,32 @@ If the user asks to build a complex application or feature from scratch:
         if memory:
             parts.append(f"# Memory\n\n{memory}")
         
+        # Tool roster (helps weaker models understand their capabilities)
+        if tool_names:
+            tools_str = ", ".join(tool_names)
+            parts.append(f"""## Your Callable Tools
+You have these tools available: {tools_str}
+When a user asks to do something these tools can handle, USE THE TOOL IMMEDIATELY.
+NEVER say "I cannot access files" — you CAN with read_file.
+NEVER fabricate file contents — always use read_file first.
+NEVER say "I cannot run commands" — you CAN with exec.""")
+        
+        # Guardrails from past lessons (metacognition)
+        try:
+            from kabot.memory.sqlite_store import SQLiteMetadataStore
+            db_path = self.workspace / "chroma" / "metadata.db"
+            if db_path.exists():
+                meta = SQLiteMetadataStore(db_path)
+                guardrails = meta.get_guardrails(limit=5)
+                if guardrails:
+                    guardrail_text = "\n".join(f"- {g}" for g in guardrails)
+                    parts.append(f"""## Learned Guardrails (from past mistakes)
+The following rules were learned from previous interactions where quality was low:
+{guardrail_text}
+Follow these guardrails to avoid repeating past mistakes.""")
+        except Exception:
+            pass  # Silently skip if lessons table doesn't exist yet
+        
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
         always_skills = self.skills.get_always_skills()
@@ -219,13 +256,35 @@ If the user asks to build a complex application or feature from scratch:
             if always_content:
                 parts.append(f"# Active Skills\n\n{always_content}")
         
-        # 2. Available skills: only show summary (agent uses read_file to load)
+        # 2. Auto-matched skills based on user message
+        loaded_skills = set(always_skills) if always_skills else set()
+        if skill_names:
+            loaded_skills.update(skill_names)
+        
+        if current_message:
+            matched = self.skills.match_skills(current_message, profile)
+            # Filter out already-loaded skills
+            new_matches = [s for s in matched if s not in loaded_skills]
+            if new_matches:
+                matched_content = self.skills.load_skills_for_context(new_matches)
+                if matched_content:
+                    names_str = ", ".join(new_matches)
+                    parts.append(f"# Auto-Selected Skills (matched to your request)\n\n"
+                                 f"The following skills were auto-detected as relevant: {names_str}\n\n"
+                                 f"{matched_content}")
+                    loaded_skills.update(new_matches)
+                    logger.info(f"Auto-loaded skills: {new_matches}")
+        
+        # 3. Available skills: only show summary (agent uses read_file to load)
         skills_summary = self.skills.build_skills_summary()
         if skills_summary:
-            parts.append(f"""# Skills
+            parts.append(f"""# Available Skills (Reference Documents)
 
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
+⚠️ IMPORTANT: Skills listed below are NOT callable tools. To use a skill:
+1. Call read_file with the skill's <location> path
+2. Follow the instructions inside that SKILL.md
+NEVER attempt to call a skill name directly as a tool function.
+Skills with available="false" need dependencies installed first.
 
 {skills_summary}""")
         
@@ -273,11 +332,23 @@ Always be helpful, accurate, and concise.
 CRITICAL: If you need to use a tool (like downloading files, checking weather, etc.), use the tool IMMEDIATELY in your first response.
 DO NOT send a text-only response saying "I will do this" or "Pemeriksaan sedang berlangsung" without actually calling the tool. 
 
+REMINDERS & SCHEDULING:
+- When user asks to be reminded or to schedule something, ALWAYS use the 'cron' tool.
+- NEVER fake a countdown, write "(1 menit kemudian...)" or pretend time has passed.
+- Flow: call cron tool → confirm it's set → the cron service will deliver the message automatically when the time comes.
+- For "ingatkan X menit lagi", calculate the target time = current time + X minutes, then use cron with at_time.
+- After the reminder fires, the cron job auto-deletes (one_shot/delete_after_run).
+
 NATURAL CONVERSATION:
 - Do NOT use internal labels like "PHASE 1", "ACKNOWLEDGMENT", or "PLAN" in your response.
-- Speak naturally like a human colleague.
-- Use the user's language and tone.
-- Be direct: instead of "I will now use the tool", just say "I'm checking the files for you".
+- Speak naturally like a human colleague — like a dependable friend.
+- Match the user's language, tone, and energy level.
+- Be direct: instead of "I will now use the tool", just DO IT.
+- NEVER use robotic template language like "Very well, I will process your request."
+- Use natural language. Example:
+  GOOD: "Got it, reminder set! I'll ping you in a minute."
+  BAD: "Very well, I will create a reminder. Please wait..."
+- Keep it short and human. No walls of text for simple tasks.
 
 SKILL DISCOVERY:
 If the user asks for a specific task (e.g. "Order food", "Control lights", "Check stars") and you don't have a direct tool for it:
@@ -311,6 +382,7 @@ If you are performing a multi-step task, start the first step NOW."""
         profile: str = "GENERAL",
         model: str = "gpt-4",
         max_context: int | None = None,
+        tool_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call with token budget management.
@@ -335,7 +407,7 @@ If you are performing a multi-step task, start the first step NOW."""
         messages = []
 
         # System prompt
-        system_prompt = self.build_system_prompt(skill_names, profile)
+        system_prompt = self.build_system_prompt(skill_names, profile, tool_names=tool_names, current_message=current_message)
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
 

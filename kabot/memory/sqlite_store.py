@@ -86,6 +86,21 @@ class SQLiteMetadataStore:
                 )
             """)
 
+            # Lessons table (metacognition — structured failure patterns)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS lessons (
+                    lesson_id TEXT PRIMARY KEY,
+                    trigger TEXT NOT NULL,
+                    mistake TEXT NOT NULL,
+                    fix TEXT NOT NULL,
+                    guardrail TEXT NOT NULL,
+                    score_before INTEGER,
+                    score_after INTEGER,
+                    task_type TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Models table (scanned from APIs)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS models (
@@ -102,11 +117,27 @@ class SQLiteMetadataStore:
                 )
             """)
 
+            # System logs table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS system_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    level TEXT NOT NULL,
+                    module TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    exception TEXT,
+                    metadata TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Create indexes for performance
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_level ON system_logs(level)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_created ON system_logs(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_session ON facts(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_type ON lessons(task_type)")
 
             conn.commit()
 
@@ -315,6 +346,65 @@ class SQLiteMetadataStore:
             logger.error(f"Error getting facts: {e}")
             return []
 
+    # ── Lessons (Metacognition) ─────────────────────────────────
+
+    def add_lesson(self, lesson_id: str, trigger: str, mistake: str,
+                   fix: str, guardrail: str, score_before: int | None = None,
+                   score_after: int | None = None, task_type: str | None = None) -> bool:
+        """Record a lesson from a failed/retried interaction."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO lessons
+                       (lesson_id, trigger, mistake, fix, guardrail,
+                        score_before, score_after, task_type)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (lesson_id, trigger, mistake, fix, guardrail,
+                     score_before, score_after, task_type)
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error adding lesson: {e}")
+            return False
+
+    def get_recent_lessons(self, limit: int = 10,
+                           task_type: str | None = None) -> list[dict]:
+        """Get recent lessons, optionally filtered by task type."""
+        try:
+            with self._get_connection() as conn:
+                if task_type:
+                    cursor = conn.execute(
+                        """SELECT * FROM lessons
+                           WHERE task_type = ?
+                           ORDER BY created_at DESC LIMIT ?""",
+                        (task_type, limit)
+                    )
+                else:
+                    cursor = conn.execute(
+                        """SELECT * FROM lessons
+                           ORDER BY created_at DESC LIMIT ?""",
+                        (limit,)
+                    )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting lessons: {e}")
+            return []
+
+    def get_guardrails(self, limit: int = 5) -> list[str]:
+        """Get unique guardrails for injection into system prompt."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    """SELECT DISTINCT guardrail FROM lessons
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (limit,)
+                )
+                return [row["guardrail"] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting guardrails: {e}")
+            return []
+
     def save_memory_index(self, session_id: str, message_id: str,
                          chroma_id: str, content_hash: str) -> bool:
         """Save ChromaDB memory index reference."""
@@ -393,3 +483,41 @@ class SQLiteMetadataStore:
         except Exception as e:
             logger.error(f"Error getting scanned models: {e}")
             return []
+
+    # ── System Logs ─────────────────────────────────────────────
+
+    def add_log(self, level: str, module: str, message: str,
+                metadata: dict | None = None, exception: str | None = None) -> bool:
+        """Add a system log entry."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """INSERT INTO system_logs
+                       (level, module, message, metadata, exception)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (level, module, message,
+                     json.dumps(metadata) if metadata else None,
+                     exception)
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            # Don't log this error to avoid recursion if logger uses this DB
+            print(f"Error adding log: {e}")
+            return False
+
+    def cleanup_logs(self, retention_days: int = 30) -> int:
+        """Delete logs older than retention period."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    """DELETE FROM system_logs
+                       WHERE created_at < datetime('now', ?)""",
+                    (f"-{retention_days} days",)
+                )
+                deleted = cursor.rowcount
+                conn.commit()
+                return deleted
+        except Exception as e:
+            print(f"Error cleaning logs: {e}")
+            return 0

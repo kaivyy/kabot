@@ -216,73 +216,6 @@ class ChromaMemoryManager:
         except Exception as e:
             logger.error(f"Error indexing message: {e}")
 
-    async def search_memory(self, query: str, session_id: str | None = None,
-                           limit: int = 5) -> list[dict]:
-        """
-        Search memory using semantic similarity.
-
-        Args:
-            query: Search query
-            session_id: Optional session filter
-            limit: Maximum results
-
-        Returns:
-            List of relevant messages with similarity scores
-        """
-        try:
-            # Generate query embedding
-            query_embedding = await self.embeddings.embed(query)
-
-            if not query_embedding:
-                return []
-
-            self._init_chroma()
-
-            # Prepare filter
-            where_filter = {"session_id": session_id} if session_id else None
-
-            # Search ChromaDB
-            results = self._collection.query(
-                query_embeddings=[query_embedding],
-                n_results=limit,
-                where=where_filter,
-                include=["documents", "metadatas", "distances"]
-            )
-
-            # Format results
-            messages = []
-            if results["ids"] and len(results["ids"][0]) > 0:
-                for i, chroma_id in enumerate(results["ids"][0]):
-                    metadata = results["metadatas"][0][i]
-                    document = results["documents"][0][i]
-                    distance = results["distances"][0][i]
-
-                    # Get full message from SQLite
-                    message_id = metadata.get("message_id")
-                    msg_data = self._get_message_by_id(message_id)
-
-                    if msg_data:
-                        msg_data["similarity_score"] = 1.0 - distance  # Convert distance to similarity
-                        messages.append(msg_data)
-                    else:
-                        # If not found in messages table, check facts table or use ChromaDB document
-                        fact_data = self._get_fact_by_id(message_id)
-                        if fact_data:
-                            fact_data["similarity_score"] = 1.0 - distance
-                            messages.append(fact_data)
-                        elif document:
-                            # Fallback: use ChromaDB document directly
-                            messages.append({
-                                "content": document,
-                                "metadata": metadata,
-                                "similarity_score": 1.0 - distance
-                            })
-
-            return messages
-
-        except Exception as e:
-            logger.error(f"Error searching memory: {e}")
-            return []
 
     def _perform_bm25_search(self, query: str, limit: int = 5) -> list[dict]:
         """Perform keyword search using BM25."""
@@ -436,11 +369,13 @@ class ChromaMemoryManager:
         except Exception as e:
             logger.error(f"Error searching memory: {e}")
             return []
+
+    def _get_message_by_id(self, message_id: str) -> dict | None:
         """Get message data from SQLite by ID."""
         try:
             messages = self.metadata.get_message_tree(message_id)
             if messages:
-                return messages[-1]  # Return the message itself (last in ancestors)
+                return messages[-1]
             return None
         except Exception:
             return None
@@ -632,3 +567,32 @@ class ChromaMemoryManager:
             provider_info.update(self.embeddings.get_model_info())
 
         return provider_info
+
+    # ── Lessons (Metacognition) ─────────────────────────────────
+
+    async def save_lesson(self, trigger: str, mistake: str, fix: str,
+                          guardrail: str, score_before: int | None = None,
+                          score_after: int | None = None,
+                          task_type: str | None = None) -> bool:
+        """Save a metacognition lesson to SQLite."""
+        import uuid
+        lesson_id = str(uuid.uuid4())[:12]
+        return self.metadata.add_lesson(
+            lesson_id=lesson_id,
+            trigger=trigger,
+            mistake=mistake,
+            fix=fix,
+            guardrail=guardrail,
+            score_before=score_before,
+            score_after=score_after,
+            task_type=task_type,
+        )
+
+    def get_recent_lessons(self, limit: int = 10,
+                           task_type: str | None = None) -> list[dict]:
+        """Get recent lessons from SQLite."""
+        return self.metadata.get_recent_lessons(limit=limit, task_type=task_type)
+
+    def get_guardrails(self, limit: int = 5) -> list[str]:
+        """Get distilled guardrail strings for prompt injection."""
+        return self.metadata.get_guardrails(limit=limit)

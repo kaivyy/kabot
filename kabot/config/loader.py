@@ -3,6 +3,7 @@
 import json
 import time
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 from contextlib import contextmanager
@@ -16,23 +17,42 @@ def get_config_path() -> Path:
 
 
 def get_data_dir() -> Path:
-    """Get the kabot data directory."""
+    """Get the kabot data directory (legacy support)."""
     from kabot.utils.helpers import get_data_path
     return get_data_path()
+
+
+def get_global_data_dir() -> Path:
+    """Get the global kabot data directory (for shared creds/db)."""
+    return get_data_dir()
+
+
+def get_credentials_dir() -> Path:
+    """Get the global credentials directory (Token Sink)."""
+    path = get_global_data_dir() / "credentials"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_agent_dir(agent_id: str = "main") -> Path:
+    """Get the dedicated directory for a specific agent."""
+    path = get_global_data_dir() / "agents" / agent_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def load_config(config_path: Path | None = None) -> Config:
     """
     Load configuration from file or create default.
-    
+
     Args:
         config_path: Optional path to config file. Uses default if not provided.
-    
+
     Returns:
         Loaded configuration object.
     """
     path = config_path or get_config_path()
-    
+
     if path.exists():
         try:
             with open(path) as f:
@@ -42,20 +62,16 @@ def load_config(config_path: Path | None = None) -> Config:
         except (json.JSONDecodeError, ValueError) as e:
             print(f"Warning: Failed to load config from {path}: {e}")
             print("Using default configuration.")
-    
+
     return Config()
 
-
-import time
-import os
-from contextlib import contextmanager
 
 @contextmanager
 def file_lock(path: Path, timeout: int = 10):
     """Simple file-based lock for atomic config updates."""
     lock_path = path.with_suffix(".lock")
     start_time = time.time()
-    
+
     while True:
         try:
             # Try to create the lock file exclusively
@@ -73,6 +89,7 @@ def file_lock(path: Path, timeout: int = 10):
             if time.time() - start_time > timeout:
                 raise TimeoutError(f"Could not acquire lock on {path} after {timeout}s")
             time.sleep(0.1)
+
 
 def save_config(config: Config, config_path: Path | None = None) -> None:
     """
@@ -94,18 +111,31 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
         temp_path = path.with_suffix(".tmp")
         with open(temp_path, "w") as f:
             json.dump(data, f, indent=2)
-        
+
         # Atomic rename (replace existing if possible)
         if os.name == 'nt': # Windows
+            if path.exists():
+                # Create backup like OpenClaw
+                backup_path = path.with_suffix(".json.bak")
+                try:
+                    if backup_path.exists():
+                        os.remove(backup_path)
+                    os.rename(path, backup_path)
+                except Exception:
+                    pass
+            # Move temp to final
             if path.exists():
                 os.remove(path)
             os.rename(temp_path, path)
         else: # Unix
+            if path.exists():
+                shutil.copy2(path, path.with_suffix(".json.bak"))
             os.replace(temp_path, path)
+
 
 def _migrate_config(data: dict) -> dict:
     """Migrate old config formats to current."""
-    # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
+    # Move tools.exec.restrictToWorkspace -> tools.restrictToWorkspace
     tools = data.get("tools", {})
     exec_cfg = tools.get("exec", {})
     if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:

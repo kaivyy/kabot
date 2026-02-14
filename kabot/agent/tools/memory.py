@@ -12,7 +12,7 @@ from kabot.memory.chroma_memory import ChromaMemoryManager
 
 
 class SaveMemoryTool(Tool):
-    """Tool untuk menyimpan memori pribadi, diary, atau fakta."""
+    """Tool to save personal memories, diary entries, or facts."""
 
     name = "save_memory"
     description = "Save a personal memory, diary entry, or fact for long-term storage"
@@ -158,7 +158,7 @@ class GetMemoryTool(Tool):
 
 
 class ListRemindersTool(Tool):
-    """Tool untuk melihat daftar pengingat."""
+    """Tool to list active reminders."""
 
     name = "list_reminders"
     description = "List all active reminders and their scheduled times"

@@ -21,7 +21,30 @@
       "Bash(# Create the plan file with detailed steps\ncat <<'EOF'\n# Implementation Plan: Modular Authentication System\n\n**Goal**: Refactor `kabot` authentication into a modular `kabot/auth/` system that handles provider authentication with \"smart\" features \\(OAuth vs API Key, environment detection, VPS awareness\\) and integrates it into the CLI.\n\n## 1. Directory Structure & Foundation\n\nCreate the new package structure to house the authentication logic.\n\n- [ ] **Create Directories**\n    - `kabot/auth/`\n    - `kabot/auth/handlers/`\n- [ ] **Create `__init__.py` files**\n    - `kabot/auth/__init__.py`\n    - `kabot/auth/handlers/__init__.py`\n\n**Verification**: Run `ls -R kabot/auth` to confirm structure.\n\n## 2. Utility Implementation\n\nImplement helper functions for environment detection and safe input handling.\n\n- [ ] **Create `kabot/auth/utils.py`**\n    - `is_vps\\(\\) -> bool`: Detect if running in SSH session or headless environment \\(check `SSH_CLIENT`, `SSH_TTY`, `CI` env vars\\).\n    - `open_browser\\(url: str\\)`: If local, open `webbrowser`; if VPS, print \"Please open this URL: ...\".\n    - `secure_input\\(prompt: str\\) -> str`: Wrapper around `rich.prompt.Prompt.ask\\(..., password=True\\)`.\n\n**Verification**: Create a small script to import `kabot.auth.utils` and print `is_vps\\(\\)` result.\n\n## 3. Abstract Base Handler\n\nDefine the contract that all authentication providers must follow.\n\n- [ ] **Create `kabot/auth/handlers/base.py`**\n    - Class `AuthHandler` \\(ABC\\)\n    - Abstract method `authenticate\\(self\\) -> dict`: Performs the auth flow and returns config dictionary to merge \\(e.g., `{'providers': {'openai': {'api_key': '...'}}}`\\).\n    - Abstract method `validate\\(self, credentials: dict\\) -> bool`: Optional validation step.\n    - Property `name`: Provider name.\n\n## 4. Provider Handlers\n\nImplement specific logic for each provider.\n\n- [ ] **Create `kabot/auth/handlers/openai.py`**\n    - Inherits `AuthHandler`.\n    - Prompts for API Key.\n    - Checks for existing `OPENAI_API_KEY` env var.\n- [ ] **Create `kabot/auth/handlers/anthropic.py`**\n    - Inherits `AuthHandler`.\n    - Prompts for API Key.\n- [ ] **Create `kabot/auth/handlers/google.py`**\n    - Inherits `AuthHandler`.\n    - Prompts for API Key.\n- [ ] **Create `kabot/auth/handlers/ollama.py`**\n    - Inherits `AuthHandler`.\n    - Auto-detects `OLLAMA_HOST` or prompts for base URL.\n    - Sets `api_key` to \"ollama\" \\(dummy\\) if needed by schema.\n\n**Verification**: Unit test instantiating `OpenAIHandler` and calling `authenticate` \\(mocking input\\).\n\n## 5. Menu & Registry\n\nDefine the available providers and how to load them.\n\n- [ ] **Create `kabot/auth/menu.py`**\n    - `AUTH_PROVIDERS`: Dictionary mapping identifiers to handler classes and metadata.\n    ```python\n    AUTH_PROVIDERS = {\n        \"openai\": {\n            \"name\": \"OpenAI\",\n            \"description\": \"GPT-4o, o1-preview\",\n            \"handler_path\": \"kabot.auth.handlers.openai.OpenAIHandler\"\n        },\n        ...\n    }\n    ```\n\n## 6. Auth Manager\n\nThe central controller that glues the CLI, Menu, and Handlers together.\n\n- [ ] **Create `kabot/auth/manager.py`**\n    - Class `AuthManager`.\n    - Method `list_providers\\(\\)`: Returns list for CLI selection.\n    - Method `login\\(provider_id: str\\)`:\n        1. Instantiates specific handler.\n        2. Calls `handler.authenticate\\(\\)`.\n        3. Loads current config using `kabot.config.loader`.\n        4. Updates config object.\n        5. Saves config using `kabot.config.loader.save_config`.\n    - Method `get_status\\(\\)`: Checks which providers are currently configured.\n\n**Verification**: Run a script that uses `AuthManager` to list providers.\n\n## 7. CLI Integration\n\nExpose the new functionality to the user.\n\n- [ ] **Update `kabot/cli/commands.py`**\n    - Add new command group `auth = typer.Typer\\(...\\)`.\n    - Command `auth login [provider]`: Interactive selection or direct provider login.\n    - Command `auth status`: Display configured providers.\n- [ ] **Refactor `kabot/cli/setup_wizard.py`**\n    - Replace `_setup_provider` logic with calls to `AuthManager`.\n    - This ensures the setup wizard uses the same \"smart\" logic as the individual auth command.\n\n**Verification**: Run `python -m kabot.cli.commands auth --help`.\n\n### Critical Files for Implementation\n- `kabot/auth/manager.py` - Core logic for orchestration.\n- `kabot/auth/handlers/base.py` - Interface definition.\n- `kabot/auth/utils.py` - VPS detection logic.\n- `kabot/cli/commands.py` - Entry point for the new commands.\nEOF > \"\"C:\\\\Users\\\\Arvy Kairi\\\\.claude\\\\plans\\\\auth-system.md\"\"\n)",
       "Skill(navigator:nav-task)",
       "Bash(find:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git rev-parse --show-toplevel)",
+      "Bash(if [ -d \"worktrees\" ])",
+      "Bash(then echo \"worktrees\")",
+      "Bash(fi)",
+      "Bash(if [ -d \".worktrees\" ])",
+      "Bash(then echo \".worktrees\")",
+      "Bash(git check-ignore -q .worktrees)",
+      "Bash(git worktree add .worktrees/feature/advanced-kabot-features -b feature/advanced-kabot-features)",
+      "Bash(if [ -d \"tests\" ])",
+      "Bash(then pytest tests/ -v --tb=short)",
+      "Bash(else echo \"No tests directory found\")",
+      "Bash(pytest tests/ -v --tb=line)",
+      "Bash(pytest tests/cron/test_parse.py -v)",
+      "Bash(pytest tests/cron/test_cron_tool.py -v)",
+      "Bash(pytest tests/cron/test_context_messages.py -v)",
+      "Bash(pytest tests/cron/ -v)",
+      "Bash(pytest tests/cron/test_delivery.py -v)",
+      "Bash(pytest tests/agent/test_session_isolation.py::test_process_isolated_no_history -v)",
+      "Bash(pytest tests/gateway/test_cron_api.py -v)",
+      "Bash(pytest tests/gateway/test_rate_limit.py -v)",
+      "Bash(git checkout main)",
+      "Bash(cd C:/Users/Arvy Kairi/Desktop/bot/kabot)",
+      "Bash(git merge feature/advanced-kabot-features)"
     ]
   }
 }

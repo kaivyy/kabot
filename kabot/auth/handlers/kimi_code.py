@@ -23,7 +23,8 @@ class KimiCodeHandler(AuthHandler):
         """Execute Kimi Code subscription authentication flow."""
         console.print("\n[bold]Kimi Code Subscription Setup[/bold]")
         console.print("This requires a Kimi Code subscription plan.")
-        console.print("Get your subscription key from: https://platform.moonshot.cn/console/api-keys\n")
+        url = "https://www.kimi.com/code/console"
+        console.print(f"Get your subscription key from: [link={url}]{url}[/link]\n")
 
         # Check env var first
         env_key = os.environ.get("KIMI_CODE_API_KEY")

@@ -1,5 +1,5 @@
 # Kabot Installation Script for Windows PowerShell
-# Usage: iwr -useb https://raw.githubusercontent.com/kaivyy/kabot/main/install.ps1 | iex
+# Usage: .\install.bat
 
 param(
     [string]$Version = "latest",
@@ -80,7 +80,7 @@ function Main {
     }
 
     $pythonVersion = & $pythonCmd --version
-    Write-Info "Found $pythonVersion at $(Get-Command $pythonCmd | Select-Object -ExpandProperty Source)"
+    Write-Info "Found $pythonVersion"
 
     # Create installation directory
     Write-Info "Creating installation directory at $InstallDir..."
@@ -102,17 +102,14 @@ function Main {
     $venvPython = Join-Path $venvDir "Scripts\python.exe"
     $venvPip = Join-Path $venvDir "Scripts\pip.exe"
 
-    # Upgrade pip
+    # Upgrade pip using a safer method
     Write-Info "Upgrading pip..."
-    & $venvPip install --upgrade pip setuptools wheel | Out-Null
+    & $venvPython -m pip install --upgrade pip setuptools wheel | Out-Null
 
-    # Install Kabot
-    Write-Info "Installing kabot-ai package..."
-    if ($Version -eq "latest") {
-        & $venvPip install kabot-ai
-    } else {
-        & $venvPip install "kabot-ai==$Version"
-    }
+    # Install Kabot from LOCAL source
+    Write-Info "Installing kabot-ai and dependencies from local source..."
+    & $venvPip install -e .
+    & $venvPip install questionary
 
     # Create wrapper batch file
     Write-Info "Creating kabot command wrapper..."
@@ -126,14 +123,13 @@ function Main {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if ($userPath -notlike "*$binDir*") {
         Write-Info "Adding $binDir to PATH..."
-        [Environment]::SetEnvironmentVariable(
-            "Path",
-            "$binDir;$userPath",
-            "User"
-        )
+        [Environment]::SetEnvironmentVariable("Path", "$binDir;$userPath", "User")
         $env:Path = "$binDir;$env:Path"
-        Write-Warn "PATH updated. You may need to restart your terminal."
     }
+
+    # Run doctor to ensure integrity
+    Write-Info "Running system health check (doctor)..."
+    & "$venvPython" -m kabot doctor --fix
 
     # Run setup wizard (TUI)
     Write-Info "Launching interactive setup wizard..."
@@ -143,16 +139,11 @@ function Main {
     Write-Info "Installation complete!"
     Write-Host ""
     Write-Host "Next steps:"
-    Write-Host "  1. Login to a provider: kabot auth login"
+    Write-Host "  1. Login: kabot auth login"
     Write-Host "  2. Explore models: kabot models list"
-    Write-Host "  3. Configure everything: kabot setup"
-    Write-Host "  4. Start the gateway: kabot gateway"
-    Write-Host "  5. Or chat directly: kabot agent -m 'Hello!'"
+    Write-Host "  3. Configure: kabot setup"
     Write-Host ""
     Write-Host "Documentation: https://github.com/kaivyy/kabot"
-    Write-Host ""
-    Write-Host "Note: If 'kabot' command is not found, restart your terminal or run:"
-    Write-Host "  `$env:Path = `"$binDir;`$env:Path`""
     Write-Host ""
     Read-Host "Press Enter to exit..."
 }

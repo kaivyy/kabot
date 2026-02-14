@@ -112,12 +112,89 @@ AUTH_PROVIDERS: Dict[str, Dict[str, Any]] = {
             "api_key": {
                 "label": "API Key (Manual)",
                 "description": "Standard DashScope API key",
-                "handler": "kabot.auth.handlers.openai_key.OpenAIKeyHandler"
+                "handler": "kabot.auth.handlers.simple.DashScopeKeyHandler"
             },
             "oauth": {
                 "label": "Browser Login (OAuth)",
                 "description": "Qwen Portal OAuth",
                 "handler": "kabot.auth.handlers.qwen_oauth.QwenOAuthHandler"
+            }
+        }
+    },
+    "deepseek": {
+        "name": "DeepSeek",
+        "description": "DeepSeek Coder, Chat V2",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "DeepSeek API key",
+                "handler": "kabot.auth.handlers.simple.DeepSeekKeyHandler"
+            }
+        }
+    },
+    "groq": {
+        "name": "Groq",
+        "description": "Llama 3 70B/8B (Fast inference)",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Groq Cloud API key",
+                "handler": "kabot.auth.handlers.simple.GroqKeyHandler"
+            }
+        }
+    },
+    "openrouter": {
+        "name": "OpenRouter",
+        "description": "Aggregator for Claude, GPT, Llama, etc.",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "OpenRouter API key",
+                "handler": "kabot.auth.handlers.simple.OpenRouterKeyHandler"
+            }
+        }
+    },
+    "zhipu": {
+        "name": "Zhipu AI (GLM)",
+        "description": "ChatGLM-4, GLM-4V",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Zhipu AI BigModel key",
+                "handler": "kabot.auth.handlers.simple.ZhipuKeyHandler"
+            }
+        }
+    },
+    "aihubmix": {
+        "name": "AIHubMix",
+        "description": "Mixed model aggregator",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "AIHubMix API key",
+                "handler": "kabot.auth.handlers.simple.AiHubMixKeyHandler"
+            }
+        }
+    },
+    "letta": {
+        "name": "Letta (MemGPT)",
+        "description": "Long-term memory agent server",
+        "methods": {
+            "api_key": {
+                "label": "API Key + URL",
+                "description": "Connect to Letta server",
+                "handler": "kabot.auth.handlers.simple.LettaKeyHandler"
+            }
+        }
+    },
+    "vllm": {
+        "name": "vLLM",
+        "description": "Open-source LLM inference server",
+        "methods": {
+            "api_key": {
+                "label": "Configuration",
+                "description": "Connect to vLLM server",
+                "handler": "kabot.auth.handlers.simple.VLLMHandler"
             }
         }
     }

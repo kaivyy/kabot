@@ -121,31 +121,24 @@ class KabotDoctor:
         """Render the diagnostic report with Clack aesthetic."""
         report = self.run_full_diagnostic(fix=fix)
         
-        console.print("
-[bold cyan]┌  Kabot doctor[/bold cyan]")
+        console.print("\n[bold cyan]┌  Kabot doctor[/bold cyan]")
         
         # Integrity
         content = ""
         for c in report["integrity"]:
             color = "green" if c["status"] == "OK" else "red"
-            content += f"[{color}]- {c['status']}: {c['item']} -> {c['detail']}[/{color}]
-"
+            content += f"[{color}]- {c['status']}: {c['item']} -> {c['detail']}[/{color}]\n"
         console.print("│")
         console.print(f"◇  {Panel(content.strip(), title=' State Integrity ', border_style='dim', box=box.ROUNDED)}")
         
         # Skills
-        content = f"Eligible: {len(report['skills']['eligible'])}
-"
-        content += f"Missing: {len(report['skills']['missing'])}
-"
+        content = f"Eligible: {len(report['skills']['eligible'])}\n"
+        content += f"Missing: {len(report['skills']['missing'])}\n"
         for m in report['skills']['missing']:
-            content += f"[red]- {m['name']}: {m['error']}[/red]
-"
+            content += f"[red]- {m['name']}: {m['error']}[/red]\n"
         console.print("│")
         console.print(f"◇  {Panel(content.strip(), title=' Skills Status ', border_style='dim', box=box.ROUNDED)}")
         
-        console.print("└
-")
+        console.print("└\n")
         if not fix and any(c["status"] == "CRITICAL" for c in report["integrity"]):
-            console.print("[yellow]Tip: Run 'kabot doctor --fix' to automatically create missing directories.[/yellow]
-")
+            console.print("[yellow]Tip: Run 'kabot doctor --fix' to automatically create missing directories.[/yellow]\n")

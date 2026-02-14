@@ -25,7 +25,7 @@ from kabot.agent.tools.stock import StockTool, CryptoTool
 from kabot.agent.tools.stock_analysis import StockAnalysisTool
 from kabot.agent.tools.autoplanner import AutoPlanner
 from kabot.agent.subagent import SubagentManager
-from kabot.agent.router import IntentRouter
+from kabot.agent.router import IntentRouter, RouteDecision
 from kabot.session.manager import SessionManager
 from kabot.memory.chroma_memory import ChromaMemoryManager
 from kabot.providers.registry import ModelRegistry
@@ -235,7 +235,10 @@ class AgentLoop:
 
         session = await self._init_session(msg)
         conversation_history = self.memory.get_conversation_context(msg.session_key, max_messages=30)
-        intent = await self.router.classify(msg.content)
+
+        # Router triase: SIMPLE vs COMPLEX
+        decision = await self.router.route(msg.content)
+        logger.info(f"Route: profile={decision.profile}, complex={decision.is_complex}")
 
         messages = self.context.build_messages(
             history=conversation_history,
@@ -243,10 +246,15 @@ class AgentLoop:
             media=msg.media if hasattr(msg, 'media') else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
-            profile=intent,
+            profile=decision.profile,
+            tool_names=self.tools.tool_names,
         )
 
-        final_content = await self._run_agent_loop(msg, messages)
+        if decision.is_complex:
+            final_content = await self._run_agent_loop(msg, messages)
+        else:
+            final_content = await self._run_simple_response(msg, messages)
+
         return await self._finalize_session(msg, session, final_content)
 
     async def _init_session(self, msg: InboundMessage) -> Any:
@@ -266,9 +274,38 @@ class AgentLoop:
                 tool.set_context(msg.session_key)
         return session
 
+    async def _run_simple_response(self, msg: InboundMessage, messages: list) -> str | None:
+        """Direct single-shot response for simple queries (no loop, no tools)."""
+        try:
+            response = await self.provider.chat(
+                messages=messages,
+                model=self.model,
+            )
+            return response.content or ""
+        except Exception as e:
+            logger.error(f"Simple response failed: {e}")
+            return f"Sorry, an error occurred: {str(e)}"
+
     async def _run_agent_loop(self, msg: InboundMessage, messages: list) -> str | None:
+        """
+        Full Planner→Executor→Critic loop for complex tasks.
+
+        Phase 1 (Plan): Ask LLM to decompose task + success criteria
+        Phase 2 (Execute): Tool calling loop (existing behavior)
+        Phase 3 (Critic): Score result 0-10, retry if < 7
+        """
         iteration = 0
         models_to_try = [self.model] + self.fallbacks
+        self_eval_retried = False
+        critic_retried = 0
+        max_critic_retries = 2  # Max 2 critic-driven retries
+        first_score = None
+        already_published = False  # Track if we already sent content to user
+
+        # Phase 1: Planning — inject plan into context (skip for simple tool tasks)
+        plan = await self._plan_task(msg.content)
+        if plan:
+            messages.append({"role": "user", "content": f"[SYSTEM PLAN]\n{plan}\n\nNow execute this plan step by step."})
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -277,11 +314,51 @@ class AgentLoop:
                 return f"Sorry, all available models failed. Last error: {str(error)}"
 
             if response.content:
-                await self.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id, content=response.content
-                ))
+                # Self-evaluation: detect refusal patterns before sending to user
+                if not response.has_tool_calls and not self_eval_retried:
+                    passed, nudge = self._self_evaluate(msg.content, response.content)
+                    if not passed and nudge:
+                        self_eval_retried = True
+                        logger.warning(f"Self-eval: refusal detected, retrying (iter {iteration})")
+                        messages = self.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
+                        messages.append({"role": "user", "content": nudge})
+                        continue
+
+                # Phase 3: Critic — score before sending final response
+                if not response.has_tool_calls and critic_retried < max_critic_retries:
+                    score, feedback = await self._critic_evaluate(msg.content, response.content)
+                    if first_score is None:
+                        first_score = score
+
+                    if score < 7 and critic_retried < max_critic_retries:
+                        critic_retried += 1
+                        logger.warning(f"Critic: score {score}/10, retrying ({critic_retried}/{max_critic_retries})")
+                        messages = self.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
+                        messages.append({"role": "user", "content": (
+                            f"[CRITIC FEEDBACK - Score: {score}/10]\n{feedback}\n\n"
+                            f"Please improve your response based on this feedback."
+                        )})
+                        continue
+                    else:
+                        # Log lesson if we had to retry
+                        if critic_retried > 0:
+                            await self._log_lesson(
+                                question=msg.content,
+                                feedback=feedback,
+                                score_before=first_score or 0,
+                                score_after=score,
+                            )
+
+                # Only publish intermediate content if there are more tool calls coming
+                if response.has_tool_calls:
+                    await self.bus.publish_outbound(OutboundMessage(
+                        channel=msg.channel, chat_id=msg.chat_id, content=response.content
+                    ))
+                    already_published = True
+
                 messages = self.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
                 if not response.has_tool_calls:
+                    # Final response — DON'T publish here, let _finalize_session handle it
                     return response.content
 
             if response.has_tool_calls:
@@ -289,6 +366,165 @@ class AgentLoop:
             else:
                 return response.content
         return "I've completed processing but have no response to give."
+
+    def _self_evaluate(self, question: str, answer: str) -> tuple[bool, str | None]:
+        """Quick heuristic: detect common failure patterns (no extra LLM call)."""
+        if not answer or len(answer) < 30:
+            return True, None
+
+        answer_lower = answer.lower()
+
+        # Multilingual refusal patterns (EN, ID, ES, FR, DE, PT, RU, JA, ZH, KO)
+        refusal_patterns = [
+            # English
+            "i cannot", "i can't", "i don't have access", "i'm unable to",
+            "i am unable to", "cannot access", "i'm not able to",
+            # Indonesian
+            "saya tidak bisa", "saya tidak dapat", "saya tidak memiliki akses",
+            "tidak dapat mengakses",
+            # Spanish
+            "no puedo", "no tengo acceso",
+            # French
+            "je ne peux pas", "je n'ai pas accès",
+            # German
+            "ich kann nicht", "ich habe keinen zugriff",
+            # Portuguese
+            "não consigo", "não tenho acesso",
+            # Russian
+            "я не могу", "у меня нет доступа",
+            # Japanese
+            "できません", "アクセスできません",
+            # Chinese
+            "我无法", "我不能", "无法访问",
+            # Korean
+            "할 수 없", "접근할 수 없",
+        ]
+
+        has_refusal = any(p in answer_lower for p in refusal_patterns)
+        if has_refusal and len(self.tools.tool_names) > 0:
+            tool_list = ", ".join(self.tools.tool_names)
+            return False, (
+                f"SYSTEM: You said you cannot do something, but you have these tools: {tool_list}. "
+                f"Use the appropriate tool instead of refusing. For example, use 'read_file' to read files, "
+                f"'exec' to run commands, 'web_search' to search the web. Try again and actually use a tool."
+            )
+
+        return True, None
+
+    # Patterns for immediate-action tasks that should NEVER go through planning
+    _IMMEDIATE_ACTION_PATTERNS = [
+        # Reminders / scheduling (multilingual)
+        "remind", "reminder", "schedule", "alarm",
+        "ingatkan", "bangunkan", "jadwalkan", "pengingat",
+        "timer", "wake me",
+        # Weather
+        "weather", "cuaca", "suhu", "temperature",
+        # Quick lookups
+        "stock", "crypto", "saham", "harga",
+        # Time queries
+        "what time", "jam berapa",
+    ]
+
+    async def _plan_task(self, question: str) -> str | None:
+        """Phase 1: Ask LLM to create a brief execution plan.
+        
+        Skips planning for immediate-action tasks (reminders, weather, etc.)
+        that just need a single tool call.
+        """
+        if len(question) < 30:
+            return None  # Too short to need planning
+
+        # Skip planning for immediate-action tasks — these should call tools directly
+        q_lower = question.lower()
+        for pattern in self._IMMEDIATE_ACTION_PATTERNS:
+            if pattern in q_lower:
+                logger.info(f"Skipping plan for immediate-action task: matched '{pattern}'")
+                return None
+
+        try:
+            plan_prompt = f"""Create a brief plan (max 5 steps) to answer this request.
+For each step, specify:
+1. What to do
+2. Which tool to use (if any)
+3. Success criteria
+
+CRITICAL: If the request is for creating code, skills, or complex actions, Step 1 MUST be "Ask user for approval/details".
+Do not plan to write/execute immediately.
+
+Request: {question[:500]}
+
+Reply with a numbered plan. Be concise."""
+
+            response = await self.provider.chat(
+                messages=[{"role": "user", "content": plan_prompt}],
+                model=self.model,
+                max_tokens=300,
+                temperature=0.3
+            )
+            logger.info(f"Plan generated: {response.content[:100]}...")
+            return response.content
+        except Exception as e:
+            logger.warning(f"Planning failed: {e}")
+            return None
+
+    async def _critic_evaluate(self, question: str, answer: str) -> tuple[int, str]:
+        """Phase 3: Score response quality 0-10 with rubric."""
+        try:
+            eval_prompt = f"""Score this AI response 0-10 based on:
+- Correctness: Does it accurately answer the question?
+- Completeness: Is anything important missing?
+- Evidence: Did it use tools/data or fabricate information?
+- Clarity: Is it well-structured and clear?
+
+Question: {question[:300]}
+Response: {answer[:800]}
+
+Reply in this EXACT format:
+SCORE: X
+FEEDBACK: <one sentence explaining the score>"""
+
+            response = await self.provider.chat(
+                messages=[{"role": "user", "content": eval_prompt}],
+                model=self.model,
+                max_tokens=100,
+                temperature=0.0
+            )
+
+            # Parse score
+            import re
+            score_match = re.search(r'SCORE:\s*(\d+)', response.content)
+            score = int(score_match.group(1)) if score_match else 7
+            score = max(0, min(10, score))  # Clamp 0-10
+
+            feedback_match = re.search(r'FEEDBACK:\s*(.+)', response.content)
+            feedback = feedback_match.group(1).strip() if feedback_match else response.content
+
+            logger.info(f"Critic score: {score}/10 — {feedback[:80]}")
+            return score, feedback
+
+        except Exception as e:
+            logger.warning(f"Critic evaluation failed: {e}")
+            return 7, "Evaluation skipped"  # Pass by default on error
+
+    async def _log_lesson(self, question: str, feedback: str,
+                          score_before: int, score_after: int) -> None:
+        """Log a metacognition lesson from critic-driven retries."""
+        try:
+            import uuid
+            lesson_id = str(uuid.uuid4())[:12]
+            self.memory.metadata.add_lesson(
+                lesson_id=lesson_id,
+                trigger=question[:200],
+                mistake=f"Initial response scored {score_before}/10",
+                fix=feedback[:200],
+                guardrail=f"Improved to {score_after}/10 after retry",
+                score_before=score_before,
+                score_after=score_after,
+                task_type="complex",
+            )
+            logger.info(f"Lesson logged: {lesson_id} ({score_before}→{score_after})")
+        except Exception as e:
+            logger.warning(f"Failed to log lesson: {e}")
 
     async def _call_llm_with_fallback(self, messages: list, models: list) -> tuple[Any | None, Exception | None]:
         last_error = None

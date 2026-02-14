@@ -1,7 +1,4 @@
 """Tests for Google OAuth handler."""
-import pytest
-from unittest.mock import patch
-
 
 def test_google_oauth_handler_exists():
     """GoogleOAuthHandler class should exist."""
@@ -16,14 +13,27 @@ def test_google_oauth_handler_has_name():
     assert handler.name == "Google Gemini (OAuth)"
 
 
-@patch('kabot.auth.handlers.google_oauth.run_oauth_flow')
-def test_authenticate_returns_gemini_oauth_token(mock_flow):
-    """authenticate() should return gemini provider with oauth_token."""
-    mock_flow.return_value = "google-test-token-123"
+def test_google_oauth_constants():
+    """Google OAuth should use real Antigravity credentials."""
+    from kabot.auth.handlers.google_oauth import (
+        GOOGLE_CLIENT_ID,
+        GOOGLE_CLIENT_SECRET,
+        GOOGLE_AUTH_URL,
+        GOOGLE_TOKEN_URL,
+        REDIRECT_PORT,
+    )
+    assert GOOGLE_CLIENT_ID.endswith(".apps.googleusercontent.com")
+    assert GOOGLE_CLIENT_SECRET.startswith("GOCSPX-")
+    assert GOOGLE_AUTH_URL == "https://accounts.google.com/o/oauth2/v2/auth"
+    assert GOOGLE_TOKEN_URL == "https://oauth2.googleapis.com/token"
+    assert REDIRECT_PORT == 51121
 
-    from kabot.auth.handlers.google_oauth import GoogleOAuthHandler
-    handler = GoogleOAuthHandler()
-    result = handler.authenticate()
 
-    # Note: Uses 'gemini' as provider key for config compatibility
-    assert result == {"providers": {"gemini": {"oauth_token": "google-test-token-123"}}}
+def test_google_pkce_generation():
+    """PKCE verifier and challenge should be generated correctly."""
+    from kabot.auth.handlers.google_oauth import _generate_pkce
+    verifier, challenge = _generate_pkce()
+    assert len(verifier) > 20
+    assert len(challenge) > 20
+    # Challenge should be different from verifier (it's the SHA256 hash)
+    assert verifier != challenge

@@ -1,5 +1,6 @@
 """Configuration schema using Pydantic."""
 
+from typing import Any
 from pathlib import Path
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
@@ -174,6 +175,9 @@ class GatewayConfig(BaseModel):
     """Gateway/server configuration."""
     host: str = "0.0.0.0"
     port: int = 18790
+    bind_mode: str = "local" # loopback, local, public
+    auth_token: str = ""     # Bearer token for API access
+    tailscale: bool = False  # Enable Tailscale exposure
 
 
 class WebSearchConfig(BaseModel):
@@ -209,13 +213,27 @@ class ToolsConfig(BaseModel):
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
 
 
+class LoggingConfig(BaseModel):
+    """Logging configuration."""
+    enabled: bool = True
+    level: str = "INFO"
+    file_enabled: bool = True
+    file_path: str = "~/.kabot/logs/kabot.log"
+    rotation: str = "10 MB"
+    retention: str = "7 days"
+    db_enabled: bool = True
+    db_retention_days: int = 30
+
+
 class Config(BaseSettings):
     """Root configuration for kabot."""
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    skills: dict[str, dict[str, Any]] = Field(default_factory=dict)
     
     @property
     def workspace_path(self) -> Path:
@@ -250,44 +268,44 @@ class Config(BaseSettings):
         _, name = self._match_provider(model)
         return name
 
-        def get_api_key(self, model: str | None = None) -> str | None:
-            """Get API key for the given model. Supports profiles with legacy fallback."""
-            p = self.get_provider(model)
-            if not p:
-                return None
-                
-            # Try active profile first
-            if p.active_profile in p.profiles:
-                profile = p.profiles[p.active_profile]
-                if profile.api_key:
-                    return profile.api_key
-                if profile.oauth_token:
-                    return profile.oauth_token
-                    
-            # Legacy fallback
-            return p.api_key
-    
-        def get_api_base(self, model: str | None = None) -> str | None:
-            """Get API base URL for the given model. Supports profiles."""
-            from kabot.providers.registry import find_by_name
-            p, name = self._match_provider(model)
-            if not p:
-                return None
-                
-            # Try active profile first
-            if p.active_profile in p.profiles:
-                profile = p.profiles[p.active_profile]
-                if profile.api_base:
-                    return profile.api_base
-                    
-            if p.api_base:
-                return p.api_base
-                
-            if name:
-                spec = find_by_name(name)
-                if spec and spec.is_gateway and spec.default_api_base:
-                    return spec.default_api_base
+    def get_api_key(self, model: str | None = None) -> str | None:
+        """Get API key for the given model. Supports profiles with legacy fallback."""
+        p = self.get_provider(model)
+        if not p:
             return None
+            
+        # Try active profile first
+        if p.active_profile in p.profiles:
+            profile = p.profiles[p.active_profile]
+            if profile.api_key:
+                return profile.api_key
+            if profile.oauth_token:
+                return profile.oauth_token
+                
+        # Legacy fallback
+        return p.api_key
+
+    def get_api_base(self, model: str | None = None) -> str | None:
+        """Get API base URL for the given model. Supports profiles."""
+        from kabot.providers.registry import find_by_name
+        p, name = self._match_provider(model)
+        if not p:
+            return None
+            
+        # Try active profile first
+        if p.active_profile in p.profiles:
+            profile = p.profiles[p.active_profile]
+            if profile.api_base:
+                return profile.api_base
+                
+        if p.api_base:
+            return p.api_base
+            
+        if name:
+            spec = find_by_name(name)
+            if spec and spec.is_gateway and spec.default_api_base:
+                return spec.default_api_base
+        return None
 
     class Config:
         env_prefix = "NANOBOT_"

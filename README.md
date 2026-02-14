@@ -28,10 +28,15 @@ Kabot is now multi-modal.
 - **Vision**: Send screenshots of errors or UI mockups, and Kabot will analyze them using GPT-4o or Claude 3.5 Sonnet.
 - **Voice**: Send voice notes on Telegram/WhatsApp, and Kabot will listen (Whisper) and reply with spoken audio (TTS).
 
+#### 🛠️ Self-Healing Engine (New in v2.2)
+Pro-active system maintenance inspired by OpenClaw.
+- **Kabot Doctor**: Run `kabot doctor --fix` to automatically repair missing directories, broken databases, or invalid credentials.
+- **State Integrity**: Continuous monitoring of session stores and agent workspaces.
+
 #### 🔄 Autonomous Loop
 Self-healing execution mode. If a task fails, Kabot automatically analyzes the error, attempts a fix, and retries up to 5 times before asking for help.
 
-#### 🔑 Multi-Method Authentication (v2.0)
+#### 🔑 Multi-Method Authentication (v2.0+)
 Kabot supports flexible authentication beyond simple API keys.
 - **Smart OAuth**: Securely login via your browser with automatic port detection and VPS support.
 - **Secret Extraction**: Automatically discover credentials from local CLI tools (e.g., Google Gemini CLI).
@@ -77,15 +82,53 @@ iwr -useb https://raw.githubusercontent.com/kaivyy/kabot/main/install.ps1 | iex
 ### 🛠️ Configuration
 
 #### 1. Modular Setup Wizard
-Run the professional interactive wizard to configure everything:
+Run the professional interactive wizard to configure everything (including **Logging & Debugging** settings):
 ```bash
+kabot config
+# or
 kabot setup
+```
+
+#### 2. Quick Config Edit
+Directly open the configuration file in your default editor:
+```bash
+kabot config --edit
 ```
 
 #### 2. Authentication via CLI
 Directly configure specific providers:
 ```bash
 kabot auth login <provider>
+```
+
+#### 3. System Diagnostic
+Ensure everything is running perfectly:
+```bash
+kabot doctor --fix
+```
+
+### 📝 Logging & Debugging
+
+Kabot features a dual-layer logging system for robust monitoring.
+
+**1. File Logging**
+- **Location**: `~/.kabot/logs/kabot.log`
+- **Rotation**: Auto-rotates every 10MB (keeps 7 days by default).
+
+**2. Database Logging**
+- **Location**: `system_logs` table in `metadata.db`.
+- **Purpose**: Structured logs for auditing and debugging.
+
+**Configuration**
+You can configure these settings interactively via `kabot config` -> **Logging & Debugging**, or edit `~/.kabot/config.json` directly:
+```json
+{
+  "logging": {
+    "level": "INFO",            // DEBUG, INFO, WARNING, ERROR
+    "retention": "7 days",      // File retention policy
+    "db_retention_days": 30     // Database retention policy
+  }
+}
 ```
 
 ---
