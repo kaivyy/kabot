@@ -1,0 +1,1 @@
+"""Heartbeat service types."""
