@@ -338,6 +338,40 @@ class CronService:
                 return True
         return False
     
+    def update_job(self, job_id: str, **kwargs) -> CronJob | None:
+        """Update a job's properties."""
+        store = self._load_store()
+        for job in store.jobs:
+            if job.id == job_id:
+                if "message" in kwargs:
+                    job.payload.message = kwargs["message"]
+                    job.name = kwargs["message"][:30]
+                if "enabled" in kwargs:
+                    job.enabled = kwargs["enabled"]
+                if "schedule" in kwargs:
+                    job.schedule = kwargs["schedule"]
+                    if job.enabled:
+                        job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+                if "deliver" in kwargs:
+                    job.payload.deliver = kwargs["deliver"]
+                job.updated_at_ms = _now_ms()
+                self._save_store()
+                self._arm_timer()
+                return job
+        return None
+
+    def get_run_history(self, job_id: str) -> list[dict]:
+        """Get run history for a job (last_run info from state)."""
+        store = self._load_store()
+        for job in store.jobs:
+            if job.id == job_id:
+                if job.state.last_run_at_ms:
+                    return [{"run_at_ms": job.state.last_run_at_ms,
+                             "status": job.state.last_status,
+                             "error": job.state.last_error}]
+                return []
+        return []
+
     def status(self) -> dict:
         """Get service status."""
         store = self._load_store()

@@ -35,7 +35,7 @@ class CronTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["add", "list", "remove"],
+                    "enum": ["add", "list", "remove", "update", "run", "runs", "status"],
                     "description": "Action to perform"
                 },
                 "message": {
@@ -77,13 +77,23 @@ class CronTool(Tool):
             one_shot: bool | None = None,
             **kwargs: Any
     ) -> str:
-        if action == "add":
-            return self._add_job(message, at_time, every_seconds, cron_expr, one_shot)
-        elif action == "list":
-            return self._list_jobs()
-        elif action == "remove":
-            return self._remove_job(job_id)
-        return f"Unknown action: {action}"
+        match action:
+            case "add":
+                return self._add_job(message, at_time, every_seconds, cron_expr, one_shot)
+            case "list":
+                return self._list_jobs()
+            case "remove":
+                return self._remove_job(job_id)
+            case "update":
+                return self._update_job(job_id, **kwargs)
+            case "run":
+                return await self._run_job(job_id)
+            case "runs":
+                return self._get_runs(job_id)
+            case "status":
+                return self._get_status()
+            case _:
+                return f"Unknown action: {action}"
     
     def _add_job(self, message: str, at_time: str, every_seconds: int | None, cron_expr: str | None, one_shot: bool | None = None) -> str:
         if not message:
@@ -138,3 +148,37 @@ class CronTool(Tool):
         if self._cron.remove_job(job_id):
             return f"Removed job {job_id}"
         return f"Job {job_id} not found"
+
+    def _update_job(self, job_id: str | None, **kwargs) -> str:
+        if not job_id:
+            return "Error: job_id is required for update"
+        job = self._cron.update_job(job_id, **kwargs)
+        if job:
+            return f"Updated job '{job.name}' ({job.id})"
+        return f"Job {job_id} not found"
+
+    async def _run_job(self, job_id: str | None) -> str:
+        if not job_id:
+            return "Error: job_id is required for run"
+        if await self._cron.run_job(job_id, force=True):
+            return f"Executed job {job_id}"
+        return f"Job {job_id} not found or disabled"
+
+    def _get_runs(self, job_id: str | None) -> str:
+        if not job_id:
+            return "Error: job_id is required for runs"
+        history = self._cron.get_run_history(job_id)
+        if not history:
+            return f"No run history for job {job_id}"
+        from datetime import datetime
+        lines = []
+        for run in history:
+            dt = datetime.fromtimestamp(run["run_at_ms"] / 1000)
+            lines.append(f"  {dt.isoformat()} — {run['status']}")
+        return f"Run history for {job_id}:\n" + "\n".join(lines)
+
+    def _get_status(self) -> str:
+        status = self._cron.status()
+        return (f"Cron Service: {'Running' if status['enabled'] else 'Stopped'}\n"
+                f"Jobs: {status['jobs']}\n"
+                f"Next wake: {status.get('next_wake_at_ms', 'None')}")
