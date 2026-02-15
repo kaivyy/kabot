@@ -349,6 +349,16 @@ class AgentLoop:
     async def _run_simple_response(self, msg: InboundMessage, messages: list) -> str | None:
         """Direct single-shot response for simple queries (no loop, no tools)."""
         try:
+            # Check for context overflow and compact if needed
+            if self.context_guard.check_overflow(messages, self.model):
+                logger.warning("Context overflow detected in simple response, compacting history")
+                messages = await self.compactor.compact(
+                    messages, self.provider, self.model, keep_recent=10
+                )
+                # Verify compaction was successful
+                if self.context_guard.check_overflow(messages, self.model):
+                    logger.warning("Context still over limit after compaction")
+
             response = await self.provider.chat(
                 messages=messages,
                 model=self.model,
@@ -388,6 +398,9 @@ class AgentLoop:
                 messages = await self.compactor.compact(
                     messages, self.provider, self.model, keep_recent=10
                 )
+                # Verify compaction was successful
+                if self.context_guard.check_overflow(messages, self.model):
+                    logger.warning("Context still over limit after compaction")
 
             response, error = await self._call_llm_with_fallback(messages, models_to_try)
             if not response:
