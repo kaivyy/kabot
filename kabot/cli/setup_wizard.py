@@ -700,5 +700,39 @@ class SetupWizard:
         doc.render_report()
         Prompt.ask("│\n◆  Press Enter to return to menu")
 
+    def _install_builtin_skills(self):
+        """Copy built-in skills to workspace if not present."""
+        skills_src = Path(__file__).parent.parent / "skills"
+        skills_dst = Path(self.config.agents.defaults.workspace) / "skills"
+
+        if not skills_src.exists():
+            console.print(f"│  [yellow]Warning: Built-in skills not found at {skills_src}[/yellow]")
+            return
+
+        # Ensure destination exists
+        if not skills_dst.exists():
+            os.makedirs(skills_dst, exist_ok=True)
+            console.print(f"│  [cyan]Initializing skills directory at {skills_dst}...[/cyan]")
+        
+        # Copy skills
+        import shutil
+        count = 0
+        for item in skills_src.iterdir():
+            if item.is_dir() and (item / "SKILL.md").exists():
+                dst_path = skills_dst / item.name
+                if not dst_path.exists():
+                    try:
+                        shutil.copytree(item, dst_path)
+                        count += 1
+                    except Exception as e:
+                         console.print(f"│  [red]Failed to copy skill {item.name}: {e}[/red]")
+        
+        if count > 0:
+            console.print(f"│  [green]✓ Installed {count} built-in skills to workspace[/green]")
+
 def run_interactive_setup() -> Config:
-    return SetupWizard().run()
+    wizard = SetupWizard()
+    # Ensure workspace exists and install skills before running wizard
+    os.makedirs(os.path.expanduser(wizard.config.agents.defaults.workspace), exist_ok=True)
+    wizard._install_builtin_skills()
+    return wizard.run()

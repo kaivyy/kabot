@@ -34,6 +34,18 @@ from kabot.plugins.loader import load_plugins
 from kabot.plugins.registry import PluginRegistry
 from kabot.providers.registry import ModelRegistry
 
+# Phase 8: System Internals
+from kabot.core.command_router import CommandRouter, CommandContext
+from kabot.core.status import StatusService, BenchmarkService
+from kabot.core.doctor import DoctorService
+from kabot.core.update import UpdateService, SystemControl
+from kabot.core.commands_setup import register_builtin_commands
+
+# Phase 9: Architecture Overhaul
+from kabot.core.directives import DirectiveParser
+from kabot.core.heartbeat import HeartbeatInjector
+from kabot.core.resilience import ResilienceLayer
+
 
 class AgentLoop:
     """
@@ -110,6 +122,34 @@ class AgentLoop:
 
         self._running = False
         self._register_default_tools()
+
+        # Phase 8: System Internals — Command Router
+        self.command_router = CommandRouter()
+        self._status_service = StatusService(agent_loop=self)
+        self._benchmark_service = BenchmarkService(provider=provider, models=self.fallbacks)
+        self._doctor_service = DoctorService(workspace=workspace)
+        self._update_service = UpdateService(workspace=workspace)
+        self._system_control = SystemControl(workspace=workspace)
+        register_builtin_commands(
+            router=self.command_router,
+            status_service=self._status_service,
+            benchmark_service=self._benchmark_service,
+            doctor_service=self._doctor_service,
+            update_service=self._update_service,
+            system_control=self._system_control,
+        )
+
+        # Check if we just restarted
+        if self._system_control.check_restart_flag():
+            logger.info("Bot restarted successfully (restart flag detected)")
+
+        # Phase 9: Architecture Overhaul
+        self.directive_parser = DirectiveParser()
+        self.heartbeat = HeartbeatInjector()
+        self.resilience = ResilienceLayer(
+            primary_model=self.model,
+            fallback_models=self.fallbacks,
+        )
 
     def _load_plugins(self) -> None:
         """Load plugins from workspace and builtin directories."""
@@ -299,16 +339,46 @@ class AgentLoop:
         if msg.channel == "system":
             return await self._process_system_message(msg)
 
+        # Phase 8: Intercept slash commands BEFORE routing to LLM
+        if self.command_router.is_command(msg.content):
+            ctx = CommandContext(
+                message=msg.content,
+                args=[],
+                sender_id=msg.sender_id,
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                session_key=msg.session_key,
+                agent_loop=self,
+            )
+            result = await self.command_router.route(msg.content, ctx)
+            if result:
+                return OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=result,
+                )
+
         session = await self._init_session(msg)
         conversation_history = self.memory.get_conversation_context(msg.session_key, max_messages=30)
 
+        # Phase 9: Parse directives from message body
+        clean_body, directives = self.directive_parser.parse(msg.content)
+        effective_content = clean_body or msg.content
+        if directives.raw_directives:
+            active = self.directive_parser.format_active_directives(directives)
+            logger.info(f"Directives active: {active}")
+
+        # Phase 9: Model override via directive
+        if directives.model:
+            logger.info(f"Directive override: model → {directives.model}")
+
         # Router triase: SIMPLE vs COMPLEX
-        decision = await self.router.route(msg.content)
+        decision = await self.router.route(effective_content)
         logger.info(f"Route: profile={decision.profile}, complex={decision.is_complex}")
 
         messages = self.context.build_messages(
             history=conversation_history,
-            current_message=msg.content,
+            current_message=effective_content,
             media=msg.media if hasattr(msg, 'media') else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
@@ -601,10 +671,17 @@ FEEDBACK: <one sentence explaining the score>"""
                     tools=self.tools.get_definitions(),
                     model=current_model
                 )
+                # Phase 9: Reset resilience on success
+                self.resilience.on_success()
                 return response, None
             except Exception as e:
                 logger.warning(f"Model {current_model} failed: {e}")
                 last_error = e
+                # Phase 9: Try resilience recovery
+                status_code = getattr(e, 'status_code', None)
+                recovery = await self.resilience.handle_error(e, status_code=status_code)
+                if recovery["action"] == "model_fallback" and recovery["new_model"]:
+                    models.append(recovery["new_model"])
         return None, last_error
 
     async def _process_tool_calls(self, msg: InboundMessage, messages: list, response: Any) -> list:
