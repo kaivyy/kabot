@@ -32,9 +32,7 @@ async def _call_token_endpoint(url: str, data: dict) -> dict:
 
 
 class TokenRefreshService:
-    """Automatically refresh expired OAuth tokens."""
-
-    _lock = asyncio.Lock()
+    """Automatically refresh expired OAuth tokens with file locking for multi-process safety."""
 
     async def refresh(
         self, provider: str, profile: AuthProfile
@@ -48,13 +46,26 @@ class TokenRefreshService:
         if profile.expires_at and not self._needs_refresh(profile.expires_at):
             return None
 
-        # Prevent concurrent refreshes for the same profile
-        async with self._lock:
-            # Double-check after acquiring lock (another call might have refreshed)
-            if profile.expires_at and not self._needs_refresh(profile.expires_at):
-                return None
+        # Cross-process file locking to prevent race conditions in multi-instance deployments
+        from filelock import FileLock
+        from pathlib import Path
 
-            return await self._do_refresh(provider, profile)
+        lock_path = Path.home() / ".kabot" / "auth.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        lock = FileLock(str(lock_path), timeout=10)
+
+        try:
+            # Acquire file lock (blocking, but with timeout)
+            with lock:
+                # Double-check after acquiring lock (another process might have refreshed)
+                if profile.expires_at and not self._needs_refresh(profile.expires_at):
+                    return None
+
+                return await self._do_refresh(provider, profile)
+        except Exception as e:
+            logger.warning(f"Could not acquire auth lock or refresh failed: {e}")
+            return None
 
     def _needs_refresh(self, expires_at: int) -> bool:
         """Check if token needs refresh (expired or within buffer)."""
