@@ -222,8 +222,10 @@ class OpenAIOAuthHandler(AuthHandler):
         finally:
             loop.close()
 
+        import time
         access_token = tokens.get("access_token")
         refresh_token = tokens.get("refresh_token")
+        expires_in = tokens.get("expires_in", 3600)  # Default 1 hour
 
         if not access_token:
             console.print("[red]No access_token returned by OpenAI.[/red]")
@@ -237,6 +239,8 @@ class OpenAIOAuthHandler(AuthHandler):
                     "oauth_token": access_token,
                     "refresh_token": refresh_token,
                     "client_id": OPENAI_CLIENT_ID,
+                    "expires_at": int(time.time() * 1000) + (expires_in * 1000),
+                    "token_type": "oauth",
                 }
             }
         }

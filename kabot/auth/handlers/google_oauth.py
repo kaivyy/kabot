@@ -220,8 +220,10 @@ class GoogleOAuthHandler(AuthHandler):
             console.print(f"[red]✗ Token exchange failed: {exc.response.text}[/red]")
             return None
 
+        import time
         access_token = token_data.get("access_token", "")
         refresh_token = token_data.get("refresh_token", "")
+        expires_in = token_data.get("expires_in", 3600)  # Default 1 hour
 
         # Fetch user email
         email = _fetch_user_email(access_token)
@@ -237,6 +239,8 @@ class GoogleOAuthHandler(AuthHandler):
                     "refresh_token": refresh_token,
                     "client_id": GOOGLE_CLIENT_ID,
                     "client_secret": GOOGLE_CLIENT_SECRET,
+                    "expires_at": int(time.time() * 1000) + (expires_in * 1000),
+                    "token_type": "oauth",
                     "email": email,
                 }
             }

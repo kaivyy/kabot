@@ -206,6 +206,7 @@ class MiniMaxOAuthHandler(AuthHandler):
             if token_data:
                 access_token = token_data["access_token"]
                 refresh_token = token_data["refresh_token"]
+                expires_in = token_data.get("expired_in", 3600)  # Default 1 hour
                 resource_url = token_data.get("resource_url", "")
                 notification = token_data.get("notification_message", "")
 
@@ -221,6 +222,9 @@ class MiniMaxOAuthHandler(AuthHandler):
                         "minimax": {
                             "oauth_token": access_token,
                             "refresh_token": refresh_token,
+                            "client_id": MINIMAX_CLIENT_ID,
+                            "expires_at": int(time.time() * 1000) + (expires_in * 1000),
+                            "token_type": "oauth",
                             "api_base": api_base,
                             "region": region,
                         }

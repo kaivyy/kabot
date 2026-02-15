@@ -166,6 +166,7 @@ class QwenOAuthHandler(AuthHandler):
             if token_data:
                 access_token = token_data["access_token"]
                 refresh_token = token_data["refresh_token"]
+                expires_in = token_data.get("expires_in", 3600)  # Default 1 hour
                 resource_url = token_data.get("resource_url", "")
 
                 console.print("[green]✓ Qwen OAuth approved![/green]")
@@ -180,6 +181,9 @@ class QwenOAuthHandler(AuthHandler):
                         "qwen": {
                             "oauth_token": access_token,
                             "refresh_token": refresh_token,
+                            "client_id": QWEN_CLIENT_ID,
+                            "expires_at": int(time.time() * 1000) + (expires_in * 1000),
+                            "token_type": "oauth",
                             "api_base": api_base,
                         }
                     }
