@@ -1343,5 +1343,43 @@ def doctor(
     doc.render_report(fix=fix)
 
 
+@app.command("plugins")
+def plugins_cmd(
+    action: str = typer.Argument("list", help="Action to perform (list)"),
+):
+    """Manage plugins."""
+    from kabot.plugins.registry import PluginRegistry
+    from kabot.plugins.loader import load_plugins
+    from kabot.config.loader import load_config
+
+    config = load_config()
+    registry = PluginRegistry()
+    plugins_dir = config.workspace_path / "plugins"
+    load_plugins(plugins_dir, registry)
+
+    if action == "list":
+        plugins_list = registry.list_all()
+
+        if not plugins_list:
+            console.print("[yellow]No plugins found.[/yellow]")
+            console.print(f"[dim]Add plugins to: {plugins_dir}[/dim]")
+            return
+
+        table = Table(title="Installed Plugins")
+        table.add_column("Name", style="cyan")
+        table.add_column("Description")
+        table.add_column("Status")
+
+        for p in plugins_list:
+            status = "[green]Enabled[/green]" if p.enabled else "[red]Disabled[/red]"
+            table.add_row(p.name, p.description, status)
+
+        console.print(table)
+        console.print(f"\n[dim]Total: {len(plugins_list)} plugin(s)[/dim]")
+    else:
+        console.print(f"[red]Unknown action: {action}[/red]")
+        console.print("[dim]Available actions: list[/dim]")
+
+
 if __name__ == "__main__":
     app()
