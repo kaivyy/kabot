@@ -302,10 +302,30 @@ class AgentLoop:
         logger.info("Agent loop stopping")
 
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
+        # Parse directives (Phase 11)
+        from kabot.agent.directives import DirectiveParser
+        parser = DirectiveParser()
+        directives = parser.parse(msg.content)
+
+        # Use cleaned message for processing
+        original_content = msg.content
+        if directives.has_directives:
+            msg.content = directives.cleaned_message
+            logger.info(f"Directives: think={directives.think_mode}, verbose={directives.verbose_mode}, elevated={directives.elevated_mode}")
+
         if msg.channel == "system":
             return await self._process_system_message(msg)
 
         session = await self._init_session(msg)
+
+        # Store directives in session metadata
+        if directives.has_directives:
+            session.metadata['directives'] = {
+                'think': directives.think_mode,
+                'verbose': directives.verbose_mode,
+                'elevated': directives.elevated_mode,
+            }
+
         conversation_history = self.memory.get_conversation_context(msg.session_key, max_messages=30)
 
         # Router triase: SIMPLE vs COMPLEX
