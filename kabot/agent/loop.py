@@ -11,6 +11,7 @@ from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.bus.queue import MessageBus
 from kabot.providers.base import LLMProvider
 from kabot.agent.context import ContextBuilder
+from kabot.agent.directives import DirectiveParser
 from kabot.agent.tools.registry import ToolRegistry
 from kabot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from kabot.agent.tools.shell import ExecTool
@@ -104,6 +105,21 @@ class AgentLoop:
         self._vector_store = None
         self._vector_store_path = str(workspace / "vector_db")
 
+        # Context management (Phase 11)
+        from kabot.agent.context_guard import ContextGuard
+        from kabot.agent.compactor import Compactor
+        self.context_guard = ContextGuard(max_tokens=128000, buffer_tokens=4000)
+        self.compactor = Compactor()
+
+        # Auth rotation (Phase 11)
+        from kabot.auth.rotation import AuthRotation
+        api_keys = self._collect_api_keys(provider)
+        if len(api_keys) > 1:
+            self.auth_rotation = AuthRotation(api_keys, cooldown_seconds=300)
+            logger.info(f"Auth rotation enabled with {len(api_keys)} keys")
+        else:
+            self.auth_rotation = None
+
         self.router = IntentRouter(provider, model=self.model)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -150,6 +166,14 @@ class AgentLoop:
             primary_model=self.model,
             fallback_models=self.fallbacks,
         )
+
+    def _collect_api_keys(self, provider) -> list[str]:
+        """Collect all available API keys from provider."""
+        keys = []
+        if hasattr(provider, 'api_key') and provider.api_key:
+            keys.append(provider.api_key)
+        # Add support for multiple keys from config in future
+        return keys
 
     def _load_plugins(self) -> None:
         """Load plugins from workspace and builtin directories."""
@@ -336,6 +360,15 @@ class AgentLoop:
         logger.info("Agent loop stopping")
 
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
+        # Parse directives (Phase 11)
+        parser = DirectiveParser()
+        directives = parser.parse(msg.content)
+
+        # Use cleaned message for processing
+        if directives.has_directives:
+            msg.content = directives.cleaned_message
+            logger.info(f"Directives: think={directives.think_mode}, verbose={directives.verbose_mode}, elevated={directives.elevated_mode}")
+
         if msg.channel == "system":
             return await self._process_system_message(msg)
 
@@ -359,6 +392,15 @@ class AgentLoop:
                 )
 
         session = await self._init_session(msg)
+
+        # Store directives in session metadata
+        if directives.has_directives:
+            session.metadata['directives'] = {
+                'think': directives.think_mode,
+                'verbose': directives.verbose_mode,
+                'elevated': directives.elevated_mode,
+            }
+
         conversation_history = self.memory.get_conversation_context(msg.session_key, max_messages=30)
 
         # Phase 9: Parse directives from message body
@@ -413,6 +455,16 @@ class AgentLoop:
     async def _run_simple_response(self, msg: InboundMessage, messages: list) -> str | None:
         """Direct single-shot response for simple queries (no loop, no tools)."""
         try:
+            # Check for context overflow and compact if needed
+            if self.context_guard.check_overflow(messages, self.model):
+                logger.warning("Context overflow detected in simple response, compacting history")
+                messages = await self.compactor.compact(
+                    messages, self.provider, self.model, keep_recent=10
+                )
+                # Verify compaction was successful
+                if self.context_guard.check_overflow(messages, self.model):
+                    logger.warning("Context still over limit after compaction")
+
             response = await self.provider.chat(
                 messages=messages,
                 model=self.model,
@@ -445,6 +497,17 @@ class AgentLoop:
 
         while iteration < self.max_iterations:
             iteration += 1
+
+            # Check for context overflow and compact if needed
+            if self.context_guard.check_overflow(messages, self.model):
+                logger.warning("Context overflow detected, compacting history")
+                messages = await self.compactor.compact(
+                    messages, self.provider, self.model, keep_recent=10
+                )
+                # Verify compaction was successful
+                if self.context_guard.check_overflow(messages, self.model):
+                    logger.warning("Context still over limit after compaction")
+
             response, error = await self._call_llm_with_fallback(messages, models_to_try)
             if not response:
                 return f"Sorry, all available models failed. Last error: {str(error)}"
@@ -666,15 +729,52 @@ FEEDBACK: <one sentence explaining the score>"""
         last_error = None
         for current_model in models:
             try:
+                # Use rotated key if available
+                original_key = None
+                if self.auth_rotation:
+                    current_key = self.auth_rotation.current_key()
+                    # Update provider key temporarily
+                    if hasattr(self.provider, 'api_key'):
+                        original_key = self.provider.api_key
+                        self.provider.api_key = current_key
+
                 response = await self.provider.chat(
                     messages=messages,
                     tools=self.tools.get_definitions(),
                     model=current_model
                 )
+
+                # Restore original key
+                if self.auth_rotation and original_key is not None:
+                    self.provider.api_key = original_key
+
                 # Phase 9: Reset resilience on success
                 self.resilience.on_success()
+
                 return response, None
             except Exception as e:
+                error_str = str(e).lower()
+
+                # Check if auth/rate limit error
+                if self.auth_rotation and hasattr(self.provider, 'api_key'):
+                    if "401" in error_str or "429" in error_str or "rate" in error_str:
+                        reason = "rate_limit" if "429" in error_str or "rate" in error_str else "auth_error"
+                        current_key = self.auth_rotation.current_key()
+                        self.auth_rotation.mark_failed(current_key, reason)
+
+                        # Try rotating to next key
+                        next_key = self.auth_rotation.rotate()
+                        if next_key != current_key:
+                            logger.info(f"Retrying with rotated key due to {reason}")
+                            # Restore original key before retry
+                            if original_key is not None:
+                                self.provider.api_key = original_key
+                            continue  # Retry with new key
+
+                # Restore original key on error
+                if self.auth_rotation and original_key is not None:
+                    self.provider.api_key = original_key
+
                 logger.warning(f"Model {current_model} failed: {e}")
                 last_error = e
                 # Phase 9: Try resilience recovery
