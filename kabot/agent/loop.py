@@ -20,6 +20,7 @@ from kabot.agent.tools.message import MessageTool
 from kabot.agent.tools.spawn import SpawnTool
 from kabot.agent.tools.cron import CronTool
 from kabot.agent.tools.memory import SaveMemoryTool, GetMemoryTool, ListRemindersTool
+from kabot.agent.tools.memory_search import MemorySearchTool
 from kabot.agent.tools.weather import WeatherTool
 from kabot.agent.tools.stock import StockTool, CryptoTool
 from kabot.agent.tools.stock_analysis import StockAnalysisTool
@@ -28,6 +29,9 @@ from kabot.agent.subagent import SubagentManager
 from kabot.agent.router import IntentRouter, RouteDecision
 from kabot.session.manager import SessionManager
 from kabot.memory.chroma_memory import ChromaMemoryManager
+from kabot.memory.vector_store import VectorStore
+from kabot.plugins.loader import load_plugins
+from kabot.plugins.registry import PluginRegistry
 from kabot.providers.registry import ModelRegistry
 
 
@@ -84,6 +88,10 @@ class AgentLoop:
             workspace / "memory_db",
             enable_hybrid_memory=enable_hybrid_memory
         )
+        # Vector store for semantic memory search (Phase 7) - lazy initialization
+        self._vector_store = None
+        self._vector_store_path = str(workspace / "vector_db")
+
         self.router = IntentRouter(provider, model=self.model)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -96,8 +104,47 @@ class AgentLoop:
             restrict_to_workspace=restrict_to_workspace,
         )
 
+        # Plugin system (Phase 6)
+        self.plugin_registry = PluginRegistry()
+        self._load_plugins()
+
         self._running = False
         self._register_default_tools()
+
+    def _load_plugins(self) -> None:
+        """Load plugins from workspace and builtin directories."""
+        # Load from workspace plugins directory
+        workspace_plugins = self.workspace / "plugins"
+        if workspace_plugins.exists():
+            loaded = load_plugins(workspace_plugins, self.plugin_registry)
+            logger.info(f"Loaded {len(loaded)} plugins from workspace")
+
+        # Load from builtin plugins directory (if exists)
+        builtin_plugins = Path(__file__).parent.parent / "plugins"
+        if builtin_plugins.exists() and builtin_plugins != workspace_plugins:
+            loaded = load_plugins(builtin_plugins, self.plugin_registry)
+            logger.info(f"Loaded {len(loaded)} builtin plugins")
+
+    @property
+    def vector_store(self) -> VectorStore:
+        """Lazy initialization of vector store."""
+        if self._vector_store is None:
+            try:
+                self._vector_store = VectorStore(
+                    path=self._vector_store_path,
+                    collection_name="kabot_memory"
+                )
+                logger.info("Vector store initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize vector store: {e}")
+                # Return a dummy store that does nothing
+                class DummyVectorStore:
+                    def search(self, query: str, k: int = 3):
+                        return []
+                    def add(self, documents: list[str], ids: list[str]):
+                        pass
+                self._vector_store = DummyVectorStore()
+        return self._vector_store
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -130,6 +177,10 @@ class AgentLoop:
 
         self.tools.register(SaveMemoryTool(memory_manager=self.memory))
         self.tools.register(GetMemoryTool(memory_manager=self.memory))
+
+        # Vector memory search tool (Phase 7)
+        self.tools.register(MemorySearchTool(store=self.vector_store))
+
         self.tools.register(WeatherTool())
         self.tools.register(StockTool())
         self.tools.register(CryptoTool())
@@ -140,6 +191,21 @@ class AgentLoop:
             message_bus=self.bus
         )
         self.tools.register(autoplanner)
+
+        # Load plugin-based tools (Phase 6)
+        self._register_plugin_tools()
+
+    def _register_plugin_tools(self) -> None:
+        """Register tools from loaded plugins."""
+        plugins = self.plugin_registry.list_all()
+        if not plugins:
+            return
+
+        logger.info(f"Registering tools from {len(plugins)} plugins")
+        # Note: Plugin tools are currently skill-based (SKILL.md files)
+        # They don't register as executable tools but as context/skills
+        # Future enhancement: Support plugin-based tool registration
+        # For now, plugins are loaded and available via the plugin registry
 
     def _get_tool_status_message(self, tool_name: str, args: dict) -> str | None:
         """Generate a user-friendly status message for a tool call."""
