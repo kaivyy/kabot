@@ -92,6 +92,12 @@ class AgentLoop:
         self._vector_store = None
         self._vector_store_path = str(workspace / "vector_db")
 
+        # Context management (Phase 11)
+        from kabot.agent.context_guard import ContextGuard
+        from kabot.agent.compactor import Compactor
+        self.context_guard = ContextGuard(max_tokens=128000, buffer_tokens=4000)
+        self.compactor = Compactor()
+
         self.router = IntentRouter(provider, model=self.model)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -375,6 +381,14 @@ class AgentLoop:
 
         while iteration < self.max_iterations:
             iteration += 1
+
+            # Check for context overflow and compact if needed
+            if self.context_guard.check_overflow(messages, self.model):
+                logger.warning("Context overflow detected, compacting history")
+                messages = await self.compactor.compact(
+                    messages, self.provider, self.model, keep_recent=10
+                )
+
             response, error = await self._call_llm_with_fallback(messages, models_to_try)
             if not response:
                 return f"Sorry, all available models failed. Last error: {str(error)}"
