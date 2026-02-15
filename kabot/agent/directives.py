@@ -52,17 +52,27 @@ class DirectiveParser:
             if not match:
                 break
 
-            result.has_directives = True
             directive = match.group(1)
             directive_lower = directive.lower()
 
             if directive_lower in self.DIRECTIVES:
+                result.has_directives = True
                 attr_name = self.DIRECTIVES[directive_lower]
                 setattr(result, attr_name, True)
                 logger.debug(f"Directive detected: {directive}")
+            else:
+                # Unknown directive - warn and stop processing
+                logger.warning(f"Unknown directive: {directive}")
+                break
 
             # Remove the matched directive and whitespace from the start
             cleaned = cleaned[match.end():].strip()
 
-        result.cleaned_message = cleaned
+        # Validate cleaned message is not empty after directive removal
+        if result.has_directives and not cleaned:
+            logger.warning("Message is empty after directive removal, keeping original")
+            result.cleaned_message = message
+        else:
+            result.cleaned_message = cleaned
+
         return result

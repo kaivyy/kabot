@@ -11,6 +11,7 @@ from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.bus.queue import MessageBus
 from kabot.providers.base import LLMProvider
 from kabot.agent.context import ContextBuilder
+from kabot.agent.directives import DirectiveParser
 from kabot.agent.tools.registry import ToolRegistry
 from kabot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from kabot.agent.tools.shell import ExecTool
@@ -303,12 +304,10 @@ class AgentLoop:
 
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
         # Parse directives (Phase 11)
-        from kabot.agent.directives import DirectiveParser
         parser = DirectiveParser()
         directives = parser.parse(msg.content)
 
         # Use cleaned message for processing
-        original_content = msg.content
         if directives.has_directives:
             msg.content = directives.cleaned_message
             logger.info(f"Directives: think={directives.think_mode}, verbose={directives.verbose_mode}, elevated={directives.elevated_mode}")

@@ -1,6 +1,5 @@
 """Tests for inline directives parser."""
 
-import pytest
 from kabot.agent.directives import DirectiveParser, ParsedDirectives
 
 
@@ -61,3 +60,46 @@ def test_parse_elevated_directive():
 
     assert result.elevated_mode is True
     assert result.cleaned_message == "Run system command"
+
+
+def test_parse_empty_message_after_directive():
+    """Test directive with no message content."""
+    parser = DirectiveParser()
+    message = "/think"
+    result = parser.parse(message)
+
+    assert result.has_directives is True
+    assert result.think_mode is True
+    # Empty message after directive removal keeps original message
+    assert result.cleaned_message == "/think"
+
+
+def test_parse_unknown_directive():
+    """Test unknown directive is ignored."""
+    parser = DirectiveParser()
+    message = "/unknown do something"
+    result = parser.parse(message)
+
+    # Unknown directive should be removed but not set any flags
+    assert result.has_directives is False
+    assert result.cleaned_message == "/unknown do something"  # Unknown directives not removed
+
+
+def test_parse_directive_in_middle():
+    """Test directive in middle of text is not parsed."""
+    parser = DirectiveParser()
+    message = "Hello /think world"
+    result = parser.parse(message)
+
+    assert result.has_directives is False
+    assert result.cleaned_message == "Hello /think world"
+
+
+def test_parse_mixed_case_directive():
+    """Test mixed case directives work."""
+    parser = DirectiveParser()
+    message = "/THINK What is this?"
+    result = parser.parse(message)
+
+    assert result.think_mode is True
+    assert result.cleaned_message == "What is this?"
