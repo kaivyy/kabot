@@ -35,7 +35,7 @@ def test_truncator_preserves_beginning():
     result = truncator.truncate(large_result, "test_tool")
 
     assert "START" in result
-    assert " END" not in result or result.index(" END") > len(large_result) - 100
+    assert "END" not in result
 
 
 def test_truncator_handles_empty_result():
@@ -55,3 +55,18 @@ def test_truncator_custom_threshold():
     assert truncator.threshold == 5000
     assert truncator.max_tokens == 10000
     assert truncator.max_share == 0.5
+
+
+def test_truncator_fallback_without_tiktoken():
+    """Falls back to character-based counting when tiktoken unavailable."""
+    from unittest.mock import patch
+
+    with patch('builtins.__import__', side_effect=ImportError("tiktoken not found")):
+        truncator = ToolResultTruncator(max_tokens=128000, max_share=0.3)
+        large_result = "x" * 200000
+
+        result = truncator.truncate(large_result, "test_tool")
+
+        assert len(result) < len(large_result)
+        assert "⚠️" in result
+
