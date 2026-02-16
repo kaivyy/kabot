@@ -47,6 +47,9 @@ from kabot.core.directives import DirectiveParser
 from kabot.core.heartbeat import HeartbeatInjector
 from kabot.core.resilience import ResilienceLayer
 
+# Phase 12: Critical Features
+from kabot.agent.truncator import ToolResultTruncator
+
 
 class AgentLoop:
     """
@@ -166,6 +169,9 @@ class AgentLoop:
             primary_model=self.model,
             fallback_models=self.fallbacks,
         )
+
+        # Phase 12: Critical Features
+        self.truncator = ToolResultTruncator(max_tokens=128000, max_share=0.3)
 
     def _collect_api_keys(self, provider) -> list[str]:
         """Collect all available API keys from provider."""
@@ -429,7 +435,7 @@ class AgentLoop:
         )
 
         if decision.is_complex:
-            final_content = await self._run_agent_loop(msg, messages)
+            final_content = await self._run_agent_loop(msg, messages, session)
         else:
             final_content = await self._run_simple_response(msg, messages)
 
@@ -474,7 +480,7 @@ class AgentLoop:
             logger.error(f"Simple response failed: {e}")
             return f"Sorry, an error occurred: {str(e)}"
 
-    async def _run_agent_loop(self, msg: InboundMessage, messages: list) -> str | None:
+    async def _run_agent_loop(self, msg: InboundMessage, messages: list, session: Any) -> str | None:
         """
         Full Planner→Executor→Critic loop for complex tasks.
 
@@ -507,6 +513,9 @@ class AgentLoop:
                 # Verify compaction was successful
                 if self.context_guard.check_overflow(messages, self.model):
                     logger.warning("Context still over limit after compaction")
+
+            # Phase 12: Apply think mode before LLM call
+            messages = self._apply_think_mode(messages, session)
 
             response, error = await self._call_llm_with_fallback(messages, models_to_try)
             if not response:
@@ -561,7 +570,7 @@ class AgentLoop:
                     return response.content
 
             if response.has_tool_calls:
-                messages = await self._process_tool_calls(msg, messages, response)
+                messages = await self._process_tool_calls(msg, messages, response, session)
             else:
                 return response.content
         return "I've completed processing but have no response to give."
@@ -784,7 +793,7 @@ FEEDBACK: <one sentence explaining the score>"""
                     models.append(recovery["new_model"])
         return None, last_error
 
-    async def _process_tool_calls(self, msg: InboundMessage, messages: list, response: Any) -> list:
+    async def _process_tool_calls(self, msg: InboundMessage, messages: list, response: Any, session: Any) -> list:
         tool_call_dicts = [
             {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
             for tc in response.tool_calls
@@ -802,7 +811,12 @@ FEEDBACK: <one sentence explaining the score>"""
                     channel=msg.channel, chat_id=msg.chat_id, content=f"_{status}_", metadata={"type": "status_update"}
                 ))
             result = await self.tools.execute(tc.name, tc.arguments)
-            result_for_llm = self._format_tool_result(result)
+
+            # Phase 12: Apply truncation after tool execution
+            result_str = str(result)
+            truncated_result = self.truncator.truncate(result_str, tc.name)
+
+            result_for_llm = self._format_tool_result(truncated_result)
             messages = self.context.add_tool_result(messages, tc.id, tc.name, result_for_llm)
             await self.memory.add_message(
                 msg.session_key, "tool", str(result),
@@ -846,8 +860,8 @@ FEEDBACK: <one sentence explaining the score>"""
             if hasattr(tool, "set_context"): tool.set_context(origin_channel, origin_chat_id)
 
         messages = self.context.build_messages(history=session.get_history(), current_message=msg.content, channel=origin_channel, chat_id=origin_chat_id)
-        
-        final_content = await self._run_agent_loop(msg, messages)
+
+        final_content = await self._run_agent_loop(msg, messages, session)
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         if final_content: session.add_message("assistant", final_content)
         self.sessions.save(session)
@@ -895,6 +909,77 @@ FEEDBACK: <one sentence explaining the score>"""
             tool_names=self.tools.tool_names,
         )
 
+        # Create a minimal session for isolated execution
+        session = self.sessions.get_or_create(session_key)
+
         # Run simple response (no planning for isolated jobs)
-        final_content = await self._run_agent_loop(msg, messages)
+        final_content = await self._run_agent_loop(msg, messages, session)
         return final_content or ""
+
+    # Phase 12: Directives Behavior Implementation
+    def _apply_think_mode(self, messages: list, session: Any) -> list:
+        """Apply think mode if directive is active."""
+        try:
+            directives = session.metadata.get('directives', {})
+            if not isinstance(directives, dict):
+                logger.warning("Directives metadata corrupted, using defaults")
+                directives = {}
+
+            if not directives.get('think'):
+                return messages
+
+            reasoning_prompt = {
+                "role": "system",
+                "content": (
+                    "Think step-by-step. Show your reasoning process explicitly before taking action. "
+                    "Consider edge cases, alternative approaches, and potential issues. "
+                    "When analyzing code, read related files to understand full context."
+                )
+            }
+
+            messages.insert(0, reasoning_prompt)
+            logger.debug("Think mode applied: reasoning prompt injected")
+            return messages
+
+        except Exception as e:
+            logger.error(f"Failed to apply think mode: {e}")
+            return messages
+
+    def _should_log_verbose(self, session: Any) -> bool:
+        """Check if verbose logging is enabled."""
+        try:
+            directives = session.metadata.get('directives', {})
+            if not isinstance(directives, dict):
+                return False
+            return directives.get('verbose', False)
+        except Exception as e:
+            logger.error(f"Failed to check verbose mode: {e}")
+            return False
+
+    def _format_verbose_output(self, message: str, session: Any) -> str:
+        """Format output with verbose details if enabled."""
+        try:
+            if not self._should_log_verbose(session):
+                return message
+
+            verbose_prefix = "[VERBOSE] "
+            return f"{verbose_prefix}{message}"
+        except Exception as e:
+            logger.error(f"Failed to format verbose output: {e}")
+            return message
+
+    def _get_tool_permissions(self, session: Any) -> dict:
+        """Get tool permissions based on elevated mode."""
+        try:
+            directives = session.metadata.get('directives', {})
+            if not isinstance(directives, dict):
+                return {"auto_approve": False, "restrictions_disabled": False}
+
+            elevated = directives.get('elevated', False)
+            return {
+                "auto_approve": elevated,
+                "restrictions_disabled": elevated
+            }
+        except Exception as e:
+            logger.error(f"Failed to get tool permissions: {e}")
+            return {"auto_approve": False, "restrictions_disabled": False}
