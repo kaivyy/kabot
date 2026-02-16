@@ -1,14 +1,13 @@
 """Configuration loading utilities."""
 
 import json
-import time
 import os
 import shutil
 from pathlib import Path
 from typing import Any
-from contextlib import contextmanager
 
 from kabot.config.schema import Config
+from kabot.utils.pid_lock import PIDLock
 
 
 def get_config_path() -> Path:
@@ -66,34 +65,9 @@ def load_config(config_path: Path | None = None) -> Config:
     return Config()
 
 
-@contextmanager
-def file_lock(path: Path, timeout: int = 10):
-    """Simple file-based lock for atomic config updates."""
-    lock_path = path.with_suffix(".lock")
-    start_time = time.time()
-
-    while True:
-        try:
-            # Try to create the lock file exclusively
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-            try:
-                yield
-                break
-            finally:
-                os.close(fd)
-                try:
-                    os.remove(lock_path)
-                except Exception:
-                    pass
-        except FileExistsError:
-            if time.time() - start_time > timeout:
-                raise TimeoutError(f"Could not acquire lock on {path} after {timeout}s")
-            time.sleep(0.1)
-
-
 def save_config(config: Config, config_path: Path | None = None) -> None:
     """
-    Save configuration to file with atomic locking.
+    Save configuration to file with PID-based locking and atomic writes.
 
     Args:
         config: Configuration to save.
@@ -106,7 +80,8 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     data = config.model_dump()
     data = convert_to_camel(data)
 
-    with file_lock(path):
+    # Use PIDLock for multi-process safety with stale lock recovery
+    with PIDLock(path):
         # Write to temp file first for atomic replacement
         temp_path = path.with_suffix(".tmp")
         with open(temp_path, "w") as f:
