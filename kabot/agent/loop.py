@@ -31,8 +31,9 @@ from kabot.agent.router import IntentRouter, RouteDecision
 from kabot.session.manager import SessionManager
 from kabot.memory.chroma_memory import ChromaMemoryManager
 from kabot.memory.vector_store import VectorStore
-from kabot.plugins.loader import load_plugins
+from kabot.plugins.loader import load_plugins, load_dynamic_plugins
 from kabot.plugins.registry import PluginRegistry
+from kabot.plugins.hooks import HookManager
 from kabot.providers.registry import ModelRegistry
 
 # Phase 8: System Internals
@@ -137,6 +138,7 @@ class AgentLoop:
 
         # Plugin system (Phase 6)
         self.plugin_registry = PluginRegistry()
+        self.hooks = HookManager()
         self._load_plugins()
 
         self._running = False
@@ -186,14 +188,22 @@ class AgentLoop:
         # Load from workspace plugins directory
         workspace_plugins = self.workspace / "plugins"
         if workspace_plugins.exists():
+            # Load legacy SKILL.md plugins
             loaded = load_plugins(workspace_plugins, self.plugin_registry)
-            logger.info(f"Loaded {len(loaded)} plugins from workspace")
+            logger.info(f"Loaded {len(loaded)} SKILL.md plugins from workspace")
+
+            # Load new plugin.json plugins with hooks
+            loaded_dynamic = load_dynamic_plugins(workspace_plugins, self.plugin_registry, self.hooks)
+            logger.info(f"Loaded {len(loaded_dynamic)} dynamic plugins from workspace")
 
         # Load from builtin plugins directory (if exists)
         builtin_plugins = Path(__file__).parent.parent / "plugins"
         if builtin_plugins.exists() and builtin_plugins != workspace_plugins:
             loaded = load_plugins(builtin_plugins, self.plugin_registry)
-            logger.info(f"Loaded {len(loaded)} builtin plugins")
+            logger.info(f"Loaded {len(loaded)} SKILL.md builtin plugins")
+
+            loaded_dynamic = load_dynamic_plugins(builtin_plugins, self.plugin_registry, self.hooks)
+            logger.info(f"Loaded {len(loaded_dynamic)} dynamic builtin plugins")
 
     @property
     def vector_store(self) -> VectorStore:
@@ -340,6 +350,9 @@ class AgentLoop:
         """Run the agent loop, processing messages from the bus."""
         self._running = True
         logger.info("Agent loop started")
+
+        # Phase 10: Emit ON_STARTUP hook
+        await self.hooks.emit("ON_STARTUP")
 
         while self._running:
             try:
