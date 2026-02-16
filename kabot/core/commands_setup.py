@@ -96,4 +96,17 @@ def register_builtin_commands(
 
     router.register("/uptime", cmd_uptime, "Show bot uptime")
 
+    # ─── /clip ───
+    async def cmd_clip(ctx: CommandContext) -> str:
+        if not ctx.args:
+            return "Usage: `/clip <text>`"
+
+        text = " ".join(ctx.args)
+        from kabot.core.windows import clip_copy
+        if clip_copy(text):
+            return "✅ Copied to clipboard!"
+        return "❌ Failed to copy (is clip.exe available?)"
+
+    router.register("/clip", cmd_clip, "Copy text to system clipboard")
+
     logger.info(f"Registered {len(router._commands)} built-in commands")
