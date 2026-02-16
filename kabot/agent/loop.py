@@ -956,30 +956,28 @@ FEEDBACK: <one sentence explaining the score>"""
             logger.error(f"Failed to check verbose mode: {e}")
             return False
 
-    def _format_verbose_output(self, message: str, session: Any) -> str:
-        """Format output with verbose details if enabled."""
-        try:
-            if not self._should_log_verbose(session):
-                return message
-
-            verbose_prefix = "[VERBOSE] "
-            return f"{verbose_prefix}{message}"
-        except Exception as e:
-            logger.error(f"Failed to format verbose output: {e}")
-            return message
+    def _format_verbose_output(self, tool_name: str, tool_result: str, tokens_used: int) -> str:
+        """Format verbose debug output."""
+        return (
+            f"\n\n[DEBUG] Tool: {tool_name}\n"
+            f"[DEBUG] Tokens: {tokens_used}\n"
+            f"[DEBUG] Result:\n{tool_result}\n"
+        )
 
     def _get_tool_permissions(self, session: Any) -> dict:
-        """Get tool permissions based on elevated mode."""
+        """Get tool execution permissions based on directives."""
         try:
-            directives = session.metadata.get('directives', {})
-            if not isinstance(directives, dict):
-                return {"auto_approve": False, "restrictions_disabled": False}
+            elevated = session.metadata.get('directives', {}).get('elevated', False)
 
-            elevated = directives.get('elevated', False)
             return {
-                "auto_approve": elevated,
-                "restrictions_disabled": elevated
+                'auto_approve': elevated,
+                'restrict_to_workspace': not elevated,
+                'allow_high_risk': elevated
             }
         except Exception as e:
             logger.error(f"Failed to get tool permissions: {e}")
-            return {"auto_approve": False, "restrictions_disabled": False}
+            return {
+                'auto_approve': False,
+                'restrict_to_workspace': True,
+                'allow_high_risk': False
+            }

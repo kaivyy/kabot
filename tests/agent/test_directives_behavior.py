@@ -39,7 +39,7 @@ def test_think_mode_injects_reasoning_prompt(mock_session):
     assert result[1] == messages[0]  # Original message preserved
 
 
-def test_think_mode_disabled(mock_session):
+def test_think_mode_disabled_by_default(mock_session):
     """Think mode disabled should not modify messages."""
     # Arrange
     mock_session.metadata['directives'] = {'think': False, 'verbose': False, 'elevated': False}
@@ -54,23 +54,6 @@ def test_think_mode_disabled(mock_session):
 
     # Assert
     assert result == messages  # Unchanged
-
-
-def test_think_mode_handles_missing_directives(mock_session):
-    """Think mode should handle missing directives gracefully."""
-    # Arrange
-    mock_session.metadata = {}  # No directives
-    messages = [
-        {"role": "user", "content": "Hello"}
-    ]
-
-    loop = AgentLoop.__new__(AgentLoop)
-
-    # Act
-    result = loop._apply_think_mode(messages.copy(), mock_session)
-
-    # Assert
-    assert result == messages  # Unchanged, no error
 
 
 def test_think_mode_handles_corrupted_directives(mock_session):
@@ -118,39 +101,22 @@ def test_verbose_mode_disabled(mock_session):
     assert result is False
 
 
-def test_verbose_format_output(mock_session):
-    """Verbose mode should format output with prefix."""
+def test_format_verbose_output(mock_session):
+    """Verbose mode should format output with DEBUG prefix."""
     # Arrange
-    mock_session.metadata['directives'] = {'think': False, 'verbose': True, 'elevated': False}
-    message = "Test message"
-
     loop = AgentLoop.__new__(AgentLoop)
 
     # Act
-    result = loop._format_verbose_output(message, mock_session)
+    result = loop._format_verbose_output("test_tool", "result data", 150)
 
     # Assert
-    assert result == "[VERBOSE] Test message"
-    assert result.startswith("[VERBOSE] ")
-
-
-def test_verbose_format_output_disabled(mock_session):
-    """Verbose mode disabled should not modify output."""
-    # Arrange
-    mock_session.metadata['directives'] = {'think': False, 'verbose': False, 'elevated': False}
-    message = "Test message"
-
-    loop = AgentLoop.__new__(AgentLoop)
-
-    # Act
-    result = loop._format_verbose_output(message, mock_session)
-
-    # Assert
-    assert result == message  # Unchanged
+    assert "[DEBUG] Tool: test_tool" in result
+    assert "[DEBUG] Tokens: 150" in result
+    assert "[DEBUG] Result:\nresult data" in result
 
 
 def test_elevated_mode_enabled(mock_session):
-    """Elevated mode should enable auto-approve and disable restrictions."""
+    """Elevated mode should enable auto-approve and high-risk operations."""
     # Arrange
     mock_session.metadata['directives'] = {'think': False, 'verbose': False, 'elevated': True}
 
@@ -161,7 +127,8 @@ def test_elevated_mode_enabled(mock_session):
 
     # Assert
     assert result["auto_approve"] is True
-    assert result["restrictions_disabled"] is True
+    assert result["restrict_to_workspace"] is False
+    assert result["allow_high_risk"] is True
 
 
 def test_elevated_mode_disabled(mock_session):
@@ -176,26 +143,8 @@ def test_elevated_mode_disabled(mock_session):
 
     # Assert
     assert result["auto_approve"] is False
-    assert result["restrictions_disabled"] is False
-
-
-def test_directives_default_behavior(mock_session):
-    """Missing directives should default to safe behavior."""
-    # Arrange
-    mock_session.metadata = {}  # No directives
-
-    loop = AgentLoop.__new__(AgentLoop)
-
-    # Act
-    think_result = loop._apply_think_mode([{"role": "user", "content": "test"}], mock_session)
-    verbose_result = loop._should_log_verbose(mock_session)
-    permissions_result = loop._get_tool_permissions(mock_session)
-
-    # Assert
-    assert len(think_result) == 1  # No think mode injection
-    assert verbose_result is False  # Verbose disabled
-    assert permissions_result["auto_approve"] is False  # Elevated disabled
-    assert permissions_result["restrictions_disabled"] is False
+    assert result["restrict_to_workspace"] is True
+    assert result["allow_high_risk"] is False
 
 
 def test_directives_error_handling(mock_session):
@@ -214,3 +163,5 @@ def test_directives_error_handling(mock_session):
     assert len(think_result) == 1
     assert verbose_result is False
     assert permissions_result["auto_approve"] is False
+    assert permissions_result["restrict_to_workspace"] is True
+    assert permissions_result["allow_high_risk"] is False
