@@ -501,6 +501,9 @@ class AgentLoop:
         if plan:
             messages.append({"role": "user", "content": f"[SYSTEM PLAN]\n{plan}\n\nNow execute this plan step by step."})
 
+        # Phase 12: Apply think mode before loop starts (only once)
+        messages = self._apply_think_mode(messages, session)
+
         while iteration < self.max_iterations:
             iteration += 1
 
@@ -513,9 +516,6 @@ class AgentLoop:
                 # Verify compaction was successful
                 if self.context_guard.check_overflow(messages, self.model):
                     logger.warning("Context still over limit after compaction")
-
-            # Phase 12: Apply think mode before LLM call
-            messages = self._apply_think_mode(messages, session)
 
             response, error = await self._call_llm_with_fallback(messages, models_to_try)
             if not response:
@@ -825,12 +825,12 @@ FEEDBACK: <one sentence explaining the score>"""
         return messages
 
     def _format_tool_result(self, result: Any) -> str:
-        res_str = str(result)
-        limit = 4000
-        if len(res_str) > limit:
-            keep = limit // 2
-            res_str = res_str[:keep] + "\n\n... [TRUNCATED] ...\n\n" + res_str[-keep:]
-        return res_str
+        """Format tool result for LLM context.
+
+        Note: Truncation is handled by ToolResultTruncator before this method is called.
+        This method only converts the result to string format.
+        """
+        return str(result)
 
     async def _finalize_session(self, msg: InboundMessage, session: Any, final_content: str | None) -> OutboundMessage:
         if final_content and not final_content.startswith("I've completed"):
@@ -918,7 +918,30 @@ FEEDBACK: <one sentence explaining the score>"""
 
     # Phase 12: Directives Behavior Implementation
     def _apply_think_mode(self, messages: list, session: Any) -> list:
-        """Apply think mode if directive is active."""
+        """Apply think mode directive by injecting reasoning prompt into message context.
+
+        Think mode enhances the LLM's reasoning capabilities by instructing it to:
+        - Show step-by-step reasoning before taking action
+        - Consider edge cases and alternative approaches
+        - Read related files for full context understanding
+        - Explicitly explain its thought process
+
+        This method should be called ONCE before the agent loop starts, not on every iteration,
+        to avoid injecting the reasoning prompt multiple times.
+
+        Args:
+            messages: List of message dictionaries in OpenAI format
+            session: Session object containing metadata with directives
+
+        Returns:
+            Modified messages list with reasoning prompt inserted at the beginning if think mode
+            is active, otherwise returns messages unchanged
+
+        Note:
+            - Gracefully handles corrupted or missing directives metadata
+            - Logs debug message when think mode is applied
+            - Returns original messages on any error to prevent loop disruption
+        """
         try:
             directives = session.metadata.get('directives', {})
             if not isinstance(directives, dict):
@@ -946,7 +969,28 @@ FEEDBACK: <one sentence explaining the score>"""
             return messages
 
     def _should_log_verbose(self, session: Any) -> bool:
-        """Check if verbose logging is enabled."""
+        """Check if verbose logging directive is enabled for the current session.
+
+        Verbose mode provides detailed debug output including:
+        - Tool execution details
+        - Token usage statistics
+        - Full tool results before truncation
+        - Internal processing information
+
+        This is useful for debugging, development, and understanding the agent's
+        decision-making process.
+
+        Args:
+            session: Session object containing metadata with directives
+
+        Returns:
+            True if verbose mode is enabled, False otherwise
+
+        Note:
+            - Returns False if directives metadata is corrupted or missing
+            - Returns False on any error to prevent disrupting normal operation
+            - Safe to call frequently as it only reads session metadata
+        """
         try:
             directives = session.metadata.get('directives', {})
             if not isinstance(directives, dict):
@@ -957,7 +1001,28 @@ FEEDBACK: <one sentence explaining the score>"""
             return False
 
     def _format_verbose_output(self, tool_name: str, tool_result: str, tokens_used: int) -> str:
-        """Format verbose debug output."""
+        """Format verbose debug output for tool execution details.
+
+        Creates a structured debug message containing tool execution information
+        that can be sent to the user when verbose mode is enabled. This helps
+        users understand what tools are being called, how much context they consume,
+        and what results they produce.
+
+        Args:
+            tool_name: Name of the tool that was executed (e.g., "read_file", "exec")
+            tool_result: The result returned by the tool (may be truncated)
+            tokens_used: Estimated number of tokens consumed by the tool result
+
+        Returns:
+            Formatted string with DEBUG prefix containing tool name, token count,
+            and the full result
+
+        Example output:
+            [DEBUG] Tool: read_file
+            [DEBUG] Tokens: 1234
+            [DEBUG] Result:
+            <tool result content here>
+        """
         return (
             f"\n\n[DEBUG] Tool: {tool_name}\n"
             f"[DEBUG] Tokens: {tokens_used}\n"
@@ -965,7 +1030,38 @@ FEEDBACK: <one sentence explaining the score>"""
         )
 
     def _get_tool_permissions(self, session: Any) -> dict:
-        """Get tool execution permissions based on directives."""
+        """Get tool execution permissions based on elevated directive status.
+
+        The elevated directive grants the agent expanded permissions for tool execution,
+        allowing it to perform operations that would normally be restricted. This is
+        useful for administrative tasks, system maintenance, or when the user explicitly
+        trusts the agent to perform sensitive operations.
+
+        Permission levels:
+        - Normal mode (elevated=False):
+          * auto_approve: False - requires user confirmation for risky operations
+          * restrict_to_workspace: True - limits file operations to workspace directory
+          * allow_high_risk: False - blocks potentially dangerous operations
+
+        - Elevated mode (elevated=True):
+          * auto_approve: True - automatically approves tool executions
+          * restrict_to_workspace: False - allows file operations outside workspace
+          * allow_high_risk: True - permits high-risk operations
+
+        Args:
+            session: Session object containing metadata with directives
+
+        Returns:
+            Dictionary with permission flags:
+            - auto_approve: Whether to skip confirmation prompts
+            - restrict_to_workspace: Whether to limit file operations to workspace
+            - allow_high_risk: Whether to allow potentially dangerous operations
+
+        Note:
+            - Returns safe defaults (all restrictions enabled) on any error
+            - Elevated mode should only be used when the user explicitly requests it
+            - Tools should check these permissions before executing sensitive operations
+        """
         try:
             elevated = session.metadata.get('directives', {}).get('elevated', False)
 
