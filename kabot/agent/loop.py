@@ -804,6 +804,11 @@ FEEDBACK: <one sentence explaining the score>"""
         tc_data = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in response.tool_calls]
         await self.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data)
 
+        # Phase 12: Get tool permissions based on elevated mode directive
+        permissions = self._get_tool_permissions(session)
+        if permissions.get('auto_approve'):
+            logger.debug("Elevated mode active: auto_approve=True, restrict_to_workspace=False")
+
         for tc in response.tool_calls:
             status = self._get_tool_status_message(tc.name, tc.arguments)
             if status:
@@ -815,6 +820,12 @@ FEEDBACK: <one sentence explaining the score>"""
             # Phase 12: Apply truncation after tool execution
             result_str = str(result)
             truncated_result = self.truncator.truncate(result_str, tc.name)
+
+            # Phase 12: Add verbose mode output if enabled
+            if self._should_log_verbose(session):
+                token_count = self.truncator._count_tokens(result_str)
+                verbose_output = self._format_verbose_output(tc.name, result_str, token_count)
+                truncated_result += verbose_output
 
             result_for_llm = self._format_tool_result(truncated_result)
             messages = self.context.add_tool_result(messages, tc.id, tc.name, result_for_llm)
