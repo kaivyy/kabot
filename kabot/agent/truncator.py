@@ -20,8 +20,8 @@ class ToolResultTruncator:
             keep_tokens = int(self.threshold * 0.8)
             truncated = self._truncate_to_tokens(result, keep_tokens)
             warning = (
-                f"\n\n⚠️ [Output truncated: {token_count} tokens exceeds limit of {self.threshold}. "
-                f"Showing first {keep_tokens} tokens. Use pagination or filters to get specific data.]"
+                f"⚠️ [Output truncated: {token_count} tokens exceeds limit of {self.threshold}. "
+                f"Showing first {keep_tokens} tokens...]"
             )
             return truncated + warning
         except Exception as e:
