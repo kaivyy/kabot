@@ -1,11 +1,23 @@
 """Async message queue for decoupled channel-agent communication."""
 
 import asyncio
+from dataclasses import dataclass
 from typing import Callable, Awaitable
 
 from loguru import logger
 
 from kabot.bus.events import InboundMessage, OutboundMessage, SystemEvent
+
+
+@dataclass
+class AgentMessage:
+    msg_id: str
+    from_agent: str
+    to_agent: str | None
+    msg_type: str
+    content: dict
+    timestamp: float
+    reply_to: str | None = None
 
 
 class MessageBus:
@@ -28,6 +40,10 @@ class MessageBus:
         self.system_events: asyncio.Queue[SystemEvent] = asyncio.Queue()
         self._system_event_subscribers: list[Callable[[SystemEvent], Awaitable[None]]] = []
         self._seq_by_run: dict[str, int] = {}  # Monotonic sequence counter per run
+
+        # Phase 2 Task 11: Agent-to-agent communication
+        self.agent_messages: asyncio.Queue[AgentMessage] = asyncio.Queue()
+        self._agent_subscribers: dict[str, asyncio.Queue[AgentMessage]] = {}
 
         self._running = False
 
