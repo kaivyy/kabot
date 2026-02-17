@@ -1,5 +1,7 @@
 """Configuration schema using Pydantic."""
 
+from __future__ import annotations
+
 from typing import Any
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -127,10 +129,20 @@ class AgentDefaults(BaseModel):
     max_tool_iterations: int = 20
 
 
+class AgentConfig(BaseModel):
+    """Configuration for a single agent instance."""
+    id: str
+    name: str = ""
+    model: str | None = None
+    workspace: str | None = None
+    default: bool = False
+
+
 class AgentsConfig(BaseModel):
     """Agent configuration."""
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     enable_hybrid_memory: bool = True
+    agents: list[AgentConfig] = Field(default_factory=list)
 
 
 class AuthProfile(BaseModel):
