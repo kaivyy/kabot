@@ -536,6 +536,7 @@ def gateway(
             tasks = [
                 agent.run(),
                 channels.start_all(),
+                bus.dispatch_system_events(),
             ]
 
             if recovery_data:
