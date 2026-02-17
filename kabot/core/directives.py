@@ -33,6 +33,7 @@ class DirectiveSet:
     # Behavior modifiers
     think: bool = False           # Enable chain-of-thought reasoning
     verbose: bool = False         # Enable debug-level output in chat
+    elevated: bool = False        # Enable high-risk tool usage
     json_output: bool = False     # Force JSON response format
     no_tools: bool = False        # Disable tool usage for this turn
     raw: bool = False             # Skip markdown formatting
@@ -61,6 +62,7 @@ class DirectiveParser:
     KNOWN_DIRECTIVES = {
         "think": "bool",
         "verbose": "bool", 
+        "elevated": "bool",
         "json": "bool",
         "notools": "bool",
         "raw": "bool",
@@ -118,6 +120,7 @@ class DirectiveParser:
         if found_directives:
             directives.think = found_directives.get("think", False)
             directives.verbose = found_directives.get("verbose", False)
+            directives.elevated = found_directives.get("elevated", False)
             directives.json_output = found_directives.get("json", False)
             directives.no_tools = found_directives.get("notools", False)
             directives.raw = found_directives.get("raw", False)

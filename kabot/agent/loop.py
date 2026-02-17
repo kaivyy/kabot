@@ -51,6 +51,9 @@ from kabot.core.resilience import ResilienceLayer
 # Phase 12: Critical Features
 from kabot.agent.truncator import ToolResultTruncator
 
+# Phase 13: Resilience & Security
+from kabot.core.sentinel import CrashSentinel, format_recovery_message
+
 
 class AgentLoop:
     """
@@ -174,6 +177,10 @@ class AgentLoop:
 
         # Phase 12: Critical Features
         self.truncator = ToolResultTruncator(max_tokens=128000, max_share=0.3)
+
+        # Phase 13: Crash Recovery
+        sentinel_path = Path.home() / ".kabot" / "crash.sentinel"
+        self.sentinel = CrashSentinel(sentinel_path)
 
     def _collect_api_keys(self, provider) -> list[str]:
         """Collect all available API keys from provider."""
@@ -351,6 +358,22 @@ class AgentLoop:
         self._running = True
         logger.info("Agent loop started")
 
+        # Phase 13: Check for crash from previous session
+        crash_data = self.sentinel.check_for_crash()
+        if crash_data:
+            recovery_msg = format_recovery_message(crash_data)
+            logger.warning(f"Crash detected, sending recovery message")
+            # Send recovery message to the crashed session if we have context
+            if crash_data.get('session_id'):
+                try:
+                    await self.bus.publish_outbound(OutboundMessage(
+                        channel="system",
+                        chat_id=crash_data.get('session_id', 'unknown'),
+                        content=recovery_msg
+                    ))
+                except Exception as e:
+                    logger.error(f"Failed to send recovery message: {e}")
+
         # Phase 10: Emit ON_STARTUP hook
         await self.hooks.emit("ON_STARTUP")
 
@@ -376,17 +399,12 @@ class AgentLoop:
 
     def stop(self) -> None:
         self._running = False
+        # Phase 13: Clear sentinel on clean shutdown
+        self.sentinel.clear_sentinel()
         logger.info("Agent loop stopping")
 
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
-        # Parse directives (Phase 11)
-        parser = DirectiveParser()
-        directives = parser.parse(msg.content)
 
-        # Use cleaned message for processing
-        if directives.has_directives:
-            msg.content = directives.cleaned_message
-            logger.info(f"Directives: think={directives.think_mode}, verbose={directives.verbose_mode}, elevated={directives.elevated_mode}")
 
         if msg.channel == "system":
             return await self._process_system_message(msg)
@@ -412,26 +430,28 @@ class AgentLoop:
 
         session = await self._init_session(msg)
 
-        # Store directives in session metadata
-        if directives.has_directives:
-            session.metadata['directives'] = {
-                'think': directives.think_mode,
-                'verbose': directives.verbose_mode,
-                'elevated': directives.elevated_mode,
-            }
-
-        conversation_history = self.memory.get_conversation_context(msg.session_key, max_messages=30)
-
         # Phase 9: Parse directives from message body
         clean_body, directives = self.directive_parser.parse(msg.content)
         effective_content = clean_body or msg.content
+
+        # Store directives in session metadata
         if directives.raw_directives:
             active = self.directive_parser.format_active_directives(directives)
             logger.info(f"Directives active: {active}")
+            
+            session.metadata['directives'] = {
+                'think': directives.think,
+                'verbose': directives.verbose,
+                'elevated': directives.elevated,
+            }
+            # Ensure metadata persists
+            self.sessions.save(session)
 
         # Phase 9: Model override via directive
         if directives.model:
             logger.info(f"Directive override: model → {directives.model}")
+
+        conversation_history = self.memory.get_conversation_context(msg.session_key, max_messages=30)
 
         # Router triase: SIMPLE vs COMPLEX
         decision = await self.router.route(effective_content)
@@ -456,6 +476,15 @@ class AgentLoop:
 
     async def _init_session(self, msg: InboundMessage) -> Any:
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {msg.content[:80]}...")
+
+        # Phase 13: Mark session active before processing (crash recovery)
+        message_id = f"{msg.channel}:{msg.chat_id}:{msg.sender_id}"
+        self.sentinel.mark_session_active(
+            session_id=msg.session_key,
+            message_id=message_id,
+            user_message=msg.content
+        )
+
         session = self.sessions.get_or_create(msg.session_key)
         self.memory.create_session(msg.session_key, msg.channel, msg.chat_id, msg.sender_id)
         await self.memory.add_message(msg.session_key, "user", msg.content)
@@ -469,6 +498,12 @@ class AgentLoop:
             tool = self.tools.get(tool_name)
             if hasattr(tool, "set_context"):
                 tool.set_context(msg.session_key)
+
+        # Phase 13: Set session context for spawn tool (for persistent registry)
+        spawn_tool = self.tools.get("spawn")
+        if spawn_tool and hasattr(spawn_tool, "set_session_context"):
+            spawn_tool.set_session_context(msg.session_key)
+
         return session
 
     async def _run_simple_response(self, msg: InboundMessage, messages: list) -> str | None:

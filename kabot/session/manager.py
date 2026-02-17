@@ -1,6 +1,7 @@
 """Session management for conversation history."""
 
 import json
+import os
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -9,6 +10,7 @@ from typing import Any
 from loguru import logger
 
 from kabot.utils.helpers import ensure_dir, safe_filename
+from kabot.utils.pid_lock import PIDLock
 
 
 @dataclass
@@ -134,23 +136,36 @@ class SessionManager:
             return None
     
     def save(self, session: Session) -> None:
-        """Save a session to disk."""
+        """Save a session to disk with PID-based locking and atomic writes."""
         path = self._get_session_path(session.key)
-        
-        with open(path, "w") as f:
-            # Write metadata first
-            metadata_line = {
-                "_type": "metadata",
-                "created_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat(),
-                "metadata": session.metadata
-            }
-            f.write(json.dumps(metadata_line) + "\n")
-            
-            # Write messages
-            for msg in session.messages:
-                f.write(json.dumps(msg) + "\n")
-        
+
+        # Use PIDLock for multi-process safety (Phase 13 fix)
+        with PIDLock(path):
+            # Write to temp file first for atomic replacement
+            temp_path = path.with_suffix(".tmp")
+
+            with open(temp_path, "w") as f:
+                # Write metadata first
+                metadata_line = {
+                    "_type": "metadata",
+                    "created_at": session.created_at.isoformat(),
+                    "updated_at": session.updated_at.isoformat(),
+                    "metadata": session.metadata
+                }
+                f.write(json.dumps(metadata_line) + "\n")
+
+                # Write messages
+                for msg in session.messages:
+                    f.write(json.dumps(msg) + "\n")
+
+            # Atomic rename (replace existing if possible)
+            if os.name == 'nt':  # Windows
+                if path.exists():
+                    os.remove(path)
+                os.rename(temp_path, path)
+            else:  # Unix
+                os.replace(temp_path, path)
+
         self._cache[session.key] = session
     
     def delete(self, key: str) -> bool:

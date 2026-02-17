@@ -15,6 +15,7 @@ from kabot.agent.tools.registry import ToolRegistry
 from kabot.agent.tools.filesystem import ReadFileTool, WriteFileTool, ListDirTool
 from kabot.agent.tools.shell import ExecTool
 from kabot.agent.tools.web import WebSearchTool, WebFetchTool
+from kabot.agent.subagent_registry import SubagentRegistry
 
 
 class SubagentManager:
@@ -45,6 +46,13 @@ class SubagentManager:
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
+
+        # Phase 13: Persistent subagent registry
+        registry_path = Path.home() / ".kabot" / "subagents" / "runs.json"
+        self.registry = SubagentRegistry(registry_path)
+
+        # Cleanup old completed runs on startup
+        self.registry.cleanup_old_runs(max_age_seconds=86400)
     
     async def spawn(
         self,
@@ -52,36 +60,48 @@ class SubagentManager:
         label: str | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
+        parent_session_key: str = "unknown",
     ) -> str:
         """
         Spawn a subagent to execute a task in the background.
-        
+
         Args:
             task: The task description for the subagent.
             label: Optional human-readable label for the task.
             origin_channel: The channel to announce results to.
             origin_chat_id: The chat ID to announce results to.
-        
+            parent_session_key: Parent session key for tracking.
+
         Returns:
             Status message indicating the subagent was started.
         """
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
-        
+
         origin = {
             "channel": origin_channel,
             "chat_id": origin_chat_id,
         }
-        
+
+        # Phase 13: Register in persistent registry
+        self.registry.register(
+            run_id=task_id,
+            task=task,
+            label=display_label,
+            parent_session_key=parent_session_key,
+            origin_channel=origin_channel,
+            origin_chat_id=origin_chat_id,
+        )
+
         # Create background task
         bg_task = asyncio.create_task(
             self._run_subagent(task_id, task, display_label, origin)
         )
         self._running_tasks[task_id] = bg_task
-        
+
         # Cleanup when done
         bg_task.add_done_callback(lambda _: self._running_tasks.pop(task_id, None))
-        
+
         logger.info(f"Spawned subagent [{task_id}]: {display_label}")
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
     
@@ -167,13 +187,30 @@ class SubagentManager:
             
             if final_result is None:
                 final_result = "Task completed but no final response was generated."
-            
+
             logger.info(f"Subagent [{task_id}] completed successfully")
+
+            # Phase 13: Mark as completed in registry
+            self.registry.complete(
+                run_id=task_id,
+                result=final_result,
+                status="completed"
+            )
+
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
-            
+
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             logger.error(f"Subagent [{task_id}] failed: {e}")
+
+            # Phase 13: Mark as failed in registry
+            self.registry.complete(
+                run_id=task_id,
+                result=error_msg,
+                status="failed",
+                error=str(e)
+            )
+
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
     
     async def _announce_result(
