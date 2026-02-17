@@ -128,7 +128,8 @@ class AgentLoop:
             self.auth_rotation = None
 
         self.router = IntentRouter(provider, model=self.model)
-        self.tools = ToolRegistry()
+        # Phase 14: Pass bus for system event emission (will set run_id per message)
+        self.tools = ToolRegistry(bus=bus, run_id=None)
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -358,6 +359,14 @@ class AgentLoop:
         self._running = True
         logger.info("Agent loop started")
 
+        # Phase 14: Emit lifecycle start event
+        from kabot.bus.events import SystemEvent
+        run_id = "agent-loop"
+        seq = self.bus.get_next_seq(run_id)
+        await self.bus.emit_system_event(
+            SystemEvent.lifecycle(run_id, seq, "start", component="agent_loop")
+        )
+
         # Phase 13: Check for crash from previous session
         crash_data = self.sentinel.check_for_crash()
         if crash_data:
@@ -389,6 +398,16 @@ class AgentLoop:
                         await self.bus.publish_outbound(response)
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
+
+                    # Phase 14: Emit error event
+                    seq = self.bus.get_next_seq(run_id)
+                    await self.bus.emit_system_event(
+                        SystemEvent.error(
+                            run_id, seq, "processing_error", str(e),
+                            session_key=msg.session_key
+                        )
+                    )
+
                     await self.bus.publish_outbound(OutboundMessage(
                         channel=msg.channel,
                         chat_id=msg.chat_id,
@@ -399,6 +418,17 @@ class AgentLoop:
 
     def stop(self) -> None:
         self._running = False
+
+        # Phase 14: Emit lifecycle stop event
+        from kabot.bus.events import SystemEvent
+        run_id = "agent-loop"
+        seq = self.bus.get_next_seq(run_id)
+        asyncio.create_task(
+            self.bus.emit_system_event(
+                SystemEvent.lifecycle(run_id, seq, "stop", component="agent_loop")
+            )
+        )
+
         # Phase 13: Clear sentinel on clean shutdown
         self.sentinel.clear_sentinel()
         logger.info("Agent loop stopping")
@@ -476,6 +506,10 @@ class AgentLoop:
 
     async def _init_session(self, msg: InboundMessage) -> Any:
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {msg.content[:80]}...")
+
+        # Phase 14: Set run_id for tool event tracking
+        run_id = f"msg-{msg.session_key}-{msg.timestamp.timestamp()}"
+        self.tools._run_id = run_id
 
         # Phase 13: Mark session active before processing (crash recovery)
         message_id = f"{msg.channel}:{msg.chat_id}:{msg.sender_id}"
