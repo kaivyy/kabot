@@ -138,11 +138,19 @@ class AgentConfig(BaseModel):
     default: bool = False
 
 
+class AgentBinding(BaseModel):
+    """Binding configuration to route messages to specific agents."""
+    agent_id: str
+    channel: str
+    chat_id: str | None = None
+
+
 class AgentsConfig(BaseModel):
     """Agent configuration."""
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     enable_hybrid_memory: bool = True
     agents: list[AgentConfig] = Field(default_factory=list)
+    bindings: list[AgentBinding] = Field(default_factory=list)
 
 
 class AuthProfile(BaseModel):
