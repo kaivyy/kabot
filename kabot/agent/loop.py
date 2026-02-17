@@ -73,6 +73,7 @@ class AgentLoop:
         provider: LLMProvider,
         workspace: Path,
         model: str | None = None,
+        config: Any = None,
         fallbacks: list[str] | None = None,
         max_iterations: int = 20,
         brave_api_key: str | None = None,
@@ -82,8 +83,9 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         enable_hybrid_memory: bool = True,
     ):
-        from kabot.config.schema import ExecToolConfig
+        from kabot.config.schema import ExecToolConfig, Config
         from kabot.cron.service import CronService
+        self.config = config or Config()
         self.bus = bus
         self.provider = provider
         self.workspace = workspace
@@ -504,24 +506,36 @@ class AgentLoop:
 
         return await self._finalize_session(msg, session, final_content)
 
+    def _get_session_key(self, msg: InboundMessage) -> str:
+        """Get session key with agent routing."""
+        from kabot.routing.bindings import resolve_agent_route
+        from kabot.session.session_key import build_agent_session_key
+
+        agent_id = resolve_agent_route(self.config, msg.channel, msg.chat_id)
+        return build_agent_session_key(agent_id, msg.channel, msg.chat_id)
+
     async def _init_session(self, msg: InboundMessage) -> Any:
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {msg.content[:80]}...")
 
+        # Get session key with agent routing and set it on the message
+        session_key = self._get_session_key(msg)
+        msg._session_key = session_key
+
         # Phase 14: Set run_id for tool event tracking
-        run_id = f"msg-{msg.session_key}-{msg.timestamp.timestamp()}"
+        run_id = f"msg-{session_key}-{msg.timestamp.timestamp()}"
         self.tools._run_id = run_id
 
         # Phase 13: Mark session active before processing (crash recovery)
         message_id = f"{msg.channel}:{msg.chat_id}:{msg.sender_id}"
         self.sentinel.mark_session_active(
-            session_id=msg.session_key,
+            session_id=session_key,
             message_id=message_id,
             user_message=msg.content
         )
 
-        session = self.sessions.get_or_create(msg.session_key)
-        self.memory.create_session(msg.session_key, msg.channel, msg.chat_id, msg.sender_id)
-        await self.memory.add_message(msg.session_key, "user", msg.content)
+        session = self.sessions.get_or_create(session_key)
+        self.memory.create_session(session_key, msg.channel, msg.chat_id, msg.sender_id)
+        await self.memory.add_message(session_key, "user", msg.content)
 
         for tool_name in ["message", "spawn", "cron"]:
             tool = self.tools.get(tool_name)
@@ -531,12 +545,12 @@ class AgentLoop:
         for tool_name in ["save_memory", "get_memory", "list_reminders"]:
             tool = self.tools.get(tool_name)
             if hasattr(tool, "set_context"):
-                tool.set_context(msg.session_key)
+                tool.set_context(session_key)
 
         # Phase 13: Set session context for spawn tool (for persistent registry)
         spawn_tool = self.tools.get("spawn")
         if spawn_tool and hasattr(spawn_tool, "set_session_context"):
-            spawn_tool.set_session_context(msg.session_key)
+            spawn_tool.set_session_context(session_key)
 
         return session
 
