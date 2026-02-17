@@ -27,5 +27,5 @@ def test_authenticate_uses_code_api_base(mock_input):
         result = handler.authenticate()
 
         # Kimi Code uses different API base for coding features
-        assert result["providers"]["kimi"]["api_base"] == "https://api.moonshot.cn/v1"
-        assert result["providers"]["kimi"]["subscription_type"] == "kimi_code"
+        assert result["providers"]["moonshot"]["api_base"] == "https://api.moonshot.cn/v1"
+        assert result["providers"]["moonshot"]["subscription_type"] == "kimi_code"

@@ -37,12 +37,12 @@ def test_cleanup_logs(store):
     with store._get_connection() as conn:
         try:
             conn.execute(
-                "INSERT INTO system_logs (level, message, created_at) VALUES (?, ?, datetime('now', '-31 days'))",
-                ("INFO", "old",)
+                "INSERT INTO system_logs (level, module, message, created_at) VALUES (?, ?, ?, datetime('now', '-31 days'))",
+                ("INFO", "test", "old",)
             )
             conn.execute(
-                "INSERT INTO system_logs (level, message, created_at) VALUES (?, ?, datetime('now', '-1 day'))",
-                ("INFO", "new",)
+                "INSERT INTO system_logs (level, module, message, created_at) VALUES (?, ?, ?, datetime('now', '-1 day'))",
+                ("INFO", "test", "new",)
             )
             conn.commit()
         except sqlite3.OperationalError:

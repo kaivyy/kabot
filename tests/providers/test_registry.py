@@ -138,7 +138,7 @@ def test_model_resolution():
     assert registry.resolve("pro", user_aliases) == "openai/gpt-4o"
     
     # 2. Registry alias (from catalog)
-    assert registry.resolve("sonnet") == "anthropic/claude-3-5-sonnet-20240620"
+    assert registry.resolve("sonnet") == "anthropic/claude-3-5-sonnet-20241022"
     assert registry.resolve("gpt4") == "openai/gpt-4o"
     
     # 3. Short ID resolution
