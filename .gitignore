@@ -7,6 +7,7 @@ build/
 docs/*
 !docs/logs/
 !docs/plans/
+!docs/multi-agent.md
 *.egg-info/
 *.egg
 *.pyc
