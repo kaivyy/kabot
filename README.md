@@ -182,6 +182,7 @@ Kabot's **ModelRegistry** abstracts away the differences between providers. You 
 | **OpenAI** | `gpt-4o`, `gpt-4-turbo`, `o1-preview`, `o1-mini` | 🥈 **General Logic** | $$$ |
 | **Google** | `gemini-1.5-pro`, `gemini-1.5-flash` | 🥉 **Huge Context (2M)** | $ |
 | **DeepSeek** | `deepseek-chat`, `deepseek-coder` | 💸 **Cost Performance** | ¢ |
+| **Groq** | `llama3-70b`, `mixtral-8x7b` | ⚡ **Instant Speed (500t/s)** | 🆓 |
 
 ### Local Models (Offline)
 Kabot supports **Ollama** and **LM Studio** out of the box.

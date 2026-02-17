@@ -261,6 +261,35 @@ STATIC_MODEL_CATALOG = [
         pricing=ModelPricing(input_1m=0.0, output_1m=0.0),
         capabilities=["chat"],
         is_premium=True
+    ),
+
+    # --- Groq ---
+    ModelMetadata(
+        id="groq/llama3-70b-8192",
+        name="Groq Llama 3 70B",
+        provider="groq",
+        context_window=8192,
+        pricing=ModelPricing(input_1m=0.0, output_1m=0.0), # Free usually
+        capabilities=["chat", "fast"],
+        is_premium=True
+    ),
+    ModelMetadata(
+        id="groq/mixtral-8x7b-32768",
+        name="Groq Mixtral",
+        provider="groq",
+        context_window=32768,
+        pricing=ModelPricing(input_1m=0.0, output_1m=0.0),
+        capabilities=["chat", "fast"],
+        is_premium=True
+    ),
+    ModelMetadata(
+        id="groq/gemma2-9b-it",
+        name="Groq Gemma 2 9B",
+        provider="groq",
+        context_window=8192,
+        pricing=ModelPricing(input_1m=0.0, output_1m=0.0),
+        capabilities=["chat", "fast"],
+        is_premium=True
     )
 ]
 
