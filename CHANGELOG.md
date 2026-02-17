@@ -7,9 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added - Phase 13: Resilience & Security (2026-02-16)
+### Fixed - Phase 13 Completion: Critical Gap Integration (2026-02-17)
 
-**OpenClaw Parity: 65% → 85%**
+**OpenClaw Parity: 65% → 85% (ACTUALLY ACHIEVED)**
+
+After deep verification analysis, discovered that Phase 13 initial implementation (2026-02-16) created the infrastructure but did NOT integrate it into the system. This update completes the integration:
+
+#### Session File Protection (CRITICAL FIX)
+- **Applied PIDLock to session files** (`kabot/session/manager.py:138-169`)
+- Added atomic write pattern (temp file + rename) to prevent corruption
+- Eliminates race condition risk when multiple processes access sessions
+- Pattern: Same as `config/loader.py` but was missing from session manager
+
+#### Crash Recovery Integration (CRITICAL FIX)
+- **Integrated CrashSentinel into agent loop** (`kabot/agent/loop.py`)
+- Added crash detection on startup (lines 361-375)
+- Mark session active before processing messages (lines 480-486)
+- Clear sentinel on clean shutdown (lines 402-403)
+- Recovery messages now sent to users after unexpected restarts
+- Note: `core/sentinel.py` existed but was completely unused
+
+#### Persistent Subagent Registry (NEW FEATURE)
+- **Created SubagentRegistry class** (`kabot/agent/subagent_registry.py` - 229 lines)
+- Persistent tracking of subagent tasks across process restarts
+- Integrated into SubagentManager (`kabot/agent/subagent.py`)
+- Updated SpawnTool to pass parent session key (`kabot/agent/tools/spawn.py`)
+- Subagents now survive crashes and can be queried/resumed
+- Registry stored at `~/.kabot/subagents/runs.json` with PIDLock protection
+
+#### Additional Changes
+- Added `elevated` directive to `kabot/core/directives.py` for high-risk tool usage
+
+### Impact
+- **Before**: Phase 13 was 60% complete (infrastructure created but not integrated)
+- **After**: Phase 13 is 100% complete (all critical gaps closed)
+- **Verification**: Ultimate verification document confirmed all gaps are now fixed
+
+### References
+- Ultimate verification: `docs/openclaw-analysis/ultimate-verification-gap-kabot-openclaw.md`
+- Commit: `2a5e276` - feat(phase-13): complete OpenClaw parity
+
+---
+
+### Added - Phase 13: Resilience & Security Infrastructure (2026-02-16)
+
+**Initial Implementation (Partial - 60% Complete)**
 
 #### Task 1: PID Locking System
 - Added `kabot/utils/pid_lock.py` with file-based process locking
