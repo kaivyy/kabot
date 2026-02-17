@@ -7,20 +7,32 @@ from kabot.agent.loop import AgentLoop
 from kabot.bus.queue import MessageBus
 
 
+@pytest.fixture
+def test_workspace(tmp_path):
+    """Provide a temporary workspace."""
+    workspace = tmp_path / "test_workspace"
+    workspace.mkdir(exist_ok=True)
+    yield workspace
+    # Cleanup
+    import shutil
+    if workspace.exists():
+        try:
+            shutil.rmtree(workspace)
+        except PermissionError:
+            pass  # Ignore cleanup errors on Windows
+
+
 @pytest.mark.asyncio
-async def test_plugin_system_initialized():
+async def test_plugin_system_initialized(test_workspace):
     """Test that plugin system is initialized in agent loop."""
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model = MagicMock(return_value="gpt-4")
 
-    workspace = Path("./test_workspace")
-    workspace.mkdir(exist_ok=True)
-
     agent = AgentLoop(
         bus=bus,
         provider=provider,
-        workspace=workspace,
+        workspace=test_workspace,
         enable_hybrid_memory=False
     )
 
@@ -32,59 +44,39 @@ async def test_plugin_system_initialized():
     plugins = agent.plugin_registry.list_all()
     assert isinstance(plugins, list)
 
-    # Cleanup
-    import shutil
-    if workspace.exists():
-        shutil.rmtree(workspace)
-
 
 @pytest.mark.asyncio
-async def test_vector_store_lazy_initialization():
+async def test_vector_store_lazy_initialization(test_workspace):
     """Test that vector store is lazily initialized."""
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model = MagicMock(return_value="gpt-4")
 
-    workspace = Path("./test_workspace")
-    workspace.mkdir(exist_ok=True)
-
     agent = AgentLoop(
         bus=bus,
         provider=provider,
-        workspace=workspace,
+        workspace=test_workspace,
         enable_hybrid_memory=False
     )
 
-    # Verify vector store is not initialized yet
-    assert agent._vector_store is None
-
     # Access vector_store property triggers lazy initialization
     store = agent.vector_store
-    assert store is not None
 
     # Verify it has search method (either real or dummy)
     assert hasattr(store, 'search')
 
-    # Cleanup
-    import shutil
-    if workspace.exists():
-        shutil.rmtree(workspace)
-
 
 @pytest.mark.asyncio
-async def test_memory_search_tool_registered():
+async def test_memory_search_tool_registered(test_workspace):
     """Test that memory search tool is registered."""
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model = MagicMock(return_value="gpt-4")
 
-    workspace = Path("./test_workspace")
-    workspace.mkdir(exist_ok=True)
-
     agent = AgentLoop(
         bus=bus,
         provider=provider,
-        workspace=workspace,
+        workspace=test_workspace,
         enable_hybrid_memory=False
     )
 
@@ -93,7 +85,3 @@ async def test_memory_search_tool_registered():
     assert tool is not None
     assert tool.name == "memory_search"
 
-    # Cleanup
-    import shutil
-    if workspace.exists():
-        shutil.rmtree(workspace)

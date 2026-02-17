@@ -2,6 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from kabot.agent.loop import AgentLoop
+from kabot.agent.router import RouteDecision
 from kabot.bus.events import InboundMessage
 
 @pytest.mark.asyncio
@@ -35,6 +36,7 @@ async def test_background_session_not_saved():
         
         mock_router = mock_router_cls.return_value
         mock_router.classify = AsyncMock(return_value="GENERAL")
+        mock_router.route = AsyncMock(return_value=RouteDecision(profile="GENERAL", is_complex=False))
 
         # Initialize agent
         agent = AgentLoop(
@@ -85,6 +87,7 @@ async def test_normal_session_saved():
         
         mock_router = mock_router_cls.return_value
         mock_router.classify = AsyncMock(return_value="GENERAL")
+        mock_router.route = AsyncMock(return_value=RouteDecision(profile="GENERAL", is_complex=False))
     
         # Initialize agent
         agent = AgentLoop(

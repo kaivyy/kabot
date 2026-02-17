@@ -15,6 +15,7 @@ async def test_process_isolated_no_history():
     loop.fallbacks = []
     loop.max_iterations = 1
     loop.bus = MagicMock()
+    loop.sessions = MagicMock()  # Add missing sessions attribute
     loop._run_agent_loop = AsyncMock(return_value="Response")
 
     # Mock build_messages to verify it's called with empty history
@@ -45,6 +46,7 @@ async def test_process_isolated_session_key():
     loop.fallbacks = []
     loop.max_iterations = 1
     loop.bus = MagicMock()
+    loop.sessions = MagicMock()  # Add missing sessions attribute
     loop._run_agent_loop = AsyncMock(return_value="Response")
     loop.context.build_messages = MagicMock(return_value=[])
 
