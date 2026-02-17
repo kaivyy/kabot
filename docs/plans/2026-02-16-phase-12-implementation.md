@@ -617,3 +617,93 @@ Expected: 16/16 tests PASS, >80% coverage
 - Design Document: `docs/plans/2026-02-16-phase-12-critical-features-design.md`
 - Phase 11 Implementation: `docs/logs/2026-02-15-phase-11-openclaw-parity.md`
 - OpenClaw Analysis: `docs/openclaw-analysis/deep-technical-findings.md`
+
+---
+
+## Task 36: Windows Native Integration
+
+**Goal:** Provide native Windows capabilities (clipboard, WSL detection) via CLI.
+
+**Files:**
+- Create: `kabot/core/windows.py`
+- Modify: `kabot/core/commands_setup.py`
+
+### Step 1: Implement Windows Utilities
+
+```python
+# kabot/core/windows.py
+import subprocess
+import os
+
+def wsl_detect() -> dict:
+    """Detect if running in WSL."""
+    if os.path.exists("/proc/version"):
+        with open("/proc/version", "r") as f:
+            content = f.read().lower()
+            if "microsoft" in content:
+                return {"is_wsl": True, "version": 2 if "wsl2" in content else 1}
+    return {"is_wsl": False}
+
+def clip_copy(text: str) -> bool:
+    """Copy text to Windows clipboard."""
+    try:
+        # Use clip.exe (available in Windows & WSL)
+        subprocess.run(["clip.exe"], input=text.encode("utf-16"), check=True)
+        return True
+    except Exception:
+        return False
+```
+
+### Step 2: Add `kbt clip` Command
+
+Add to `kabot/core/commands_setup.py`:
+
+```python
+    # ─── /clip ───
+    async def cmd_clip(ctx: CommandContext) -> str:
+        if not ctx.args:
+            return "Usage: `/clip <text>`"
+        
+        text = " ".join(ctx.args)
+        from kabot.core.windows import clip_copy
+        if clip_copy(text):
+            return "✅ Copied to clipboard!"
+        return "❌ Failed to copy (is clip.exe available?)"
+
+    router.register("/clip", cmd_clip, "Copy text to system clipboard")
+```
+
+---
+
+## Task 37: Multi-Platform Daemon
+
+**Goal:** Create service files for auto-start.
+
+**Files:**
+- Create: `kabot/core/daemon.py`
+
+### Step 1: Implement Service Generators
+
+```python
+# kabot/core/daemon.py
+def generate_systemd_unit(user: str, workdir: str) -> str:
+    return f"""[Unit]
+Description=Kabot Service
+After=network.target
+
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={workdir}
+ExecStart={workdir}/venv/bin/python -m kabot.cli start
+Restart=always
+
+[Install]
+WantedBy=default.target
+"""
+
+def generate_launchagent_plist(label: str, workdir: str) -> str:
+    # Logic for macOS plist
+    pass
+```
+
