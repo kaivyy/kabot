@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ from kabot.core.resilience import ResilienceLayer
 
 # Phase 12: Critical Features
 from kabot.agent.truncator import ToolResultTruncator
+from kabot.cron.parse import parse_reminder_request
 
 # Phase 13: Resilience & Security
 from kabot.core.sentinel import CrashSentinel, format_recovery_message
@@ -500,6 +502,25 @@ class AgentLoop:
         # Phase 9: Parse directives from message body
         clean_body, directives = self.directive_parser.parse(msg.content)
         effective_content = clean_body or msg.content
+
+        reminder_request = parse_reminder_request(effective_content)
+        if reminder_request:
+            cron_tool = self.tools.get("cron")
+            if cron_tool:
+                now = datetime.now()
+                at_time = (now + timedelta(milliseconds=reminder_request["offset_ms"])).strftime("%Y-%m-%d %H:%M")
+                await cron_tool.execute(
+                    action="add",
+                    message=reminder_request["message"],
+                    at_time=at_time,
+                    context_messages=0,
+                )
+                return OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=f"Pengingat dijadwalkan untuk {at_time}.",
+                    reply_to=msg.message_id,
+                )
 
         # Store directives in session metadata
         if directives.raw_directives:

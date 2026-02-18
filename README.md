@@ -616,6 +616,341 @@ Unlock hidden capabilities by adding these tags to your message.
 
 ---
 
+## 🎛️ Model Management Tutorial
+
+Complete guide for switching models, setting up OAuth, and managing multiple AI providers.
+
+### Quick Start: Set OpenAI as Default
+
+**Method 1: Via CLI (Permanent)**
+```bash
+# Set default model globally
+kabot models set openai/gpt-4o
+kabot models set gpt-4o  # Short form
+
+# Verify the change
+kabot models list --current
+```
+
+**Method 2: Via Chat Commands (Session)**
+```bash
+# In Telegram/Discord/WhatsApp chat
+/switch openai/gpt-4o
+/switch gpt-4o
+/switch  # Check current model
+```
+
+### OAuth Setup for OpenAI (ChatGPT Subscription)
+
+**Step 1: Run Setup Wizard**
+```bash
+kabot config
+```
+
+**Step 2: Navigate to OAuth Setup**
+```
+→ Model / Auth (Providers, Keys, OAuth)
+→ Provider Login (Setup API Keys/OAuth)
+→ OpenAI - GPT-4o, o1-preview, etc.
+→ Browser Login (OAuth) - ChatGPT subscription login
+```
+
+**Step 3: Complete Browser Authentication**
+- Browser opens automatically for OAuth flow
+- Login with your ChatGPT account credentials
+- Grant permissions when prompted
+- Return to terminal when complete
+
+**Step 4: Set Default Model**
+```
+→ Select Default Model (Browse Registry)
+→ Filter models by provider: openai
+→ Select: gpt-4o (Recommended)
+```
+
+**Troubleshooting OAuth:**
+```bash
+# If OAuth fails, try manual setup
+kabot config
+→ Model / Auth → Provider Login → OpenAI → Manual Setup
+
+# Check OAuth token status
+kabot doctor  # Validates all credentials
+```
+
+### Bot Commands Reference
+
+**Model Switching Commands:**
+```bash
+# Switch model for current chat session
+/switch openai/gpt-4o          # OpenAI GPT-4o
+/switch anthropic/claude-sonnet-4-5  # Claude Sonnet
+/switch groq/llama-3.1-70b     # Groq Llama (fast)
+/switch deepseek/deepseek-coder # DeepSeek Coder
+
+# Per-message model override (doesn't change default)
+/model gpt-4o Explain quantum computing
+/model groq/llama-3.1-8b Quick question about Python
+```
+
+**Model Information Commands:**
+```bash
+# List all available models
+/models list
+
+# Show current model
+/switch
+
+# Model usage statistics
+/usage
+/usage --days 7
+/usage --provider openai
+```
+
+**Configuration Commands:**
+```bash
+# Set configuration values via chat
+/config set agents.defaults.model "openai/gpt-4o"
+/config get agents.defaults.model
+/config list providers
+```
+
+### Multi-Provider Setup
+
+**Supported Providers:**
+| Provider | Setup Method | Best For | Cost |
+|----------|--------------|----------|------|
+| **OpenAI** | OAuth/API Key | General purpose, coding | $$$ |
+| **Anthropic** | API Key | Complex reasoning, analysis | $$$ |
+| **Groq** | API Key | Fast responses (500+ tok/s) | 🆓 |
+| **DeepSeek** | API Key | Code generation, math | ¢ |
+| **Google** | API Key | Large context (2M tokens) | $ |
+| **OpenRouter** | API Key | 100+ models via gateway | $ |
+
+**Configuration Example:**
+```json
+{
+  "providers": {
+    "openai": {
+      "profiles": {
+        "default": {
+          "oauthToken": "eyJhbGciOiJSUzI1NiIs...",
+          "tokenType": "oauth"
+        }
+      },
+      "activeProfile": "default",
+      "fallbacks": ["groq/llama-3.1-70b"]
+    },
+    "groq": {
+      "apiKey": "gsk_...",
+      "fallbacks": []
+    },
+    "anthropic": {
+      "apiKey": "sk-ant-...",
+      "fallbacks": ["openai/gpt-4o"]
+    }
+  }
+}
+```
+
+### Use Case Optimization
+
+**Task-Specific Model Selection:**
+```bash
+# Coding tasks → DeepSeek Coder
+/switch deepseek/deepseek-coder
+# "Write a Python web scraper"
+
+# Fast responses → Groq
+/switch groq/llama-3.1-8b
+# "What's 2+2?"
+
+# Complex analysis → Claude
+/switch anthropic/claude-opus-4-5
+# "Analyze this business strategy document"
+
+# Creative writing → GPT-4o
+/switch openai/gpt-4o
+# "Write a short story about AI"
+```
+
+**Cost Optimization Strategy:**
+```bash
+# Development/Testing (Free/Cheap)
+/switch groq/llama-3.1-8b        # Free tier
+/switch deepseek/deepseek-chat    # Very cheap
+
+# Production (Premium)
+/switch openai/gpt-4o            # High quality
+/switch anthropic/claude-opus-4-5 # Best reasoning
+```
+
+### Advanced Configuration
+
+**Fallback Chain Setup:**
+```json
+{
+  "agents": {
+    "defaults": {
+      "model": "openai/gpt-4o",
+      "fallbacks": [
+        "anthropic/claude-sonnet-4-5",
+        "groq/llama-3.1-70b"
+      ]
+    }
+  }
+}
+```
+
+**Per-Agent Model Assignment:**
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "coding",
+        "model": "deepseek/deepseek-coder",
+        "workspace": "~/code"
+      },
+      {
+        "id": "writing",
+        "model": "openai/gpt-4o",
+        "workspace": "~/docs"
+      },
+      {
+        "id": "quick",
+        "model": "groq/llama-3.1-8b",
+        "workspace": "~/temp"
+      }
+    ],
+    "bindings": [
+      {"agent_id": "coding", "channel": "telegram", "chat_id": "coding_chat"},
+      {"agent_id": "writing", "channel": "discord"},
+      {"agent_id": "quick", "channel": "telegram", "chat_id": "quick_chat"}
+    ]
+  }
+}
+```
+
+### CLI Model Management
+
+**List and Discovery:**
+```bash
+# List all available models
+kabot models list
+
+# Filter by provider
+kabot models list --provider openai
+kabot models list --provider anthropic
+
+# Show premium models only
+kabot models list --premium
+
+# Get detailed model info
+kabot models info gpt-4o
+kabot models info claude-sonnet-4-5
+
+# Scan for new models
+kabot models scan
+```
+
+**Model Configuration:**
+```bash
+# Set primary model
+kabot models set openai/gpt-4o
+
+# Set with fallbacks
+kabot models set anthropic/claude-sonnet-4-5 --fallback groq/llama-3.1-70b
+
+# Reset to default
+kabot models reset
+```
+
+### Troubleshooting
+
+**Common Issues:**
+
+**1. "No API key configured" Error:**
+```bash
+# Check provider configuration
+kabot doctor
+
+# Verify OAuth token
+kabot config
+→ Model / Auth → Provider Login → OpenAI → Check Status
+
+# Manual API key setup
+export OPENAI_API_KEY="sk-..."
+```
+
+**2. Model Not Found:**
+```bash
+# Update model registry
+kabot models scan
+
+# Check available models
+kabot models list --provider openai
+
+# Use full model name
+/switch openai/gpt-4o  # Not just "gpt-4o"
+```
+
+**3. OAuth Token Expired:**
+```bash
+# Re-authenticate
+kabot config
+→ Model / Auth → Provider Login → OpenAI → Browser Login
+
+# Check token status
+kabot auth status openai
+```
+
+**4. Unicode/Emoji Display Issues (Windows):**
+```bash
+# Use Windows Terminal or PowerShell
+# Or set environment variables:
+set PYTHONIOENCODING=utf-8
+setx PYTHONIOENCODING utf-8  # Permanent
+```
+
+**5. Provider Priority Issues:**
+```bash
+# Check current provider matching
+kabot models list --current
+
+# Force specific provider
+/switch openai/gpt-4o  # Explicit provider prefix
+
+# Clear conflicting API keys
+kabot config
+→ Model / Auth → Remove unused providers
+```
+
+### Best Practices
+
+**1. Default Setup Recommendation:**
+- **Primary**: OpenAI (OAuth) for general use
+- **Coding**: DeepSeek for programming tasks
+- **Fast**: Groq for quick responses
+- **Backup**: Anthropic for complex reasoning
+
+**2. Security:**
+- Use OAuth when available (no API key exposure)
+- Store API keys in environment variables
+- Use `allowed_users` for public channels
+
+**3. Cost Management:**
+- Start with free tiers (Groq, DeepSeek free tier)
+- Use cheaper models for testing/development
+- Reserve premium models for production
+
+**4. Performance:**
+- Use Groq for speed-critical applications
+- Use Claude/GPT-4o for quality-critical tasks
+- Set appropriate fallback chains
+
+---
+
 ## 🔒 Security
 
 Kabot is effectively a **remote shell** wrapped in an LLM. Security is paramount.

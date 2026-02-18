@@ -1,5 +1,5 @@
 # tests/cron/test_parse.py
-from kabot.cron.parse import parse_absolute_time_ms, parse_relative_time_ms
+from kabot.cron.parse import parse_absolute_time_ms, parse_relative_time_ms, parse_reminder_request
 
 def test_iso_timestamp():
     result = parse_absolute_time_ms("2026-02-15T10:00:00+07:00")
@@ -21,3 +21,22 @@ def test_natural_language():
 def test_invalid_returns_none():
     assert parse_absolute_time_ms("not a date") is None
     assert parse_relative_time_ms("not a time") is None
+
+
+def test_reminder_indonesian_with_message():
+    result = parse_reminder_request("ingatkan saya 2 menit lagi beli susu")
+    assert result == {"offset_ms": 120000, "message": "beli susu"}
+
+
+def test_reminder_indonesian_default_message():
+    result = parse_reminder_request("ingatkan 2 menit lagi")
+    assert result == {"offset_ms": 120000, "message": "Pengingat"}
+
+
+def test_reminder_english_with_message():
+    result = parse_reminder_request("remind me in 5 minutes to call mom")
+    assert result == {"offset_ms": 300000, "message": "call mom"}
+
+
+def test_reminder_non_relative_returns_none():
+    assert parse_reminder_request("ingatkan saya besok") is None
