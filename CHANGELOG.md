@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Setup Wizard Critical Issues and Missing Features (2026-02-18)
+
+**Comprehensive setup wizard overhaul addressing 10+ critical issues discovered during completeness audit.**
+
+#### Critical Fixes (Phase 1)
+- **Removed duplicate method definition** (`kabot/setup/wizard.py`)
+  - Eliminated duplicate `_configure_skills` method causing import conflicts
+- **Fixed Windows service installer** (`kabot/setup/installers/windows.py`)
+  - Corrected PowerShell variable syntax from `${{variable}}` to `${variable}`
+  - Fixed service registration and startup configuration
+- **Implemented Linux systemd service installer** (`kabot/setup/installers/linux.py`)
+  - Added complete systemd service file generation and installation
+  - Proper user/system service handling with appropriate permissions
+- **Added API key validation framework** (`kabot/setup/wizard.py`)
+  - Integrated validation for OpenAI, Anthropic, and other LLM providers
+  - Real-time validation during setup process with clear error messages
+
+#### Core Features (Phase 2)
+- **Created comprehensive uninstaller scripts**
+  - Windows PowerShell uninstaller (`kabot/setup/uninstallers/windows.py`)
+  - Linux/Mac shell uninstaller (`kabot/setup/uninstallers/unix.py`)
+  - Service removal, file cleanup, and configuration backup
+- **Implemented configuration backup system** (`kabot/setup/backup.py`)
+  - Versioned backup storage with automatic rollback capability
+  - Backup creation before major configuration changes
+- **Added setup state persistence** (`kabot/setup/state.py`)
+  - JSON-based state tracking for setup process resumption
+  - Recovery from interrupted installations
+- **Fixed built-in skills installation integration**
+  - Proper integration with existing skills system
+  - Resolved circular import issues and dependency conflicts
+
+#### Test Infrastructure Updates
+- **Updated AgentBinding schema** across all test files
+  - Migrated from legacy format to new `match` field structure
+  - Updated imports to include `AgentBindingMatch` and `PeerMatch`
+- **Fixed agent routing logic** (`kabot/agent/loop.py:_resolve_model_for_message`)
+  - Corrected peer resolution for proper model selection
+  - Fixed session key handling in background sessions
+- **Resolved mock setup issues** in autoplanner integration tests
+  - Added missing `_agent_subscribers` attribute to mock MessageBus
+
+### Impact
+- **Before**: Setup wizard had 10+ critical issues including broken service installers, missing uninstall capability, no configuration backup, and test failures
+- **After**: Complete, production-ready setup wizard with full lifecycle management and robust test coverage
+- **Test Results**: All 507 tests passing (fixed 17 failing tests)
+
+### References
+- Design document: `docs/plans/2026-02-18-setup-wizard-fixes-design.md`
+- Implementation plan: `docs/plans/2026-02-18-setup-wizard-fixes-implementation.md`
+- Commit: `a540af5` - fix: complete setup wizard fixes and test infrastructure updates
+
+---
+
 ### Added - Phase 14: Event Bus Expansion (2026-02-17)
 
 **OpenClaw Parity: 85% → 100% (COMPLETE)**
