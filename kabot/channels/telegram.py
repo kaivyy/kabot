@@ -104,15 +104,46 @@ class TelegramChannel(BaseChannel):
         bus: MessageBus,
         groq_api_key: str = "",
         session_manager: SessionManager | None = None,
+        command_router: Any = None,
     ):
         super().__init__(config, bus)
         self.config: TelegramConfig = config
         self.groq_api_key = groq_api_key
         self.session_manager = session_manager
+        self.command_router = command_router
         self._app: Application | None = None
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
         self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
-    
+
+    def get_bot_commands_from_router(self, router: Any) -> list[BotCommand]:
+        """Generate BotCommand list from CommandRouter.
+
+        Args:
+            router: CommandRouter instance with registered commands
+
+        Returns:
+            List of BotCommand objects for Telegram bot API
+        """
+        commands = []
+
+        # Always include static commands
+        commands.extend(self.BOT_COMMANDS)
+
+        # Add commands from router if available
+        if router and hasattr(router, '_commands'):
+            for cmd_name, registration in router._commands.items():
+                # Remove leading slash for Telegram API
+                cmd_name_clean = cmd_name.lstrip('/')
+
+                # Skip if already in static commands
+                if any(cmd.command == cmd_name_clean for cmd in self.BOT_COMMANDS):
+                    continue
+
+                # Add command with description
+                commands.append(BotCommand(cmd_name_clean, registration.description))
+
+        return commands
+
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
         if not self.config.token:
@@ -150,10 +181,16 @@ class TelegramChannel(BaseChannel):
         # Get bot info and register command menu
         bot_info = await self._app.bot.get_me()
         logger.info(f"Telegram bot @{bot_info.username} connected")
-        
+
         try:
-            await self._app.bot.set_my_commands(self.BOT_COMMANDS)
-            logger.debug("Telegram bot commands registered")
+            # Get commands from router if available, otherwise use static commands
+            commands_to_register = (
+                self.get_bot_commands_from_router(self.command_router)
+                if self.command_router
+                else self.BOT_COMMANDS
+            )
+            await self._app.bot.set_my_commands(commands_to_register)
+            logger.debug(f"Telegram bot commands registered: {len(commands_to_register)} commands")
         except Exception as e:
             logger.warning(f"Failed to register bot commands: {e}")
         
