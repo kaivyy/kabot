@@ -1,50 +1,45 @@
-# Kabot Windows Service Installer
-param([switch], [switch], [switch])
+# Windows Service Installer for Kabot
+param(
+    [string]$ServiceName = "KabotService",
+    [string]$DisplayName = "Kabot AI Assistant Service",
+    [string]$Description = "Kabot AI Assistant Background Service"
+)
 
- = ":USERPROFILE\.kabot\venv\Scripts\python.exe"
- = "KabotGateway"
-
-function Install-KabotService {
-    Write-Host "Installing Kabot service..." -ForegroundColor Cyan
-    if (-not (Test-Path )) {
-        Write-Host "Error: Kabot not found. Run: kabot onboard" -ForegroundColor Red
-        exit 1
-    }
-    
-     = New-ScheduledTaskAction -Execute  -Argument "-m kabot gateway"
-     = New-ScheduledTaskTrigger -AtLogOn -User :USERNAME
-     = New-ScheduledTaskPrincipal -UserId :USERNAME -LogonType Interactive
-     = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-    
-    Register-ScheduledTask -TaskName  -Action  -Trigger  -Principal  -Settings  -Description "Kabot AI Gateway" -Force | Out-Null
-    Write-Host "OK Installed. Start with: Start-ScheduledTask -TaskName " -ForegroundColor Green
+# Check admin privileges
+if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Error "This script requires Administrator privileges"
+    exit 1
 }
 
-function Uninstall-KabotService {
-    Unregister-ScheduledTask -TaskName  -Confirm: -ErrorAction Stop
-    Write-Host "OK Uninstalled" -ForegroundColor Green
+# Set paths with proper environment variables
+$pythonExe = "$env:USERPROFILE\.kabot\venv\Scripts\python.exe"
+$kabotScript = "$env:USERPROFILE\.kabot\venv\Scripts\kabot.exe"
+$workingDir = "$env:USERPROFILE\.kabot"
+$logPath = "$env:USERPROFILE\.kabot\logs\service.log"
+
+# Validate paths exist
+if (-not (Test-Path $pythonExe)) {
+    Write-Error "Python executable not found at: $pythonExe"
+    exit 1
 }
 
-function Install-StartupShortcut {
-     = [Environment]::GetFolderPath('Startup')
-     = Join-Path  "kabot-startup.bat"
-     = Join-Path  "Kabot.lnk"
-    
-     = New-Object -ComObject WScript.Shell
-     = .CreateShortcut()
-    .TargetPath = 
-    .WindowStyle = 7
-    .Save()
-    Write-Host "OK Startup shortcut created" -ForegroundColor Green
+if (-not (Test-Path $kabotScript)) {
+    Write-Error "Kabot executable not found at: $kabotScript"
+    exit 1
 }
 
-if () { Install-KabotService }
-elseif () { Uninstall-KabotService }
-elseif () { Install-StartupShortcut }
-else {
-    Write-Host "Kabot Service Installer" -ForegroundColor Cyan
-    Write-Host "Usage:"
-    Write-Host "  -Install        Install as scheduled task"
-    Write-Host "  -StartupFolder  Add to Startup folder"
-    Write-Host "  -Uninstall      Remove service"
+# Create service
+$servicePath = "`"$kabotScript`" daemon --log-file `"$logPath`""
+
+try {
+    New-Service -Name $ServiceName -BinaryPathName $servicePath -DisplayName $DisplayName -Description $Description -StartupType Automatic
+    Write-Host "Service '$ServiceName' created successfully"
+
+    # Start service
+    Start-Service -Name $ServiceName
+    Write-Host "Service '$ServiceName' started successfully"
+
+} catch {
+    Write-Error "Failed to create/start service: $_"
+    exit 1
 }
