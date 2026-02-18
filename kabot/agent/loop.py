@@ -703,7 +703,12 @@ class AgentLoop:
 
         self_eval_retried = False
         critic_retried = 0
-        max_critic_retries = 2  # Max 2 critic-driven retries
+
+        # Adaptive critic system: weaker models get more lenient thresholds
+        is_weak_model = self._is_weak_model(model)
+        max_critic_retries = 1 if is_weak_model else 2  # Reduce retries for weak models
+        critic_threshold = 5 if is_weak_model else 7    # Lower threshold for weak models
+
         first_score = None
         already_published = False  # Track if we already sent content to user
 
@@ -743,15 +748,15 @@ class AgentLoop:
                         messages.append({"role": "user", "content": nudge})
                         continue
 
-                # Phase 3: Critic — score before sending final response
-                if not response.has_tool_calls and critic_retried < max_critic_retries:
-                    score, feedback = await self._critic_evaluate(msg.content, response.content)
+                # Phase 3: Critic — score before sending final response (adaptive for weak models)
+                if not response.has_tool_calls and critic_retried < max_critic_retries and not is_weak_model:
+                    score, feedback = await self._critic_evaluate(msg.content, response.content, model)
                     if first_score is None:
                         first_score = score
 
-                    if score < 7 and critic_retried < max_critic_retries:
+                    if score < critic_threshold and critic_retried < max_critic_retries:
                         critic_retried += 1
-                        logger.warning(f"Critic: score {score}/10, retrying ({critic_retried}/{max_critic_retries})")
+                        logger.warning(f"Critic: score {score}/10 (threshold: {critic_threshold}), retrying ({critic_retried}/{max_critic_retries})")
                         messages = self.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
                         messages.append({"role": "user", "content": (
                             f"[CRITIC FEEDBACK - Score: {score}/10]\n{feedback}\n\n"
@@ -886,9 +891,37 @@ Reply with a numbered plan. Be concise."""
             logger.warning(f"Planning failed: {e}")
             return None
 
-    async def _critic_evaluate(self, question: str, answer: str) -> tuple[int, str]:
-        """Phase 3: Score response quality 0-10 with rubric."""
+    def _is_weak_model(self, model: str) -> bool:
+        """Check if model is considered weak and needs adaptive critic thresholds."""
+        weak_models = [
+            "llama-4-scout", "llama-3.1-8b", "llama-3-8b", "gemma-7b",
+            "mistral-7b", "phi-3", "qwen-7b", "codellama-7b"
+        ]
+        model_lower = model.lower()
+        return any(weak in model_lower for weak in weak_models)
+
+    async def _critic_evaluate(self, question: str, answer: str, model: str | None = None) -> tuple[int, str]:
+        """Phase 3: Score response quality 0-10 with rubric. Uses separate model for weak models."""
         try:
+            # For weak models, use a stronger model for evaluation if available
+            eval_model = model or self.model
+            if self._is_weak_model(eval_model):
+                # Try to use a stronger model for evaluation
+                stronger_models = ["openai/gpt-4o", "anthropic/claude-3-5-sonnet-20241022", "openai/gpt-4o-mini"]
+                for strong_model in stronger_models:
+                    try:
+                        # Test if this model is available
+                        test_response = await self.provider.chat(
+                            messages=[{"role": "user", "content": "test"}],
+                            model=strong_model,
+                            max_tokens=5,
+                            temperature=0.0
+                        )
+                        eval_model = strong_model
+                        logger.info(f"Using stronger model {strong_model} for critic evaluation")
+                        break
+                    except Exception:
+                        continue
             eval_prompt = f"""Score this AI response 0-10 based on:
 - Correctness: Does it accurately answer the question?
 - Completeness: Is anything important missing?
@@ -904,7 +937,7 @@ FEEDBACK: <one sentence explaining the score>"""
 
             response = await self.provider.chat(
                 messages=[{"role": "user", "content": eval_prompt}],
-                model=self.model,
+                model=eval_model,
                 max_tokens=100,
                 temperature=0.0
             )
