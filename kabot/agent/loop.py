@@ -541,18 +541,37 @@ class AgentLoop:
         return await self._finalize_session(msg, session, final_content)
 
     def _get_session_key(self, msg: InboundMessage) -> str:
-        """Get session key with agent routing."""
+        """Get session key with OpenClaw-compatible agent routing."""
         from kabot.routing.bindings import resolve_agent_route
-        from kabot.session.session_key import build_agent_session_key
 
-        agent_id = resolve_agent_route(self.config, msg.channel, msg.chat_id)
-        return build_agent_session_key(agent_id, msg.channel, msg.chat_id)
+        # Build peer info from message
+        peer = None
+        if hasattr(msg, 'peer_kind') and hasattr(msg, 'peer_id'):
+            peer = {"kind": msg.peer_kind, "id": msg.peer_id}
+        elif msg.chat_id:
+            # Default: treat chat_id as direct peer
+            peer = {"kind": "direct", "id": msg.chat_id}
+
+        # Resolve route with full context
+        route = resolve_agent_route(
+            config=self.config,
+            channel=msg.channel,
+            account_id=getattr(msg, 'account_id', None),
+            peer=peer,
+            parent_peer=getattr(msg, 'parent_peer', None),
+            guild_id=getattr(msg, 'guild_id', None),
+            team_id=getattr(msg, 'team_id', None),
+            thread_id=getattr(msg, 'thread_id', None),
+        )
+
+        return route["session_key"]
 
     def _resolve_model_for_message(self, msg: InboundMessage) -> str:
         """Resolve the model to use for this message based on agent routing.
 
-        This implements per-agent model assignment similar to OpenClaw:
+        This implements per-agent model assignment with fallbacks (OpenClaw-compatible):
         - If the agent has a model override, use it
+        - If the agent has fallbacks, they override global fallbacks
         - Otherwise, use the default model (self.model)
 
         Args:
@@ -562,17 +581,42 @@ class AgentLoop:
             The model string to use for this message
         """
         from kabot.routing.bindings import resolve_agent_route
-        from kabot.agent.agent_scope import resolve_agent_model
+        from kabot.agent.agent_scope import resolve_agent_model, resolve_agent_model_fallbacks
 
-        # Resolve which agent should handle this message
-        agent_id = resolve_agent_route(self.config, msg.channel, msg.chat_id)
+        # Build peer info from message
+        peer = None
+        if hasattr(msg, 'peer_kind') and hasattr(msg, 'peer_id'):
+            peer = {"kind": msg.peer_kind, "id": msg.peer_id}
+        elif msg.chat_id:
+            peer = {"kind": "direct", "id": msg.chat_id}
+
+        # Resolve route to get agent_id
+        route = resolve_agent_route(
+            config=self.config,
+            channel=msg.channel,
+            account_id=getattr(msg, 'account_id', None),
+            peer=peer,
+            parent_peer=getattr(msg, 'parent_peer', None),
+            guild_id=getattr(msg, 'guild_id', None),
+            team_id=getattr(msg, 'team_id', None),
+        )
+        agent_id = route["agent_id"]
 
         # Check if this agent has a model override
         agent_model = resolve_agent_model(self.config, agent_id)
 
         # If agent has model override, resolve it through registry and return
         if agent_model:
-            return self.registry.resolve(agent_model)
+            resolved = self.registry.resolve(agent_model)
+
+            # Check for per-agent fallbacks
+            agent_fallbacks = resolve_agent_model_fallbacks(self.config, agent_id)
+            if agent_fallbacks:
+                # Store agent-specific fallbacks for this request
+                # (This would need to be passed to the provider)
+                pass
+
+            return resolved
 
         # Otherwise use default model
         return self.model

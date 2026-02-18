@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 @dataclass
 class InboundMessage:
-    """Message received from a chat channel."""
+    """Message received from a chat channel (OpenClaw-compatible)."""
 
     channel: str  # telegram, discord, slack, whatsapp
     sender_id: str  # User identifier
@@ -17,6 +17,15 @@ class InboundMessage:
     media: list[str] = field(default_factory=list)  # Media URLs
     metadata: dict[str, Any] = field(default_factory=dict)  # Channel-specific data
     _session_key: str | None = None  # Override for session key
+
+    # OpenClaw-compatible routing fields
+    account_id: str | None = None  # Account/user identifier for routing
+    peer_kind: str | None = None  # Peer type: "direct", "group", "channel"
+    peer_id: str | None = None  # Peer identifier
+    guild_id: str | None = None  # Discord guild ID
+    team_id: str | None = None  # Slack team ID
+    thread_id: str | None = None  # Thread identifier
+    parent_peer: dict[str, str] | None = None  # Parent peer for thread inheritance
 
     @property
     def session_key(self) -> str:

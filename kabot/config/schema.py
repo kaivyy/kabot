@@ -146,20 +146,71 @@ class AgentDefaults(BaseModel):
     max_tool_iterations: int = 20
 
 
+class AgentModelConfig(BaseModel):
+    """Model configuration for an agent."""
+    primary: str
+    fallbacks: list[str] = Field(default_factory=list)
+
+
+class AgentSandboxConfig(BaseModel):
+    """Sandbox configuration for an agent."""
+    enabled: bool = True
+    docker_image: str | None = None
+    memory_limit: str | None = None
+    cpu_limit: float | None = None
+    network_disabled: bool = False
+
+
+class AgentToolsConfig(BaseModel):
+    """Tools configuration for an agent."""
+    allowlist: list[str] | None = None
+    denylist: list[str] | None = None
+
+
 class AgentConfig(BaseModel):
     """Configuration for a single agent instance."""
     id: str
     name: str = ""
-    model: str | None = None
+    model: str | AgentModelConfig | None = None
     workspace: str | None = None
+    agent_dir: str | None = None
     default: bool = False
+    skills: list[str] | None = None
+    sandbox: AgentSandboxConfig | None = None
+    tools: AgentToolsConfig | None = None
+    memory_search: bool | None = None
+    human_delay: int | None = None
+    heartbeat: int | None = None
+    identity: dict[str, Any] | None = None
+    group_chat: dict[str, Any] | None = None
+    subagents: dict[str, Any] | None = None
+
+
+class PeerMatch(BaseModel):
+    """Peer matching configuration."""
+    kind: str  # "direct", "group", "channel"
+    id: str
+
+
+class AgentBindingMatch(BaseModel):
+    """Match criteria for agent binding."""
+    channel: str | None = None
+    account_id: str | None = None  # Supports "*" wildcard
+    peer: PeerMatch | None = None
+    guild_id: str | None = None  # Discord guild
+    team_id: str | None = None  # Slack team
 
 
 class AgentBinding(BaseModel):
     """Binding configuration to route messages to specific agents."""
     agent_id: str
-    channel: str
-    chat_id: str | None = None
+    match: AgentBindingMatch
+
+
+class SessionConfig(BaseModel):
+    """Session management configuration."""
+    dm_scope: str = "main"  # "main", "per-peer", "per-channel-peer", "per-account-channel-peer"
+    identity_links: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class AgentsConfig(BaseModel):
@@ -168,6 +219,7 @@ class AgentsConfig(BaseModel):
     enable_hybrid_memory: bool = True
     agents: list[AgentConfig] = Field(default_factory=list)
     bindings: list[AgentBinding] = Field(default_factory=list)
+    session: SessionConfig = Field(default_factory=SessionConfig)
 
 
 class AuthProfile(BaseModel):
