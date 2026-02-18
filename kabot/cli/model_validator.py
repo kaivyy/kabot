@@ -11,12 +11,7 @@ def validate_format(model_id: str) -> bool:
 def resolve_alias(alias: str) -> Optional[str]:
     """Resolve alias to full model ID."""
     registry = ModelRegistry()
-
-    # Check if it's a registered alias
-    if alias in registry._aliases:
-        return registry._aliases[alias]
-
-    return None
+    return registry.resolve_alias(alias)
 
 
 def suggest_alternatives(invalid_input: str) -> list[str]:
@@ -25,7 +20,8 @@ def suggest_alternatives(invalid_input: str) -> list[str]:
     suggestions = []
 
     # Check if it's close to an alias
-    for alias_name, model_id in registry._aliases.items():
+    all_aliases = registry.get_all_aliases()
+    for alias_name, model_id in all_aliases.items():
         if alias_name in invalid_input.lower() or invalid_input.lower() in alias_name:
             suggestions.append(f"{model_id} (alias: {alias_name})")
 

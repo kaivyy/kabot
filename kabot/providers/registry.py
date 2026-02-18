@@ -72,6 +72,14 @@ class ModelRegistry:
         """Register a model alias."""
         self._aliases[alias] = model_id
 
+    def resolve_alias(self, alias: str) -> Optional[str]:
+        """Resolve an alias to its full model ID. Returns None if not found."""
+        return self._aliases.get(alias)
+
+    def get_all_aliases(self) -> Dict[str, str]:
+        """Get all registered aliases. Returns a copy to prevent external modification."""
+        return self._aliases.copy()
+
     def resolve(self, name: str, user_aliases: Optional[Dict[str, str]] = None) -> str:
         """
         Resolve a name (alias, short ID, or full ID) to a full model ID.
