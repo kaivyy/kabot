@@ -325,6 +325,146 @@ kabot mode set single --user-id user:telegram:research_chat
 
 ---
 
+## 🔌 Multi-Channel Instances
+
+Run multiple bot instances per platform with different configurations and agent bindings.
+
+### Overview
+
+Kabot supports running multiple bots per platform simultaneously (e.g., 4 Telegram bots, 4 Discord bots). Each instance has:
+- **Unique ID**: Identifies the bot instance (e.g., "work_bot", "personal_bot")
+- **Type-specific config**: Token, credentials, and platform-specific settings
+- **Agent binding**: Optional routing to specific agents for context separation
+- **Independent operation**: Each instance runs as a separate bot with its own connection
+
+### Configuration
+
+**Via Setup Wizard:**
+```bash
+kabot config
+# Navigate to: Channels → Manage Channel Instances
+# Add/Edit/Delete instances interactively
+```
+
+**Via config.json:**
+```json
+{
+  "channels": {
+    "instances": [
+      {
+        "id": "work_bot",
+        "type": "telegram",
+        "enabled": true,
+        "config": {
+          "token": "123456:ABC-DefGhIjKlMnOpQrStUvWxYz",
+          "allow_from": []
+        },
+        "agent_binding": "work"
+      },
+      {
+        "id": "personal_bot",
+        "type": "telegram",
+        "enabled": true,
+        "config": {
+          "token": "789012:XYZ-AbcDefGhIjKlMnOpQrStUv",
+          "allow_from": []
+        },
+        "agent_binding": "personal"
+      },
+      {
+        "id": "team_discord",
+        "type": "discord",
+        "enabled": true,
+        "config": {
+          "token": "MTA5...",
+          "allow_from": []
+        },
+        "agent_binding": "work"
+      }
+    ]
+  }
+}
+```
+
+### Supported Channel Types
+
+| Type | Configuration Fields | Notes |
+| :--- | :--- | :--- |
+| **telegram** | `token`, `allow_from`, `proxy` | Get token from @BotFather |
+| **discord** | `token`, `allow_from`, `gateway_url`, `intents` | Get token from Discord Developer Portal |
+| **whatsapp** | `bridge_url`, `allow_from` | Requires WhatsApp bridge setup |
+| **slack** | `bot_token`, `app_token`, `mode` | Socket mode supported |
+
+### Use Cases
+
+**1. Work/Personal Separation**
+```json
+{
+  "instances": [
+    {"id": "work_bot", "type": "telegram", "agent_binding": "work"},
+    {"id": "personal_bot", "type": "telegram", "agent_binding": "personal"}
+  ]
+}
+```
+- Different Telegram bots for work and personal use
+- Each routes to its own agent with separate context
+- No conversation mixing between work and personal
+
+**2. Multi-Team Deployment**
+```json
+{
+  "instances": [
+    {"id": "team_a_tele", "type": "telegram", "agent_binding": "team_a"},
+    {"id": "team_b_tele", "type": "telegram", "agent_binding": "team_b"},
+    {"id": "team_a_discord", "type": "discord", "agent_binding": "team_a"}
+  ]
+}
+```
+- Multiple teams using the same Kabot server
+- Each team has dedicated bot instances
+- Agent bindings ensure context isolation
+
+**3. Testing and Production**
+```json
+{
+  "instances": [
+    {"id": "prod_bot", "type": "telegram", "enabled": true},
+    {"id": "test_bot", "type": "telegram", "enabled": true}
+  ]
+}
+```
+- Separate bots for production and testing
+- Test new features without affecting production users
+- Easy enable/disable for maintenance
+
+### Channel Instance Routing
+
+Messages are routed using the format: `type:id`
+
+Example:
+- `telegram:work_bot` → Work Telegram bot instance
+- `telegram:personal_bot` → Personal Telegram bot instance
+- `discord:team_discord` → Team Discord bot instance
+
+### Backward Compatibility
+
+Legacy single-instance configs continue to work:
+```json
+{
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token": "legacy:TOKEN"
+    }
+  }
+}
+```
+- Legacy configs are processed after instances
+- Both can coexist in the same configuration
+- Gradual migration path available
+
+---
+
 ## 🏗️ Architecture
 
 Kabot operates on a **Gateway-Agent** model, decoupling the "brain" from the "body".
