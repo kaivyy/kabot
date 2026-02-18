@@ -32,15 +32,20 @@ UNSUPPORTED_PROVIDERS = {
 
 def get_model_status(model_id: str) -> str:
     """Return 'working', 'catalog', 'unsupported', or 'unknown'."""
+    # Validate input
+    if not model_id:
+        return "unknown"
+
     if model_id in WORKING_MODELS:
         return "working"
+
+    # Check catalog before unsupported providers to avoid false negatives
+    if model_id in CATALOG_ONLY:
+        return "catalog"
 
     provider = model_id.split("/")[0] if "/" in model_id else model_id
     if provider in UNSUPPORTED_PROVIDERS:
         return "unsupported"
-
-    if model_id in CATALOG_ONLY:
-        return "catalog"
 
     return "unknown"
 
