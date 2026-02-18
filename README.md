@@ -184,6 +184,51 @@ kabot agents delete work
 }
 ```
 
+**Per-Agent Model Switching:**
+
+Kabot now supports per-agent model assignment, allowing you to:
+- Use **one model for multiple agents** (cost-effective for similar tasks)
+- Use **different models for different agents** (optimize for specific use cases)
+
+**Example 1: One Model for Multiple Agents**
+```json
+{
+  "agents": {
+    "list": [
+      {"id": "work", "model": null, "default": false},
+      {"id": "personal", "model": null, "default": false},
+      {"id": "family", "model": null, "default": true}
+    ]
+  }
+}
+```
+All three agents will use the global default model (e.g., Claude Sonnet), but maintain separate conversation histories.
+
+**Example 2: Different Models for Different Agents**
+```json
+{
+  "agents": {
+    "list": [
+      {"id": "coding", "model": "anthropic/claude-3-5-sonnet-20241022", "default": false},
+      {"id": "writing", "model": "openai/gpt-4o", "default": false},
+      {"id": "quick", "model": "groq/llama3-70b", "default": true}
+    ],
+    "bindings": [
+      {"agent_id": "coding", "channel": "telegram", "chat_id": "coding_chat"},
+      {"agent_id": "writing", "channel": "telegram", "chat_id": "writing_chat"},
+      {"agent_id": "quick", "channel": "telegram", "chat_id": "quick_chat"}
+    ]
+  }
+}
+```
+Each agent uses a model optimized for its purpose: Claude for coding, GPT-4o for writing, Llama3 for quick queries.
+
+**How It Works:**
+- When a message arrives, Kabot resolves which agent should handle it via bindings
+- If the agent has a `model` override, that model is used
+- If `model` is `null` or not set, the global default model is used
+- Model switching happens automatically per message
+
 ### System 2: Collaborative Orchestration (Role-Based Collaboration)
 
 Multiple agents with specialized roles work together on a single task, combining their strengths for complex problem-solving.
