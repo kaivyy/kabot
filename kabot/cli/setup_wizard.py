@@ -457,17 +457,68 @@ class SetupWizard:
         ClackUI.section_end()
 
     def _model_picker(self, provider_id: Optional[str] = None):
-        if not provider_id:
-            providers = self.registry.get_providers()
-            sorted_providers = sorted(providers.items())
-            
-            p_choices = [questionary.Choice(f"All providers ({len(self.registry.list_models())} models)", value="all")]
-            for p_name, count in sorted_providers:
-                p_choices.append(questionary.Choice(f"{p_name} ({count} models)", value=p_name))
-            
+        from kabot.cli.model_validator import resolve_alias
+        from kabot.providers.model_status import get_model_status, get_status_indicator
+
+        # Popular aliases section
+        popular_aliases = [
+            ("codex", "OpenAI GPT-5.1 Codex (Advanced Coding)"),
+            ("sonnet", "Claude 3.5 Sonnet (Latest, 200K context)"),
+            ("gemini", "Google Gemini 1.5 Pro (2M context)"),
+            ("gpt4o", "OpenAI GPT-4o (Multi-modal)"),
+        ]
+
+        m_choices = [
+            questionary.Choice(f"Keep current ({self.config.agents.defaults.model})", value="keep"),
+        ]
+
+        # Add popular aliases
+        for alias, description in popular_aliases:
+            model_id = resolve_alias(alias)
+            if model_id:
+                status = get_model_status(model_id)
+                indicator = get_status_indicator(status)
+                m_choices.append(
+                    questionary.Choice(f"{alias:10} - {description} {indicator}", value=f"alias:{alias}")
+                )
+
+        # Add browse and manual options
+        m_choices.extend([
+            questionary.Choice("Browse All Models (by provider)", value="browse"),
+            questionary.Choice("Enter Model ID or Alias Manually", value="manual"),
+        ])
+
+        selected = ClackUI.clack_select("Select default model (or use alias)", choices=m_choices)
+
+        if selected == "keep" or selected is None:
+            return
+        elif selected == "browse":
+            self._model_browser(provider_id)
+        elif selected == "manual":
+            self._manual_model_entry()
+        elif selected.startswith("alias:"):
+            alias = selected.split(":")[1]
+            model_id = resolve_alias(alias)
+            if model_id:
+                self._confirm_and_set_model(model_id)
+
+    def _model_browser(self, provider_id: Optional[str] = None):
+        """Browse models by provider with status indicators."""
+        from kabot.providers.model_status import get_model_status, get_status_indicator
+
+        providers = self.registry.get_providers()
+        sorted_providers = sorted(providers.items())
+
+        p_choices = [questionary.Choice(f"All providers ({len(self.registry.list_models())} models)", value="all")]
+        for p_name, count in sorted_providers:
+            p_choices.append(questionary.Choice(f"{p_name} ({count} models)", value=p_name))
+
+        if provider_id is None:
             p_val = ClackUI.clack_select("Filter models by provider", choices=p_choices)
-            if p_val == "all": provider_id = None
-            else: provider_id = p_val
+            if p_val == "all":
+                provider_id = None
+            else:
+                provider_id = p_val
 
         all_models = self.registry.list_models()
         if provider_id:
@@ -478,23 +529,128 @@ class SetupWizard:
 
         m_choices = [
             questionary.Choice(f"Keep current ({self.config.agents.defaults.model})", value="keep"),
-            questionary.Choice("Enter model ID manually", value="manual"),
+            questionary.Choice("Enter model ID or Alias Manually", value="manual"),
         ]
         for m in models:
-            label = f"{m.id} ({m.name})"
-            if m.is_premium: label += " ★"
+            status = get_model_status(m.id)
+            indicator = get_status_indicator(status)
+            label = f"{indicator} {m.id} ({m.name})"
+            if m.is_premium:
+                label += " ★"
             m_choices.append(questionary.Choice(label, value=m.id))
-        
+
         selected_model = ClackUI.clack_select("Select default model", choices=m_choices)
-        
+
         if selected_model == "keep" or selected_model is None:
             return
         elif selected_model == "manual":
-            manual = Prompt.ask("│  Enter Model ID")
-            if manual: self.config.agents.defaults.model = manual
+            self._manual_model_entry()
         else:
-            self.config.agents.defaults.model = selected_model
-            console.print(f"│  [green]✓ Set to {selected_model}[/green]")
+            self._confirm_and_set_model(selected_model)
+
+    def _manual_model_entry(self):
+        """Manual model entry with format hints and validation."""
+        from kabot.cli.model_validator import validate_format, resolve_alias, suggest_alternatives
+        from kabot.providers.model_status import get_model_status, get_status_indicator
+
+        console.print("│")
+        console.print("│  [bold]Enter Model ID or Alias[/bold]")
+        console.print("│")
+        console.print("│  Format: [cyan]provider/model-name[/cyan]  OR  [cyan]alias[/cyan]")
+        console.print("│  Examples:")
+        console.print("│    • openai/gpt-4o")
+        console.print("│    • anthropic/claude-3-5-sonnet-20241022")
+        console.print("│    • codex (alias for openai/gpt-5.1-codex)")
+        console.print("│")
+        console.print("│  Available aliases: codex, sonnet, gemini, gpt4o, o1, kimi")
+        console.print("│  Type 'help' to see all aliases")
+        console.print("│")
+
+        while True:
+            user_input = Prompt.ask("│  Your input").strip()
+
+            if user_input == "help":
+                self._show_alias_help()
+                continue
+
+            if not user_input:
+                console.print("│  [yellow]Cancelled[/yellow]")
+                return
+
+            # Try alias resolution first
+            model_id = resolve_alias(user_input)
+            if model_id:
+                console.print(f"│  [green]✓ Resolved alias '{user_input}' to: {model_id}[/green]")
+                self._confirm_and_set_model(model_id)
+                return
+
+            # Validate format
+            if not validate_format(user_input):
+                console.print(f"│  [red]❌ Invalid format: \"{user_input}\"[/red]")
+                console.print("│  [dim]Expected: provider/model-name[/dim]")
+                console.print("│")
+
+                suggestions = suggest_alternatives(user_input)
+                if suggestions:
+                    console.print("│  [yellow]Did you mean one of these?[/yellow]")
+                    for suggestion in suggestions:
+                        console.print(f"│    • {suggestion}")
+                    console.print("│")
+                continue
+
+            # Valid format, check status and confirm
+            self._confirm_and_set_model(user_input)
+            return
+
+    def _confirm_and_set_model(self, model_id: str):
+        """Confirm model selection and set if approved."""
+        from kabot.providers.model_status import get_model_status, get_status_indicator
+
+        status = get_model_status(model_id)
+        indicator = get_status_indicator(status)
+
+        console.print(f"│  {indicator} Model: {model_id}")
+        console.print(f"│  Status: {status}")
+
+        if status == "unsupported":
+            console.print("│  [red]⚠️  This provider is not supported by LiteLLM[/red]")
+            console.print("│  [dim]The model may not work correctly[/dim]")
+            if not Confirm.ask("│  Continue anyway?", default=False):
+                return
+        elif status == "catalog":
+            console.print("│  [yellow]⚠️  This model is in catalog but not verified[/yellow]")
+            console.print("│  [dim]If you encounter issues, try a working model[/dim]")
+
+        self.config.agents.defaults.model = model_id
+        console.print(f"│  [green]✓ Model set to {model_id}[/green]")
+
+    def _show_alias_help(self):
+        """Show all available aliases."""
+        from kabot.providers.registry import ModelRegistry
+
+        registry = ModelRegistry()
+        aliases = registry.get_all_aliases()
+
+        # Group by provider
+        grouped = {}
+        for alias, model_id in aliases.items():
+            provider = model_id.split("/")[0]
+            if provider not in grouped:
+                grouped[provider] = []
+            grouped[provider].append((alias, model_id))
+
+        console.print("│")
+        console.print("│  [bold cyan]Available Model Aliases[/bold cyan]")
+        console.print("│")
+
+        for provider, items in sorted(grouped.items()):
+            console.print(f"│  [bold]{provider.title()}:[/bold]")
+            for alias, model_id in sorted(items):
+                console.print(f"│    {alias:12} → {model_id}")
+            console.print("│")
+
+        console.print("│  [dim]Press Enter to continue...[/dim]")
+        input()
 
     def _configure_tools(self):
         ClackUI.section_start("Tools & Sandbox")
