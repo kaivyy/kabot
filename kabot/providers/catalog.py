@@ -61,6 +61,15 @@ STATIC_MODEL_CATALOG = [
         is_premium=True
     ),
     ModelMetadata(
+        id="openai/gpt-5.2-codex",
+        name="GPT-5.2 Codex",
+        provider="openai",
+        context_window=128000,
+        pricing=ModelPricing(input_1m=0.0, output_1m=0.0), # Unknown
+        capabilities=["tools", "coding"],
+        is_premium=True
+    ),
+    ModelMetadata(
         id="openai-codex/gpt-5.3-codex",
         name="GPT-5.3 Codex Pro",
         provider="openai-codex",
