@@ -15,7 +15,8 @@ from kabot.agent.directives import DirectiveParser
 from kabot.agent.tools.registry import ToolRegistry
 from kabot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from kabot.agent.tools.shell import ExecTool
-from kabot.agent.tools.web import WebSearchTool, WebFetchTool
+from kabot.agent.tools.web import WebSearchTool
+from kabot.agent.tools.web_fetch import WebFetchTool
 from kabot.agent.tools.browser import BrowserTool
 from kabot.agent.tools.message import MessageTool
 from kabot.agent.tools.spawn import SpawnTool
