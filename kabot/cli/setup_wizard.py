@@ -364,24 +364,6 @@ class SetupWizard:
         from kabot.agent.skills import SkillsLoader
         loader = SkillsLoader(self.config.workspace_path)
         
-        skills = loader.list_skills(filter_unavailable=False)
-        eligible = len([s for s in skills if s['valid']])
-        
-        console.print(f"│  Found {len(skills)} skills ({eligible} valid)")
-        
-        if not Confirm.ask("│  Configure skills config?", default=True):
-            ClackUI.section_end()
-            return
-
-        for s in skills:
-            name = s['name']
-            meta = loader._get_skill_meta(name)
-            requires = meta.get("requires", {})
-    def _configure_skills(self):
-        ClackUI.section_start("Skills")
-        from kabot.agent.skills import SkillsLoader
-        loader = SkillsLoader(self.config.workspace_path)
-        
         # 1. Load all skills with detailed status
         all_skills = loader.list_skills(filter_unavailable=False)
         
