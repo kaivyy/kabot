@@ -82,10 +82,20 @@ class AgentLoop:
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         enable_hybrid_memory: bool = True,
+        mode_manager: Any = None,
     ):
         from kabot.config.schema import ExecToolConfig, Config
         from kabot.cron.service import CronService
+        from kabot.agent.mode_manager import ModeManager
+        from kabot.agent.coordinator import Coordinator
+
         self.config = config or Config()
+
+        # Initialize mode manager and coordinator
+        self.mode_manager = mode_manager or ModeManager(
+            Path.home() / ".kabot" / "mode_config.json"
+        )
+        self.coordinator = Coordinator(bus, "master")
         self.bus = bus
         self.provider = provider
         self.workspace = workspace
@@ -434,6 +444,30 @@ class AgentLoop:
         # Phase 13: Clear sentinel on clean shutdown
         self.sentinel.clear_sentinel()
         logger.info("Agent loop stopping")
+
+    async def _should_use_collaborative_mode(self, msg: InboundMessage) -> bool:
+        """Check if collaborative multi-agent mode should be used for this message."""
+        user_id = f"user:{msg.channel}:{msg.chat_id}"
+        mode = self.mode_manager.get_mode(user_id)
+        return mode == "multi"
+
+    async def _process_collaborative(self, msg: InboundMessage) -> OutboundMessage:
+        """Process message using collaborative multi-agent mode."""
+        # Delegate to brainstorming agent
+        task_id = await self.coordinator.delegate_task(
+            task=msg.content,
+            target_role="brainstorming"
+        )
+
+        # Collect results
+        result = await self.coordinator.collect_results(task_id)
+
+        return OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content=result.get("output", "Task completed"),
+            reply_to=msg.message_id
+        )
 
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
 
