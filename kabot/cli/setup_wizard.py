@@ -523,7 +523,13 @@ class SetupWizard:
             def status(enabled: bool):
                 return "[green]ON[/green]" if enabled else "[dim]OFF[/dim]"
 
+            # Show instance count if any exist
+            instance_label = "Manage Channel Instances"
+            if c.instances:
+                instance_label = f"Manage Channel Instances ({len(c.instances)} configured)"
+
             options = [
+                questionary.Choice(instance_label, value="instances"),
                 questionary.Choice(f"Telegram  [{status(c.telegram.enabled)}]", value="telegram"),
                 questionary.Choice(f"WhatsApp  [{status(c.whatsapp.enabled)}]", value="whatsapp"),
                 questionary.Choice(f"Discord   [{status(c.discord.enabled)}]", value="discord"),
@@ -540,8 +546,11 @@ class SetupWizard:
             if choice == "back" or choice is None:
                 ClackUI.section_end()
                 break
-                
-            if choice == "telegram":
+
+            if choice == "instances":
+                self._configure_channel_instances()
+
+            elif choice == "telegram":
                 if Confirm.ask("│  Enable Telegram?", default=c.telegram.enabled):
                     token = Prompt.ask("│  Bot Token", default=c.telegram.token)
                     if token:
@@ -632,6 +641,162 @@ class SetupWizard:
 
 
             ClackUI.section_end()
+
+    def _configure_channel_instances(self):
+        """Configure multiple channel instances (e.g., 4 Telegram bots, 4 Discord bots)."""
+        from kabot.config.schema import ChannelInstance
+
+        while True:
+            ClackUI.section_start("Channel Instances")
+
+            # Show current instances
+            if self.config.channels.instances:
+                console.print("│  [bold]Current Instances:[/bold]")
+                for idx, inst in enumerate(self.config.channels.instances, 1):
+                    status = "[green]✓[/green]" if inst.enabled else "[dim]✗[/dim]"
+                    binding = f" → {inst.agent_binding}" if inst.agent_binding else ""
+                    console.print(f"│    {idx}. [{inst.type}] {inst.id} {status}{binding}")
+                console.print("│")
+
+            options = [
+                questionary.Choice("Add Instance", value="add"),
+                questionary.Choice("Edit Instance", value="edit"),
+                questionary.Choice("Delete Instance", value="delete"),
+                questionary.Choice("Back", value="back"),
+            ]
+
+            choice = ClackUI.clack_select("Manage Instances", choices=options)
+
+            if choice == "back" or choice is None:
+                ClackUI.section_end()
+                break
+            elif choice == "add":
+                self._add_channel_instance()
+            elif choice == "edit":
+                self._edit_channel_instance()
+            elif choice == "delete":
+                self._delete_channel_instance()
+
+    def _add_channel_instance(self):
+        """Add a new channel instance."""
+        from kabot.config.schema import ChannelInstance
+
+        instance_id = Prompt.ask("│  Instance ID (e.g., work_bot, personal_bot)")
+        if not instance_id:
+            console.print("│  [yellow]Cancelled[/yellow]")
+            return
+
+        channel_type = ClackUI.clack_select("Channel Type", choices=[
+            questionary.Choice("Telegram", value="telegram"),
+            questionary.Choice("Discord", value="discord"),
+            questionary.Choice("WhatsApp", value="whatsapp"),
+            questionary.Choice("Slack", value="slack"),
+        ])
+
+        # Get type-specific configuration
+        config_dict = {}
+
+        if channel_type == "telegram":
+            token = Prompt.ask("│  Bot Token")
+            if not token:
+                console.print("│  [yellow]Cancelled[/yellow]")
+                return
+            config_dict = {"token": token, "allow_from": []}
+
+        elif channel_type == "discord":
+            token = Prompt.ask("│  Bot Token")
+            if not token:
+                console.print("│  [yellow]Cancelled[/yellow]")
+                return
+            config_dict = {"token": token, "allow_from": []}
+
+        elif channel_type == "whatsapp":
+            bridge_url = Prompt.ask("│  Bridge URL", default="ws://localhost:3001")
+            config_dict = {"bridge_url": bridge_url, "allow_from": []}
+
+        elif channel_type == "slack":
+            bot_token = Prompt.ask("│  Bot Token (xoxb-...)")
+            app_token = Prompt.ask("│  App Token (xapp-...)")
+            if not bot_token or not app_token:
+                console.print("│  [yellow]Cancelled[/yellow]")
+                return
+            config_dict = {"bot_token": bot_token, "app_token": app_token}
+
+        # Optional agent binding
+        agent_binding = None
+        if self.config.agents.agents:
+            if Confirm.ask("│  Bind to specific agent?", default=False):
+                agent_ids = [a.id for a in self.config.agents.agents]
+                agent_binding = ClackUI.clack_select("Agent ID", choices=[
+                    questionary.Choice(aid, value=aid) for aid in agent_ids
+                ])
+
+        # Create instance
+        instance = ChannelInstance(
+            id=instance_id,
+            type=channel_type,
+            enabled=True,
+            config=config_dict,
+            agent_binding=agent_binding
+        )
+
+        self.config.channels.instances.append(instance)
+        console.print(f"│  [green]✓ Added {channel_type} instance '{instance_id}'[/green]")
+
+    def _edit_channel_instance(self):
+        """Edit an existing channel instance."""
+        if not self.config.channels.instances:
+            console.print("│  [yellow]No instances configured[/yellow]")
+            return
+
+        # Show instances with numbers
+        choices = []
+        for idx, inst in enumerate(self.config.channels.instances, 1):
+            label = f"{idx}. [{inst.type}] {inst.id}"
+            choices.append(questionary.Choice(label, value=idx - 1))
+
+        idx = ClackUI.clack_select("Select instance to edit", choices=choices)
+        if idx is None:
+            return
+
+        instance = self.config.channels.instances[idx]
+
+        # Edit enabled status
+        instance.enabled = Confirm.ask(
+            f"│  Enable {instance.id}?",
+            default=instance.enabled
+        )
+
+        # Edit agent binding
+        if self.config.agents.agents:
+            if Confirm.ask("│  Change agent binding?", default=False):
+                agent_ids = ["none"] + [a.id for a in self.config.agents.agents]
+                choices = [questionary.Choice(aid, value=aid) for aid in agent_ids]
+                binding = ClackUI.clack_select("Agent ID", choices=choices)
+                instance.agent_binding = None if binding == "none" else binding
+
+        console.print(f"│  [green]✓ Updated {instance.id}[/green]")
+
+    def _delete_channel_instance(self):
+        """Delete a channel instance."""
+        if not self.config.channels.instances:
+            console.print("│  [yellow]No instances configured[/yellow]")
+            return
+
+        # Show instances with numbers
+        choices = []
+        for idx, inst in enumerate(self.config.channels.instances, 1):
+            label = f"{idx}. [{inst.type}] {inst.id}"
+            choices.append(questionary.Choice(label, value=idx - 1))
+
+        idx = ClackUI.clack_select("Select instance to delete", choices=choices)
+        if idx is None:
+            return
+
+        instance = self.config.channels.instances[idx]
+        if Confirm.ask(f"│  Delete {instance.id}?", default=False):
+            self.config.channels.instances.pop(idx)
+            console.print(f"│  [green]✓ Deleted {instance.id}[/green]")
 
     def _configure_whatsapp(self):
         """Special flow for WhatsApp Bridge."""
