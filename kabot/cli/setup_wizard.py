@@ -2,8 +2,11 @@
 
 import sys
 import os
+import json
+import shutil
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from datetime import datetime
 
 import questionary
 from rich.console import Console
@@ -142,10 +145,56 @@ class SetupWizard:
         self.registry = ModelRegistry()
         self.ran_section = False
 
+    def _create_backup(self) -> str:
+        """Create configuration backup before changes."""
+        import hashlib
+
+        backup_dir = Path.home() / ".kabot" / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+        backup_path = backup_dir / f"{timestamp}_pre-setup"
+        backup_path.mkdir(exist_ok=True)
+
+        config_file = Path.home() / ".kabot" / "config.json"
+        if config_file.exists():
+            shutil.copy2(config_file, backup_path / "config.json")
+
+            # Create metadata
+            metadata = {
+                "created_at": timestamp,
+                "type": "pre-setup",
+                "original_path": str(config_file)
+            }
+
+            with open(backup_path / "metadata.json", "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            # Create checksum
+            with open(backup_path / "config.json", "rb") as f:
+                checksum = hashlib.sha256(f.read()).hexdigest()
+
+            with open(backup_path / "checksum.sha256", "w") as f:
+                f.write(f"{checksum}  config.json\n")
+
+        return str(backup_path)
+
     def run(self) -> Config:
         ClackUI.header()
         ClackUI.summary_box(self.config)
-        
+
+        # Create backup before making any changes
+        try:
+            console.print("│")
+            console.print("◇  [cyan]Creating configuration backup...[/cyan]")
+            backup_path = self._create_backup()
+            console.print(f"│  [green]✓ Backup created at: {backup_path}[/green]")
+            console.print("│")
+        except Exception as e:
+            console.print(f"│  [yellow]⚠ Backup creation failed: {e}[/yellow]")
+            console.print("│  [dim]Continuing without backup...[/dim]")
+            console.print("│")
+
         ClackUI.section_start("Environment")
         
         mode = ClackUI.clack_select(
