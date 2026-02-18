@@ -108,8 +108,22 @@ class QQConfig(BaseModel):
     allow_from: list[str] = Field(default_factory=list)  # Allowed user openids (empty = public access)
 
 
+class ChannelInstance(BaseModel):
+    """A single channel instance configuration.
+
+    Enables running multiple bots per platform (e.g., 4 Telegram bots, 4 Discord bots).
+    Each instance has a unique ID and can be bound to a specific agent.
+    """
+    id: str  # Unique identifier (e.g., "work_bot", "personal_bot")
+    type: str  # Channel type ("telegram", "discord", "whatsapp", etc.)
+    enabled: bool = True
+    config: dict[str, Any]  # Type-specific configuration
+    agent_binding: str | None = None  # Optional agent binding
+
+
 class ChannelsConfig(BaseModel):
     """Configuration for chat channels."""
+    # Legacy single-instance configs (backward compatibility)
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
@@ -118,6 +132,9 @@ class ChannelsConfig(BaseModel):
     email: EmailConfig = Field(default_factory=EmailConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     qq: QQConfig = Field(default_factory=QQConfig)
+
+    # Multi-instance support
+    instances: list[ChannelInstance] = Field(default_factory=list)
 
 
 class AgentDefaults(BaseModel):
