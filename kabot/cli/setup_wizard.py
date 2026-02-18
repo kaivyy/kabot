@@ -241,8 +241,10 @@ class SetupWizard:
             if choice == "login":
                 p_options = [questionary.Choice(c['name'], value=c['value']) for c in auth_choices]
                 provider_val = ClackUI.clack_select("Select provider to login", choices=p_options)
-                
+
                 if provider_val and manager.login(provider_val):
+                    # Validate the API key after successful login
+                    self._validate_provider_credentials(provider_val)
                     self._model_picker(provider_val)
             
             elif choice == "picker":
@@ -623,6 +625,140 @@ class SetupWizard:
 
 
             ClackUI.section_end()
+
+    def _validate_api_key(self, provider: str, api_key: str) -> bool:
+        """Validate API key by making a test call."""
+        if not api_key or api_key.strip() == "":
+            return True  # Skip validation for empty keys
+
+        try:
+            if provider == "openai":
+                import openai
+                client = openai.OpenAI(api_key=api_key)
+                client.models.list()
+                return True
+            elif provider == "anthropic":
+                import anthropic
+                client = anthropic.Anthropic(api_key=api_key)
+                client.messages.create(
+                    model="claude-3-haiku-20240307",
+                    max_tokens=1,
+                    messages=[{"role": "user", "content": "test"}]
+                )
+                return True
+            elif provider == "groq":
+                import groq
+                client = groq.Groq(api_key=api_key)
+                client.models.list()
+                return True
+        except Exception as e:
+            console.print(f"│  [red]Validation failed: {str(e)}[/red]")
+            return False
+
+        return True  # Default to valid for unknown providers
+
+    def _validate_provider_credentials(self, provider_id: str):
+        """Validate provider credentials with user feedback and retry options."""
+        from kabot.config.loader import load_config
+        from rich.prompt import Confirm
+        import signal
+        import time
+
+        # Load current config to get the API key
+        config = load_config()
+
+        # Map provider IDs to config fields and extract API key
+        provider_mapping = {
+            "openai": ("openai", "api_key"),
+            "anthropic": ("anthropic", "api_key"),
+            "google": ("gemini", "api_key"),
+            "groq": ("groq", "api_key"),
+            "kimi": ("moonshot", "api_key"),
+            "minimax": ("minimax", "api_key")
+        }
+
+        if provider_id not in provider_mapping:
+            console.print(f"│  [yellow]Validation not supported for {provider_id}[/yellow]")
+            return
+
+        config_field, key_field = provider_mapping[provider_id]
+        provider_config = getattr(config.providers, config_field, None)
+
+        if not provider_config:
+            console.print(f"│  [yellow]No configuration found for {provider_id}[/yellow]")
+            return
+
+        # Get API key from active profile or legacy field
+        api_key = None
+        if provider_config.active_profile and provider_config.profiles:
+            active_profile = provider_config.profiles.get(provider_config.active_profile)
+            if active_profile:
+                api_key = getattr(active_profile, key_field, None)
+
+        if not api_key:
+            api_key = getattr(provider_config, key_field, None)
+
+        if not api_key:
+            console.print(f"│  [yellow]No API key found for {provider_id}[/yellow]")
+            return
+
+        console.print("│")
+        console.print(f"│  [cyan]Validating {provider_id} API key...[/cyan]")
+
+        # Validation with timeout and retry logic
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                # Set up timeout handler
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Validation timed out")
+
+                # Set timeout for validation (10 seconds)
+                if hasattr(signal, 'SIGALRM'):  # Unix systems
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(10)
+
+                # Perform validation
+                is_valid = self._validate_api_key(provider_id, api_key)
+
+                # Clear timeout
+                if hasattr(signal, 'SIGALRM'):
+                    signal.alarm(0)
+
+                if is_valid:
+                    console.print(f"│  [green]✓ {provider_id} API key is valid[/green]")
+                    return
+                else:
+                    console.print(f"│  [red]✗ {provider_id} API key validation failed[/red]")
+                    break
+
+            except TimeoutError:
+                console.print(f"│  [yellow]⚠ Validation timed out (attempt {attempt + 1}/{max_retries + 1})[/yellow]")
+                if hasattr(signal, 'SIGALRM'):
+                    signal.alarm(0)
+
+            except ImportError as e:
+                console.print(f"│  [yellow]⚠ Cannot validate {provider_id}: Missing dependency ({str(e)})[/yellow]")
+                console.print(f"│  [dim]Install with: pip install {provider_id}[/dim]")
+                return
+
+            except Exception as e:
+                console.print(f"│  [red]✗ Validation error: {str(e)}[/red]")
+                break
+
+            # Ask if user wants to retry on timeout
+            if attempt < max_retries:
+                if not Confirm.ask("│  Retry validation?", default=True):
+                    break
+                console.print("│  [cyan]Retrying...[/cyan]")
+                time.sleep(1)
+
+        # Handle validation failure
+        console.print("│")
+        if Confirm.ask("│  Continue anyway? (You can fix this later)", default=True):
+            console.print("│  [yellow]⚠ Continuing with potentially invalid key[/yellow]")
+        else:
+            console.print("│  [dim]You can reconfigure this provider later from the main menu[/dim]")
 
     def _configure_channel_instances(self):
         """Configure multiple channel instances (e.g., 4 Telegram bots, 4 Discord bots)."""
