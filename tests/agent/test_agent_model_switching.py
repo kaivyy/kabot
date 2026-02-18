@@ -10,7 +10,7 @@ async def test_agent_uses_override_model(tmp_path):
     from kabot.agent.loop import AgentLoop
     from kabot.bus.queue import MessageBus
     from kabot.bus.events import InboundMessage
-    from kabot.config.schema import Config, AgentConfig, AgentsConfig, AgentBinding
+    from kabot.config.schema import Config, AgentConfig, AgentsConfig, AgentBinding, AgentBindingMatch, PeerMatch
     from datetime import datetime
 
     # Setup config with two agents: one with model override, one without
@@ -21,7 +21,13 @@ async def test_agent_uses_override_model(tmp_path):
             AgentConfig(id="work", name="Work Agent", model="openai/gpt-4o", default=False),
         ],
         bindings=[
-            AgentBinding(agent_id="work", channel="telegram", chat_id="work_chat"),
+            AgentBinding(
+                agent_id="work",
+                match=AgentBindingMatch(
+                    channel="telegram",
+                    peer=PeerMatch(kind="direct", id="work_chat")
+                )
+            ),
         ]
     )
 

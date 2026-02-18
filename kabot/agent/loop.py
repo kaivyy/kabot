@@ -586,7 +586,7 @@ class AgentLoop:
 
         # Build peer info from message
         peer = None
-        if hasattr(msg, 'peer_kind') and hasattr(msg, 'peer_id'):
+        if hasattr(msg, 'peer_kind') and hasattr(msg, 'peer_id') and msg.peer_kind and msg.peer_id:
             peer = {"kind": msg.peer_kind, "id": msg.peer_id}
         elif msg.chat_id:
             peer = {"kind": "direct", "id": msg.chat_id}
@@ -626,8 +626,12 @@ class AgentLoop:
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {msg.content[:80]}...")
 
         # Get session key with agent routing and set it on the message
-        session_key = self._get_session_key(msg)
-        msg._session_key = session_key
+        # Only generate new session key if one isn't already set
+        if not msg._session_key:
+            session_key = self._get_session_key(msg)
+            msg._session_key = session_key
+        else:
+            session_key = msg._session_key
 
         # Phase 14: Set run_id for tool event tracking
         run_id = f"msg-{session_key}-{msg.timestamp.timestamp()}"

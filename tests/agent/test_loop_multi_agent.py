@@ -6,15 +6,23 @@ async def test_agent_loop_routes_to_correct_agent(tmp_path):
     from kabot.agent.loop import AgentLoop
     from kabot.bus.queue import MessageBus
     from kabot.bus.events import InboundMessage
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig, AgentBinding
+    from kabot.config.schema import Config, AgentsConfig, AgentConfig, AgentBinding, AgentBindingMatch
 
     config = Config(
         agents=AgentsConfig(
-            list=[
+            agents=[
                 AgentConfig(id="work", model="openai/gpt-4o", workspace=str(tmp_path / "work")),
                 AgentConfig(id="personal", model="anthropic/claude-sonnet-4-5", default=True)
             ],
-            bindings=[AgentBinding(agent_id="work", channel="telegram")]
+            bindings=[
+                AgentBinding(
+                    agent_id="work",
+                    match=AgentBindingMatch(
+                        channel="telegram",
+                        account_id="*"
+                    )
+                )
+            ]
         )
     )
 

@@ -2,7 +2,7 @@
 
 import pytest
 from kabot.routing.bindings import resolve_agent_route
-from kabot.config.schema import Config, AgentsConfig, AgentConfig, AgentBinding
+from kabot.config.schema import Config, AgentsConfig, AgentConfig, AgentBinding, AgentBindingMatch, PeerMatch
 
 
 def test_resolve_agent_by_channel():
@@ -10,19 +10,27 @@ def test_resolve_agent_by_channel():
     config = Config(
         agents=AgentsConfig(
             agents=[AgentConfig(id="work"), AgentConfig(id="personal", default=True)],
-            bindings=[AgentBinding(agent_id="work", channel="telegram")]
+            bindings=[
+                AgentBinding(
+                    agent_id="work",
+                    match=AgentBindingMatch(
+                        channel="telegram",
+                        account_id="*"
+                    )
+                )
+            ]
         )
     )
 
-    agent_id = resolve_agent_route(config, "telegram", "123456")
-    assert agent_id == "work"
+    route = resolve_agent_route(config, "telegram", "123456")
+    assert route["agent_id"] == "work"
 
-    agent_id = resolve_agent_route(config, "whatsapp", "789")
-    assert agent_id == "personal"  # fallback to default
+    route = resolve_agent_route(config, "whatsapp", "789")
+    assert route["agent_id"] == "personal"  # fallback to default
 
 
 def test_resolve_agent_by_exact_match():
-    """Test that exact channel+chat_id bindings have highest priority."""
+    """Test that exact channel+peer bindings have highest priority."""
     config = Config(
         agents=AgentsConfig(
             agents=[
@@ -31,27 +39,39 @@ def test_resolve_agent_by_exact_match():
                 AgentConfig(id="vip")
             ],
             bindings=[
-                AgentBinding(agent_id="work", channel="telegram"),
-                AgentBinding(agent_id="vip", channel="telegram", chat_id="999")
+                AgentBinding(
+                    agent_id="work",
+                    match=AgentBindingMatch(
+                        channel="telegram",
+                        account_id="*"
+                    )
+                ),
+                AgentBinding(
+                    agent_id="vip",
+                    match=AgentBindingMatch(
+                        channel="telegram",
+                        peer=PeerMatch(kind="direct", id="999")
+                    )
+                )
             ]
         )
     )
 
-    # Exact match should take priority over channel-only
-    agent_id = resolve_agent_route(config, "telegram", "999")
-    assert agent_id == "vip"
+    # Exact peer match should take priority over channel-only
+    route = resolve_agent_route(config, "telegram", peer={"kind": "direct", "id": "999"})
+    assert route["agent_id"] == "vip"
 
     # Channel-only match
-    agent_id = resolve_agent_route(config, "telegram", "123")
-    assert agent_id == "work"
+    route = resolve_agent_route(config, "telegram", peer={"kind": "direct", "id": "123"})
+    assert route["agent_id"] == "work"
 
     # Default fallback
-    agent_id = resolve_agent_route(config, "whatsapp", "456")
-    assert agent_id == "personal"
+    route = resolve_agent_route(config, "whatsapp", peer={"kind": "direct", "id": "456"})
+    assert route["agent_id"] == "personal"
 
 
 def test_resolve_agent_priority_order():
-    """Test the priority order: exact > channel > default."""
+    """Test the priority order: peer > channel > default."""
     config = Config(
         agents=AgentsConfig(
             agents=[
@@ -60,20 +80,35 @@ def test_resolve_agent_priority_order():
                 AgentConfig(id="special_chat_agent")
             ],
             bindings=[
-                AgentBinding(agent_id="telegram_agent", channel="telegram"),
-                AgentBinding(agent_id="special_chat_agent", channel="telegram", chat_id="special123")
+                AgentBinding(
+                    agent_id="telegram_agent",
+                    match=AgentBindingMatch(
+                        channel="telegram",
+                        account_id="*"
+                    )
+                ),
+                AgentBinding(
+                    agent_id="special_chat_agent",
+                    match=AgentBindingMatch(
+                        channel="telegram",
+                        peer=PeerMatch(kind="direct", id="special123")
+                    )
+                )
             ]
         )
     )
 
-    # Priority 1: Exact match
-    assert resolve_agent_route(config, "telegram", "special123") == "special_chat_agent"
+    # Priority 1: Peer match
+    route = resolve_agent_route(config, "telegram", peer={"kind": "direct", "id": "special123"})
+    assert route["agent_id"] == "special_chat_agent"
 
     # Priority 2: Channel-only
-    assert resolve_agent_route(config, "telegram", "other456") == "telegram_agent"
+    route = resolve_agent_route(config, "telegram", peer={"kind": "direct", "id": "other456"})
+    assert route["agent_id"] == "telegram_agent"
 
     # Priority 3: Default
-    assert resolve_agent_route(config, "discord", "789") == "default_agent"
+    route = resolve_agent_route(config, "discord", peer={"kind": "direct", "id": "789"})
+    assert route["agent_id"] == "default_agent"
 
 
 def test_resolve_agent_no_bindings():
@@ -85,5 +120,5 @@ def test_resolve_agent_no_bindings():
         )
     )
 
-    agent_id = resolve_agent_route(config, "telegram", "123")
-    assert agent_id == "only_agent"
+    route = resolve_agent_route(config, "telegram", peer={"kind": "direct", "id": "123"})
+    assert route["agent_id"] == "only_agent"

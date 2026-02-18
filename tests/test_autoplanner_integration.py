@@ -68,6 +68,7 @@ def mock_bus():
     bus = Mock(spec=MessageBus)
     bus.consume_inbound = AsyncMock()
     bus.publish_outbound = AsyncMock()
+    bus._agent_subscribers = {}  # Add the missing attribute
     return bus
 
 

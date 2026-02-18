@@ -97,7 +97,23 @@
       "Bash(pytest tests/plugins/ -v)",
       "Bash(pytest tests/plugins/test_hooks.py tests/plugins/test_manifest.py tests/plugins/test_enhanced_loader.py -v)",
       "Bash(git worktree remove .worktrees/phase-10-plugin-enhancement --force)",
-      "Bash(pytest tests/core/test_windows.py tests/core/test_daemon.py -v)"
+      "Bash(pytest tests/core/test_windows.py tests/core/test_daemon.py -v)",
+      "Bash(pytest tests/agent/test_agent_registry.py -v)",
+      "Bash(pytest tests/routing/test_bindings.py -v)",
+      "Bash(pytest tests/agent/test_loop_multi_agent.py -v)",
+      "Bash(pytest tests/integration/test_multi_agent_flow.py -v)",
+      "Bash(pytest tests/agent/test_role_manager.py -v)",
+      "Bash(pytest tests/agent/test_agent_comm.py -v)",
+      "Bash(pytest tests/agent/test_mode_manager.py -v)",
+      "Bash(pytest tests/agent/test_loop_collaborative.py -v)",
+      "Bash(dir \"C:\\\\Users\\\\Arvy Kairi\\\\Desktop\\\\bot\\\\openclaw\" /b)",
+      "Bash(git rm kabot/agent/tools/web.py)",
+      "Bash(powershell -File \"C:\\\\Users\\\\Arvy Kairi\\\\Desktop\\\\bot\\\\kabot\\\\deployment\\\\install-kabot-service.ps1\" -WhatIf)",
+      "Bash(bash -n \"C:\\\\Users\\\\Arvy Kairi\\\\Desktop\\\\bot\\\\kabot\\\\deployment\\\\install-linux-service.sh\")",
+      "Bash(chmod +x \"C:\\\\Users\\\\Arvy Kairi\\\\Desktop\\\\bot\\\\kabot\\\\uninstall.sh\")",
+      "Bash(bash -n \"C:\\\\Users\\\\Arvy Kairi\\\\Desktop\\\\bot\\\\kabot\\\\uninstall.sh\")",
+      "Bash(bash -n uninstall.sh)",
+      "Bash(kabot config)"
     ]
   }
 }
