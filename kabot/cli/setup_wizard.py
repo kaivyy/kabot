@@ -179,8 +179,117 @@ class SetupWizard:
 
         return str(backup_path)
 
+    def _load_setup_state(self) -> dict:
+        """Load setup state from file."""
+        state_file = Path.home() / ".kabot" / "setup-state.json"
+        if state_file.exists():
+            try:
+                with open(state_file) as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                # Handle corrupted state file gracefully
+                return self._get_default_state()
+        return self._get_default_state()
+
+    def _get_default_state(self) -> dict:
+        """Get default setup state structure."""
+        return {
+            "version": "1.0",
+            "started_at": None,
+            "sections": {},
+            "user_selections": {}
+        }
+
+    def _save_setup_state(self, section: str, completed: bool = False, **data):
+        """Save setup state to file."""
+        state_file = Path.home() / ".kabot" / "setup-state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+
+        state = self._load_setup_state()
+
+        if not state["started_at"]:
+            state["started_at"] = datetime.now().isoformat()
+
+        state["last_updated"] = datetime.now().isoformat()
+        state["sections"][section] = {
+            "completed": completed,
+            "timestamp": datetime.now().isoformat(),
+            **data
+        }
+
+        try:
+            with open(state_file, "w") as f:
+                json.dump(state, f, indent=2)
+        except IOError as e:
+            console.print(f"│  [yellow]Warning: Could not save setup state: {e}[/yellow]")
+
+    def _clear_setup_state(self):
+        """Clear setup state file on successful completion."""
+        state_file = Path.home() / ".kabot" / "setup-state.json"
+        if state_file.exists():
+            try:
+                state_file.unlink()
+            except IOError as e:
+                console.print(f"│  [yellow]Warning: Could not clear setup state: {e}[/yellow]")
+
+    def _check_resume_setup(self) -> bool:
+        """Check if there's an interrupted setup and offer to resume."""
+        state = self._load_setup_state()
+
+        if not state.get("started_at"):
+            return False
+
+        # Check if any sections are incomplete
+        incomplete_sections = []
+        for section, info in state.get("sections", {}).items():
+            if not info.get("completed", False):
+                incomplete_sections.append(section)
+
+        if not incomplete_sections:
+            # All sections completed, clear state
+            self._clear_setup_state()
+            return False
+
+        # Show resume prompt
+        console.print("│")
+        console.print("◇  [yellow]Interrupted setup detected[/yellow]")
+        console.print(f"│  Started: {state['started_at']}")
+        console.print(f"│  Last updated: {state.get('last_updated', 'Unknown')}")
+        console.print("│")
+        console.print("│  [bold]Incomplete sections:[/bold]")
+        for section in incomplete_sections:
+            console.print(f"│    - {section}")
+        console.print("│")
+
+        resume = Confirm.ask("◇  Resume from where you left off?", default=True)
+
+        if resume:
+            # Restore user selections
+            selections = state.get("user_selections", {})
+            if selections.get("workspace_path"):
+                self.config.agents.defaults.workspace = selections["workspace_path"]
+            console.print("│  [green]✓ Resuming setup...[/green]")
+            console.print("│")
+            return True
+        else:
+            # Start fresh
+            if Confirm.ask("│  Start fresh setup? (This will clear saved progress)", default=True):
+                self._clear_setup_state()
+                console.print("│  [cyan]Starting fresh setup...[/cyan]")
+                console.print("│")
+                return False
+            else:
+                console.print("│  [yellow]Setup cancelled[/yellow]")
+                return None
+
     def run(self) -> Config:
         ClackUI.header()
+
+        # Check for interrupted setup and offer to resume
+        resume_result = self._check_resume_setup()
+        if resume_result is None:  # User cancelled
+            return self.config
+
         ClackUI.summary_box(self.config)
 
         # Create backup before making any changes
@@ -195,8 +304,12 @@ class SetupWizard:
             console.print("│  [dim]Continuing without backup...[/dim]")
             console.print("│")
 
+        # Initialize setup state if not resuming
+        if not resume_result:
+            self._save_setup_state("setup", completed=False, mode="local")
+
         ClackUI.section_start("Environment")
-        
+
         mode = ClackUI.clack_select(
             "Where will the Gateway run?",
             choices=[
@@ -206,14 +319,17 @@ class SetupWizard:
             default="local"
         )
         ClackUI.section_end()
-        
+
         if mode is None: return self.config
+
+        # Save environment selection
+        self._save_setup_state("environment", completed=True, mode=mode)
 
         while True:
             choice = self._main_menu()
             if choice == "finish" or choice is None:
                 break
-            
+
             if choice == "workspace":
                 self._configure_workspace()
             elif choice == "model":
@@ -230,9 +346,16 @@ class SetupWizard:
                 self._configure_logging()
             elif choice == "doctor":
                 self._run_doctor()
-            
+
             self.ran_section = True
-            
+
+        # Clear setup state on successful completion
+        if self.ran_section:
+            self._clear_setup_state()
+            console.print("│")
+            console.print("◇  [green]Setup completed successfully![/green]")
+            console.print("│")
+
         return self.config
 
 
@@ -260,20 +383,39 @@ class SetupWizard:
 
     def _configure_workspace(self):
         ClackUI.section_start("Workspace")
+
+        # Mark section as in progress
+        self._save_setup_state("workspace", completed=False, in_progress=True)
+
         path = Prompt.ask("│  Workspace directory", default=self.config.agents.defaults.workspace)
         self.config.agents.defaults.workspace = path
         os.makedirs(os.path.expanduser(path), exist_ok=True)
+
+        # Save user selection and mark as completed
+        self._save_setup_state("workspace", completed=True, workspace_path=path)
+
+        # Update user selections for resume capability
+        state = self._load_setup_state()
+        state["user_selections"]["workspace_path"] = path
+        with open(Path.home() / ".kabot" / "setup-state.json", "w") as f:
+            json.dump(state, f, indent=2)
+
         console.print(f"│  [green]✓ Workspace path set.[/green]")
         ClackUI.section_end()
 
     def _configure_model(self):
         ClackUI.section_start("Model & Auth")
+
+        # Mark section as in progress
+        self._save_setup_state("auth", completed=False, in_progress=True)
+
         from kabot.auth.menu import get_auth_choices
         from kabot.auth.manager import AuthManager
-        
+
         manager = AuthManager()
         auth_choices = get_auth_choices()
-        
+        configured_providers = []
+
         while True:
             choice = ClackUI.clack_select(
                 "Select an option:",
@@ -283,22 +425,35 @@ class SetupWizard:
                     questionary.Choice("Back", value="back"),
                 ]
             )
-            
+
             if choice == "back" or choice is None:
                 break
-            
+
             if choice == "login":
                 p_options = [questionary.Choice(c['name'], value=c['value']) for c in auth_choices]
                 provider_val = ClackUI.clack_select("Select provider to login", choices=p_options)
 
                 if provider_val and manager.login(provider_val):
+                    configured_providers.append(provider_val)
                     # Validate the API key after successful login
                     self._validate_provider_credentials(provider_val)
                     self._model_picker(provider_val)
-            
+
             elif choice == "picker":
                 self._model_picker()
-        
+
+        # Save configured providers and mark as completed
+        self._save_setup_state("auth", completed=True,
+                             configured_providers=configured_providers,
+                             default_model=self.config.agents.defaults.model)
+
+        # Update user selections
+        state = self._load_setup_state()
+        state["user_selections"]["selected_providers"] = configured_providers
+        state["user_selections"]["default_model"] = self.config.agents.defaults.model
+        with open(Path.home() / ".kabot" / "setup-state.json", "w") as f:
+            json.dump(state, f, indent=2)
+
         ClackUI.section_end()
 
     def _model_picker(self, provider_id: Optional[str] = None):
@@ -343,33 +498,47 @@ class SetupWizard:
 
     def _configure_tools(self):
         ClackUI.section_start("Tools & Sandbox")
-        
+
+        # Mark section as in progress
+        self._save_setup_state("tools", completed=False, in_progress=True)
+
         # Web Search
         console.print("│  [bold]Web Search[/bold]")
         self.config.tools.web.search.api_key = Prompt.ask("│  Brave Search API Key", default=self.config.tools.web.search.api_key)
         self.config.tools.web.search.max_results = int(Prompt.ask("│  Max Search Results", default=str(self.config.tools.web.search.max_results)))
-        
+
         # Execution
         console.print("│  [bold]Execution Policy[/bold]")
         self.config.tools.restrict_to_workspace = Confirm.ask("│  Restrict FS usage to workspace?", default=self.config.tools.restrict_to_workspace)
         self.config.tools.exec.timeout = int(Prompt.ask("│  Command Timeout (s)", default=str(self.config.tools.exec.timeout)))
-        
+
         # Docker Sandbox
         console.print("│  [bold]Docker Sandbox[/bold]")
+        docker_enabled = False
         if Confirm.ask("│  Enable Docker Sandbox?", default=self.config.tools.exec.docker.enabled):
             self.config.tools.exec.docker.enabled = True
+            docker_enabled = True
             self.config.tools.exec.docker.image = Prompt.ask("│  Docker Image", default=self.config.tools.exec.docker.image)
             self.config.tools.exec.docker.memory_limit = Prompt.ask("│  Memory Limit", default=self.config.tools.exec.docker.memory_limit)
             self.config.tools.exec.docker.cpu_limit = float(Prompt.ask("│  CPU Limit", default=str(self.config.tools.exec.docker.cpu_limit)))
             self.config.tools.exec.docker.network_disabled = Confirm.ask("│  Disable Network in Sandbox?", default=self.config.tools.exec.docker.network_disabled)
         else:
             self.config.tools.exec.docker.enabled = False
-            
+
+        # Mark as completed and save configuration
+        self._save_setup_state("tools", completed=True,
+                             web_search_enabled=bool(self.config.tools.web.search.api_key),
+                             docker_enabled=docker_enabled,
+                             restrict_to_workspace=self.config.tools.restrict_to_workspace)
+
         ClackUI.section_end()
 
     def _configure_gateway(self):
         ClackUI.section_start("Gateway")
-        
+
+        # Mark section as in progress
+        self._save_setup_state("gateway", completed=False, in_progress=True)
+
         # Bind Mode
         modes = [
             questionary.Choice("Loopback (Localhost only) [Secure]", value="loopback"),
@@ -383,46 +552,59 @@ class SetupWizard:
             if bind_val == "loopback": self.config.gateway.host = "127.0.0.1"
             elif bind_val == "local": self.config.gateway.host = "0.0.0.0" # Simplification, or prompt for specific IP? usually 0.0.0.0 is fine for LAN
             elif bind_val == "public": self.config.gateway.host = "0.0.0.0"
-            elif bind_val == "tailscale": 
+            elif bind_val == "tailscale":
                 self.config.gateway.host = "127.0.0.1"
                 self.config.gateway.tailscale = True
-        
+
         self.config.gateway.port = int(Prompt.ask("│  Port", default=str(self.config.gateway.port)))
-        
+
         # Auth Config
         auth_mode = ClackUI.clack_select("Authentication", choices=[
             questionary.Choice("Token (Bearer)", value="token"),
             questionary.Choice("None (Testing only)", value="none"),
         ], default="token" if self.config.gateway.auth_token else "none")
 
+        auth_configured = False
         if auth_mode == "token":
             import secrets
             current = self.config.gateway.auth_token
             default_token = current if current else secrets.token_hex(16)
             token = Prompt.ask("│  Auth Token", default=default_token)
             self.config.gateway.auth_token = token
+            auth_configured = bool(token)
         else:
             self.config.gateway.auth_token = ""
-            
+
         # Tailscale explicit toggle if not selected in bind mode
         if bind_val != "tailscale":
              self.config.gateway.tailscale = Confirm.ask("│  Enable Tailscale Funnel?", default=self.config.gateway.tailscale)
+
+        # Mark as completed and save configuration
+        self._save_setup_state("gateway", completed=True,
+                             bind_mode=bind_val,
+                             port=self.config.gateway.port,
+                             auth_configured=auth_configured,
+                             tailscale_enabled=self.config.gateway.tailscale)
 
         ClackUI.section_end()
 
     def _configure_skills(self):
         ClackUI.section_start("Skills")
+
+        # Mark section as in progress
+        self._save_setup_state("skills", completed=False, in_progress=True)
+
         from kabot.agent.skills import SkillsLoader
         loader = SkillsLoader(self.config.workspace_path)
-        
+
         # 1. Load all skills with detailed status
         all_skills = loader.list_skills(filter_unavailable=False)
-        
+
         eligible = [s for s in all_skills if s['eligible']]
         missing_reqs = [s for s in all_skills if not s['eligible'] and not s['missing']['os']]
         unsupported = [s for s in all_skills if s['missing']['os']]
         blocked = [] # Future feature
-        
+
         # 2. Status Board
         console.print("│")
         console.print("◇  Skills status ─────────────╮")
@@ -435,14 +617,22 @@ class SetupWizard:
         console.print("├─────────────────────────────╯")
         console.print("│")
 
+        configured_skills = []
+        installed_skills = []
+
         # 3. Configure/Install Prompt
         if not Confirm.ask("◇  Configure skills now? (recommended)", default=True):
+            # Mark as completed even if skipped
+            self._save_setup_state("skills", completed=True,
+                                 configured_skills=configured_skills,
+                                 installed_skills=installed_skills,
+                                 skipped=True)
             ClackUI.section_end()
             return
 
         # 4. Installation Flow (Missing Binaries/Deps)
         installable = [s for s in missing_reqs if s['missing']['bins'] or s['install']]
-        
+
         if installable:
             choices = [questionary.Choice("Skip for now", value="skip")]
             for s in installable:
@@ -451,7 +641,7 @@ class SetupWizard:
                 if missing_str:
                     label += f" (missing: {missing_str})"
                 choices.append(questionary.Choice(label, value=s['name']))
-            
+
             console.print("│")
             console.print("◆  Install missing skill dependencies")
             selected_names = questionary.checkbox(
@@ -465,17 +655,17 @@ class SetupWizard:
                     ('selected', 'fg:green'),
                 ])
             ).ask()
-            
+
             if selected_names and "skip" not in selected_names:
                 for name in selected_names:
                     skill = next((s for s in installable if s['name'] == name), None)
                     if not skill: continue
-                    
+
                     console.print(f"│  [cyan]Installing dependencies for {name}...[/cyan]")
-                    
+
                     # Check for install metadata
                     install_meta = skill.get("install", {})
-                    
+
                     if install_meta and "cmd" in install_meta:
                         import subprocess
                         cmd = install_meta["cmd"]
@@ -483,31 +673,32 @@ class SetupWizard:
                         try:
                             # Run the command
                             result = subprocess.run(
-                                cmd, 
-                                shell=True, 
-                                capture_output=True, 
+                                cmd,
+                                shell=True,
+                                capture_output=True,
                                 text=True,
                                 cwd=self.config.workspace_path
                             )
                             if result.returncode == 0:
                                 console.print(f"│  [green]✓ Installed successfully[/green]")
+                                installed_skills.append(name)
                             else:
                                 console.print(f"│  [red]✗ Install failed (exit {result.returncode})[/red]")
                                 console.print(f"│    {result.stderr.strip()[:200]}") # Show partial error
                         except Exception as e:
                             console.print(f"│  [red]✗ Error executing command: {e}[/red]")
-                    
+
                     # Show manual instructions if we can't auto-install (or if checks still fail after install)
                     if skill['missing']['bins'] and (not install_meta or not install_meta.get("cmd")):
                         console.print(f"│  [yellow]Please install the following binaries manually:[/yellow]")
                         for b in skill['missing']['bins']:
                             console.print(f"│    - {b}")
-                    
+
                     console.print(f"│  [dim]Finished processing {name}[/dim]")
 
         # 5. Environment Variable Configuration (for Eligible + Newly Installed)
         console.print("│")
-        
+
         # Filter for skills that need keys (iterate ALL skills again to catch those fixed by install)
         # We focus on `primaryEnv` or missing envs
         needs_env = []
@@ -517,42 +708,55 @@ class SetupWizard:
             # But 'missing.env' is what we care about here.
             if s['missing']['env']:
                 needs_env.append(s)
-        
+
         if needs_env:
             # console.print("◆  Configure Environment Variables") # OpenClaw doesn't have this header, it just asks
-            
+
             for s in needs_env:
                 primary_env = s.get('primaryEnv')
                 if not primary_env: continue # Should not happen if missing['env'] is set due to our logic
-                
+
                 # Ask if user wants to configure this skill
                 if not Confirm.ask(f"◇  Set {primary_env} for [cyan]{s['name']}[/cyan]?", default=True):
                     console.print("│")
                     continue
-                
+
                 current_val = os.environ.get(primary_env)
                 val = Prompt.ask(f"│  Enter {primary_env}", default=current_val or "", password=True)
-                
+
                 if val:
                     if s['name'] not in self.config.skills:
                         self.config.skills[s['name']] = {"env": {}}
                     if "env" not in self.config.skills[s['name']]:
                         self.config.skills[s['name']]["env"] = {}
-                        
+
                     self.config.skills[s['name']]["env"][primary_env] = val
                     os.environ[primary_env] = val
                     console.print(f"│  [green]✓ Saved[/green]")
+                    configured_skills.append(s['name'])
                 console.print("│")
+
+        # Mark as completed and save configuration
+        self._save_setup_state("skills", completed=True,
+                             configured_skills=configured_skills,
+                             installed_skills=installed_skills,
+                             eligible_count=len(eligible),
+                             missing_reqs_count=len(missing_reqs))
 
         ClackUI.section_end()
 
     def _configure_channels(self):
+        # Mark section as in progress
+        self._save_setup_state("channels", completed=False, in_progress=True)
+
+        configured_channels = []
+
         while True:
             ClackUI.section_start("Channels")
-            
+
             # Build choices based on current config status
             c = self.config.channels
-            
+
             def status(enabled: bool):
                 return "[green]ON[/green]" if enabled else "[dim]OFF[/dim]"
 
@@ -573,9 +777,9 @@ class SetupWizard:
                 questionary.Choice(f"Email     [{status(c.email.enabled)}]", value="email"),
                 questionary.Choice("Back", value="back"),
             ]
-            
+
             choice = ClackUI.clack_select("Select channel to configure", choices=options)
-            
+
             if choice == "back" or choice is None:
                 ClackUI.section_end()
                 break
@@ -589,12 +793,15 @@ class SetupWizard:
                     if token:
                         c.telegram.token = token
                         c.telegram.enabled = True
+                        configured_channels.append("telegram")
                         console.print("│  [green]✓ Telegram configured[/green]")
                 else:
                     c.telegram.enabled = False
 
             elif choice == "whatsapp":
                 self._configure_whatsapp()
+                if c.whatsapp.enabled:
+                    configured_channels.append("whatsapp")
 
             elif choice == "discord":
                 if Confirm.ask("│  Enable Discord?", default=c.discord.enabled):
@@ -602,7 +809,8 @@ class SetupWizard:
                     if token:
                         c.discord.token = token
                         c.discord.enabled = True
-                    
+                        configured_channels.append("discord")
+
                     # Optional advanced fields
                     if Confirm.ask("│  Configure Gateway/Intents (Advanced)?"):
                         c.discord.gateway_url = Prompt.ask("│  Gateway URL", default=c.discord.gateway_url)
@@ -623,6 +831,7 @@ class SetupWizard:
                         c.slack.bot_token = bot_token
                         c.slack.app_token = app_token
                         c.slack.enabled = True
+                        configured_channels.append("slack")
                 else:
                     c.slack.enabled = False
 
@@ -634,6 +843,7 @@ class SetupWizard:
                         c.feishu.app_id = app_id
                         c.feishu.app_secret = app_secret
                         c.feishu.enabled = True
+                        configured_channels.append("feishu")
                 else:
                     c.feishu.enabled = False
 
@@ -642,6 +852,7 @@ class SetupWizard:
                     c.dingtalk.client_id = Prompt.ask("│  Client ID (AppKey)", default=c.dingtalk.client_id)
                     c.dingtalk.client_secret = Prompt.ask("│  Client Secret (AppSecret)", default=c.dingtalk.client_secret)
                     c.dingtalk.enabled = True
+                    configured_channels.append("dingtalk")
                 else:
                     c.dingtalk.enabled = False
 
@@ -650,6 +861,7 @@ class SetupWizard:
                     c.qq.app_id = Prompt.ask("│  App ID", default=c.qq.app_id)
                     c.qq.secret = Prompt.ask("│  App Secret", default=c.qq.secret)
                     c.qq.enabled = True
+                    configured_channels.append("qq")
                 else:
                     c.qq.enabled = False
 
@@ -660,20 +872,25 @@ class SetupWizard:
                     c.email.imap_username = Prompt.ask("│  IMAP User", default=c.email.imap_username)
                     if Confirm.ask("│  Update IMAP Password?"):
                         c.email.imap_password = Prompt.ask("│  IMAP Password", password=True)
-                    
+
                     console.print("│  [bold]SMTP (Outgoing)[/bold]")
                     c.email.smtp_host = Prompt.ask("│  SMTP Host", default=c.email.smtp_host)
                     c.email.smtp_username = Prompt.ask("│  SMTP User", default=c.email.smtp_username)
                     if Confirm.ask("│  Update SMTP Password?"):
                         c.email.smtp_password = Prompt.ask("│  SMTP Password", password=True)
-                    
+
                     c.email.from_address = Prompt.ask("│  Sender Address (From)", default=c.email.from_address)
                     c.email.enabled = True
+                    configured_channels.append("email")
                 else:
                     c.email.enabled = False
 
-
             ClackUI.section_end()
+
+        # Mark as completed and save configuration
+        self._save_setup_state("channels", completed=True,
+                             configured_channels=configured_channels,
+                             instance_count=len(c.instances) if c.instances else 0)
 
     def _validate_api_key(self, provider: str, api_key: str) -> bool:
         """Validate API key by making a test call."""
@@ -1002,7 +1219,10 @@ class SetupWizard:
 
     def _configure_logging(self):
         ClackUI.section_start("Logging & Debugging")
-        
+
+        # Mark section as in progress
+        self._save_setup_state("logging", completed=False, in_progress=True)
+
         # Log Level
         level = ClackUI.clack_select("Log Level", choices=[
             questionary.Choice("DEBUG (Verbose)", value="DEBUG"),
@@ -1011,19 +1231,26 @@ class SetupWizard:
             questionary.Choice("ERROR (Critical only)", value="ERROR"),
         ], default=self.config.logging.level)
         self.config.logging.level = level
-        
+
         # File Retention
         retention = Prompt.ask("│  File Retention (e.g. '7 days', '1 week')", default=self.config.logging.retention)
         self.config.logging.retention = retention
-        
+
         # DB Retention
         db_days = Prompt.ask("│  Database Retention (days)", default=str(self.config.logging.db_retention_days))
         try:
             self.config.logging.db_retention_days = int(db_days)
         except ValueError:
             console.print("│  [red]Invalid number, keeping default.[/red]")
-            
+
         console.print("│  [green]✓ Logging configured[/green]")
+
+        # Mark as completed and save configuration
+        self._save_setup_state("logging", completed=True,
+                             log_level=level,
+                             file_retention=retention,
+                             db_retention_days=self.config.logging.db_retention_days)
+
         ClackUI.section_end()
 
     def _run_doctor(self):
