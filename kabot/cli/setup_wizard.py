@@ -736,10 +736,15 @@ class SetupWizard:
                     configured_skills.append(s['name'])
                 console.print("│")
 
+        # Install built-in skills after configuration
+        console.print("│")
+        builtin_installed = self._install_builtin_skills_with_progress()
+
         # Mark as completed and save configuration
         self._save_setup_state("skills", completed=True,
                              configured_skills=configured_skills,
                              installed_skills=installed_skills,
+                             builtin_skills_installed=builtin_installed,
                              eligible_count=len(eligible),
                              missing_reqs_count=len(missing_reqs))
 
@@ -1272,7 +1277,7 @@ class SetupWizard:
         if not skills_dst.exists():
             os.makedirs(skills_dst, exist_ok=True)
             console.print(f"│  [cyan]Initializing skills directory at {skills_dst}...[/cyan]")
-        
+
         # Copy skills
         import shutil
         count = 0
@@ -1285,9 +1290,82 @@ class SetupWizard:
                         count += 1
                     except Exception as e:
                          console.print(f"│  [red]Failed to copy skill {item.name}: {e}[/red]")
-        
+
         if count > 0:
             console.print(f"│  [green]✓ Installed {count} built-in skills to workspace[/green]")
+
+    def _install_builtin_skills_with_progress(self) -> bool:
+        """Install built-in skills with progress indicators and error handling."""
+        console.print("◇  [cyan]Installing built-in skills...[/cyan]")
+
+        skills_src = Path(__file__).parent.parent / "skills"
+        skills_dst = Path(self.config.agents.defaults.workspace) / "skills"
+
+        # Check if source skills exist
+        if not skills_src.exists():
+            console.print(f"│  [yellow]⚠ Built-in skills not found at {skills_src}[/yellow]")
+            console.print("│  [dim]Continuing without built-in skills installation[/dim]")
+            return False
+
+        # Ensure destination exists
+        try:
+            if not skills_dst.exists():
+                os.makedirs(skills_dst, exist_ok=True)
+                console.print(f"│  [cyan]Created skills directory: {skills_dst}[/cyan]")
+        except Exception as e:
+            console.print(f"│  [red]✗ Failed to create skills directory: {e}[/red]")
+            console.print("│  [dim]Continuing without built-in skills installation[/dim]")
+            return False
+
+        # Discover available skills
+        available_skills = []
+        for item in skills_src.iterdir():
+            if item.is_dir() and (item / "SKILL.md").exists():
+                available_skills.append(item)
+
+        if not available_skills:
+            console.print("│  [yellow]⚠ No built-in skills found to install[/yellow]")
+            return False
+
+        console.print(f"│  Found {len(available_skills)} built-in skills to install")
+
+        # Install skills with progress feedback
+        import shutil
+        installed_count = 0
+        failed_count = 0
+        skipped_count = 0
+
+        for skill_src in available_skills:
+            skill_name = skill_src.name
+            skill_dst = skills_dst / skill_name
+
+            if skill_dst.exists():
+                console.print(f"│  [dim]- {skill_name} (already exists)[/dim]")
+                skipped_count += 1
+                continue
+
+            try:
+                console.print(f"│  [cyan]Installing {skill_name}...[/cyan]")
+                shutil.copytree(skill_src, skill_dst)
+                console.print(f"│  [green]✓ {skill_name}[/green]")
+                installed_count += 1
+            except Exception as e:
+                console.print(f"│  [red]✗ {skill_name}: {str(e)[:60]}...[/red]")
+                failed_count += 1
+
+        # Summary
+        console.print("│")
+        if installed_count > 0:
+            console.print(f"│  [green]✓ Successfully installed {installed_count} built-in skills[/green]")
+
+        if skipped_count > 0:
+            console.print(f"│  [dim]- Skipped {skipped_count} existing skills[/dim]")
+
+        if failed_count > 0:
+            console.print(f"│  [yellow]⚠ Failed to install {failed_count} skills[/yellow]")
+            console.print("│  [dim]Setup will continue - you can manually install these later[/dim]")
+
+        return installed_count > 0
 
 def run_interactive_setup() -> Config:
     wizard = SetupWizard()
