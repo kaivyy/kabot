@@ -8,6 +8,7 @@ docs/*
 !docs/logs/
 !docs/plans/
 !docs/multi-agent.md
+!docs/collaborative-orchestration.md
 *.egg-info/
 *.egg
 *.pyc
