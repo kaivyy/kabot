@@ -14,7 +14,7 @@ from kabot.providers.base import LLMProvider
 from kabot.agent.tools.registry import ToolRegistry
 from kabot.agent.tools.filesystem import ReadFileTool, WriteFileTool, ListDirTool
 from kabot.agent.tools.shell import ExecTool
-from kabot.agent.tools.web import WebSearchTool
+from kabot.agent.tools.web_search import WebSearchTool
 from kabot.agent.tools.web_fetch import WebFetchTool
 from kabot.agent.subagent_registry import SubagentRegistry
 
