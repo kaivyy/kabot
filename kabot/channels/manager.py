@@ -37,7 +37,72 @@ class ChannelManager:
     
     def _init_channels(self) -> None:
         """Initialize channels based on config."""
-        
+
+        # Process multi-instance configs first
+        for instance in self.config.channels.instances:
+            if not instance.enabled:
+                continue
+
+            channel_key = f"{instance.type}:{instance.id}"
+
+            try:
+                if instance.type == "telegram":
+                    from kabot.channels.telegram import TelegramChannel
+                    from kabot.config.schema import TelegramConfig
+
+                    # Convert dict config to TelegramConfig
+                    tele_config = TelegramConfig(**instance.config)
+                    self.channels[channel_key] = TelegramChannel(
+                        tele_config,
+                        self.bus,
+                        groq_api_key=self.config.providers.groq.api_key,
+                        session_manager=self.session_manager,
+                    )
+                    logger.info(f"Telegram instance '{instance.id}' enabled")
+
+                elif instance.type == "discord":
+                    from kabot.channels.discord import DiscordChannel
+                    from kabot.config.schema import DiscordConfig
+
+                    discord_config = DiscordConfig(**instance.config)
+                    self.channels[channel_key] = DiscordChannel(
+                        discord_config,
+                        self.bus
+                    )
+                    logger.info(f"Discord instance '{instance.id}' enabled")
+
+                elif instance.type == "whatsapp":
+                    from kabot.channels.whatsapp import WhatsAppChannel
+                    from kabot.config.schema import WhatsAppConfig
+
+                    whatsapp_config = WhatsAppConfig(**instance.config)
+                    self.channels[channel_key] = WhatsAppChannel(
+                        whatsapp_config,
+                        self.bus
+                    )
+                    logger.info(f"WhatsApp instance '{instance.id}' enabled")
+
+                elif instance.type == "slack":
+                    from kabot.channels.slack import SlackChannel
+                    from kabot.config.schema import SlackConfig
+
+                    slack_config = SlackConfig(**instance.config)
+                    self.channels[channel_key] = SlackChannel(
+                        slack_config,
+                        self.bus
+                    )
+                    logger.info(f"Slack instance '{instance.id}' enabled")
+
+                else:
+                    logger.warning(f"Unknown channel type: {instance.type}")
+
+            except ImportError as e:
+                logger.warning(f"{instance.type} channel not available: {e}")
+            except Exception as e:
+                logger.error(f"Failed to initialize {instance.type}:{instance.id}: {e}")
+
+        # Then process legacy single-instance configs (backward compatibility)
+
         # Telegram channel
         if self.config.channels.telegram.enabled:
             try:
