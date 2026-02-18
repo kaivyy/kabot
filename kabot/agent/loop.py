@@ -548,6 +548,35 @@ class AgentLoop:
         agent_id = resolve_agent_route(self.config, msg.channel, msg.chat_id)
         return build_agent_session_key(agent_id, msg.channel, msg.chat_id)
 
+    def _resolve_model_for_message(self, msg: InboundMessage) -> str:
+        """Resolve the model to use for this message based on agent routing.
+
+        This implements per-agent model assignment similar to OpenClaw:
+        - If the agent has a model override, use it
+        - Otherwise, use the default model (self.model)
+
+        Args:
+            msg: The inbound message to resolve model for
+
+        Returns:
+            The model string to use for this message
+        """
+        from kabot.routing.bindings import resolve_agent_route
+        from kabot.agent.agent_scope import resolve_agent_model
+
+        # Resolve which agent should handle this message
+        agent_id = resolve_agent_route(self.config, msg.channel, msg.chat_id)
+
+        # Check if this agent has a model override
+        agent_model = resolve_agent_model(self.config, agent_id)
+
+        # If agent has model override, resolve it through registry and return
+        if agent_model:
+            return self.registry.resolve(agent_model)
+
+        # Otherwise use default model
+        return self.model
+
     async def _init_session(self, msg: InboundMessage) -> Any:
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {msg.content[:80]}...")
 
@@ -591,19 +620,22 @@ class AgentLoop:
     async def _run_simple_response(self, msg: InboundMessage, messages: list) -> str | None:
         """Direct single-shot response for simple queries (no loop, no tools)."""
         try:
+            # Resolve model for this agent
+            model = self._resolve_model_for_message(msg)
+
             # Check for context overflow and compact if needed
-            if self.context_guard.check_overflow(messages, self.model):
+            if self.context_guard.check_overflow(messages, model):
                 logger.warning("Context overflow detected in simple response, compacting history")
                 messages = await self.compactor.compact(
-                    messages, self.provider, self.model, keep_recent=10
+                    messages, self.provider, model, keep_recent=10
                 )
                 # Verify compaction was successful
-                if self.context_guard.check_overflow(messages, self.model):
+                if self.context_guard.check_overflow(messages, model):
                     logger.warning("Context still over limit after compaction")
 
             response = await self.provider.chat(
                 messages=messages,
-                model=self.model,
+                model=model,
             )
             return response.content or ""
         except Exception as e:
@@ -619,7 +651,11 @@ class AgentLoop:
         Phase 3 (Critic): Score result 0-10, retry if < 7
         """
         iteration = 0
-        models_to_try = [self.model] + self.fallbacks
+
+        # Resolve model for this agent
+        model = self._resolve_model_for_message(msg)
+        models_to_try = [model] + self.fallbacks
+
         self_eval_retried = False
         critic_retried = 0
         max_critic_retries = 2  # Max 2 critic-driven retries
@@ -638,13 +674,13 @@ class AgentLoop:
             iteration += 1
 
             # Check for context overflow and compact if needed
-            if self.context_guard.check_overflow(messages, self.model):
+            if self.context_guard.check_overflow(messages, model):
                 logger.warning("Context overflow detected, compacting history")
                 messages = await self.compactor.compact(
-                    messages, self.provider, self.model, keep_recent=10
+                    messages, self.provider, model, keep_recent=10
                 )
                 # Verify compaction was successful
-                if self.context_guard.check_overflow(messages, self.model):
+                if self.context_guard.check_overflow(messages, model):
                     logger.warning("Context still over limit after compaction")
 
             response, error = await self._call_llm_with_fallback(messages, models_to_try)

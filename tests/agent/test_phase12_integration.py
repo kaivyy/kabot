@@ -15,6 +15,7 @@ def mock_agent_loop():
 
     # Create mocks
     bus = Mock(spec=MessageBus)
+    bus._agent_subscribers = {}  # Add required attribute for Coordinator
     provider = Mock(spec=LLMProvider)
     provider.get_default_model.return_value = "gpt-4"
     workspace = Path("C:/temp/test_workspace")
