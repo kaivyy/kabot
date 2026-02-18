@@ -374,13 +374,15 @@ def _make_provider(config):
             default_model=model,
         )
 
-    if not (p and p.api_key) and not model.startswith("bedrock/"):
-        console.print("[red]Error: No API key configured.[/red]")
+    # Check for credentials (API key or OAuth token)
+    api_key = config.get_api_key(model)
+    if not api_key and not model.startswith("bedrock/"):
+        console.print("[red]Error: No API key or OAuth token configured.[/red]")
         console.print("Set one in ~/.kabot/config.json under providers section")
         raise typer.Exit(1)
 
     return LiteLLMProvider(
-        api_key=p.api_key if p else None,
+        api_key=api_key,
         api_base=config.get_api_base(),
         default_model=model,
         extra_headers=p.extra_headers if p else None,
