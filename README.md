@@ -113,6 +113,173 @@ One brain, many bodies. Kabot acts as a central control plane.
 
 ---
 
+## 🤖 Multi-Agent Orchestration
+
+Kabot supports two advanced multi-agent systems that can work independently or together, enabling sophisticated task execution and context separation.
+
+### System 1: OpenClaw-Style Multi-Agent (Context Separation)
+
+Multiple independent agents with separate contexts, each specialized for different domains or purposes.
+
+**Key Features:**
+- **Separate Contexts**: Each agent maintains its own conversation history and memory
+- **Per-Agent Configuration**: Custom model, workspace, and tool restrictions per agent
+- **Message Routing**: Automatic routing based on channel/platform via bindings
+- **Session Isolation**: Each agent has isolated session storage
+
+**Use Cases:**
+- Separate work/personal/family contexts
+- Domain-specific agents (coding/research/writing)
+- Multi-user scenarios with different access levels
+- Testing different models for the same task
+
+**CLI Commands:**
+```bash
+# List all configured agents
+kabot agents list
+
+# Add a new agent
+kabot agents add work --model anthropic/claude-3-5-sonnet-20241022 --workspace ~/work
+
+# Delete an agent
+kabot agents delete work
+
+# Bind agent to specific channel
+# Edit config.json to add bindings:
+{
+  "agents": {
+    "bindings": [
+      {"agent_id": "work", "channel": "telegram", "chat_id": "123456"},
+      {"agent_id": "personal", "channel": "discord"}
+    ]
+  }
+}
+```
+
+**Example Configuration:**
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "work",
+        "name": "Work Assistant",
+        "model": "anthropic/claude-3-5-sonnet-20241022",
+        "workspace": "~/work",
+        "default": false
+      },
+      {
+        "id": "personal",
+        "name": "Personal Assistant",
+        "model": "openai/gpt-4o",
+        "workspace": "~/personal",
+        "default": true
+      }
+    ],
+    "bindings": [
+      {"agent_id": "work", "channel": "telegram", "chat_id": "work_chat_id"},
+      {"agent_id": "personal", "channel": "discord"}
+    ]
+  }
+}
+```
+
+### System 2: Collaborative Orchestration (Role-Based Collaboration)
+
+Multiple agents with specialized roles work together on a single task, combining their strengths for complex problem-solving.
+
+**Roles:**
+- **Master**: Coordinates tasks and makes high-level decisions (default: GPT-4o)
+- **Brainstorming**: Generates ideas and explores approaches (default: Claude Sonnet)
+- **Executor**: Executes code and performs operations (default: Kimi K2.5)
+- **Verifier**: Reviews code and validates results (default: Claude Sonnet)
+
+**Key Features:**
+- **Agent-to-Agent Communication**: Peer-to-peer messaging via MessageBus
+- **Task Delegation**: Master agent distributes work to specialized agents
+- **Result Aggregation**: Combines outputs from multiple agents
+- **Quality Control**: Built-in verification and review workflow
+
+**Use Cases:**
+- Complex coding tasks requiring multiple perspectives
+- Brainstorming → Implementation → Review workflows
+- Tasks benefiting from different model strengths
+- Quality-critical projects needing verification
+
+**CLI Commands:**
+```bash
+# Enable collaborative mode
+kabot mode set multi
+
+# Check current mode
+kabot mode status
+
+# Disable collaborative mode (back to single-agent)
+kabot mode set single
+```
+
+**Example Workflow:**
+```
+User: "Implement user authentication with JWT"
+  ↓
+Master Agent: Analyzes request, breaks down task
+  ↓
+Brainstorming Agent: Proposes 3 implementation approaches
+  ↓
+Master Agent: Selects best approach (JWT with refresh tokens)
+  ↓
+Executor Agent: Implements code, writes tests
+  ↓
+Verifier Agent: Reviews code, checks security
+  ↓
+Master Agent: Aggregates results → Returns to user
+```
+
+### Combining Both Systems
+
+Both systems work together seamlessly:
+- **Multiple agents** (System 1) can each use **collaborative mode** (System 2)
+- Example: "work" agent uses multi-agent mode for complex tasks, "personal" agent uses single-agent mode for simple queries
+
+**Configuration Example:**
+```json
+{
+  "agents": {
+    "list": [
+      {"id": "work", "model": "anthropic/claude-3-5-sonnet-20241022", "default": true},
+      {"id": "research", "model": "openai/gpt-4o", "default": false}
+    ]
+  }
+}
+```
+
+Then set mode per user:
+```bash
+# Work agent uses collaborative mode
+kabot mode set multi --user-id user:telegram:work_chat
+
+# Research agent uses single mode
+kabot mode set single --user-id user:telegram:research_chat
+```
+
+### When to Use Each System
+
+| Scenario | Recommended System |
+| :--- | :--- |
+| Separate work/personal contexts | OpenClaw-Style (System 1) |
+| Complex multi-step coding tasks | Collaborative (System 2) |
+| Testing different models | OpenClaw-Style (System 1) |
+| Quality-critical projects | Collaborative (System 2) |
+| Multi-user deployment | OpenClaw-Style (System 1) |
+| Brainstorming + Implementation | Collaborative (System 2) |
+| Simple queries | Single-agent (default) |
+
+**Documentation:**
+- [Multi-Agent System Details](docs/multi-agent.md)
+- [Collaborative Orchestration Guide](docs/collaborative-orchestration.md)
+
+---
+
 ## 🏗️ Architecture
 
 Kabot operates on a **Gateway-Agent** model, decoupling the "brain" from the "body".
