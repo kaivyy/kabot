@@ -23,7 +23,7 @@ def extract_account_id(jwt_token: str) -> str:
         if padding != 4:
             payload_b64 += "=" * padding
 
-        payload_json = base64.b64decode(payload_b64).decode("utf-8")
+        payload_json = base64.urlsafe_b64decode(payload_b64).decode("utf-8")
         payload = json.loads(payload_json)
 
         # Extract account ID from JWT claim path
@@ -73,8 +73,8 @@ def build_chatgpt_request(
     if system_prompt:
         body["instructions"] = system_prompt
 
-    if temperature is not None:
-        body["temperature"] = temperature
+    # ChatGPT backend codex endpoint rejects "temperature".
+    # Keep function signature stable but intentionally do not send it.
 
     return body
 
@@ -94,15 +94,26 @@ def build_chatgpt_headers(jwt_token: str, account_id: str) -> Dict[str, str]:
 
 def parse_sse_stream(response_text: str) -> Iterator[Dict[str, Any]]:
     """Parse Server-Sent Events stream."""
-    for line in response_text.split("\n"):
-        line = line.strip()
-        if line.startswith("data:"):
-            data = line[5:].strip()
-            if data and data != "[DONE]":
-                try:
-                    yield json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+    for chunk in response_text.split("\n\n"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+
+        data_lines: list[str] = []
+        for line in chunk.splitlines():
+            line = line.strip()
+            if line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+
+        if not data_lines:
+            continue
+
+        data = "\n".join(data_lines).strip()
+        if data and data != "[DONE]":
+            try:
+                yield json.loads(data)
+            except json.JSONDecodeError:
+                continue
 
 
 def extract_content_from_event(event: Dict[str, Any]) -> Optional[str]:
@@ -115,15 +126,21 @@ def extract_content_from_event(event: Dict[str, Any]) -> Optional[str]:
             content = item.get("content", [])
             if content and isinstance(content, list):
                 for part in content:
-                    if part.get("type") == "text":
+                    part_type = part.get("type")
+                    if part_type in {"text", "output_text"}:
                         return part.get("text", "")
+                    if part_type == "refusal":
+                        return part.get("refusal", "")
 
     elif event_type == "response.content_part.added":
         part = event.get("part", {})
-        if part.get("type") == "text":
+        part_type = part.get("type")
+        if part_type in {"text", "output_text"}:
             return part.get("text", "")
+        if part_type == "refusal":
+            return part.get("refusal", "")
 
-    elif event_type == "response.text.delta":
+    elif event_type in {"response.output_text.delta", "response.text.delta", "response.refusal.delta"}:
         return event.get("delta", "")
 
     return None

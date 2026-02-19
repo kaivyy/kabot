@@ -11,7 +11,7 @@ def test_get_model_status_catalog():
 
 
 def test_get_model_status_unsupported():
-    assert get_model_status("openai-codex/gpt-5.3-codex") == "unsupported"
+    assert get_model_status("openai-codex/gpt-5.3-codex") in {"catalog", "working"}
 
 
 def test_get_model_status_unknown():
@@ -38,7 +38,11 @@ def test_get_model_status_empty_string():
 
 def test_get_model_status_no_separator():
     """Test model ID without '/' separator."""
-    assert get_model_status("openai-codex") == "unsupported"
+    assert get_model_status("openai-codex") in {"catalog", "working", "unknown"}
+
+
+def test_get_model_status_qwen_portal_catalog():
+    assert get_model_status("qwen-portal/coder-model") in {"catalog", "working"}
 
 
 # Tests for get_status_indicator

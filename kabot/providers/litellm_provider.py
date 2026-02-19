@@ -99,6 +99,10 @@ class LiteLLMProvider(LLMProvider):
         # Standard mode: auto-prefix for known providers
         spec = find_by_model(model)
         if spec and spec.litellm_prefix:
+            # Qwen Portal catalog models are stored as qwen-portal/<model>,
+            # but DashScope expects only the raw model id after provider prefix.
+            if spec.name == "dashscope" and model.startswith("qwen-portal/"):
+                model = model.split("/", 1)[1]
             if not any(model.startswith(s) for s in spec.skip_prefixes):
                 model = f"{spec.litellm_prefix}/{model}"
 
@@ -343,16 +347,23 @@ class LiteLLMProvider(LLMProvider):
             except ValueError as e:
                 raise ValueError(f"Invalid OAuth token: {e}")
 
+            # Strip provider prefix from model name (openai-codex/gpt-5.3-codex -> gpt-5.3-codex)
+            api_model = model.split("/")[-1] if "/" in model else model
+
             # Build request
             body = build_chatgpt_request(
-                model=model,
+                model=api_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                stream=False,  # Non-streaming for now
+                stream=True,
             )
 
             headers = build_chatgpt_headers(self.api_key, account_id)
+
+            # Debug logging
+            logger.info(f"ChatGPT Backend API Request - Model: {api_model}, Account: {account_id[:8]}...")
+            logger.debug(f"Request body: {json.dumps(body, indent=2)}")
 
             # Make request to ChatGPT backend API
             url = "https://chatgpt.com/backend-api/codex/responses"
@@ -361,9 +372,13 @@ class LiteLLMProvider(LLMProvider):
                 response = requests.post(
                     url=url,
                     headers=headers,
-                    data=json.dumps(body),
+                    json=body,
                     timeout=120,
                 )
+
+                # Log response for debugging
+                logger.info(f"ChatGPT Backend API Response Status: {response.status_code}")
+
                 response.raise_for_status()
 
                 # Parse SSE stream from response text
@@ -373,10 +388,40 @@ class LiteLLMProvider(LLMProvider):
                     if text:
                         content_parts.append(text)
 
+                # Fallback for non-streaming JSON payloads
+                if not content_parts:
+                    try:
+                        payload = response.json()
+                        output = payload.get("output", [])
+                        for item in output if isinstance(output, list) else []:
+                            if not isinstance(item, dict):
+                                continue
+                            content = item.get("content", [])
+                            if not isinstance(content, list):
+                                continue
+                            for part in content:
+                                if not isinstance(part, dict):
+                                    continue
+                                part_type = part.get("type")
+                                if part_type in {"text", "output_text"} and part.get("text"):
+                                    content_parts.append(part["text"])
+                                elif part_type == "refusal" and part.get("refusal"):
+                                    content_parts.append(part["refusal"])
+                    except ValueError:
+                        pass
+
                 return {"content": "".join(content_parts)}
 
             except requests.exceptions.HTTPError as e:
+                # Log error response body for debugging
+                error_body = ""
                 if e.response is not None:
+                    try:
+                        error_body = e.response.text
+                        logger.error(f"ChatGPT Backend API Error Response: {error_body}")
+                    except:
+                        pass
+
                     status = e.response.status_code
                     if status == 429:
                         raise RateLimitError(message=str(e), llm_provider="openai-codex", model=model)

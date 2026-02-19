@@ -178,7 +178,7 @@ class QwenOAuthHandler(AuthHandler):
 
                 return {
                     "providers": {
-                        "qwen": {
+                        "qwen-portal": {
                             "oauth_token": access_token,
                             "refresh_token": refresh_token,
                             "client_id": QWEN_CLIENT_ID,

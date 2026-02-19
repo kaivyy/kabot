@@ -205,11 +205,35 @@ class SetupWizard:
             "user_selections": {}
         }
 
-    def _save_setup_state(self, section: str, completed: bool = False, **data):
-        """Save setup state to file."""
+    def _to_json_compatible(self, value):
+        """Convert setup-state payloads to JSON-compatible structures."""
+        if hasattr(value, "model_dump"):
+            return self._to_json_compatible(value.model_dump())
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            return {k: self._to_json_compatible(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._to_json_compatible(v) for v in value]
+        if isinstance(value, tuple):
+            return [self._to_json_compatible(v) for v in value]
+        if isinstance(value, set):
+            return [self._to_json_compatible(v) for v in sorted(value)]
+        return value
+
+    def _write_setup_state(self, state: dict) -> None:
+        """Write setup state with safe JSON serialization."""
         state_file = Path.home() / ".kabot" / "setup-state.json"
         state_file.parent.mkdir(parents=True, exist_ok=True)
+        serializable_state = self._to_json_compatible(state)
+        try:
+            with open(state_file, "w") as f:
+                json.dump(serializable_state, f, indent=2)
+        except (IOError, TypeError, ValueError) as e:
+            console.print(f"│  [yellow]Warning: Could not save setup state: {e}[/yellow]")
 
+    def _save_setup_state(self, section: str, completed: bool = False, **data):
+        """Save setup state to file."""
         state = self._load_setup_state()
 
         if not state["started_at"]:
@@ -222,11 +246,7 @@ class SetupWizard:
             **data
         }
 
-        try:
-            with open(state_file, "w") as f:
-                json.dump(state, f, indent=2)
-        except IOError as e:
-            console.print(f"│  [yellow]Warning: Could not save setup state: {e}[/yellow]")
+        self._write_setup_state(state)
 
     def _clear_setup_state(self):
         """Clear setup state file on successful completion."""
@@ -402,11 +422,68 @@ class SetupWizard:
         # Update user selections for resume capability
         state = self._load_setup_state()
         state["user_selections"]["workspace_path"] = path
-        with open(Path.home() / ".kabot" / "setup-state.json", "w") as f:
-            json.dump(state, f, indent=2)
+        self._write_setup_state(state)
 
         console.print(f"│  [green]✓ Workspace path set.[/green]")
         ClackUI.section_end()
+
+    def _sync_provider_credentials_from_disk(self) -> None:
+        """Merge provider credentials saved by AuthManager into in-memory wizard config."""
+        try:
+            disk_config = load_config()
+            self.config.providers = disk_config.providers.model_copy(deep=True)
+        except Exception as e:
+            console.print(f"│  [yellow]Warning: Could not sync provider credentials: {e}[/yellow]")
+
+    def _provider_has_credentials(self, provider_config) -> bool:
+        """Check whether a provider config has any API key/OAuth credentials."""
+        if not provider_config:
+            return False
+        if provider_config.api_key:
+            return True
+        if provider_config.active_profile in provider_config.profiles:
+            active = provider_config.profiles[provider_config.active_profile]
+            if active.api_key or active.oauth_token:
+                return True
+        for profile in provider_config.profiles.values():
+            if profile.api_key or profile.oauth_token:
+                return True
+        return False
+
+    def _apply_post_login_defaults(self, provider_id: str) -> bool:
+        """Apply provider-specific default model behavior after successful login."""
+        from kabot.config.schema import AgentModelConfig
+
+        if provider_id != "openai":
+            return False
+
+        openai_codex_cfg = self.config.providers.openai_codex
+        if not self._provider_has_credentials(openai_codex_cfg):
+            return False
+
+        current_model = self.config.agents.defaults.model
+        current_primary = current_model.primary if isinstance(current_model, AgentModelConfig) else current_model
+        if not isinstance(current_primary, str):
+            return False
+
+        if not (current_primary.startswith("openai/") or current_primary.startswith("openai-codex/")):
+            return False
+
+        target_primary = "openai-codex/gpt-5.3-codex"
+        target_fallbacks = [
+            "openai/gpt-5.2-codex",
+            "openai/gpt-4o-mini",
+        ]
+
+        if isinstance(current_model, AgentModelConfig):
+            if current_model.primary == target_primary and current_model.fallbacks == target_fallbacks:
+                return False
+
+        self.config.agents.defaults.model = AgentModelConfig(
+            primary=target_primary,
+            fallbacks=target_fallbacks,
+        )
+        return True
 
     def _configure_model(self):
         ClackUI.section_start("Model & Auth")
@@ -439,7 +516,9 @@ class SetupWizard:
                 provider_val = ClackUI.clack_select("Select provider to login", choices=p_options)
 
                 if provider_val and manager.login(provider_val):
+                    self._sync_provider_credentials_from_disk()
                     configured_providers.append(provider_val)
+                    self._apply_post_login_defaults(provider_val)
                     # Validate the API key after successful login
                     self._validate_provider_credentials(provider_val)
                     self._model_picker(provider_val)
@@ -456,8 +535,7 @@ class SetupWizard:
         state = self._load_setup_state()
         state["user_selections"]["selected_providers"] = configured_providers
         state["user_selections"]["default_model"] = self.config.agents.defaults.model
-        with open(Path.home() / ".kabot" / "setup-state.json", "w") as f:
-            json.dump(state, f, indent=2)
+        self._write_setup_state(state)
 
         ClackUI.section_end()
 

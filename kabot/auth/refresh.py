@@ -11,9 +11,13 @@ from kabot.config.schema import AuthProfile
 # Provider-specific token endpoints
 _TOKEN_ENDPOINTS = {
     "openai": "https://auth.openai.com/oauth/token",
+    "openai-codex": "https://auth.openai.com/oauth/token",
+    "openai_codex": "https://auth.openai.com/oauth/token",
     "google": "https://oauth2.googleapis.com/token",
     "minimax": "https://api.minimax.chat/v1/oauth/token",
     "dashscope": "https://auth.aliyun.com/oauth/token",
+    "qwen-portal": "https://chat.qwen.ai/api/v1/oauth2/token",
+    "qwen_portal": "https://chat.qwen.ai/api/v1/oauth2/token",
 }
 
 # Buffer: refresh 5 minutes before actual expiry
@@ -65,7 +69,8 @@ class TokenRefreshService:
                 return await self._do_refresh(provider, profile)
         except Exception as e:
             logger.warning(f"Could not acquire auth lock or refresh failed: {e}")
-            return None
+            # Best-effort fallback: refresh without lock if lock cannot be acquired.
+            return await self._do_refresh(provider, profile)
 
     def _needs_refresh(self, expires_at: int) -> bool:
         """Check if token needs refresh (expired or within buffer)."""

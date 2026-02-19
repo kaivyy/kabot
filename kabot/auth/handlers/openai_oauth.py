@@ -55,15 +55,43 @@ def _parse_callback_input(raw: str, expected_state: str) -> Optional[Dict[str, s
     raw = raw.strip()
     if not raw:
         return None
-    try:
-        parsed = urlparse(raw)
-        params = parse_qs(parsed.query)
+
+    def _extract_from_params(params: Dict[str, list[str]]) -> Optional[Dict[str, str]]:
         code = (params.get("code") or [None])[0]
         state = (params.get("state") or [None])[0]
         if code:
             return {"code": code, "state": state or expected_state}
+        return None
+
+    try:
+        parsed = urlparse(raw)
+        # Standard callback query: ?code=...&state=...
+        query_match = _extract_from_params(parse_qs(parsed.query))
+        if query_match:
+            return query_match
+
+        # Manual paste can include fragment callback:
+        # http://localhost:1455/auth/callback#code=...&state=...
+        if parsed.fragment:
+            fragment_match = _extract_from_params(parse_qs(parsed.fragment))
+            if fragment_match:
+                return fragment_match
     except Exception:
         pass
+
+    # Raw query string fallback: "code=...&state=..."
+    if "code=" in raw:
+        raw_params = raw.lstrip("?#")
+        query_match = _extract_from_params(parse_qs(raw_params))
+        if query_match:
+            return query_match
+
+    # Compatibility fallback: "<code>#<state>"
+    if "#" in raw and "://" not in raw:
+        code, state = raw.split("#", 1)
+        if code:
+            return {"code": code, "state": state or expected_state}
+
     # Treat as raw code
     return {"code": raw, "state": expected_state}
 
@@ -156,6 +184,9 @@ class OpenAIOAuthHandler(AuthHandler):
             "code_challenge": challenge,
             "code_challenge_method": "S256",
             "state": state,
+            "id_token_add_organizations": "true",
+            "codex_cli_simplified_flow": "true",
+            "originator": "kabot",
         }
         auth_url = f"{OPENAI_AUTHORIZE_URL}?{urlencode(params)}"
 
@@ -207,6 +238,10 @@ class OpenAIOAuthHandler(AuthHandler):
             console.print("[red]No authorization code found in input.[/red]")
             return None
 
+        if parsed.get("state") and parsed["state"] != state:
+            console.print("[red]State mismatch. Please retry login.[/red]")
+            return None
+
         return self._exchange_and_return(parsed["code"], verifier)
 
     def _exchange_and_return(self, code: str, verifier: str) -> Optional[Dict[str, Any]]:
@@ -235,7 +270,7 @@ class OpenAIOAuthHandler(AuthHandler):
 
         return {
             "providers": {
-                "openai": {
+                "openai_codex": {
                     "oauth_token": access_token,
                     "refresh_token": refresh_token,
                     "client_id": OPENAI_CLIENT_ID,

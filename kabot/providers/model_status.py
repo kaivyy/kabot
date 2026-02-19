@@ -16,7 +16,10 @@ WORKING_MODELS = {
 
 CATALOG_ONLY = {
     "openai/gpt-5.1-codex",
+    "openai-codex/gpt-5.3-codex",
     "openai-codex/gpt-5.3-codex-spark",
+    "qwen-portal/coder-model",
+    "qwen-portal/vision-model",
     "anthropic/claude-opus-4-6",
     "anthropic/claude-sonnet-4-5",
     "google-gemini-cli/gemini-3-pro-preview",
@@ -25,10 +28,8 @@ CATALOG_ONLY = {
 }
 
 UNSUPPORTED_PROVIDERS = {
-    "openai-codex",
     "kimi-coding",
     "google-gemini-cli",
-    "qwen-portal",
 }
 
 def get_model_status(model_id: str) -> str:

@@ -49,3 +49,59 @@ async def test_no_refresh_for_api_key():
     service = TokenRefreshService()
     result = await service.refresh("openai", profile)
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_do_refresh_supports_openai_codex_provider_alias():
+    profile = AuthProfile(
+        name="codex",
+        oauth_token="expired_token",
+        refresh_token="valid_refresh",
+        expires_at=int(time.time() * 1000) - 60_000,
+        token_type="oauth",
+        client_id="app_EMoamEEZ73f0CkXaXp7hrann",
+    )
+
+    mock_response = {
+        "access_token": "new_access_token",
+        "refresh_token": "new_refresh_token",
+        "expires_in": 3600,
+    }
+
+    service = TokenRefreshService()
+    with patch("kabot.auth.refresh._call_token_endpoint", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+        result = await service._do_refresh("openai-codex", profile)
+
+    assert result is not None
+    assert result.oauth_token == "new_access_token"
+    assert result.refresh_token == "new_refresh_token"
+    assert result.expires_at > int(time.time() * 1000)
+    mock_call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_do_refresh_supports_qwen_portal_provider_alias():
+    profile = AuthProfile(
+        name="qwen",
+        oauth_token="expired_token",
+        refresh_token="valid_refresh",
+        expires_at=int(time.time() * 1000) - 60_000,
+        token_type="oauth",
+        client_id="f0304373b74a44d2b584a3fb70ca9e56",
+    )
+
+    mock_response = {
+        "access_token": "new_access_token",
+        "refresh_token": "new_refresh_token",
+        "expires_in": 3600,
+    }
+
+    service = TokenRefreshService()
+    with patch("kabot.auth.refresh._call_token_endpoint", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+        result = await service._do_refresh("qwen-portal", profile)
+
+    assert result is not None
+    assert result.oauth_token == "new_access_token"
+    assert result.refresh_token == "new_refresh_token"
+    assert result.expires_at > int(time.time() * 1000)
+    mock_call.assert_awaited_once()

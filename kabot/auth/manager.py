@@ -147,13 +147,20 @@ class AuthManager:
     def _save_credentials(self, auth_data: Dict[str, Any], profile_id: str = "default") -> bool:
         """Save credentials to config using AuthProfiles."""
         from kabot.config.schema import AuthProfile
+        provider_aliases = {
+            "openai-codex": "openai_codex",
+            "qwen-portal": "dashscope",
+            "qwen_portal": "dashscope",
+        }
         try:
             current_config = load_config()
 
             if "providers" in auth_data:
                 for prov_name, prov_data in auth_data["providers"].items():
                     # Get or create provider config
-                    provider_config_obj = getattr(current_config.providers, prov_name, None)
+                    normalized_name = prov_name.replace("-", "_")
+                    config_key = provider_aliases.get(prov_name, provider_aliases.get(normalized_name, normalized_name))
+                    provider_config_obj = getattr(current_config.providers, config_key, None)
 
                     if provider_config_obj is None:
                         console.print(f"│  [yellow]Warning: Provider '{prov_name}' not in config schema[/yellow]")
