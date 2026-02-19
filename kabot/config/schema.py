@@ -140,7 +140,7 @@ class ChannelsConfig(BaseModel):
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
     workspace: str = "~/.kabot/workspace"
-    model: str = "anthropic/claude-opus-4-5"
+    model: str | AgentModelConfig = "anthropic/claude-opus-4-5"
     max_tokens: int = 8192
     temperature: float = 0.7
     max_tool_iterations: int = 20
@@ -258,6 +258,7 @@ class ProvidersConfig(BaseModel):
     """Configuration for LLM providers."""
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
+    openai_codex: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
     deepseek: ProviderConfig = Field(default_factory=ProviderConfig)
     groq: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -339,11 +340,24 @@ class Config(BaseSettings):
     def workspace_path(self) -> Path:
         """Get expanded workspace path."""
         return Path(self.agents.defaults.workspace).expanduser()
-    
+
+    def _normalize_model_for_provider(self, model: str) -> str:
+        if model.startswith("openai/gpt-5.3-codex"):
+            return model.replace("openai/", "openai-codex/", 1)
+        if model.startswith("gpt-5.3-codex"):
+            return f"openai-codex/{model}"
+        return model
+
+    def _primary_model_value(self, value: str | AgentModelConfig | None) -> str | None:
+        if isinstance(value, AgentModelConfig):
+            return value.primary
+        return value
+
     def _match_provider(self, model: str | None = None) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
         from kabot.providers.registry import PROVIDERS
-        model_lower = (model or self.agents.defaults.model).lower()
+        model_value = self._primary_model_value(model or self.agents.defaults.model) or ""
+        model_lower = self._normalize_model_for_provider(model_value).lower()
 
         def has_credentials(p: "ProviderConfig") -> bool:
             """Check if provider has any credentials (api_key or profiles with tokens)."""
@@ -357,13 +371,15 @@ class Config(BaseSettings):
 
         # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
-            p = getattr(self.providers, spec.name, None)
+            config_key = spec.name.replace("-", "_")
+            p = getattr(self.providers, config_key, None)
             if p and any(kw in model_lower for kw in spec.keywords) and has_credentials(p):
                 return p, spec.name
 
         # Fallback: gateways first, then others (follows registry order)
         for spec in PROVIDERS:
-            p = getattr(self.providers, spec.name, None)
+            config_key = spec.name.replace("-", "_")
+            p = getattr(self.providers, config_key, None)
             if p and has_credentials(p):
                 return p, spec.name
         return None, None
@@ -435,9 +451,10 @@ class Config(BaseSettings):
         """Extract provider name from model string."""
         if not model:
             return None
+        normalized = self._normalize_model_for_provider(model)
         # Handle "provider/model" format
-        if "/" in model:
-            return model.split("/")[0]
+        if "/" in normalized:
+            return normalized.split("/")[0]
         # Try to match against known providers
         _, name = self._match_provider(model)
         return name

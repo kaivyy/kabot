@@ -55,7 +55,12 @@ class ClackUI:
         lines = []
         
         # Model
-        lines.append(f"model: {c.agents.defaults.model}")
+        model = c.agents.defaults.model
+        if hasattr(model, "primary"):
+            fallbacks = ", ".join(getattr(model, "fallbacks", []) or [])
+            lines.append(f"model: {model.primary} (fallbacks: {fallbacks})")
+        else:
+            lines.append(f"model: {model}")
         
         # Gateway
         mode = "local" # Default/Placeholder until we have remote support

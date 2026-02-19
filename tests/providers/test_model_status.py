@@ -23,6 +23,10 @@ def test_get_model_status_catalog_from_unsupported_provider():
     assert get_model_status("google-gemini-cli/gemini-3-pro-preview") == "catalog"
 
 
+def test_get_model_status_codex_spark_catalog():
+    assert get_model_status("openai-codex/gpt-5.3-codex-spark") in {"catalog", "working"}
+
+
 # Edge case tests
 def test_get_model_status_none():
     assert get_model_status(None) == "unknown"

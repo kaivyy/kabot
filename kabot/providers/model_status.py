@@ -16,6 +16,7 @@ WORKING_MODELS = {
 
 CATALOG_ONLY = {
     "openai/gpt-5.1-codex",
+    "openai-codex/gpt-5.3-codex-spark",
     "anthropic/claude-opus-4-6",
     "anthropic/claude-sonnet-4-5",
     "google-gemini-cli/gemini-3-pro-preview",

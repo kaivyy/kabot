@@ -2,6 +2,15 @@
 
 import pytest
 
+from kabot.config.schema import (
+    Config,
+    AgentsConfig,
+    AgentDefaults,
+    AgentModelConfig,
+    ProvidersConfig,
+    ProviderConfig,
+    AuthProfile,
+)
 
 def test_agent_config_schema():
     """Test AgentConfig schema with all fields."""
@@ -63,3 +72,52 @@ def test_agents_config_empty_list():
     agents = AgentsConfig()
     assert len(agents.agents) == 0
     assert isinstance(agents.agents, list)
+
+
+def test_provider_normalizes_openai_gpt53_codex_to_codex():
+    cfg = Config(
+        agents=AgentsConfig(defaults=AgentDefaults(model="openai/gpt-5.3-codex")),
+        providers=ProvidersConfig(
+            openai=ProviderConfig(api_key="sk-openai"),
+            openai_codex=ProviderConfig(
+                profiles={"default": AuthProfile(name="default", oauth_token="tok", token_type="oauth")},
+                active_profile="default",
+            ),
+        ),
+    )
+    assert cfg.get_provider_name("openai/gpt-5.3-codex") == "openai-codex"
+
+
+def test_provider_does_not_normalize_openai_gpt52_codex():
+    cfg = Config(
+        agents=AgentsConfig(defaults=AgentDefaults(model="openai/gpt-5.2-codex")),
+        providers=ProvidersConfig(
+            openai=ProviderConfig(api_key="sk-openai"),
+            openai_codex=ProviderConfig(
+                profiles={"default": AuthProfile(name="default", oauth_token="tok", token_type="oauth")},
+                active_profile="default",
+            ),
+        ),
+    )
+    assert cfg.get_provider_name("openai/gpt-5.2-codex") == "openai"
+
+
+def test_defaults_model_object_uses_primary_for_matching():
+    cfg = Config(
+        agents=AgentsConfig(
+            defaults=AgentDefaults(
+                model=AgentModelConfig(
+                    primary="openai/gpt-5.3-codex",
+                    fallbacks=["openai/gpt-5.2-codex"],
+                )
+            )
+        ),
+        providers=ProvidersConfig(
+            openai=ProviderConfig(api_key="sk-openai"),
+            openai_codex=ProviderConfig(
+                profiles={"default": AuthProfile(name="default", oauth_token="tok", token_type="oauth")},
+                active_profile="default",
+            ),
+        ),
+    )
+    assert cfg.get_provider_name() == "openai-codex"

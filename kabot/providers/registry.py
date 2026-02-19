@@ -221,6 +221,14 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="Anthropic",
     ),
     ProviderSpec(
+        name="openai-codex",
+        keywords=("openai-codex",),
+        env_key="OPENAI_CODEX_API_KEY",
+        display_name="OpenAI Codex",
+        litellm_prefix="openai-codex",
+        skip_prefixes=("openai-codex/",),
+    ),
+    ProviderSpec(
         name="openai",
         keywords=("openai", "gpt"),
         env_key="OPENAI_API_KEY",

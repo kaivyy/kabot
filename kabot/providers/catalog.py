@@ -78,6 +78,15 @@ STATIC_MODEL_CATALOG = [
         capabilities=["tools", "coding", "reasoning"],
         is_premium=True
     ),
+    ModelMetadata(
+        id="openai-codex/gpt-5.3-codex-spark",
+        name="GPT-5.3 Codex Spark",
+        provider="openai-codex",
+        context_window=128000,
+        pricing=ModelPricing(input_1m=0.0, output_1m=0.0),
+        capabilities=["tools", "coding", "reasoning"],
+        is_premium=True
+    ),
 
     # --- Anthropic ---
     ModelMetadata(

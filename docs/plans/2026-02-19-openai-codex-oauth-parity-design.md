@@ -6,6 +6,8 @@ Align kabot with OpenClaw for OpenAI Codex OAuth while keeping the existing Open
 - primary: `openai-codex/gpt-5.3-codex`
 - fallbacks: `openai/gpt-5.2-codex`, `openai/gpt-4o-mini`
 
+Additionally, mirror OpenClaw's model normalization (`openai/gpt-5.3-codex` → `openai-codex`) and catalog behavior (`gpt-5.3-codex-spark` fallback).
+
 ## Goals
 - Support OpenAI Codex OAuth as a first-class provider in kabot.
 - Preserve existing OpenAI API key behavior without regression.
@@ -21,6 +23,7 @@ Align kabot with OpenClaw for OpenAI Codex OAuth while keeping the existing Open
 - kabot has OpenAI OAuth flow (`OpenAIOAuthHandler`) but stores credentials under provider `openai`.
 - `openai-codex/gpt-5.3-codex` exists in the catalog but is marked unsupported via provider status.
 - OpenClaw treats `openai-codex` as a distinct provider with OAuth and defaults to `openai-codex/gpt-5.3-codex`.
+- OpenClaw normalizes `openai/gpt-5.3-codex` to provider `openai-codex` and adds `gpt-5.3-codex-spark` to the catalog when missing.
 
 ## Proposed Changes
 ### Provider Registry
@@ -30,6 +33,11 @@ Align kabot with OpenClaw for OpenAI Codex OAuth while keeping the existing Open
 ### Model Status
 - Remove `openai-codex` from `UNSUPPORTED_PROVIDERS`.
 - Mark `openai-codex/gpt-5.3-codex` as at least `catalog` (or `working` if validation exists).
+- Add `openai-codex/gpt-5.3-codex-spark` to the catalog (matching OpenClaw's fallback behavior).
+
+### Model Normalization
+- Normalize `openai/gpt-5.3-codex` (and `gpt-5.3-codex*`) to provider `openai-codex` before credential resolution.
+- Do not normalize `openai/gpt-5.2-codex` (remains `openai`).
 
 ### OAuth Flow
 - Update `OpenAIOAuthHandler` to save credentials into `providers.openai-codex` profiles.
@@ -44,19 +52,23 @@ Align kabot with OpenClaw for OpenAI Codex OAuth while keeping the existing Open
 ## Data Flow
 1) User runs OpenAI OAuth login.
 2) OAuth tokens stored in kabot profiles under `openai-codex` provider.
-3) `get_api_key(model)` resolves credentials by provider inferred from model.
+3) `get_api_key(model)` resolves credentials by provider inferred from model (after normalization when applicable).
 4) `LiteLLMProvider` executes calls using the selected model; fallbacks applied on failure.
 
 ## Error Handling
 - Expired OAuth token triggers refresh; on failure, prompt re-login.
 - Unsupported model selection warns in wizard and requires confirmation.
 - Fallbacks are attempted sequentially for transient errors.
+- If user selects `openai/gpt-5.3-codex`, normalize to `openai-codex` and surface a clear auth error if OAuth credentials are missing.
 
 ## Testing & Verification
 - Unit tests:
   - provider registry includes `openai-codex`.
   - `model_status` reports `openai-codex/gpt-5.3-codex` as supported/catalog.
   - OAuth login persists to `providers.openai-codex` profile.
+  - model normalization: `openai/gpt-5.3-codex` routes to `openai-codex`, but `openai/gpt-5.2-codex` stays `openai`.
+  - catalog includes `openai-codex/gpt-5.3-codex-spark`.
+  - `agents.defaults.model` accepts `str | AgentModelConfig` without breaking summaries/provider matching.
 - Manual:
   - Run OAuth login and confirm stored profile.
   - Set default model to `openai-codex/gpt-5.3-codex` and run `kabot agent`.
@@ -64,7 +76,8 @@ Align kabot with OpenClaw for OpenAI Codex OAuth while keeping the existing Open
 
 ## Compatibility & Rollout
 - Existing OpenAI API key and OAuth flows continue to work for `openai/*` models.
-- New OAuth Codex path is opt-in by selecting `openai-codex/*` models.
+- New OAuth Codex path is opt-in by selecting `openai-codex/*` models (or by normalizing `openai/gpt-5.3-codex`).
+- Update kabot docs to reference `openai-codex/gpt-5.3-codex` as the Codex OAuth default (per OpenClaw code).
 
 ## Risks
 - LiteLLM may not accept `openai-codex` provider identifiers; if so, fallback to `openai/*` mitigates.
