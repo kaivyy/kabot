@@ -1292,8 +1292,8 @@ def status():
 
     console.print(f"{__logo__} kabot Status\n")
 
-    console.print(f"Config: {config_path} {'[green]✓[/green]' if config_path.exists() else '[red]✗[/red]'}")
-    console.print(f"Workspace: {workspace} {'[green]✓[/green]' if workspace.exists() else '[red]✗[/red]'}")
+    console.print(f"Config: {config_path} {'[green]OK[/green]' if config_path.exists() else '[red]MISSING[/red]'}")
+    console.print(f"Workspace: {workspace} {'[green]OK[/green]' if workspace.exists() else '[red]MISSING[/red]'}")
 
     if config_path.exists():
         from kabot.providers.registry import PROVIDERS
@@ -1313,12 +1313,12 @@ def status():
             if spec.is_local:
                 # Local deployments show api_base instead of api_key
                 if p.api_base:
-                    console.print(f"{spec.label}: [green]✓ {p.api_base}[/green]")
+                    console.print(f"{spec.label}: [green]OK {p.api_base}[/green]")
                 else:
                     console.print(f"{spec.label}: [dim]not set[/dim]")
             else:
                 has_key = bool(p.api_key)
-                status_icon = "[green]✓[/green]" if has_key else "[dim]not set[/dim]"
+                status_icon = "[green]OK[/green]" if has_key else "[dim]not set[/dim]"
                 console.print(f"{spec.label}: {status_icon}")
 
 
