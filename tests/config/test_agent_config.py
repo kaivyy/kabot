@@ -1,6 +1,7 @@
 """Tests for agent configuration schema."""
 
 import pytest
+import time
 
 from kabot.config.schema import (
     Config,
@@ -121,3 +122,83 @@ def test_defaults_model_object_uses_primary_for_matching():
         ),
     )
     assert cfg.get_provider_name() == "openai-codex"
+
+
+def test_provider_match_accepts_setup_token_profile_credentials():
+    cfg = Config(
+        agents=AgentsConfig(defaults=AgentDefaults(model="anthropic/claude-sonnet-4-5")),
+        providers=ProvidersConfig(
+            anthropic=ProviderConfig(
+                profiles={
+                    "default": AuthProfile(
+                        name="default",
+                        setup_token="sk-ant-oat01-example",
+                        token_type="token",
+                    )
+                },
+                active_profile="default",
+            ),
+        ),
+    )
+    assert cfg.get_provider_name("anthropic/claude-sonnet-4-5") == "anthropic"
+
+
+def test_get_api_key_returns_setup_token_from_active_profile():
+    cfg = Config(
+        agents=AgentsConfig(defaults=AgentDefaults(model="anthropic/claude-sonnet-4-5")),
+        providers=ProvidersConfig(
+            anthropic=ProviderConfig(
+                profiles={
+                    "default": AuthProfile(
+                        name="default",
+                        setup_token="sk-ant-oat01-example",
+                        token_type="token",
+                    )
+                },
+                active_profile="default",
+            ),
+        ),
+    )
+    assert cfg.get_api_key("anthropic/claude-sonnet-4-5") == "sk-ant-oat01-example"
+
+
+@pytest.mark.asyncio
+async def test_get_api_key_async_uses_default_model_provider_for_refresh(monkeypatch):
+    cfg = Config(
+        agents=AgentsConfig(
+            defaults=AgentDefaults(
+                model=AgentModelConfig(primary="openai-codex/gpt-5.3-codex")
+            )
+        ),
+        providers=ProvidersConfig(
+            openai_codex=ProviderConfig(
+                profiles={
+                    "default": AuthProfile(
+                        name="default",
+                        oauth_token="old-token",
+                        refresh_token="refresh-token",
+                        expires_at=1,
+                        token_type="oauth",
+                    )
+                },
+                active_profile="default",
+            ),
+        ),
+    )
+
+    called: dict[str, str] = {}
+
+    class _DummyRefresh:
+        async def refresh(self, provider: str, profile: AuthProfile):
+            called["provider"] = provider
+            updated = profile.model_copy()
+            updated.oauth_token = "new-token"
+            updated.expires_at = int(time.time() * 1000) + 3_600_000
+            return updated
+
+    monkeypatch.setattr("kabot.auth.refresh.TokenRefreshService", lambda: _DummyRefresh())
+
+    token = await cfg.get_api_key_async()
+
+    assert token == "new-token"
+    assert called["provider"] == "openai-codex"

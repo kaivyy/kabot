@@ -14,6 +14,7 @@ _TOKEN_ENDPOINTS = {
     "openai-codex": "https://auth.openai.com/oauth/token",
     "openai_codex": "https://auth.openai.com/oauth/token",
     "google": "https://oauth2.googleapis.com/token",
+    "gemini": "https://oauth2.googleapis.com/token",
     "minimax": "https://api.minimax.chat/v1/oauth/token",
     "dashscope": "https://auth.aliyun.com/oauth/token",
     "qwen-portal": "https://chat.qwen.ai/api/v1/oauth2/token",
@@ -93,6 +94,8 @@ class TokenRefreshService:
             }
             if profile.client_id:
                 data["client_id"] = profile.client_id
+            if profile.client_secret:
+                data["client_secret"] = profile.client_secret
 
             result = await _call_token_endpoint(token_url, data)
 

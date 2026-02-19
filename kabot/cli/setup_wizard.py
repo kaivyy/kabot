@@ -17,9 +17,11 @@ from rich.table import Table
 from rich import box
 
 from kabot import __version__, __logo__
-from kabot.config.schema import Config, AuthProfile
+from kabot.config.schema import Config, AuthProfile, AgentConfig, ChannelInstance
 from kabot.config.loader import load_config, save_config
+from kabot.cli.fleet_templates import FLEET_TEMPLATES, get_template_roles
 from kabot.utils.network import probe_gateway
+from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
 from kabot.providers.registry import ModelRegistry
 
 console = Console()
@@ -149,6 +151,26 @@ class SetupWizard:
         self.config = load_config()
         self.registry = ModelRegistry()
         self.ran_section = False
+
+    def _suggest_gateway_mode(self) -> str:
+        """Suggest gateway mode based on detected runtime environment."""
+        return recommended_gateway_mode(detect_runtime_environment())
+
+    def _detected_environment_payload(self) -> dict:
+        """Return detected environment flags for setup state snapshot."""
+        runtime = detect_runtime_environment()
+        return {
+            "platform": runtime.platform,
+            "is_windows": runtime.is_windows,
+            "is_macos": runtime.is_macos,
+            "is_linux": runtime.is_linux,
+            "is_wsl": runtime.is_wsl,
+            "is_termux": runtime.is_termux,
+            "is_vps": runtime.is_vps,
+            "is_headless": runtime.is_headless,
+            "is_ci": runtime.is_ci,
+            "has_display": runtime.has_display,
+        }
 
     def _create_backup(self) -> str:
         """Create configuration backup before changes."""
@@ -334,6 +356,23 @@ class SetupWizard:
             self._save_setup_state("setup", completed=False, mode="local")
 
         ClackUI.section_start("Environment")
+        detected_env = self._detected_environment_payload()
+        detected_tags = []
+        if detected_env["is_termux"]:
+            detected_tags.append("termux")
+        if detected_env["is_wsl"]:
+            detected_tags.append("wsl")
+        if detected_env["is_vps"]:
+            detected_tags.append("vps")
+        if detected_env["is_headless"]:
+            detected_tags.append("headless")
+        if detected_env["is_ci"]:
+            detected_tags.append("ci")
+        if detected_tags:
+            console.print(f"â”‚  [dim]Detected: {detected_env['platform']} ({', '.join(detected_tags)})[/dim]")
+        else:
+            console.print(f"â”‚  [dim]Detected: {detected_env['platform']}[/dim]")
+        suggested_mode = self._suggest_gateway_mode()
 
         mode = ClackUI.clack_select(
             "Where will the Gateway run?",
@@ -341,14 +380,20 @@ class SetupWizard:
                 questionary.Choice("Local (this machine)", value="local"),
                 questionary.Choice("Remote (info-only)", value="remote"),
             ],
-            default="local"
+            default=suggested_mode
         )
         ClackUI.section_end()
 
         if mode is None: return self.config
 
         # Save environment selection
-        self._save_setup_state("environment", completed=True, mode=mode)
+        self._save_setup_state(
+            "environment",
+            completed=True,
+            mode=mode,
+            detected=detected_env,
+            suggested_mode=suggested_mode,
+        )
 
         while True:
             choice = self._main_menu()
@@ -439,14 +484,14 @@ class SetupWizard:
         """Check whether a provider config has any API key/OAuth credentials."""
         if not provider_config:
             return False
-        if provider_config.api_key:
+        if provider_config.api_key or getattr(provider_config, "setup_token", None):
             return True
         if provider_config.active_profile in provider_config.profiles:
             active = provider_config.profiles[provider_config.active_profile]
-            if active.api_key or active.oauth_token:
+            if active.api_key or active.oauth_token or active.setup_token:
                 return True
         for profile in provider_config.profiles.values():
-            if profile.api_key or profile.oauth_token:
+            if profile.api_key or profile.oauth_token or profile.setup_token:
                 return True
         return False
 
@@ -748,8 +793,18 @@ class SetupWizard:
 
         # Execution
         console.print("│  [bold]Execution Policy[/bold]")
-        self.config.tools.restrict_to_workspace = Confirm.ask("│  Restrict FS usage to workspace?", default=self.config.tools.restrict_to_workspace)
+        freedom_mode = Confirm.ask(
+            "│  Enable OpenClaw-style freedom mode? [Trusted environment only]",
+            default=bool(self.config.tools.exec.auto_approve),
+        )
+        self._set_openclaw_freedom_mode(freedom_mode)
+
+        self.config.tools.restrict_to_workspace = Confirm.ask(
+            "│  Restrict FS usage to workspace?",
+            default=self.config.tools.restrict_to_workspace,
+        )
         self.config.tools.exec.timeout = int(Prompt.ask("│  Command Timeout (s)", default=str(self.config.tools.exec.timeout)))
+        self.config.tools.exec.auto_approve = freedom_mode
 
         # Docker Sandbox
         console.print("│  [bold]Docker Sandbox[/bold]")
@@ -768,9 +823,32 @@ class SetupWizard:
         self._save_setup_state("tools", completed=True,
                              web_search_enabled=bool(self.config.tools.web.search.api_key),
                              docker_enabled=docker_enabled,
-                             restrict_to_workspace=self.config.tools.restrict_to_workspace)
+                             restrict_to_workspace=self.config.tools.restrict_to_workspace,
+                             freedom_mode=freedom_mode)
 
         ClackUI.section_end()
+
+    def _set_openclaw_freedom_mode(self, enabled: bool) -> None:
+        """Apply trusted-mode defaults for maximum tool flexibility."""
+        if enabled:
+            self.config.tools.exec.auto_approve = True
+            self.config.tools.restrict_to_workspace = False
+            self.config.integrations.http_guard.enabled = False
+            self.config.integrations.http_guard.block_private_networks = False
+            self.config.integrations.http_guard.allow_hosts = []
+            self.config.integrations.http_guard.deny_hosts = []
+            return
+
+        self.config.tools.exec.auto_approve = False
+        self.config.integrations.http_guard.enabled = True
+        self.config.integrations.http_guard.block_private_networks = True
+        self.config.integrations.http_guard.allow_hosts = []
+        self.config.integrations.http_guard.deny_hosts = [
+            "localhost",
+            "127.0.0.1",
+            "169.254.169.254",
+            "metadata.google.internal",
+        ]
 
     def _configure_gateway(self):
         ClackUI.section_start("Gateway")
@@ -1177,36 +1255,45 @@ class SetupWizard:
         # Load current config to get the API key
         config = load_config()
 
-        # Map provider IDs to config fields and extract API key
+        # Map provider IDs to config fields for credential lookup
         provider_mapping = {
-            "openai": ("openai", "api_key"),
-            "anthropic": ("anthropic", "api_key"),
-            "google": ("gemini", "api_key"),
-            "groq": ("groq", "api_key"),
-            "kimi": ("moonshot", "api_key"),
-            "minimax": ("minimax", "api_key")
+            "openai": "openai",
+            "anthropic": "anthropic",
+            "google": "gemini",
+            "groq": "groq",
+            "kimi": "moonshot",
+            "minimax": "minimax"
         }
 
         if provider_id not in provider_mapping:
             console.print(f"│  [yellow]Validation not supported for {provider_id}[/yellow]")
             return
 
-        config_field, key_field = provider_mapping[provider_id]
+        config_field = provider_mapping[provider_id]
         provider_config = getattr(config.providers, config_field, None)
 
         if not provider_config:
             console.print(f"│  [yellow]No configuration found for {provider_id}[/yellow]")
             return
 
-        # Get API key from active profile or legacy field
+        # Get credential from active profile or legacy field.
+        credential_fields = ("api_key", "oauth_token", "setup_token")
         api_key = None
         if provider_config.active_profile and provider_config.profiles:
             active_profile = provider_config.profiles.get(provider_config.active_profile)
             if active_profile:
-                api_key = getattr(active_profile, key_field, None)
+                for field in credential_fields:
+                    value = getattr(active_profile, field, None)
+                    if value:
+                        api_key = value
+                        break
 
         if not api_key:
-            api_key = getattr(provider_config, key_field, None)
+            for field in credential_fields:
+                value = getattr(provider_config, field, None)
+                if value:
+                    api_key = value
+                    break
 
         if not api_key:
             console.print(f"│  [yellow]No API key found for {provider_id}[/yellow]")
@@ -1270,114 +1357,370 @@ class SetupWizard:
         else:
             console.print("│  [dim]You can reconfigure this provider later from the main menu[/dim]")
 
+    def _instance_id_exists(self, instance_id: str) -> bool:
+        return any(inst.id == instance_id for inst in self.config.channels.instances)
+
+    def _next_available_instance_id(self, preferred_id: str) -> str:
+        base = (preferred_id or "").strip().replace(" ", "_")
+        if not base:
+            base = "bot"
+        if not self._instance_id_exists(base):
+            return base
+        i = 2
+        while True:
+            candidate = f"{base}_{i}"
+            if not self._instance_id_exists(candidate):
+                return candidate
+            i += 1
+
+    def _ensure_agent_exists(self, agent_id: str, model_override: str | None = None) -> str:
+        clean_id = (agent_id or "").strip().replace(" ", "_") or "main"
+        existing = next((a for a in self.config.agents.agents if a.id == clean_id), None)
+        if existing:
+            if model_override:
+                existing.model = model_override
+            return clean_id
+
+        workspace_path = Path.home() / ".kabot" / f"workspace-{clean_id}"
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        self.config.agents.agents.append(
+            AgentConfig(
+                id=clean_id,
+                name=clean_id.replace("_", " ").title(),
+                model=model_override or None,
+                workspace=str(workspace_path),
+                default=(len(self.config.agents.agents) == 0),
+            )
+        )
+        return clean_id
+
+    def _add_channel_instance_record(
+        self,
+        *,
+        instance_id: str,
+        channel_type: str,
+        config_dict: dict[str, Any],
+        agent_binding: str | None = None,
+        auto_create_agent: bool = False,
+        model_override: str | None = None,
+    ) -> ChannelInstance:
+        final_id = self._next_available_instance_id(instance_id)
+        final_binding = agent_binding
+        if auto_create_agent:
+            final_binding = self._ensure_agent_exists(final_binding or final_id, model_override=model_override)
+
+        instance = ChannelInstance(
+            id=final_id,
+            type=channel_type,
+            enabled=True,
+            config=config_dict,
+            agent_binding=final_binding,
+        )
+        self.config.channels.instances.append(instance)
+        return instance
+
+    def _prompt_instance_config(self, channel_type: str) -> dict[str, Any] | None:
+        if channel_type == "telegram":
+            token = Prompt.ask("|  Bot Token")
+            if not token:
+                return None
+            return {"token": token, "allow_from": []}
+
+        if channel_type == "discord":
+            token = Prompt.ask("|  Bot Token")
+            if not token:
+                return None
+            return {"token": token, "allow_from": []}
+
+        if channel_type == "whatsapp":
+            bridge_url = Prompt.ask("|  Bridge URL", default="ws://localhost:3001")
+            return {"bridge_url": bridge_url, "allow_from": []}
+
+        if channel_type == "slack":
+            bot_token = Prompt.ask("|  Bot Token (xoxb-...)")
+            app_token = Prompt.ask("|  App Token (xapp-...)")
+            if not bot_token or not app_token:
+                return None
+            return {"bot_token": bot_token, "app_token": app_token}
+
+        return None
+
+    def _prompt_agent_binding(self, default_agent_id: str) -> tuple[str | None, bool, str | None]:
+        if not self.config.agents.agents:
+            if Confirm.ask("|  Auto-create dedicated agent for this bot?", default=True):
+                use_custom_model = Confirm.ask("|  Set custom model for this new agent?", default=False)
+                model_override = Prompt.ask("|  Agent Model", default="").strip() if use_custom_model else None
+                return default_agent_id, True, model_override or None
+            return None, False, None
+
+        if not Confirm.ask("|  Bind this bot to a specific agent?", default=False):
+            return None, False, None
+
+        choices = [
+            questionary.Choice("No binding (shared default)", value="__none__"),
+            questionary.Choice("Create new agent", value="__create__"),
+        ]
+        choices.extend(questionary.Choice(agent.id, value=agent.id) for agent in self.config.agents.agents)
+        selection = ClackUI.clack_select("Agent Binding", choices=choices)
+
+        if selection == "__none__":
+            return None, False, None
+        if selection == "__create__":
+            new_agent_id = Prompt.ask("|  New Agent ID", default=default_agent_id)
+            use_custom_model = Confirm.ask("|  Set custom model for this new agent?", default=False)
+            model_override = Prompt.ask("|  Agent Model", default="").strip() if use_custom_model else None
+            return new_agent_id, True, model_override or None
+        return selection, False, None
+
     def _configure_channel_instances(self):
         """Configure multiple channel instances (e.g., 4 Telegram bots, 4 Discord bots)."""
-        from kabot.config.schema import ChannelInstance
-
         while True:
             ClackUI.section_start("Channel Instances")
 
-            # Show current instances
             if self.config.channels.instances:
-                console.print("│  [bold]Current Instances:[/bold]")
+                console.print("|  [bold]Current Instances:[/bold]")
                 for idx, inst in enumerate(self.config.channels.instances, 1):
-                    status = "[green]✓[/green]" if inst.enabled else "[dim]✗[/dim]"
-                    binding = f" → {inst.agent_binding}" if inst.agent_binding else ""
-                    console.print(f"│    {idx}. [{inst.type}] {inst.id} {status}{binding}")
-                console.print("│")
+                    status = "[green]ON[/green]" if inst.enabled else "[dim]OFF[/dim]"
+                    binding = f" -> {inst.agent_binding}" if inst.agent_binding else ""
+                    console.print(f"|    {idx}. [{inst.type}] {inst.id} {status}{binding}")
+                console.print("|")
 
             options = [
                 questionary.Choice("Add Instance", value="add"),
+                questionary.Choice("Quick Add Multiple", value="bulk"),
+                questionary.Choice("Apply Fleet Template", value="template"),
                 questionary.Choice("Edit Instance", value="edit"),
                 questionary.Choice("Delete Instance", value="delete"),
                 questionary.Choice("Back", value="back"),
             ]
-
             choice = ClackUI.clack_select("Manage Instances", choices=options)
 
             if choice == "back" or choice is None:
                 ClackUI.section_end()
                 break
-            elif choice == "add":
+            if choice == "add":
                 self._add_channel_instance()
+            elif choice == "bulk":
+                self._bulk_add_channel_instances()
+            elif choice == "template":
+                self._apply_fleet_template_interactive()
             elif choice == "edit":
                 self._edit_channel_instance()
             elif choice == "delete":
                 self._delete_channel_instance()
 
     def _add_channel_instance(self):
-        """Add a new channel instance."""
-        from kabot.config.schema import ChannelInstance
-
-        instance_id = Prompt.ask("│  Instance ID (e.g., work_bot, personal_bot)")
+        """Add a single channel instance with optional dedicated agent creation."""
+        instance_id = Prompt.ask("|  Instance ID (e.g., work_bot, personal_bot)").strip()
         if not instance_id:
-            console.print("│  [yellow]Cancelled[/yellow]")
+            console.print("|  [yellow]Cancelled[/yellow]")
             return
 
-        channel_type = ClackUI.clack_select("Channel Type", choices=[
-            questionary.Choice("Telegram", value="telegram"),
-            questionary.Choice("Discord", value="discord"),
-            questionary.Choice("WhatsApp", value="whatsapp"),
-            questionary.Choice("Slack", value="slack"),
-        ])
-
-        # Get type-specific configuration
-        config_dict = {}
-
-        if channel_type == "telegram":
-            token = Prompt.ask("│  Bot Token")
-            if not token:
-                console.print("│  [yellow]Cancelled[/yellow]")
-                return
-            config_dict = {"token": token, "allow_from": []}
-
-        elif channel_type == "discord":
-            token = Prompt.ask("│  Bot Token")
-            if not token:
-                console.print("│  [yellow]Cancelled[/yellow]")
-                return
-            config_dict = {"token": token, "allow_from": []}
-
-        elif channel_type == "whatsapp":
-            bridge_url = Prompt.ask("│  Bridge URL", default="ws://localhost:3001")
-            config_dict = {"bridge_url": bridge_url, "allow_from": []}
-
-        elif channel_type == "slack":
-            bot_token = Prompt.ask("│  Bot Token (xoxb-...)")
-            app_token = Prompt.ask("│  App Token (xapp-...)")
-            if not bot_token or not app_token:
-                console.print("│  [yellow]Cancelled[/yellow]")
-                return
-            config_dict = {"bot_token": bot_token, "app_token": app_token}
-
-        # Optional agent binding
-        agent_binding = None
-        if self.config.agents.agents:
-            if Confirm.ask("│  Bind to specific agent?", default=False):
-                agent_ids = [a.id for a in self.config.agents.agents]
-                agent_binding = ClackUI.clack_select("Agent ID", choices=[
-                    questionary.Choice(aid, value=aid) for aid in agent_ids
-                ])
-
-        # Create instance
-        instance = ChannelInstance(
-            id=instance_id,
-            type=channel_type,
-            enabled=True,
-            config=config_dict,
-            agent_binding=agent_binding
+        channel_type = ClackUI.clack_select(
+            "Channel Type",
+            choices=[
+                questionary.Choice("Telegram", value="telegram"),
+                questionary.Choice("Discord", value="discord"),
+                questionary.Choice("WhatsApp", value="whatsapp"),
+                questionary.Choice("Slack", value="slack"),
+            ],
         )
+        if not channel_type:
+            return
 
-        self.config.channels.instances.append(instance)
-        console.print(f"│  [green]✓ Added {channel_type} instance '{instance_id}'[/green]")
+        config_dict = self._prompt_instance_config(channel_type)
+        if not config_dict:
+            console.print("|  [yellow]Cancelled[/yellow]")
+            return
+
+        agent_binding, auto_create_agent, model_override = self._prompt_agent_binding(instance_id)
+        instance = self._add_channel_instance_record(
+            instance_id=instance_id,
+            channel_type=channel_type,
+            config_dict=config_dict,
+            agent_binding=agent_binding,
+            auto_create_agent=auto_create_agent,
+            model_override=model_override,
+        )
+        console.print(f"|  [green]OK[/green] Added {channel_type} instance '{instance.id}'")
+
+    def _bulk_add_channel_instances(self):
+        """Quick flow for adding many instances at once."""
+        channel_type = ClackUI.clack_select(
+            "Bulk Channel Type",
+            choices=[
+                questionary.Choice("Telegram", value="telegram"),
+                questionary.Choice("Discord", value="discord"),
+                questionary.Choice("WhatsApp", value="whatsapp"),
+                questionary.Choice("Slack", value="slack"),
+            ],
+        )
+        if not channel_type:
+            return
+
+        count_raw = Prompt.ask("|  Number of bots to add", default="2").strip()
+        try:
+            count = int(count_raw)
+        except ValueError:
+            console.print("|  [red]Invalid count[/red]")
+            return
+        if count < 1 or count > 20:
+            console.print("|  [red]Count must be 1-20[/red]")
+            return
+
+        prefix = Prompt.ask("|  Instance ID prefix", default=f"{channel_type}_bot").strip() or f"{channel_type}_bot"
+        auto_bind = Confirm.ask("|  Auto-create dedicated agent for each bot?", default=True)
+        shared_model_override = None
+        if auto_bind and Confirm.ask("|  Set one model for all new agents?", default=False):
+            shared_model_override = Prompt.ask("|  Agent Model", default="").strip() or None
+
+        for index in range(1, count + 1):
+            console.print(f"|  [bold]Bot #{index}[/bold]")
+            default_instance_id = f"{prefix}_{index}"
+            instance_id = Prompt.ask(f"|  Instance ID #{index}", default=default_instance_id).strip() or default_instance_id
+
+            config_dict = self._prompt_instance_config(channel_type)
+            if not config_dict:
+                console.print("|  [yellow]Skipped (missing config)[/yellow]")
+                continue
+
+            agent_binding = None
+            auto_create_agent = False
+            model_override = shared_model_override
+            if auto_bind:
+                agent_binding = instance_id
+                auto_create_agent = True
+            else:
+                agent_binding, auto_create_agent, model_override = self._prompt_agent_binding(instance_id)
+
+            instance = self._add_channel_instance_record(
+                instance_id=instance_id,
+                channel_type=channel_type,
+                config_dict=config_dict,
+                agent_binding=agent_binding,
+                auto_create_agent=auto_create_agent,
+                model_override=model_override,
+            )
+            console.print(f"|  [green]OK[/green] Added {channel_type} instance '{instance.id}'")
+
+    def _build_template_channel_config(self, channel_type: str, token: str) -> dict[str, Any]:
+        """Build channel config from one credential token for fleet templates."""
+        clean = (token or "").strip()
+        if channel_type == "telegram":
+            return {"token": clean, "allow_from": []}
+        if channel_type == "discord":
+            return {"token": clean, "allow_from": []}
+        if channel_type == "whatsapp":
+            return {"bridge_url": clean or "ws://localhost:3001", "allow_from": []}
+        if channel_type == "slack":
+            if "|" in clean:
+                bot_token, app_token = [part.strip() for part in clean.split("|", 1)]
+            else:
+                bot_token, app_token = clean, ""
+            return {"bot_token": bot_token, "app_token": app_token}
+        raise ValueError(f"Unsupported channel type for fleet template: {channel_type}")
+
+    def _apply_fleet_template(
+        self,
+        *,
+        template_id: str,
+        channel_type: str,
+        base_id: str,
+        bot_tokens: list[str],
+    ) -> int:
+        """Apply fleet template by creating bound agents + channel instances."""
+        template = FLEET_TEMPLATES.get(template_id)
+        if not template:
+            raise ValueError(f"Unknown fleet template: {template_id}")
+        if not bot_tokens:
+            raise ValueError("bot_tokens cannot be empty")
+
+        roles = get_template_roles(template_id)
+        if not roles:
+            raise ValueError(f"Template '{template_id}' has no role definitions")
+
+        created = 0
+        clean_base = (base_id or "fleet").strip().replace(" ", "_") or "fleet"
+        max_items = min(len(roles), len(bot_tokens))
+
+        for index in range(max_items):
+            role_cfg = roles[index]
+            role = str(role_cfg.get("role", f"role_{index + 1}")).strip().replace(" ", "_")
+            model = role_cfg.get("default_model")
+
+            agent_id = f"{clean_base}_{role}"
+            bound_agent = self._ensure_agent_exists(agent_id, model_override=model)
+            config_dict = self._build_template_channel_config(channel_type, bot_tokens[index])
+
+            self._add_channel_instance_record(
+                instance_id=agent_id,
+                channel_type=channel_type,
+                config_dict=config_dict,
+                agent_binding=bound_agent,
+                auto_create_agent=False,
+            )
+            created += 1
+
+        return created
+
+    def _apply_fleet_template_interactive(self) -> None:
+        """Interactive flow to apply predefined fleet templates."""
+        template_choices = [
+            questionary.Choice(f"{meta.get('label', key)}", value=key)
+            for key, meta in FLEET_TEMPLATES.items()
+        ]
+        template_id = ClackUI.clack_select("Fleet Template", choices=template_choices)
+        if not template_id:
+            return
+
+        channel_type = ClackUI.clack_select(
+            "Channel Type",
+            choices=[
+                questionary.Choice("Telegram", value="telegram"),
+                questionary.Choice("Discord", value="discord"),
+                questionary.Choice("WhatsApp", value="whatsapp"),
+                questionary.Choice("Slack", value="slack"),
+            ],
+        )
+        if not channel_type:
+            return
+
+        roles = get_template_roles(template_id)
+        base_id = Prompt.ask("|  Fleet base id", default="team").strip() or "team"
+
+        token_hint = "Bot Token"
+        if channel_type == "slack":
+            token_hint = "Bot token|App token"
+        elif channel_type == "whatsapp":
+            token_hint = "Bridge URL"
+
+        bot_tokens: list[str] = []
+        for idx, role_cfg in enumerate(roles, 1):
+            role = role_cfg.get("role", f"role_{idx}")
+            value = Prompt.ask(f"|  {token_hint} for {role}").strip()
+            if not value:
+                console.print("|  [yellow]Skipped empty credential[/yellow]")
+                continue
+            bot_tokens.append(value)
+
+        if not bot_tokens:
+            console.print("|  [yellow]Cancelled (no credentials provided)[/yellow]")
+            return
+
+        created = self._apply_fleet_template(
+            template_id=template_id,
+            channel_type=channel_type,
+            base_id=base_id,
+            bot_tokens=bot_tokens,
+        )
+        console.print(f"|  [green]OK[/green] Applied template '{template_id}' with {created} bot(s)")
 
     def _edit_channel_instance(self):
         """Edit an existing channel instance."""
         if not self.config.channels.instances:
-            console.print("│  [yellow]No instances configured[/yellow]")
+            console.print("|  [yellow]No instances configured[/yellow]")
             return
 
-        # Show instances with numbers
         choices = []
         for idx, inst in enumerate(self.config.channels.instances, 1):
             label = f"{idx}. [{inst.type}] {inst.id}"
@@ -1388,30 +1731,23 @@ class SetupWizard:
             return
 
         instance = self.config.channels.instances[idx]
+        instance.enabled = Confirm.ask(f"|  Enable {instance.id}?", default=instance.enabled)
 
-        # Edit enabled status
-        instance.enabled = Confirm.ask(
-            f"│  Enable {instance.id}?",
-            default=instance.enabled
-        )
+        if Confirm.ask("|  Change agent binding?", default=False):
+            binding, auto_create, model_override = self._prompt_agent_binding(instance.id)
+            if auto_create and binding:
+                instance.agent_binding = self._ensure_agent_exists(binding, model_override=model_override)
+            else:
+                instance.agent_binding = binding
 
-        # Edit agent binding
-        if self.config.agents.agents:
-            if Confirm.ask("│  Change agent binding?", default=False):
-                agent_ids = ["none"] + [a.id for a in self.config.agents.agents]
-                choices = [questionary.Choice(aid, value=aid) for aid in agent_ids]
-                binding = ClackUI.clack_select("Agent ID", choices=choices)
-                instance.agent_binding = None if binding == "none" else binding
-
-        console.print(f"│  [green]✓ Updated {instance.id}[/green]")
+        console.print(f"|  [green]OK[/green] Updated {instance.id}")
 
     def _delete_channel_instance(self):
         """Delete a channel instance."""
         if not self.config.channels.instances:
-            console.print("│  [yellow]No instances configured[/yellow]")
+            console.print("|  [yellow]No instances configured[/yellow]")
             return
 
-        # Show instances with numbers
         choices = []
         for idx, inst in enumerate(self.config.channels.instances, 1):
             label = f"{idx}. [{inst.type}] {inst.id}"
@@ -1422,9 +1758,9 @@ class SetupWizard:
             return
 
         instance = self.config.channels.instances[idx]
-        if Confirm.ask(f"│  Delete {instance.id}?", default=False):
+        if Confirm.ask(f"|  Delete {instance.id}?", default=False):
             self.config.channels.instances.pop(idx)
-            console.print(f"│  [green]✓ Deleted {instance.id}[/green]")
+            console.print(f"|  [green]OK[/green] Deleted {instance.id}")
 
     def _configure_whatsapp(self):
         """Special flow for WhatsApp Bridge."""
@@ -1612,3 +1948,4 @@ def run_interactive_setup() -> Config:
     os.makedirs(os.path.expanduser(wizard.config.agents.defaults.workspace), exist_ok=True)
     wizard._install_builtin_skills()
     return wizard.run()
+

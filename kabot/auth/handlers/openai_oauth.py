@@ -4,7 +4,6 @@ Uses the same public client_id as OpenAI Codex CLI to authenticate
 users with their ChatGPT subscription via browser login.
 """
 
-import os
 import secrets
 import hashlib
 import base64
@@ -19,6 +18,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from kabot.auth.handlers.base import AuthHandler
+from kabot.utils.environment import detect_runtime_environment
 
 console = Console()
 
@@ -42,12 +42,7 @@ def _generate_pkce() -> tuple[str, str]:
 
 def _is_headless() -> bool:
     """Detect headless/VPS environment."""
-    return any([
-        os.environ.get("SSH_CLIENT"),
-        os.environ.get("SSH_TTY"),
-        os.environ.get("CI"),
-        os.path.exists("/.dockerenv"),
-    ])
+    return detect_runtime_environment().is_headless
 
 
 def _parse_callback_input(raw: str, expected_state: str) -> Optional[Dict[str, str]]:

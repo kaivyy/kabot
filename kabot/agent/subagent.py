@@ -16,6 +16,7 @@ from kabot.agent.tools.filesystem import ReadFileTool, WriteFileTool, ListDirToo
 from kabot.agent.tools.shell import ExecTool
 from kabot.agent.tools.web_search import WebSearchTool
 from kabot.agent.tools.web_fetch import WebFetchTool
+from kabot.agent.tools.meta_graph import MetaGraphTool
 from kabot.agent.subagent_registry import SubagentRegistry
 
 
@@ -37,6 +38,8 @@ class SubagentManager:
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        http_guard: Any | None = None,
+        meta_config: Any | None = None,
     ):
         from kabot.config.schema import ExecToolConfig
         self.provider = provider
@@ -46,6 +49,8 @@ class SubagentManager:
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self.http_guard = http_guard
+        self.meta_config = meta_config
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
 
         # Phase 13: Persistent subagent registry
@@ -127,9 +132,11 @@ class SubagentManager:
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
+                auto_approve=bool(getattr(self.exec_config, "auto_approve", False)),
             ))
             tools.register(WebSearchTool(api_key=self.brave_api_key))
-            tools.register(WebFetchTool())
+            tools.register(WebFetchTool(http_guard=self.http_guard))
+            tools.register(MetaGraphTool(meta_config=self.meta_config))
             
             # Build messages with subagent-specific prompt
             system_prompt = self._build_subagent_prompt(task)

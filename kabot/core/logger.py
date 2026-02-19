@@ -33,19 +33,42 @@ def configure_logger(config: Config, store=None):
     # File
     if config.logging.file_enabled:
         path = Path(config.logging.file_path).expanduser()
-        logger.add(
-            path,
-            rotation=config.logging.rotation,
-            retention=config.logging.retention,
-            level=config.logging.level,
-            enqueue=True # Async safe
-        )
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                logger.add(
+                    path,
+                    rotation=config.logging.rotation,
+                    retention=config.logging.retention,
+                    level=config.logging.level,
+                    enqueue=True # Async safe
+                )
+            except Exception:
+                # Some Windows environments block multiprocessing queues.
+                logger.add(
+                    path,
+                    rotation=config.logging.rotation,
+                    retention=config.logging.retention,
+                    level=config.logging.level,
+                    enqueue=False
+                )
+        except Exception as exc:
+            # Keep process running even if file sink cannot be initialized.
+            sys.stderr.write(f"Failed to initialize file logger at {path}: {exc}\n")
     
     # DB
     if config.logging.db_enabled and store:
-        logger.add(
-            DatabaseSink(store),
-            level=config.logging.level,
-            serialize=False, # We handle message object directly
-            enqueue=True # Async safe
-        )
+        try:
+            logger.add(
+                DatabaseSink(store),
+                level=config.logging.level,
+                serialize=False, # We handle message object directly
+                enqueue=True # Async safe
+            )
+        except Exception:
+            logger.add(
+                DatabaseSink(store),
+                level=config.logging.level,
+                serialize=False,
+                enqueue=False
+            )

@@ -3,6 +3,7 @@ from kabot.core.logger import configure_logger, DatabaseSink
 from kabot.config.schema import Config
 import pytest
 from pathlib import Path
+import sys
 
 def test_db_sink_integration(tmp_path):
     # Setup mock store
@@ -38,3 +39,24 @@ def test_db_sink_integration(tmp_path):
     # Verify File sink
     assert log_file.exists()
     assert "Test message" in log_file.read_text()
+
+
+def test_configure_logger_tolerates_file_permission_error(monkeypatch, tmp_path):
+    config = Config()
+    config.logging.file_path = str(tmp_path / "blocked.log")
+
+    calls = []
+
+    def fake_add(sink, *args, **kwargs):
+        calls.append(sink)
+        if isinstance(sink, Path):
+            raise PermissionError("permission denied")
+        return 1
+
+    monkeypatch.setattr("kabot.core.logger.logger.remove", lambda *args, **kwargs: None)
+    monkeypatch.setattr("kabot.core.logger.logger.add", fake_add)
+
+    # Should not raise even if file sink fails.
+    configure_logger(config, store=None)
+
+    assert sys.stderr in calls

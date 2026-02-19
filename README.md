@@ -26,6 +26,40 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
+## What's New (2026-02-19)
+
+- Multi-bot setup is faster with `Quick Add Multiple` in setup wizard (`Channels -> Manage Channel Instances`).
+- Multi-AI routing is stronger: instance binding is enforced at runtime and exact instance routing has higher priority.
+- New operations command: `kabot env-check` (runtime profile + recommended gateway mode).
+- `remote-bootstrap` now includes real Windows apply path via Task Scheduler.
+- Plugins now support full lifecycle: `install/update/enable/disable/remove/doctor`.
+- Plugin install supports git + pinned ref: `kabot plugins install --git <repo> --ref <tag|branch|commit>`.
+
+### Quick Ops Cheatsheet
+
+```bash
+# 1) Setup many bots quickly (wizard)
+kabot config
+# Channels -> Manage Channel Instances -> Quick Add Multiple
+
+# 2) Check runtime environment + recommended mode
+kabot env-check --verbose
+
+# 3) Remote bootstrap
+kabot remote-bootstrap --platform linux --service systemd --apply
+kabot remote-bootstrap --platform windows --service windows --apply
+
+# 4) Plugin lifecycle
+kabot plugins install --git https://example.com/repo.git --ref v1.2.3
+kabot plugins update --target my_plugin
+kabot plugins doctor --target my_plugin
+
+# 5) Health check + auto-fix
+kabot doctor --fix
+```
+
+---
+
 ## 🚀 Quick Start
 
 **Runtime**: Python 3.11+
@@ -343,7 +377,7 @@ Kabot supports running multiple bots per platform simultaneously (e.g., 4 Telegr
 ```bash
 kabot config
 # Navigate to: Channels → Manage Channel Instances
-# Add/Edit/Delete instances interactively
+# Use Add/Edit/Delete or Quick Add Multiple for batch setup
 ```
 
 **Via config.json:**
@@ -437,6 +471,21 @@ kabot config
 - Test new features without affecting production users
 - Easy enable/disable for maintenance
 
+### High-Volume Setup (4-6+ Bots)
+
+For fast setup of many bots:
+
+```bash
+kabot config
+# Channels → Manage Channel Instances → Quick Add Multiple
+```
+
+You can:
+- Create multiple Telegram/Discord/Slack/WhatsApp instances in one flow
+- Auto-create dedicated agent per bot
+- Set model override for newly created agents
+- Keep one shared default model for all bots if preferred
+
 ### Channel Instance Routing
 
 Messages are routed using the format: `type:id`
@@ -445,6 +494,11 @@ Example:
 - `telegram:work_bot` → Work Telegram bot instance
 - `telegram:personal_bot` → Personal Telegram bot instance
 - `discord:team_discord` → Team Discord bot instance
+
+Routing notes:
+- Base binding `channel: telegram` matches `telegram:<instance_id>`
+- Exact instance binding `channel: telegram:work_bot` has higher priority
+- Instance `agent_binding` is enforced at runtime for session/model routing
 
 ### Backward Compatibility
 
@@ -462,6 +516,109 @@ Legacy single-instance configs continue to work:
 - Legacy configs are processed after instances
 - Both can coexist in the same configuration
 - Gradual migration path available
+
+---
+
+## 🛠️ Operations & Plugin Lifecycle
+
+### Environment Check
+
+Use `env-check` to verify runtime profile and recommended gateway mode:
+
+```bash
+kabot env-check
+kabot env-check --verbose
+```
+
+This reports platform flags (`windows/macos/linux/wsl/termux/vps/headless`) and whether `local` or `remote` mode is recommended.
+
+### Remote Bootstrap
+
+Use `remote-bootstrap` to generate/apply service startup guidance:
+
+```bash
+# Linux
+kabot remote-bootstrap --platform linux --service systemd --dry-run
+kabot remote-bootstrap --platform linux --service systemd --apply
+
+# macOS
+kabot remote-bootstrap --platform macos --service launchd --dry-run
+kabot remote-bootstrap --platform macos --service launchd --apply
+
+# Windows (Task Scheduler)
+kabot remote-bootstrap --platform windows --service windows --apply
+
+# Termux
+kabot remote-bootstrap --platform termux --service auto --dry-run
+```
+
+### Plugin Lifecycle Commands
+
+Kabot now supports full plugin lifecycle operations:
+
+```bash
+# List installed plugins
+kabot plugins list
+
+# Install from local directory
+kabot plugins install --source /path/to/plugin
+
+# Install from git with pinned ref (tag/branch/commit)
+kabot plugins install --git https://example.com/repo.git --ref v1.2.3
+
+# Update plugin (uses tracked source by default)
+kabot plugins update --target my_plugin
+
+# Enable/disable
+kabot plugins disable --target my_plugin
+kabot plugins enable --target my_plugin
+
+# Diagnose plugin health
+kabot plugins doctor
+kabot plugins doctor --target my_plugin
+
+# Scaffold a new dynamic plugin
+kabot plugins scaffold --target meta_bridge
+
+# Remove plugin
+kabot plugins remove --target my_plugin --yes
+```
+
+Update safety:
+- Plugin updates use rollback protection.
+- If update fails, previous plugin version is automatically restored.
+
+### Auth Parity Diagnostics
+
+Use this command to validate OAuth/API handler parity across providers and aliases:
+
+```bash
+kabot auth parity
+```
+
+### Meta Threads and Instagram Integrations
+
+Kabot now supports Meta outbound actions and verified webhook ingress:
+
+- Outbound tool: `meta_graph` (Threads create/publish, Instagram media create/publish)
+- Verified webhook routes: `GET /webhooks/meta` and `POST /webhooks/meta`
+- Signature validation: `X-Hub-Signature-256` with app secret
+
+See full setup and examples in `docs/integrations/meta-threads-instagram.md`.
+
+### OpenClaw-Style Freedom Mode (Trusted Environment)
+
+If you want "do anything" behavior for private/trusted deployments:
+
+- Setup wizard:
+  - `kabot config`
+  - `Tools & Sandbox`
+  - Enable `OpenClaw-style freedom mode`
+
+This mode:
+- enables `exec` auto approval,
+- disables HTTP target guard restrictions for `web_fetch`,
+- keeps defaults available to switch back to secure mode.
 
 ---
 

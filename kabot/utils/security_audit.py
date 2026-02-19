@@ -101,13 +101,14 @@ class SecurityAuditor:
     def check_network_security(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Check if services bind to public interfaces without auth."""
         findings = []
+        public_hosts = ["0.0.0.0", "::", "*"]
 
-        # Check API server binding
+        # Legacy API schema check (backward compatibility)
         api_config = config.get("api", {})
         api_host = api_config.get("host", "127.0.0.1")
         auth_enabled = api_config.get("auth_enabled", False)
 
-        if api_host in ["0.0.0.0", "::", "*"]:
+        if api_host in public_hosts:
             if not auth_enabled:
                 findings.append({
                     "type": "Network Security",
@@ -118,12 +119,12 @@ class SecurityAuditor:
                     "remediation": "Set api.host to '127.0.0.1' or enable api.auth_enabled"
                 })
 
-        # Check WebSocket server binding
+        # Legacy WebSocket schema check (backward compatibility)
         ws_config = config.get("websocket", {})
         ws_host = ws_config.get("host", "127.0.0.1")
         ws_auth = ws_config.get("auth_enabled", False)
 
-        if ws_host in ["0.0.0.0", "::", "*"]:
+        if ws_host in public_hosts:
             if not ws_auth:
                 findings.append({
                     "type": "Network Security",
@@ -133,6 +134,21 @@ class SecurityAuditor:
                     "detail": f"WebSocket server binds to {ws_host} without authentication",
                     "remediation": "Set websocket.host to '127.0.0.1' or enable websocket.auth_enabled"
                 })
+
+        # Current gateway schema check
+        gateway_config = config.get("gateway", {})
+        gateway_host = gateway_config.get("host", "127.0.0.1")
+        gateway_token = (gateway_config.get("auth_token") or "").strip()
+
+        if gateway_host in public_hosts and not gateway_token:
+            findings.append({
+                "type": "Network Security",
+                "severity": "HIGH",
+                "item": "Public Gateway Without Authentication",
+                "file": "config",
+                "detail": f"Gateway binds to {gateway_host} without auth token configured",
+                "remediation": "Set gateway.host to '127.0.0.1' or configure gateway.auth_token"
+            })
 
         return findings
 

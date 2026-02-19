@@ -12,6 +12,26 @@ from kabot.auth.menu import AUTH_PROVIDERS
 
 console = Console()
 
+_PROVIDER_ALIASES = {
+    "openai-codex": "openai",
+    "openai_codex": "openai",
+    "codex-cli": "openai",
+    "qwen-portal": "dashscope",
+    "qwen_portal": "dashscope",
+    "gemini": "google",
+    "moonshot": "kimi",
+    "vllm": "ollama",
+}
+
+_ALIAS_DEFAULT_METHODS = {
+    "openai-codex": "oauth",
+    "openai_codex": "oauth",
+    "codex-cli": "oauth",
+    "qwen-portal": "oauth",
+    "qwen_portal": "oauth",
+    "vllm": "url",
+}
+
 
 class AuthManager:
     """Manages authentication for multiple providers with multiple methods."""
@@ -32,9 +52,17 @@ class AuthManager:
         Returns:
             True if authentication successful, False otherwise
         """
+        # Normalize provider aliases used by OpenClaw-style IDs.
+        original_provider_id = provider_id
+        provider_id = _PROVIDER_ALIASES.get(provider_id, provider_id)
+        if method_id is None:
+            method_id = _ALIAS_DEFAULT_METHODS.get(original_provider_id)
+
         # 1. Validate provider
         if provider_id not in AUTH_PROVIDERS:
-            console.print(f"[bold red]Error:[/bold red] Provider '{provider_id}' not found.")
+            console.print(
+                f"[bold red]Error:[/bold red] Provider '{original_provider_id}' not found."
+            )
             return False
 
         provider = AUTH_PROVIDERS[provider_id]
@@ -139,7 +167,10 @@ class AuthManager:
 
         # Check at least one provider has credentials
         for provider_data in auth_data["providers"].values():
-            if any(key in provider_data for key in ["api_key", "oauth_token", "api_base"]):
+            if any(
+                key in provider_data
+                for key in ["api_key", "oauth_token", "setup_token", "api_base"]
+            ):
                 return True
 
         return False
@@ -151,6 +182,9 @@ class AuthManager:
             "openai-codex": "openai_codex",
             "qwen-portal": "dashscope",
             "qwen_portal": "dashscope",
+            "google": "gemini",
+            "kimi": "moonshot",
+            "ollama": "vllm",
         }
         try:
             current_config = load_config()
@@ -220,7 +254,7 @@ class AuthManager:
             profile_list = "-"
 
             if provider_cfg:
-                has_legacy = bool(provider_cfg.api_key)
+                has_legacy = bool(provider_cfg.api_key or getattr(provider_cfg, "setup_token", None))
                 has_profiles = len(provider_cfg.profiles) > 0
 
                 if has_legacy or has_profiles:
@@ -241,3 +275,70 @@ class AuthManager:
             table.add_row(meta["name"], status, active_profile, profile_list)
 
         console.print(table)
+
+    def parity_report(self) -> Dict[str, Any]:
+        """Build an auth parity report across providers, methods, and aliases."""
+        checks: list[dict[str, Any]] = []
+        issues: list[str] = []
+        oauth_checks = 0
+
+        for provider_id, provider_meta in AUTH_PROVIDERS.items():
+            methods = provider_meta.get("methods", {})
+            if not isinstance(methods, dict):
+                issues.append(f"{provider_id}: methods must be a dict")
+                continue
+
+            for method_id, method_meta in methods.items():
+                handler_path = str(method_meta.get("handler", "")).strip()
+                is_oauth = method_id == "oauth"
+                if is_oauth:
+                    oauth_checks += 1
+
+                check = {
+                    "provider": provider_id,
+                    "method": method_id,
+                    "handler": handler_path,
+                    "ok": True,
+                    "error": "",
+                }
+
+                if not handler_path:
+                    check["ok"] = False
+                    check["error"] = "missing handler path"
+                elif not handler_path.startswith("kabot.auth.handlers."):
+                    check["ok"] = False
+                    check["error"] = "handler path must start with kabot.auth.handlers."
+                else:
+                    try:
+                        module_path, class_name = handler_path.rsplit(".", 1)
+                        module = importlib.import_module(module_path)
+                        getattr(module, class_name)
+                    except Exception as exc:
+                        check["ok"] = False
+                        check["error"] = f"handler import failed: {exc}"
+
+                if not check["ok"]:
+                    issues.append(f"{provider_id}:{method_id} -> {check['error']}")
+                checks.append(check)
+
+        alias_checks: list[dict[str, Any]] = []
+        for alias, target in _PROVIDER_ALIASES.items():
+            ok = target in AUTH_PROVIDERS
+            alias_check = {
+                "alias": alias,
+                "target": target,
+                "ok": ok,
+            }
+            alias_checks.append(alias_check)
+            if not ok:
+                issues.append(f"alias '{alias}' targets unknown provider '{target}'")
+
+        return {
+            "ok": len(issues) == 0,
+            "provider_count": len(AUTH_PROVIDERS),
+            "method_count": len(checks),
+            "oauth_method_count": oauth_checks,
+            "checks": checks,
+            "alias_checks": alias_checks,
+            "issues": issues,
+        }

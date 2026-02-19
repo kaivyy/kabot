@@ -52,6 +52,24 @@ function Find-Python {
     return $null
 }
 
+function Get-InstallEnvironment {
+    $isRemote = [bool]($env:SSH_CLIENT -or $env:SSH_TTY -or $env:CI)
+    $isInteractive = [Environment]::UserInteractive
+    $isHeadless = $isRemote -or (-not $isInteractive)
+
+    $tags = @()
+    if ($isRemote) { $tags += "vps" }
+    if ($env:CI) { $tags += "ci" }
+    if ($isHeadless) { $tags += "headless" }
+
+    return @{
+        IsRemote = $isRemote
+        IsHeadless = $isHeadless
+        IsInteractive = $isInteractive
+        Tags = $tags
+    }
+}
+
 function Main {
     # Print Logo (Ultra-High Fidelity Gemini Shaded)
     $logo = @"
@@ -67,6 +85,12 @@ function Main {
     Write-Host $logo -ForegroundColor Cyan
 
     Write-Info "Installing Kabot AI Agent..."
+    $runtime = Get-InstallEnvironment
+    if ($runtime.Tags.Count -gt 0) {
+        Write-Info "Detected environment: windows ($($runtime.Tags -join ', '))"
+    } else {
+        Write-Info "Detected environment: windows"
+    }
 
     # Check for Python
     Write-Info "Checking for Python >= $MinPythonVersion..."
@@ -131,9 +155,14 @@ function Main {
     Write-Info "Running system health check (doctor)..."
     & "$venvPython" -m kabot doctor --fix
 
-    # Run setup wizard (TUI)
-    Write-Info "Launching interactive setup wizard..."
-    & "$venvPython" -m kabot setup
+    # Run setup wizard (TUI) when interactive
+    if ($runtime.IsInteractive) {
+        Write-Info "Launching interactive setup wizard..."
+        & "$venvPython" -m kabot setup
+    } else {
+        Write-Warn "Non-interactive session detected. Skipping setup wizard."
+        Write-Info "Run this after install: kabot setup"
+    }
 
     Write-Host ""
     Write-Info "Installation complete!"
@@ -145,7 +174,9 @@ function Main {
     Write-Host ""
     Write-Host "Documentation: https://github.com/kaivyy/kabot"
     Write-Host ""
-    Read-Host "Press Enter to exit..."
+    if ($runtime.IsInteractive) {
+        Read-Host "Press Enter to exit..."
+    }
 }
 
 try {
@@ -153,5 +184,7 @@ try {
 } catch {
     Write-Error $_.Exception.Message
     Write-Host ""
-    Read-Host "Press Enter to exit..."
+    if ([Environment]::UserInteractive) {
+        Read-Host "Press Enter to exit..."
+    }
 }

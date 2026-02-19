@@ -3,13 +3,18 @@
 import asyncio
 import os
 import re
+import time
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 from loguru import logger
 
 from kabot.agent.tools.base import Tool
 from kabot.security.command_firewall import CommandFirewall, ApprovalDecision
+
+ApprovalDecisionValue = str | bool
+ApprovalCallback = Callable[[str, Path], ApprovalDecisionValue | Awaitable[ApprovalDecisionValue]]
 
 
 class ExecTool(Tool):
@@ -26,6 +31,7 @@ class ExecTool(Tool):
         docker_config: Any | None = None,
         firewall_config_path: Path | None = None,
         auto_approve: bool = False,
+        approval_callback: ApprovalCallback | None = None,
     ):
         self.timeout = timeout
         self.working_dir = working_dir
@@ -33,10 +39,13 @@ class ExecTool(Tool):
         self.docker_config = docker_config
         self.restrict_to_workspace = restrict_to_workspace
         self.auto_approve = auto_approve
+        self.approval_callback = approval_callback
 
         # Legacy pattern support (deprecated, use CommandFirewall instead)
         self.deny_patterns = deny_patterns or []
         self.allow_patterns = allow_patterns or []
+        self._always_approved_commands: set[str] = set()
+        self._pending_approvals: dict[str, dict[str, Any]] = {}
 
         # Initialize CommandFirewall
         if firewall_config_path is None:
@@ -49,6 +58,69 @@ class ExecTool(Tool):
         except Exception as e:
             logger.error(f"Failed to initialize CommandFirewall: {e}")
             self.firewall = None
+
+    def set_approval_callback(self, callback: ApprovalCallback | None) -> None:
+        """Set interactive approval callback used when firewall policy returns ASK."""
+        self.approval_callback = callback
+
+    def _store_pending_approval(self, session_key: str, command: str, cwd: str) -> str:
+        """Store pending approval request for later /approve handling."""
+        approval_id = uuid.uuid4().hex[:8]
+        self._pending_approvals[session_key] = {
+            "id": approval_id,
+            "command": command,
+            "working_dir": cwd,
+            "created_at": time.time(),
+        }
+        return approval_id
+
+    def set_pending_approval(self, session_key: str, command: str, working_dir: str | None = None) -> str:
+        """Public helper for tests and external approval orchestration."""
+        cwd = working_dir or self.working_dir or os.getcwd()
+        return self._store_pending_approval(session_key, command, cwd)
+
+    def get_pending_approval(self, session_key: str, approval_id: str | None = None) -> dict[str, Any] | None:
+        """Get pending approval for a session (optionally constrained by approval id)."""
+        pending = self._pending_approvals.get(session_key)
+        if not pending:
+            return None
+        if approval_id and pending.get("id") != approval_id:
+            return None
+        return dict(pending)
+
+    def consume_pending_approval(self, session_key: str, approval_id: str | None = None) -> dict[str, Any] | None:
+        """Consume pending approval and remove it from queue."""
+        pending = self._pending_approvals.get(session_key)
+        if not pending:
+            return None
+        if approval_id and pending.get("id") != approval_id:
+            return None
+        self._pending_approvals.pop(session_key, None)
+        return dict(pending)
+
+    def clear_pending_approval(self, session_key: str, approval_id: str | None = None) -> bool:
+        """Clear pending approval without executing it."""
+        pending = self._pending_approvals.get(session_key)
+        if not pending:
+            return False
+        if approval_id and pending.get("id") != approval_id:
+            return False
+        self._pending_approvals.pop(session_key, None)
+        return True
+
+    @staticmethod
+    def _normalize_approval_choice(choice: ApprovalDecisionValue | None) -> str:
+        """Normalize callback response into one of allow_once/allow_always/deny."""
+        if choice is True:
+            return "allow_once"
+        if choice is False or choice is None:
+            return "deny"
+        normalized = str(choice).strip().lower()
+        if normalized in {"allow", "allow_once", "once", "yes", "y"}:
+            return "allow_once"
+        if normalized in {"allow_always", "always", "persist", "a"}:
+            return "allow_always"
+        return "deny"
 
     @property
     def name(self) -> str:
@@ -80,10 +152,25 @@ class ExecTool(Tool):
             return "Error: Shell execution is disabled (read-only mode active)."
 
         cwd = working_dir or self.working_dir or os.getcwd()
+        session_key = kwargs.get("_session_key") if isinstance(kwargs.get("_session_key"), str) else None
+        approved_by_user = bool(kwargs.get("_approved_by_user", False))
+        if command in self._always_approved_commands:
+            approved_by_user = True
 
         # Phase 13: Use CommandFirewall for granular approval
-        if self.firewall and not self.auto_approve:
-            decision = self.firewall.check_command(command)
+        if self.firewall and not self.auto_approve and not approved_by_user:
+            firewall_context = {
+                "tool": self.name,
+                "channel": kwargs.get("_channel") if isinstance(kwargs.get("_channel"), str) else "",
+                "chat_id": kwargs.get("_chat_id") if isinstance(kwargs.get("_chat_id"), str) else "",
+                "session_key": session_key or "",
+                "agent_id": kwargs.get("_agent_id") if isinstance(kwargs.get("_agent_id"), str) else "",
+                "account_id": kwargs.get("_account_id") if isinstance(kwargs.get("_account_id"), str) else "",
+                "thread_id": kwargs.get("_thread_id") if isinstance(kwargs.get("_thread_id"), str) else "",
+                "peer_kind": kwargs.get("_peer_kind") if isinstance(kwargs.get("_peer_kind"), str) else "",
+                "peer_id": kwargs.get("_peer_id") if isinstance(kwargs.get("_peer_id"), str) else "",
+            }
+            decision = self.firewall.check_command(command, context=firewall_context)
 
             if decision == ApprovalDecision.DENY:
                 logger.warning(f"Command denied by firewall: {command}")
@@ -95,11 +182,48 @@ class ExecTool(Tool):
                 )
 
             elif decision == ApprovalDecision.ASK:
-                # In elevated mode or auto_approve, proceed
-                # Otherwise, this would require user confirmation (future enhancement)
-                logger.info(f"Command requires approval: {command}")
-                # For now, we proceed but log it
-                # Future: Implement interactive confirmation via message bus
+                if self.approval_callback:
+                    try:
+                        callback_result = self.approval_callback(command, self.firewall.config_path)
+                        if asyncio.iscoroutine(callback_result):
+                            callback_result = await callback_result
+                        choice = self._normalize_approval_choice(callback_result)
+                        if choice == "allow_always":
+                            self._always_approved_commands.add(command)
+                            approved_by_user = True
+                            logger.info(f"Command approved persistently by user: {command}")
+                        elif choice == "allow_once":
+                            approved_by_user = True
+                            logger.info(f"Command approved once by user: {command}")
+                        else:
+                            logger.info(f"Command denied by interactive approval: {command}")
+                            return (
+                                "Error: Command denied by user approval.\n"
+                                f"Command: {command}\n"
+                                "Reason: Approval prompt returned deny."
+                            )
+                    except Exception as exc:
+                        logger.warning(f"Approval callback failed ({exc}); falling back to pending approval flow")
+
+                if not approved_by_user:
+                    if session_key:
+                        approval_id = self._store_pending_approval(session_key, command, cwd)
+                        logger.info(f"Command queued for approval {approval_id}: {command}")
+                        return (
+                            "Error: Command requires approval by security policy.\n"
+                            f"Command: {command}\n"
+                            f"Approval ID: {approval_id}\n"
+                            f"Reply with '/approve {approval_id}' to run once, or '/deny {approval_id}' to reject."
+                        )
+
+                    logger.info(f"Command requires approval: {command}")
+                    return (
+                        "Error: Command requires approval by security policy.\n"
+                        f"Command: {command}\n"
+                        "Reason: Firewall policy is 'ask' and no explicit approval was provided.\n"
+                        "Use elevated mode, or add a strict allowlist entry in: "
+                        f"{self.firewall.config_path}"
+                    )
 
         # Legacy guard (deprecated, firewall is preferred)
         guard_error = self._guard_command(command, cwd)
@@ -110,7 +234,7 @@ class ExecTool(Tool):
         if self._is_high_risk(command):
              # In a future update, we can implement an interactive confirmation loop here.
              # For now, we block it to be safe unless allow_patterns overrides it.
-             if not self.allow_patterns and not self.auto_approve:
+             if not self.allow_patterns and not self.auto_approve and not approved_by_user:
                  return "Error: High-risk command blocked. Please execute this manually or enable elevated mode."
 
         try:
@@ -150,7 +274,9 @@ class ExecTool(Tool):
                     timeout=self.timeout
                 )
             except asyncio.TimeoutError:
-                process.kill()
+                kill_result = process.kill()
+                if asyncio.iscoroutine(kill_result):
+                    await kill_result
                 return f"Error: Command timed out after {self.timeout} seconds"
 
             output_parts = []

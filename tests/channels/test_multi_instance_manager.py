@@ -1,8 +1,9 @@
 """Test multi-instance channel manager."""
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import patch
 from kabot.config.schema import Config, ChannelsConfig, ChannelInstance
 from kabot.channels.manager import ChannelManager
+from kabot.channels.base import BaseChannel
 from kabot.bus.queue import MessageBus
 
 
@@ -154,3 +155,59 @@ async def test_channel_manager_instances_and_legacy():
         assert "discord:new_bot" in manager.channels
         assert "telegram" in manager.channels
         assert len(manager.channels) == 2
+
+
+class _FakeTelegramChannel(BaseChannel):
+    """Minimal BaseChannel implementation for instance-routing tests."""
+
+    name = "telegram"
+
+    def __init__(self, config, bus, *args, **kwargs):
+        super().__init__(config, bus)
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    async def send(self, msg) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_channel_instance_inbound_uses_instance_channel_key_and_binding_metadata():
+    """Inbound messages from instance channels should preserve instance identity."""
+    config = Config()
+    config.channels = ChannelsConfig(
+        instances=[
+            ChannelInstance(
+                id="work_bot",
+                type="telegram",
+                enabled=True,
+                config={"token": "123:ABC", "allow_from": []},
+                agent_binding="work",
+            )
+        ]
+    )
+    bus = MessageBus()
+
+    with patch("kabot.channels.telegram.TelegramChannel", _FakeTelegramChannel):
+        manager = ChannelManager(config, bus)
+
+    channel = manager.channels["telegram:work_bot"]
+    await channel._handle_message(
+        sender_id="42",
+        chat_id="1001",
+        content="hello",
+        metadata={"message_id": "m1"},
+    )
+    inbound = await bus.consume_inbound()
+
+    assert inbound.channel == "telegram:work_bot"
+    assert inbound.metadata["message_id"] == "m1"
+    assert inbound.metadata["channel_instance"] == {
+        "id": "work_bot",
+        "type": "telegram",
+        "agent_binding": "work",
+    }

@@ -1,4 +1,3 @@
-﻿import os
 import webbrowser
 import asyncio
 import re
@@ -7,6 +6,7 @@ from urllib.parse import urlparse, parse_qs
 from rich.prompt import Prompt
 from rich.console import Console
 from kabot.auth.oauth_callback import OAuthCallbackServer
+from kabot.utils.environment import detect_runtime_environment
 
 console = Console()
 
@@ -31,19 +31,10 @@ def parse_redirect_url(input_text: str) -> Optional[str]:
 def is_vps() -> bool:
     """
     Detect if running in a VPS/Headless environment.
-    Checks for SSH environment variables or CI flags.
+    Uses centralized runtime environment detection.
     """
-    # Common indicators of SSH sessions
-    ssh_client = os.environ.get("SSH_CLIENT")
-    ssh_tty = os.environ.get("SSH_TTY")
-
-    # Common indicators of CI/CD environments
-    ci = os.environ.get("CI")
-
-    # Check if running in Docker (optional, but often correlates with headless)
-    is_docker = os.path.exists("/.dockerenv")
-
-    return any([ssh_client, ssh_tty, ci, is_docker])
+    env = detect_runtime_environment()
+    return env.is_vps or env.is_headless
 
 def open_browser(url: str):
     """

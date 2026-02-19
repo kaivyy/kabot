@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from kabot.agent.tools.memory_search import MemorySearchTool
 from kabot.agent.tools.weather import WeatherTool
 from kabot.agent.tools.stock import StockTool, CryptoTool
 from kabot.agent.tools.stock_analysis import StockAnalysisTool
+from kabot.agent.tools.meta_graph import MetaGraphTool
 from kabot.agent.tools.autoplanner import AutoPlanner
 from kabot.agent.subagent import SubagentManager
 from kabot.agent.router import IntentRouter, RouteDecision
@@ -54,6 +56,8 @@ from kabot.agent.truncator import ToolResultTruncator
 
 # Phase 13: Resilience & Security
 from kabot.core.sentinel import CrashSentinel, format_recovery_message
+
+_APPROVAL_CMD_RE = re.compile(r"^\s*/(approve|deny)(?:\s+([A-Za-z0-9_-]+))?\s*$", re.IGNORECASE)
 
 
 class AgentLoop:
@@ -112,6 +116,7 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
+        self.exec_auto_approve = bool(getattr(self.exec_config, "auto_approve", False))
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
@@ -151,6 +156,8 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            http_guard=getattr(getattr(self.config, "integrations", None), "http_guard", None),
+            meta_config=getattr(getattr(self.config, "integrations", None), "meta", None),
         )
 
         # Plugin system (Phase 6)
@@ -259,10 +266,15 @@ class AgentLoop:
             working_dir=str(self.workspace),
             timeout=self.exec_config.timeout,
             restrict_to_workspace=self.restrict_to_workspace,
+            auto_approve=self.exec_auto_approve,
         ))
 
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
-        self.tools.register(WebFetchTool())
+        self.tools.register(
+            WebFetchTool(
+                http_guard=getattr(getattr(self.config, "integrations", None), "http_guard", None)
+            )
+        )
         self.tools.register(BrowserTool())
 
         message_tool = MessageTool(send_callback=self.bus.publish_outbound)
@@ -286,6 +298,7 @@ class AgentLoop:
         self.tools.register(StockTool())
         self.tools.register(CryptoTool())
         self.tools.register(StockAnalysisTool())
+        self.tools.register(MetaGraphTool(config=self.config))
 
         autoplanner = AutoPlanner(
             tool_registry=self.tools,
@@ -476,6 +489,11 @@ class AgentLoop:
         if msg.channel == "system":
             return await self._process_system_message(msg)
 
+        approval_action = self._parse_approval_command(msg.content)
+        if approval_action:
+            action, approval_id = approval_action
+            return await self._process_pending_exec_approval(msg, action=action, approval_id=approval_id)
+
         # Phase 8: Intercept slash commands BEFORE routing to LLM
         if self.command_router.is_command(msg.content):
             ctx = CommandContext(
@@ -541,31 +559,163 @@ class AgentLoop:
 
         return await self._finalize_session(msg, session, final_content)
 
-    def _get_session_key(self, msg: InboundMessage) -> str:
-        """Get session key with OpenClaw-compatible agent routing."""
+    @staticmethod
+    def _parse_approval_command(content: str) -> tuple[str, str | None] | None:
+        """Parse /approve or /deny command from user message."""
+        if not content:
+            return None
+        match = _APPROVAL_CMD_RE.match(content.strip())
+        if not match:
+            return None
+        action = match.group(1).lower()
+        approval_id = match.group(2)
+        return action, approval_id
+
+    async def _process_pending_exec_approval(
+        self,
+        msg: InboundMessage,
+        action: str,
+        approval_id: str | None = None,
+    ) -> OutboundMessage:
+        """Handle explicit approval commands for pending exec actions."""
+        session = await self._init_session(msg)
+        exec_tool = self.tools.get("exec")
+        if not exec_tool or not hasattr(exec_tool, "consume_pending_approval"):
+            return await self._finalize_session(
+                msg,
+                session,
+                "No executable approval flow is available in this session.",
+            )
+
+        if action == "deny":
+            cleared = exec_tool.clear_pending_approval(msg.session_key, approval_id)
+            if cleared:
+                return await self._finalize_session(
+                    msg,
+                    session,
+                    "Pending command approval denied.",
+                )
+            return await self._finalize_session(
+                msg,
+                session,
+                "No matching pending command approval found.",
+            )
+
+        pending = exec_tool.consume_pending_approval(msg.session_key, approval_id)
+        if not pending:
+            return await self._finalize_session(
+                msg,
+                session,
+                "No matching pending command approval found.",
+            )
+
+        command = pending.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return await self._finalize_session(
+                msg,
+                session,
+                "Pending approval entry is invalid.",
+            )
+
+        working_dir = pending.get("working_dir")
+        result = await exec_tool.execute(
+            command=command,
+            working_dir=working_dir if isinstance(working_dir, str) else None,
+            _session_key=msg.session_key,
+            _approved_by_user=True,
+        )
+        return await self._finalize_session(msg, session, result)
+
+    def _route_context_for_message(self, msg: InboundMessage) -> dict[str, Any]:
+        """Build normalized routing context from message + channel instance metadata."""
+        metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+        instance_meta = metadata.get("channel_instance") if isinstance(metadata.get("channel_instance"), dict) else {}
+
+        account_id = msg.account_id
+        instance_id = instance_meta.get("id")
+        if not account_id and isinstance(instance_id, (str, int)):
+            account_id = str(instance_id)
+
+        peer_kind = msg.peer_kind
+        peer_id = msg.peer_id
+        if not peer_kind and metadata.get("is_group") is True:
+            peer_kind = "group"
+        elif not peer_kind and msg.chat_id:
+            peer_kind = "direct"
+        if not peer_id and msg.chat_id:
+            peer_id = msg.chat_id
+
+        peer = None
+        if isinstance(peer_kind, str) and peer_kind and isinstance(peer_id, str) and peer_id:
+            peer = {"kind": peer_kind, "id": peer_id}
+
+        parent_peer = msg.parent_peer if isinstance(msg.parent_peer, dict) else None
+
+        forced_agent_id = None
+        if isinstance(instance_meta.get("agent_binding"), str) and instance_meta["agent_binding"].strip():
+            forced_agent_id = instance_meta["agent_binding"].strip()
+
+        return {
+            "channel": msg.channel,
+            "account_id": account_id,
+            "forced_agent_id": forced_agent_id,
+            "peer": peer,
+            "parent_peer": parent_peer,
+            "guild_id": msg.guild_id,
+            "team_id": msg.team_id,
+            "thread_id": msg.thread_id,
+        }
+
+    def _resolve_route_for_message(self, msg: InboundMessage) -> dict[str, str]:
+        """Resolve OpenClaw-compatible route for a message with instance-aware context."""
         from kabot.routing.bindings import resolve_agent_route
 
-        # Build peer info from message
-        peer = None
-        if hasattr(msg, 'peer_kind') and hasattr(msg, 'peer_id'):
-            peer = {"kind": msg.peer_kind, "id": msg.peer_id}
-        elif msg.chat_id:
-            # Default: treat chat_id as direct peer
-            peer = {"kind": "direct", "id": msg.chat_id}
-
-        # Resolve route with full context
-        route = resolve_agent_route(
+        ctx = self._route_context_for_message(msg)
+        return resolve_agent_route(
             config=self.config,
-            channel=msg.channel,
-            account_id=getattr(msg, 'account_id', None),
-            peer=peer,
-            parent_peer=getattr(msg, 'parent_peer', None),
-            guild_id=getattr(msg, 'guild_id', None),
-            team_id=getattr(msg, 'team_id', None),
-            thread_id=getattr(msg, 'thread_id', None),
+            channel=ctx["channel"],
+            account_id=ctx["account_id"],
+            forced_agent_id=ctx["forced_agent_id"],
+            peer=ctx["peer"],
+            parent_peer=ctx["parent_peer"],
+            guild_id=ctx["guild_id"],
+            team_id=ctx["team_id"],
+            thread_id=ctx["thread_id"],
         )
 
+    def _get_session_key(self, msg: InboundMessage) -> str:
+        """Get session key with OpenClaw-compatible agent routing."""
+        route = self._resolve_route_for_message(msg)
         return route["session_key"]
+
+    def _resolve_models_for_message(self, msg: InboundMessage) -> list[str]:
+        """Resolve model chain for this message, including per-agent fallback overrides."""
+        from kabot.agent.agent_scope import resolve_agent_model, resolve_agent_model_fallbacks
+
+        route = self._resolve_route_for_message(msg)
+        agent_id = route["agent_id"]
+
+        primary = self.model
+        fallback_models = list(self.fallbacks)
+
+        agent_model = resolve_agent_model(self.config, agent_id)
+        if agent_model:
+            primary = self.registry.resolve(agent_model)
+
+            # OpenClaw-compatible behavior: per-agent fallbacks override global fallbacks.
+            agent_fallbacks = resolve_agent_model_fallbacks(self.config, agent_id)
+            if agent_fallbacks:
+                fallback_models = [self.registry.resolve(m) for m in agent_fallbacks]
+
+        chain: list[str] = []
+        seen: set[str] = set()
+        for model in [primary, *fallback_models]:
+            resolved = self.registry.resolve(model)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            chain.append(resolved)
+        return chain
 
     def _resolve_model_for_message(self, msg: InboundMessage) -> str:
         """Resolve the model to use for this message based on agent routing.
@@ -581,46 +731,12 @@ class AgentLoop:
         Returns:
             The model string to use for this message
         """
-        from kabot.routing.bindings import resolve_agent_route
-        from kabot.agent.agent_scope import resolve_agent_model, resolve_agent_model_fallbacks
+        return self._resolve_models_for_message(msg)[0]
 
-        # Build peer info from message
-        peer = None
-        if hasattr(msg, 'peer_kind') and hasattr(msg, 'peer_id') and msg.peer_kind and msg.peer_id:
-            peer = {"kind": msg.peer_kind, "id": msg.peer_id}
-        elif msg.chat_id:
-            peer = {"kind": "direct", "id": msg.chat_id}
-
-        # Resolve route to get agent_id
-        route = resolve_agent_route(
-            config=self.config,
-            channel=msg.channel,
-            account_id=getattr(msg, 'account_id', None),
-            peer=peer,
-            parent_peer=getattr(msg, 'parent_peer', None),
-            guild_id=getattr(msg, 'guild_id', None),
-            team_id=getattr(msg, 'team_id', None),
-        )
-        agent_id = route["agent_id"]
-
-        # Check if this agent has a model override
-        agent_model = resolve_agent_model(self.config, agent_id)
-
-        # If agent has model override, resolve it through registry and return
-        if agent_model:
-            resolved = self.registry.resolve(agent_model)
-
-            # Check for per-agent fallbacks
-            agent_fallbacks = resolve_agent_model_fallbacks(self.config, agent_id)
-            if agent_fallbacks:
-                # Store agent-specific fallbacks for this request
-                # (This would need to be passed to the provider)
-                pass
-
-            return resolved
-
-        # Otherwise use default model
-        return self.model
+    def _resolve_agent_id_for_message(self, msg: InboundMessage) -> str:
+        """Resolve routed agent id for this message."""
+        route = self._resolve_route_for_message(msg)
+        return route["agent_id"]
 
     async def _init_session(self, msg: InboundMessage) -> Any:
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {msg.content[:80]}...")
@@ -702,9 +818,9 @@ class AgentLoop:
         """
         iteration = 0
 
-        # Resolve model for this agent
-        model = self._resolve_model_for_message(msg)
-        models_to_try = [model] + self.fallbacks
+        # Resolve model chain for this agent.
+        models_to_try = self._resolve_models_for_message(msg)
+        model = models_to_try[0]
 
         self_eval_retried = False
         critic_retried = 0
@@ -1055,8 +1171,14 @@ FEEDBACK: <one sentence explaining the score>"""
 
         # Phase 12: Get tool permissions based on elevated mode directive
         permissions = self._get_tool_permissions(session)
-        if permissions.get('auto_approve'):
+        if permissions.get('auto_approve') or self.exec_auto_approve:
             logger.debug("Elevated mode active: auto_approve=True, restrict_to_workspace=False")
+
+        exec_tool = self.tools.get("exec")
+        if exec_tool and hasattr(exec_tool, "auto_approve"):
+            exec_tool.auto_approve = bool(
+                self.exec_auto_approve or permissions.get("auto_approve", False)
+            )
 
         for tc in response.tool_calls:
             status = self._get_tool_status_message(tc.name, tc.arguments)
@@ -1064,7 +1186,18 @@ FEEDBACK: <one sentence explaining the score>"""
                 await self.bus.publish_outbound(OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id, content=f"_{status}_", metadata={"type": "status_update"}
                 ))
-            result = await self.tools.execute(tc.name, tc.arguments)
+            tool_params = dict(tc.arguments)
+            if tc.name == "exec":
+                tool_params["_session_key"] = msg.session_key
+                tool_params["_channel"] = msg.channel
+                tool_params["_chat_id"] = msg.chat_id
+                tool_params["_agent_id"] = self._resolve_agent_id_for_message(msg)
+                tool_params["_account_id"] = msg.account_id or ""
+                tool_params["_thread_id"] = msg.thread_id or ""
+                tool_params["_peer_kind"] = msg.peer_kind or ""
+                tool_params["_peer_id"] = msg.peer_id or ""
+
+            result = await self.tools.execute(tc.name, tool_params)
 
             # Phase 12: Apply truncation after tool execution
             result_str = str(result)
@@ -1100,7 +1233,10 @@ FEEDBACK: <one sentence explaining the score>"""
             session.add_message("user", msg.content)
             if final_content:
                 session.add_message("assistant", final_content)
-            self.sessions.save(session)
+            try:
+                self.sessions.save(session)
+            except Exception as exc:
+                logger.warning(f"Session save failed for {msg.session_key}: {exc}")
 
         return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=final_content or "")
 
@@ -1124,7 +1260,10 @@ FEEDBACK: <one sentence explaining the score>"""
         final_content = await self._run_agent_loop(msg, messages, session)
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         if final_content: session.add_message("assistant", final_content)
-        self.sessions.save(session)
+        try:
+            self.sessions.save(session)
+        except Exception as exc:
+            logger.warning(f"Session save failed for {session_key}: {exc}")
         return OutboundMessage(channel=origin_channel, chat_id=origin_chat_id, content=final_content or "")
 
     async def process_direct(self, content: str, session_key: str = "cli:direct", channel: str = "cli", chat_id: str = "direct") -> str:

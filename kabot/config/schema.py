@@ -231,6 +231,7 @@ class AuthProfile(BaseModel):
     expires_at: int | None = None          # NEW: ms since epoch
     token_type: str | None = None          # NEW: "oauth" | "api_key" | "token"
     client_id: str | None = None           # NEW: OAuth client ID
+    client_secret: str | None = None       # Optional OAuth client secret (provider-specific)
     setup_token: str | None = None
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None
@@ -246,6 +247,7 @@ class AuthProfile(BaseModel):
 class ProviderConfig(BaseModel):
     """LLM provider configuration."""
     api_key: str = ""  # Legacy/Primary key
+    setup_token: str | None = None
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix) 
     fallbacks: list[str] = Field(default_factory=list)
@@ -304,6 +306,7 @@ class DockerConfig(BaseModel):
 class ExecToolConfig(BaseModel):
     """Shell exec tool configuration."""
     timeout: int = 60
+    auto_approve: bool = False
     docker: DockerConfig = Field(default_factory=DockerConfig)
 
 
@@ -312,6 +315,40 @@ class ToolsConfig(BaseModel):
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
+
+
+class HttpGuardConfig(BaseModel):
+    """HTTP target guard configuration for integration tools."""
+
+    enabled: bool = True
+    block_private_networks: bool = True
+    allow_hosts: list[str] = Field(default_factory=list)
+    deny_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "localhost",
+            "127.0.0.1",
+            "169.254.169.254",
+            "metadata.google.internal",
+        ]
+    )
+
+
+class MetaIntegrationConfig(BaseModel):
+    """Meta Graph API integration configuration."""
+
+    enabled: bool = False
+    access_token: str = ""
+    app_secret: str = ""
+    verify_token: str = ""
+    threads_user_id: str = ""
+    instagram_user_id: str = ""
+
+
+class IntegrationsConfig(BaseModel):
+    """External integration guardrails."""
+
+    http_guard: HttpGuardConfig = Field(default_factory=HttpGuardConfig)
+    meta: MetaIntegrationConfig = Field(default_factory=MetaIntegrationConfig)
 
 
 class LoggingConfig(BaseModel):
@@ -334,6 +371,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     skills: dict[str, dict[str, Any]] = Field(default_factory=dict)
     
     @property
@@ -361,11 +399,11 @@ class Config(BaseSettings):
 
         def has_credentials(p: "ProviderConfig") -> bool:
             """Check if provider has any credentials (api_key or profiles with tokens)."""
-            if p.api_key:
+            if p.api_key or p.setup_token:
                 return True
             # Check if any profile has credentials
             for profile in p.profiles.values():
-                if profile.api_key or profile.oauth_token:
+                if profile.api_key or profile.oauth_token or profile.setup_token:
                     return True
             return False
 
@@ -414,15 +452,17 @@ class Config(BaseSettings):
                 return profile.api_key
             if profile.oauth_token:
                 return profile.oauth_token
+            if profile.setup_token:
+                return profile.setup_token
 
         # Legacy fallback
-        return p.api_key
+        return p.api_key or p.setup_token
 
     async def get_api_key_async(self, model: str | None = None) -> str | None:
         """Async version of get_api_key with OAuth auto-refresh."""
         from kabot.auth.refresh import TokenRefreshService
 
-        p = self.get_provider(model)
+        p, provider_name = self._match_provider(model)
         if not p:
             return None
 
@@ -431,9 +471,8 @@ class Config(BaseSettings):
 
             # Auto-refresh expired OAuth tokens
             if profile.is_expired() and profile.refresh_token:
-                provider_name = self._provider_name_for(model) or ""
                 service = TokenRefreshService()
-                updated = await service.refresh(provider_name, profile)
+                updated = await service.refresh(provider_name or "", profile)
                 if updated:
                     # Update in-memory config
                     p.profiles[p.active_profile] = updated
@@ -443,14 +482,17 @@ class Config(BaseSettings):
                 return profile.api_key
             if profile.oauth_token:
                 return profile.oauth_token
+            if profile.setup_token:
+                return profile.setup_token
 
         # Legacy fallback
-        return p.api_key
+        return p.api_key or p.setup_token
 
     def _provider_name_for(self, model: str | None) -> str | None:
         """Extract provider name from model string."""
         if not model:
-            return None
+            _, name = self._match_provider(None)
+            return name
         normalized = self._normalize_model_for_provider(model)
         # Handle "provider/model" format
         if "/" in normalized:

@@ -77,3 +77,40 @@ async def test_chat_openai_codex_uses_streaming_payload_and_parses_output_text(m
     assert body.get("stream") is True
     assert "temperature" not in body
     assert response.content == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_chat_openai_codex_decodes_sse_utf8_from_raw_bytes(monkeypatch):
+    target_text = 'Halo! 👋 "2 menit lagi makan".'
+    sse_utf8 = 'data: {"type":"response.output_text.delta","delta":"Halo! 👋 \\"2 menit lagi makan\\"."}\n\n'
+    sse_bytes = sse_utf8.encode("utf-8")
+
+    class DummyResponse:
+        def __init__(self):
+            self.status_code = 200
+            self.content = sse_bytes
+            # Simulate requests wrong charset decode (mojibake source).
+            self.text = sse_bytes.decode("latin-1")
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(
+        litellm_provider_module.requests,
+        "post",
+        lambda **kwargs: DummyResponse(),
+    )
+
+    provider = LiteLLMProvider(
+        api_key=_fake_jwt(),
+        default_model="openai-codex/gpt-5.3-codex",
+    )
+    response = await provider._chat_openai_codex(
+        messages=[{"role": "user", "content": "Say hello"}],
+        tools=None,
+        model="openai-codex/gpt-5.3-codex",
+        max_tokens=128,
+        temperature=0.2,
+    )
+
+    assert response.content == target_text

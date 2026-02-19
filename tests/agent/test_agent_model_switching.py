@@ -104,3 +104,63 @@ async def test_agent_uses_default_model_when_no_override(tmp_path):
 
     # Should use default model
     assert resolved_model == "anthropic/claude-3-5-sonnet-20241022"
+
+
+@pytest.mark.asyncio
+async def test_instance_agent_binding_forces_agent_model_and_fallbacks(tmp_path):
+    """Instance agent_binding should route to bound agent and use agent fallbacks."""
+    from kabot.agent.loop import AgentLoop
+    from kabot.bus.queue import MessageBus
+    from kabot.bus.events import InboundMessage
+    from kabot.config.schema import Config, AgentConfig, AgentsConfig, AgentModelConfig
+    from datetime import datetime
+
+    config = Config()
+    config.agents = AgentsConfig(
+        agents=[
+            AgentConfig(id="main", default=True),
+            AgentConfig(
+                id="work",
+                model=AgentModelConfig(
+                    primary="openai/gpt-4o",
+                    fallbacks=["openai/gpt-4o-mini", "openai/gpt-4.1-mini"],
+                ),
+            ),
+        ]
+    )
+
+    bus = MessageBus()
+    provider = MagicMock()
+    provider.get_default_model = MagicMock(return_value="anthropic/claude-3-5-sonnet-20241022")
+    provider.chat = AsyncMock(return_value=MagicMock(content="Response", has_tool_calls=False))
+
+    loop = AgentLoop(
+        bus=bus,
+        provider=provider,
+        workspace=tmp_path,
+        config=config,
+        model="anthropic/claude-3-5-sonnet-20241022",
+        fallbacks=["openai/gpt-4.1", "anthropic/claude-3-5-haiku-20241022"],
+    )
+
+    msg = InboundMessage(
+        channel="telegram:work_bot",
+        chat_id="work_chat",
+        sender_id="user123",
+        content="Test message",
+        timestamp=datetime.now(),
+        metadata={
+            "channel_instance": {
+                "id": "work_bot",
+                "type": "telegram",
+                "agent_binding": "work",
+            }
+        },
+    )
+
+    assert loop._resolve_agent_id_for_message(msg) == "work"
+    assert "work" in loop._get_session_key(msg)
+
+    # New behavior: per-agent fallbacks override global runtime fallbacks.
+    models = loop._resolve_models_for_message(msg)
+    assert models == ["openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4.1-mini"]

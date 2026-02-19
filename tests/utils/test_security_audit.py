@@ -249,6 +249,40 @@ class TestNetworkSecurity:
 
         assert any(f["item"] == "Public API Without Authentication" for f in findings)
 
+    def test_check_network_security_gateway_public_without_auth(self, tmp_path):
+        """Gateway public bind without auth token should be flagged."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        config = {
+            "gateway": {
+                "host": "0.0.0.0",
+                "auth_token": "",
+            }
+        }
+
+        auditor = SecurityAuditor(workspace)
+        findings = auditor.check_network_security(config)
+
+        assert any(f["item"] == "Public Gateway Without Authentication" for f in findings)
+
+    def test_check_network_security_gateway_public_with_auth(self, tmp_path):
+        """Gateway public bind with auth token should be allowed."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        config = {
+            "gateway": {
+                "host": "0.0.0.0",
+                "auth_token": "kabot-test-token",
+            }
+        }
+
+        auditor = SecurityAuditor(workspace)
+        findings = auditor.check_network_security(config)
+
+        assert not any(f["item"] == "Public Gateway Without Authentication" for f in findings)
+
 
 class TestRedactionPolicy:
     """Test redaction policy checks."""

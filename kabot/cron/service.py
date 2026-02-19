@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from pathlib import Path
@@ -10,6 +11,9 @@ from typing import Any, Callable, Coroutine
 from loguru import logger
 
 from kabot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
+from kabot.utils.pid_lock import PIDLock
+
+MAX_RUN_HISTORY = 20
 
 
 def _now_ms() -> int:
@@ -65,6 +69,16 @@ class CronService:
                 data = json.loads(self.store_path.read_text())
                 jobs = []
                 for j in data.get("jobs", []):
+                    state_data = j.get("state", {})
+                    persisted_history = state_data.get("runs")
+                    run_history = persisted_history if isinstance(persisted_history, list) else []
+                    if not run_history and state_data.get("lastRunAtMs"):
+                        run_history = [{
+                            "run_at_ms": state_data.get("lastRunAtMs"),
+                            "status": state_data.get("lastStatus"),
+                            "error": state_data.get("lastError"),
+                        }]
+
                     jobs.append(CronJob(
                         id=j["id"],
                         name=j["name"],
@@ -84,10 +98,11 @@ class CronService:
                             to=j["payload"].get("to"),
                         ),
                         state=CronJobState(
-                            next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
-                            last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
-                            last_status=j.get("state", {}).get("lastStatus"),
-                            last_error=j.get("state", {}).get("lastError"),
+                            next_run_at_ms=state_data.get("nextRunAtMs"),
+                            last_run_at_ms=state_data.get("lastRunAtMs"),
+                            last_status=state_data.get("lastStatus"),
+                            last_error=state_data.get("lastError"),
+                            run_history=run_history,
                         ),
                         created_at_ms=j.get("createdAtMs", 0),
                         updated_at_ms=j.get("updatedAtMs", 0),
@@ -135,6 +150,7 @@ class CronService:
                         "lastRunAtMs": j.state.last_run_at_ms,
                         "lastStatus": j.state.last_status,
                         "lastError": j.state.last_error,
+                        "runs": (j.state.run_history or [])[-MAX_RUN_HISTORY:],
                     },
                     "createdAtMs": j.created_at_ms,
                     "updatedAtMs": j.updated_at_ms,
@@ -143,8 +159,13 @@ class CronService:
                 for j in self._store.jobs
             ]
         }
-        
-        self.store_path.write_text(json.dumps(data, indent=2))
+
+        payload = json.dumps(data, indent=2)
+        temp_path = self.store_path.with_suffix(self.store_path.suffix + ".tmp")
+
+        with PIDLock(self.store_path):
+            temp_path.write_text(payload)
+            os.replace(temp_path, self.store_path)
     
     async def start(self) -> None:
         """Start the cron service."""
@@ -240,9 +261,19 @@ class CronService:
             job.state.last_status = "error"
             job.state.last_error = str(e)
             logger.error(f"Cron: job '{job.name}' failed: {e}")
-        
+
+        end_ms = _now_ms()
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = _now_ms()
+        run_entry = {
+            "run_at_ms": start_ms,
+            "status": job.state.last_status,
+            "error": job.state.last_error,
+            "duration_ms": max(0, end_ms - start_ms),
+        }
+        history = list(job.state.run_history or [])
+        history.append(run_entry)
+        job.state.run_history = history[-MAX_RUN_HISTORY:]
         
         # Handle one-shot jobs or jobs marked for deletion
         if job.delete_after_run or job.schedule.kind == "at":
@@ -370,14 +401,19 @@ class CronService:
         return None
 
     def get_run_history(self, job_id: str) -> list[dict]:
-        """Get run history for a job (last_run info from state)."""
+        """Get run history for a job."""
         store = self._load_store()
         for job in store.jobs:
             if job.id == job_id:
+                if job.state.run_history:
+                    return list(job.state.run_history)
                 if job.state.last_run_at_ms:
-                    return [{"run_at_ms": job.state.last_run_at_ms,
-                             "status": job.state.last_status,
-                             "error": job.state.last_error}]
+                    # Backward-compatible fallback for old persisted state.
+                    return [{
+                        "run_at_ms": job.state.last_run_at_ms,
+                        "status": job.state.last_status,
+                        "error": job.state.last_error,
+                    }]
                 return []
         return []
 

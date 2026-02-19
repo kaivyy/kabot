@@ -122,3 +122,49 @@ def test_resolve_agent_no_bindings():
 
     route = resolve_agent_route(config, "telegram", peer={"kind": "direct", "id": "123"})
     assert route["agent_id"] == "only_agent"
+
+
+def test_resolve_agent_base_channel_binding_matches_instance_channel():
+    """Binding channel=telegram should match telegram instance channel keys."""
+    config = Config(
+        agents=AgentsConfig(
+            agents=[AgentConfig(id="work"), AgentConfig(id="main", default=True)],
+            bindings=[
+                AgentBinding(
+                    agent_id="work",
+                    match=AgentBindingMatch(channel="telegram", account_id="*"),
+                )
+            ],
+        )
+    )
+    config.agents.session.dm_scope = "per-channel-peer"
+
+    route = resolve_agent_route(config, "telegram:work_bot", peer={"kind": "direct", "id": "123"})
+    assert route["agent_id"] == "work"
+    assert "telegram:work_bot" in route["session_key"]
+
+
+def test_resolve_agent_exact_instance_channel_binding_wins():
+    """Exact instance channel bindings should be usable for per-bot routing."""
+    config = Config(
+        agents=AgentsConfig(
+            agents=[
+                AgentConfig(id="default", default=True),
+                AgentConfig(id="telegram_agent"),
+                AgentConfig(id="work_bot_agent"),
+            ],
+            bindings=[
+                AgentBinding(
+                    agent_id="telegram_agent",
+                    match=AgentBindingMatch(channel="telegram", account_id="*"),
+                ),
+                AgentBinding(
+                    agent_id="work_bot_agent",
+                    match=AgentBindingMatch(channel="telegram:work_bot", account_id="*"),
+                ),
+            ],
+        )
+    )
+
+    route = resolve_agent_route(config, "telegram:work_bot", peer={"kind": "direct", "id": "123"})
+    assert route["agent_id"] == "work_bot_agent"

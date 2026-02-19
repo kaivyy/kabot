@@ -43,6 +43,18 @@ def test_openai_codex_default_does_not_override_non_openai_model():
     assert wizard.config.agents.defaults.model == "anthropic/claude-3-5-sonnet-20241022"
 
 
+def test_provider_has_credentials_accepts_setup_token():
+    wizard = SetupWizard()
+    wizard.config.providers.anthropic.profiles["default"] = AuthProfile(
+        name="default",
+        setup_token="sk-ant-oat01-example",
+        token_type="token",
+    )
+    wizard.config.providers.anthropic.active_profile = "default"
+
+    assert wizard._provider_has_credentials(wizard.config.providers.anthropic) is True
+
+
 def test_sync_provider_credentials_from_disk_preserves_unsaved_config(monkeypatch):
     wizard = SetupWizard()
     wizard.config.agents.defaults.workspace = "~/my-local-workspace"

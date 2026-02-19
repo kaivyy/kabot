@@ -8,6 +8,7 @@ Generates service files for auto-start on different platforms:
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -195,6 +196,53 @@ def install_launchd_service(
         return False, f"Failed to create service file: {e}"
 
 
+def install_windows_task_service(
+    task_name: str = "kabot",
+    workdir: Optional[str] = None,
+    python_path: Optional[str] = None,
+) -> tuple[bool, str]:
+    """
+    Install Windows Task Scheduler task for kabot auto-start.
+
+    Args:
+        task_name: Task Scheduler task name
+        workdir: Working directory for startup (defaults to current directory)
+        python_path: Python executable path (defaults to current interpreter)
+
+    Returns:
+        Tuple of (success, message)
+    """
+    if sys.platform != "win32":
+        return False, "Windows Task Scheduler is only available on Windows"
+
+    workdir = workdir or os.getcwd()
+    python_path = python_path or sys.executable
+    task_command = f'"{python_path}" -m kabot.cli start'
+
+    create_cmd = [
+        "schtasks",
+        "/Create",
+        "/TN",
+        task_name,
+        "/SC",
+        "ONLOGON",
+        "/RL",
+        "LIMITED",
+        "/TR",
+        task_command,
+        "/F",
+    ]
+
+    env = os.environ.copy()
+    env["KABOT_WORKDIR"] = workdir
+    result = subprocess.run(create_cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "Unknown schtasks error"
+        return False, f"Failed to create Windows task: {detail}"
+
+    return True, f"Windows startup task created: {task_name}"
+
+
 def get_service_status() -> dict:
     """
     Get current service installation status.
@@ -226,8 +274,8 @@ def get_service_status() -> dict:
             status["installed"] = True
 
     elif sys.platform == "win32":
-        status["service_available"] = False
+        status["service_available"] = True
         status["service_type"] = "task_scheduler"
-        status["note"] = "Windows Task Scheduler support coming soon"
+        status["note"] = "Use remote-bootstrap --platform windows --service windows --apply"
 
     return status

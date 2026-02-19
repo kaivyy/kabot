@@ -94,19 +94,14 @@ class TestExecToolFirewallIntegration:
             mock_subprocess.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_ask_mode_logs_and_proceeds(self, exec_tool):
-        """Test that ASK mode logs command and proceeds."""
-        # Default mode is 'ask'
+    async def test_ask_mode_requires_explicit_approval(self, exec_tool):
+        """ASK mode should block execution until command is explicitly approved."""
         with patch('asyncio.create_subprocess_shell') as mock_subprocess:
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(return_value=(b"test", b""))
-            mock_process.returncode = 0
-            mock_subprocess.return_value = mock_process
-
             result = await exec_tool.execute("echo test")
 
-            # Should execute (for now, until interactive confirmation is implemented)
-            mock_subprocess.assert_called_once()
+            assert "requires approval" in result.lower()
+            assert "elevated" in result.lower() or "allowlist" in result.lower()
+            mock_subprocess.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_firewall_creates_directories(self, tmp_path):
@@ -115,7 +110,7 @@ class TestExecToolFirewallIntegration:
         deep_path = tmp_path / "nonexistent" / "deep" / "path" / "config.yaml"
         tool = ExecTool(
             firewall_config_path=deep_path,
-            auto_approve=False
+            auto_approve=True
         )
 
         # Firewall should initialize successfully by creating parent directories
@@ -133,7 +128,7 @@ class TestExecToolFirewallIntegration:
             mock_subprocess.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_audit_logging(self, exec_tool):
+    async def test_audit_logging(self, exec_tool_auto_approve):
         """Test that successful commands are audit logged."""
         with patch('asyncio.create_subprocess_shell') as mock_subprocess:
             mock_process = AsyncMock()
@@ -142,7 +137,7 @@ class TestExecToolFirewallIntegration:
             mock_subprocess.return_value = mock_process
 
             with patch('kabot.agent.tools.shell.logger') as mock_logger:
-                result = await exec_tool.execute("echo test")
+                result = await exec_tool_auto_approve.execute("echo test")
 
                 # Should log successful execution
                 mock_logger.info.assert_called()

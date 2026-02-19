@@ -381,9 +381,18 @@ class LiteLLMProvider(LLMProvider):
 
                 response.raise_for_status()
 
-                # Parse SSE stream from response text
+                # Parse SSE stream from UTF-8 bytes first to avoid mojibake
+                # when requests guesses charset incorrectly.
+                sse_text = response.text
+                raw_payload = getattr(response, "content", None)
+                if isinstance(raw_payload, (bytes, bytearray)):
+                    try:
+                        sse_text = raw_payload.decode("utf-8")
+                    except UnicodeDecodeError:
+                        sse_text = raw_payload.decode("utf-8", errors="replace")
+
                 content_parts = []
-                for event in parse_sse_stream(response.text):
+                for event in parse_sse_stream(sse_text):
                     text = extract_content_from_event(event)
                     if text:
                         content_parts.append(text)

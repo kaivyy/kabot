@@ -136,15 +136,27 @@ def _prompt_text() -> str:
     return "\001\033[1;34m\002You:\001\033[0m\002 "
 
 
+def _terminal_safe(text: str, encoding: str | None = None) -> str:
+    """Best-effort conversion for terminals that cannot print Unicode content."""
+    value = text or ""
+    enc = encoding or getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        value.encode(enc)
+        return value
+    except (LookupError, UnicodeEncodeError):
+        return value.encode(enc, errors="replace").decode(enc, errors="replace")
+
+
 def _print_agent_response(response: str, render_markdown: bool) -> None:
     """Render assistant response with consistent terminal styling."""
-    content = response or ""
+    content = _terminal_safe(response or "")
     body = Markdown(content) if render_markdown else Text(content)
+    title = _terminal_safe(f"{__logo__} kabot")
     console.print()
     console.print(
         Panel(
             body,
-            title=f"{__logo__} kabot",
+            title=title,
             title_align="left",
             border_style="cyan",
             padding=(0, 1),
@@ -356,26 +368,62 @@ This file stores important information that should persist across sessions.
         console.print("  [dim]Created memory/MEMORY.md[/dim]")
 
 
+def _merge_fallbacks(primary: str, *groups: list[str]) -> list[str]:
+    """Merge fallback lists while preserving order and removing duplicates."""
+    merged: list[str] = []
+    for group in groups:
+        for model in group:
+            if not model or model == primary:
+                continue
+            if model not in merged:
+                merged.append(model)
+    return merged
+
+
+def _resolve_model_runtime(config) -> tuple[str, list[str]]:
+    """Resolve default model + fallback chain from config defaults."""
+    from kabot.config.schema import AgentModelConfig
+
+    model_config = config.agents.defaults.model
+    if isinstance(model_config, AgentModelConfig):
+        return model_config.primary, list(model_config.fallbacks or [])
+    return str(model_config), []
+
+
+def _resolve_api_key_with_refresh(config, model: str) -> str | None:
+    """Resolve API/OAuth token with async refresh when no loop is running."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            return asyncio.run(config.get_api_key_async(model))
+        except Exception:
+            return config.get_api_key(model)
+    return config.get_api_key(model)
+
+
 def _make_provider(config):
     """Create LLMProvider from config. Exits if no API key found."""
     from kabot.providers.litellm_provider import LiteLLMProvider
 
-    p = config.get_provider()
-    provider_name = config.get_provider_name()
-    model = config.agents.defaults.model
+    model, model_fallbacks = _resolve_model_runtime(config)
+    p = config.get_provider(model)
+    provider_name = config.get_provider_name(model)
+    provider_fallbacks = list(p.fallbacks) if p else []
+    runtime_fallbacks = _merge_fallbacks(model, model_fallbacks, provider_fallbacks)
 
     # Special handling for Letta provider
     if provider_name == "letta":
         from kabot.providers.letta_provider import LettaProvider
         return LettaProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(),
+            api_base=config.get_api_base(model),
             workspace_path=config.agents.defaults.workspace,
             default_model=model,
         )
 
     # Check for credentials (API key or OAuth token)
-    api_key = config.get_api_key(model)
+    api_key = _resolve_api_key_with_refresh(config, model)
     if not api_key and not model.startswith("bedrock/"):
         console.print("[red]Error: No API key or OAuth token configured.[/red]")
         console.print("Set one in ~/.kabot/config.json under providers section")
@@ -383,11 +431,11 @@ def _make_provider(config):
 
     return LiteLLMProvider(
         api_key=api_key,
-        api_base=config.get_api_base(),
+        api_base=config.get_api_base(model),
         default_model=model,
         extra_headers=p.extra_headers if p else None,
         provider_name=provider_name,
-        fallbacks=p.fallbacks if p else None,
+        fallbacks=runtime_fallbacks,
     )
 
 
@@ -405,6 +453,100 @@ def _inject_skill_env(config):
                 count += 1
     if count > 0:
         console.print(f"[dim]Injected {count} skill environment variables[/dim]")
+
+
+_REMINDER_CONTEXT_MARKER = "\n\nRecent context:\n"
+_REMINDER_FAILURE_MARKERS = (
+    "all models failed",
+    "error:",
+    "authentication failed",
+    "rate limit",
+    "unauthorized",
+    "forbidden",
+    "quota",
+)
+
+
+def _strip_reminder_context(message: str) -> str:
+    """Return reminder message without attached context block."""
+    if not message:
+        return ""
+    if _REMINDER_CONTEXT_MARKER in message:
+        return message.split(_REMINDER_CONTEXT_MARKER, 1)[0].strip()
+    return message.strip()
+
+
+def _should_use_reminder_fallback(response: str | None) -> bool:
+    """Detect provider/error outputs where reminder should fallback to raw text."""
+    if not response or not response.strip():
+        return True
+    lowered = response.lower()
+    return any(marker in lowered for marker in _REMINDER_FAILURE_MARKERS)
+
+
+def _resolve_cron_delivery_content(job_message: str, assistant_response: str | None) -> str:
+    """Resolve outbound reminder text, falling back to deterministic payload."""
+    fallback = _strip_reminder_context(job_message)
+    if _should_use_reminder_fallback(assistant_response):
+        return fallback
+    return (assistant_response or "").strip()
+
+
+def _cli_exec_approval_prompt(command: str, config_path: Path) -> str:
+    """Interactive approval prompt for exec ASK-mode in CLI sessions."""
+    from rich.prompt import Prompt
+
+    console.print("\n[bold yellow]Security approval required[/bold yellow]")
+    console.print(f"Command: [cyan]{command}[/cyan]")
+    console.print(f"[dim]Policy file: {config_path}[/dim]")
+    choice = Prompt.ask(
+        "Allow this command?",
+        choices=["once", "always", "deny"],
+        default="deny",
+    )
+    if choice == "once":
+        return "allow_once"
+    if choice == "always":
+        return "allow_always"
+    return "deny"
+
+
+def _wire_cli_exec_approval(agent_loop) -> None:
+    """Attach CLI approval prompt callback to ExecTool when available."""
+    exec_tool = agent_loop.tools.get("exec")
+    if exec_tool and hasattr(exec_tool, "set_approval_callback"):
+        exec_tool.set_approval_callback(_cli_exec_approval_prompt)
+
+
+def _next_cli_reminder_delay_seconds(
+    cron_service,
+    channel: str = "cli",
+    chat_id: str = "direct",
+    max_wait_seconds: float | None = 300.0,
+) -> float | None:
+    """Return earliest pending CLI reminder delay (seconds), or None."""
+    import time
+
+    now_ms = int(time.time() * 1000)
+    delays: list[float] = []
+    for job in cron_service.list_jobs(include_disabled=False):
+        if not job.payload.deliver:
+            continue
+        if job.payload.channel != channel or job.payload.to != chat_id:
+            continue
+        if not job.state.next_run_at_ms:
+            continue
+
+        delay_s = max(0.0, (job.state.next_run_at_ms - now_ms) / 1000.0)
+        delays.append(delay_s)
+
+    if not delays:
+        return None
+
+    next_delay = min(delays)
+    if max_wait_seconds is not None and next_delay > max_wait_seconds:
+        return None
+    return next_delay
 
 
 # ============================================================================
@@ -427,6 +569,7 @@ def gateway(
     from kabot.cron.types import CronJob
     from kabot.heartbeat.service import HeartbeatService
     from kabot.gateway.webhook_server import WebhookServer
+    from loguru import logger
 
     if verbose:
         import logging
@@ -453,15 +596,21 @@ def gateway(
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
 
-    p = config.get_provider()
+    runtime_model, model_fallbacks = _resolve_model_runtime(config)
+    p = config.get_provider(runtime_model)
+    runtime_fallbacks = _merge_fallbacks(
+        runtime_model,
+        model_fallbacks,
+        list(p.fallbacks) if p else [],
+    )
 
     # Create agent with cron service
     agent = AgentLoop(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
-        model=config.agents.defaults.model,
-        fallbacks=p.fallbacks if p else None,
+        model=runtime_model,
+        fallbacks=runtime_fallbacks,
         max_iterations=config.agents.defaults.max_tool_iterations,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
@@ -474,20 +623,29 @@ def gateway(
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
-        response = await agent.process_direct(
+        assistant_response: str | None = None
+        try:
+            assistant_response = await agent.process_direct(
+                job.payload.message,
+                session_key=f"background:cron:{job.id}",
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to or "direct",
+            )
+        except Exception as exc:
+            logger.warning(f"Cron gateway execution failed for {job.id}: {exc}")
+
+        delivery_content = _resolve_cron_delivery_content(
             job.payload.message,
-            session_key=f"background:cron:{job.id}",
-            channel=job.payload.channel or "cli",
-            chat_id=job.payload.to or "direct",
+            assistant_response,
         )
         if job.payload.deliver and job.payload.to:
             from kabot.bus.events import OutboundMessage
             await bus.publish_outbound(OutboundMessage(
                 channel=job.payload.channel or "cli",
                 chat_id=job.payload.to,
-                content=response or ""
+                content=delivery_content
             ))
-        return response
+        return delivery_content
     cron.on_job = on_cron_job
 
     # Create heartbeat service
@@ -503,7 +661,12 @@ def gateway(
     )
 
     # Create webhook server
-    webhook_server = WebhookServer(bus)
+    webhook_server = WebhookServer(
+        bus,
+        auth_token=config.gateway.auth_token or None,
+        meta_verify_token=getattr(getattr(config.integrations, "meta", None), "verify_token", None),
+        meta_app_secret=getattr(getattr(config.integrations, "meta", None), "app_secret", None),
+    )
 
     # Create channel manager
     channels = ChannelManager(config, bus, session_manager=session_manager)
@@ -533,7 +696,10 @@ def gateway(
             # Start webhook server (using same port as gateway for simplicity in this phase)   
             # In a real production setup, we might want separate ports or a reverse proxy      
             # But here we are integrating into the main event loop
-            webhook_runner = await webhook_server.start(port=port)
+            webhook_runner = await webhook_server.start(
+                host=config.gateway.host,
+                port=port,
+            )
 
             tasks = [
                 agent.run(),
@@ -608,7 +774,13 @@ def agent(
     else:
         logger.disable("kabot")
 
-    p = config.get_provider()
+    runtime_model, model_fallbacks = _resolve_model_runtime(config)
+    p = config.get_provider(runtime_model)
+    runtime_fallbacks = _merge_fallbacks(
+        runtime_model,
+        model_fallbacks,
+        list(p.fallbacks) if p else [],
+    )
 
     # Initialize CronService (required for reminder tools)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
@@ -618,14 +790,16 @@ def agent(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
-        model=config.agents.defaults.model,
-        fallbacks=p.fallbacks if p else None,
+        model=runtime_model,
+        fallbacks=runtime_fallbacks,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         enable_hybrid_memory=config.agents.enable_hybrid_memory,
         cron_service=cron,  # Pass cron service to enable tools
     )
+    if sys.stdin.isatty():
+        _wire_cli_exec_approval(agent_loop)
 
     # Setup cron callback for CLI
     async def on_cron_job(job: CronJob) -> str | None:
@@ -635,15 +809,24 @@ def agent(
         if target and target != "cli":
             return None  # Ignore jobs for other channels? Or execute anyway?
 
-        response = await agent_loop.process_direct(
+        assistant_response: str | None = None
+        try:
+            assistant_response = await agent_loop.process_direct(
+                job.payload.message,
+                session_key=f"background:cron:{job.id}"
+            )
+        except Exception as exc:
+            logger.warning(f"Cron CLI execution failed for {job.id}: {exc}")
+
+        delivery_content = _resolve_cron_delivery_content(
             job.payload.message,
-            session_key=f"background:cron:{job.id}"
+            assistant_response,
         )
-        
+
         # Verify if we should print it (if in interactive mode)
-        if response and job.payload.deliver:
-            _print_agent_response(f"[Reminder] {response}", render_markdown=markdown)
-        return response
+        if delivery_content and job.payload.deliver:
+            _print_agent_response(f"[Reminder] {delivery_content}", render_markdown=markdown)
+        return delivery_content
 
     cron.on_job = on_cron_job
 
@@ -657,14 +840,58 @@ def agent(
     if message:
         # Single message mode
         async def run_once():
-            # Start cron briefly to allow scheduling (though async jobs won't fire)
-            await cron.start()
+            cron_started = False
+            # Start cron so reminder jobs can also execute if due soon.
+            try:
+                await cron.start()
+                cron_started = True
+            except Exception as exc:
+                logger.warning(f"Cron unavailable in one-shot mode: {exc}")
+                console.print(
+                    "[yellow]Cron scheduler unavailable for this run. "
+                    "Reminders may be delivered by another running kabot instance.[/yellow]"
+                )
             try:
                 with _thinking_ctx():
                     response = await agent_loop.process_direct(message, session_id)
                 _print_agent_response(response, render_markdown=markdown)
+
+                # Keep process alive briefly when a CLI reminder is due soon,
+                # so one-shot calls like "ingatkan 2 menit lagi" can fire.
+                if cron_started:
+                    wait_budget_s = 5 * 60.0
+                    elapsed_s = 0.0
+                    while elapsed_s < wait_budget_s:
+                        remaining_s = wait_budget_s - elapsed_s
+                        next_delay = _next_cli_reminder_delay_seconds(
+                            cron,
+                            channel="cli",
+                            chat_id="direct",
+                            max_wait_seconds=remaining_s,
+                        )
+                        if next_delay is None:
+                            break
+
+                        rounded = max(1, int(round(next_delay)))
+                        console.print(f"[dim]Waiting for scheduled reminder ({rounded}s)...[/dim]")
+                        sleep_for = next_delay + 0.35
+                        await asyncio.sleep(sleep_for)
+                        elapsed_s += sleep_for
+
+                    if elapsed_s == 0.0:
+                        far_delay = _next_cli_reminder_delay_seconds(
+                            cron,
+                            channel="cli",
+                            chat_id="direct",
+                            max_wait_seconds=None,
+                        )
+                        if far_delay is not None and far_delay > wait_budget_s:
+                            console.print(
+                                "[dim]Reminder scheduled for later. Keep `kabot gateway` or interactive mode running for delivery.[/dim]"
+                            )
             finally:
-                cron.stop()
+                if cron_started:
+                    cron.stop()
 
         asyncio.run(run_once())
     else:
@@ -683,7 +910,15 @@ def agent(
         signal.signal(signal.SIGINT, _exit_on_sigint)
 
         async def run_interactive():
-            await cron.start()
+            cron_started = False
+            try:
+                await cron.start()
+                cron_started = True
+            except Exception as exc:
+                logger.warning(f"Cron unavailable in interactive mode: {exc}")
+                console.print(
+                    "[yellow]Cron scheduler unavailable. Reminder scheduling is disabled in this session.[/yellow]"
+                )
             try:
                 while True:
                     try:
@@ -713,7 +948,8 @@ def agent(
                         console.print("\nGoodbye!")
                         break
             finally:
-                cron.stop()
+                if cron_started:
+                    cron.stop()
 
         asyncio.run(run_interactive())
 
@@ -1081,10 +1317,14 @@ def auth_methods(
 ):
     """List available authentication methods for a provider."""
     from kabot.auth.menu import AUTH_PROVIDERS
+    from kabot.auth.manager import _PROVIDER_ALIASES
     from rich.table import Table
 
+    original_provider = provider
+    provider = _PROVIDER_ALIASES.get(provider, provider)
+
     if provider not in AUTH_PROVIDERS:
-        console.print(f"[red]Provider '{provider}' not found[/red]")
+        console.print(f"[red]Provider '{original_provider}' not found[/red]")
         console.print("\nAvailable providers:")
         for pid in AUTH_PROVIDERS.keys():
             console.print(f"  - {pid}")
@@ -1108,7 +1348,7 @@ def auth_methods(
     console.print("\n")
     console.print(table)
     console.print("\n")
-    console.print(f"[dim]Usage: kabot auth login {provider} --method <method_id>[/dim]")       
+    console.print(f"[dim]Usage: kabot auth login {original_provider} --method <method_id>[/dim]")       
 
 
 @auth_app.command("status")
@@ -1117,6 +1357,314 @@ def auth_status():
     from kabot.auth.manager import AuthManager
     manager = AuthManager()
     manager.get_status()
+
+
+@auth_app.command("parity")
+def auth_parity():
+    """Run OAuth/auth handler parity diagnostics across providers."""
+    from kabot.auth.manager import AuthManager
+
+    manager = AuthManager()
+    report = manager.parity_report()
+
+    summary = Table(title="Auth Parity Summary")
+    summary.add_column("Metric", style="cyan")
+    summary.add_column("Value", style="green")
+    summary.add_row("Providers", str(report.get("provider_count", 0)))
+    summary.add_row("Methods", str(report.get("method_count", 0)))
+    summary.add_row("OAuth Methods", str(report.get("oauth_method_count", 0)))
+    summary.add_row("Status", "OK" if report.get("ok") else "Issues Found")
+    console.print(summary)
+
+    issues = report.get("issues", [])
+    if issues:
+        issue_table = Table(title="Auth Parity Issues")
+        issue_table.add_column("Issue", style="yellow")
+        for issue in issues:
+            issue_table.add_row(str(issue))
+        console.print(issue_table)
+    else:
+        console.print("[green]No parity issues detected.[/green]")
+
+
+# ============================================================================
+# Approvals Commands
+# ============================================================================
+
+approvals_app = typer.Typer(help="Manage exec approval policies and audit")
+app.add_typer(approvals_app, name="approvals")
+
+_APPROVAL_SCOPE_KEYS = {
+    "channel",
+    "tool",
+    "agent_id",
+    "account_id",
+    "thread_id",
+    "peer_kind",
+    "peer_id",
+    "team_id",
+    "guild_id",
+    "chat_id",
+    "session_key",
+}
+
+
+def _approval_config_path(config: Path | None) -> Path:
+    return config or (Path.home() / ".kabot" / "command_approvals.yaml")
+
+
+def _parse_scope_args(scope_args: list[str]) -> dict[str, str]:
+    """Parse repeated --scope KEY=VALUE args into a scope dict."""
+    scope: dict[str, str] = {}
+    for raw in scope_args:
+        if "=" not in raw:
+            raise ValueError(f"Invalid scope entry '{raw}'. Expected KEY=VALUE.")
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            raise ValueError(f"Invalid scope entry '{raw}'. Expected KEY=VALUE.")
+        if key not in _APPROVAL_SCOPE_KEYS:
+            raise ValueError(f"Invalid scope key '{key}'. Allowed: {', '.join(sorted(_APPROVAL_SCOPE_KEYS))}")
+        scope[key] = value
+    return scope
+
+
+def _pattern_entries(patterns: list[str], description_prefix: str) -> list[dict[str, str]]:
+    """Convert patterns into normalized pattern dicts for firewall config."""
+    result: list[dict[str, str]] = []
+    for pattern in patterns:
+        clean = pattern.strip()
+        if not clean:
+            continue
+        result.append(
+            {
+                "pattern": clean,
+                "description": f"{description_prefix}: {clean}",
+            }
+        )
+    return result
+
+
+@approvals_app.command("status")
+def approvals_status(
+    config: Path | None = typer.Option(None, "--config", help="Path to approval config YAML"),
+):
+    """Show command firewall policy status."""
+    from kabot.security.command_firewall import CommandFirewall
+
+    firewall = CommandFirewall(_approval_config_path(config))
+    info = firewall.get_policy_info()
+
+    table = Table(title="Approval Policy Status")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("policy", str(info["policy"]))
+    table.add_row("allowlist_count", str(info["allowlist_count"]))
+    table.add_row("denylist_count", str(info["denylist_count"]))
+    table.add_row("scoped_policy_count", str(info.get("scoped_policy_count", 0)))
+    table.add_row("integrity_verified", str(info["integrity_verified"]))
+    table.add_row("config_path", str(info["config_path"]))
+    table.add_row("audit_log_path", str(info.get("audit_log_path", "")))
+    console.print(table)
+
+
+@approvals_app.command("allow")
+def approvals_allow(
+    pattern: str = typer.Argument(..., help="Command pattern to add to allowlist"),
+    description: str = typer.Option("Added via CLI", "--description", "-d", help="Pattern description"),
+    config: Path | None = typer.Option(None, "--config", help="Path to approval config YAML"),
+):
+    """Add an allowlist pattern to approval policy."""
+    from kabot.security.command_firewall import CommandFirewall
+
+    firewall = CommandFirewall(_approval_config_path(config))
+    if firewall.add_to_allowlist(pattern, description):
+        console.print(f"[green]✓[/green] Added allowlist pattern: [cyan]{pattern}[/cyan]")
+        return
+    console.print("[red]Failed to add allowlist pattern[/red]")
+    raise typer.Exit(1)
+
+
+@approvals_app.command("scoped-list")
+def approvals_scoped_list(
+    config: Path | None = typer.Option(None, "--config", help="Path to approval config YAML"),
+):
+    """List scoped approval policies."""
+    from kabot.security.command_firewall import CommandFirewall
+
+    firewall = CommandFirewall(_approval_config_path(config))
+    scoped = firewall.list_scoped_policies()
+    if not scoped:
+        console.print("No scoped policies configured.")
+        return
+
+    table = Table(title="Scoped Approval Policies")
+    table.add_column("Name", style="cyan")
+    table.add_column("Policy")
+    table.add_column("Scope")
+    table.add_column("Allow")
+    table.add_column("Deny")
+    table.add_column("Inherit")
+
+    for item in scoped:
+        scope = item.get("scope") or {}
+        scope_text = ", ".join(f"{k}={v}" for k, v in scope.items()) if scope else "-"
+        table.add_row(
+            str(item.get("name", "")),
+            str(item.get("policy", "")),
+            scope_text,
+            str(item.get("allowlist_count", 0)),
+            str(item.get("denylist_count", 0)),
+            "yes" if item.get("inherit_global", True) else "no",
+        )
+
+    console.print(table)
+
+
+@approvals_app.command("scoped-add")
+def approvals_scoped_add(
+    name: str = typer.Option(..., "--name", help="Scoped policy name"),
+    policy: str = typer.Option(..., "--policy", help="Policy mode: deny|ask|allowlist"),
+    scope: list[str] = typer.Option(..., "--scope", help="Scope matcher KEY=VALUE (repeatable)"),
+    allow: list[str] = typer.Option([], "--allow", help="Allowlist command pattern (repeatable)"),
+    deny: list[str] = typer.Option([], "--deny", help="Denylist command pattern (repeatable)"),
+    inherit_global: bool = typer.Option(
+        True,
+        "--inherit-global/--no-inherit-global",
+        help="Merge global allow/deny lists into this scoped policy",
+    ),
+    replace: bool = typer.Option(False, "--replace", help="Replace existing scoped policy with same name"),
+    config: Path | None = typer.Option(None, "--config", help="Path to approval config YAML"),
+):
+    """Add a scoped approval policy."""
+    from kabot.security.command_firewall import CommandFirewall
+
+    normalized_policy = policy.strip().lower()
+    if normalized_policy not in {"deny", "ask", "allowlist"}:
+        console.print("[red]Invalid policy mode. Use one of: deny, ask, allowlist[/red]")
+        raise typer.Exit(1)
+
+    try:
+        scope_map = _parse_scope_args(scope)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+    allow_entries = _pattern_entries(allow, "Scoped allow")
+    deny_entries = _pattern_entries(deny, "Scoped deny")
+    firewall = CommandFirewall(_approval_config_path(config))
+    ok = firewall.add_scoped_policy(
+        name=name.strip(),
+        scope=scope_map,
+        policy=normalized_policy,
+        allowlist=allow_entries,
+        denylist=deny_entries,
+        inherit_global=inherit_global,
+        replace=replace,
+    )
+    if not ok:
+        console.print("[red]Failed to add scoped policy (already exists? use --replace)[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Added scoped policy: [cyan]{name}[/cyan]")
+
+
+@approvals_app.command("scoped-remove")
+def approvals_scoped_remove(
+    name: str = typer.Argument(..., help="Scoped policy name to remove"),
+    config: Path | None = typer.Option(None, "--config", help="Path to approval config YAML"),
+):
+    """Remove a scoped approval policy by name."""
+    from kabot.security.command_firewall import CommandFirewall
+
+    firewall = CommandFirewall(_approval_config_path(config))
+    if firewall.remove_scoped_policy(name):
+        console.print(f"[green]✓[/green] Removed scoped policy: [cyan]{name}[/cyan]")
+        return
+    console.print(f"[red]Scoped policy not found: {name}[/red]")
+    raise typer.Exit(1)
+
+
+@approvals_app.command("audit")
+def approvals_audit(
+    limit: int = typer.Option(20, "--limit", "-n", min=1, max=500, help="Max audit entries"),
+    decision: str | None = typer.Option(None, "--decision", help="Filter by decision: allow/ask/deny"),
+    channel: str | None = typer.Option(None, "--channel", help="Filter by channel"),
+    agent_id: str | None = typer.Option(None, "--agent", help="Filter by agent id"),
+    config: Path | None = typer.Option(None, "--config", help="Path to approval config YAML"),
+):
+    """Show recent command approval audit entries."""
+    from kabot.security.command_firewall import CommandFirewall
+
+    firewall = CommandFirewall(_approval_config_path(config))
+    entries = firewall.get_recent_audit(
+        limit=limit,
+        decision=decision,
+        channel=channel,
+        agent_id=agent_id,
+    )
+
+    if not entries:
+        console.print("No approval audit entries found.")
+        return
+
+    table = Table(title="Approval Audit (Recent)")
+    table.add_column("Time", style="cyan")
+    table.add_column("Decision")
+    table.add_column("Channel")
+    table.add_column("Agent")
+    table.add_column("Command", style="white")
+
+    for item in entries:
+        ctx = item.get("context") or {}
+        table.add_row(
+            str(item.get("ts", "")),
+            str(item.get("decision", "")),
+            str(ctx.get("channel", "")),
+            str(ctx.get("agent_id", "")),
+            str(item.get("command", "")),
+        )
+
+    console.print(table)
+
+
+def _resolve_remote_service(platform_name: str, requested: str) -> str:
+    """Resolve service manager based on target platform."""
+    requested = requested.lower().strip()
+    if requested != "auto":
+        return requested
+    if platform_name == "termux":
+        return "termux"
+    if platform_name == "linux":
+        return "systemd"
+    if platform_name == "macos":
+        return "launchd"
+    if platform_name == "windows":
+        return "windows"
+    return "none"
+
+
+def _remote_health_snapshot() -> list[tuple[str, bool, str]]:
+    """Collect lightweight remote-readiness checks."""
+    import shutil
+    from kabot.config.loader import get_config_path, load_config
+
+    checks: list[tuple[str, bool, str]] = []
+    config_path = get_config_path()
+    checks.append(("Config file", config_path.exists(), str(config_path)))
+
+    try:
+        cfg = load_config()
+        workspace = cfg.workspace_path
+        checks.append(("Workspace", workspace.exists(), str(workspace)))
+    except Exception as exc:
+        checks.append(("Workspace", False, f"config load failed: {exc}"))
+
+    checks.append(("Python in PATH", bool(shutil.which("python") or shutil.which("python3")), "python/python3"))
+    checks.append(("Kabot CLI in PATH", bool(shutil.which("kabot")), "kabot"))
+    return checks
 
 
 # ============================================================================
@@ -1276,6 +1824,103 @@ def cron_run(
         console.print(f"[red]Failed to run job {job_id}[/red]")
 
 
+@cron_app.command("status")
+def cron_status():
+    """Show cron service status."""
+    from kabot.config.loader import get_data_dir
+    from kabot.cron.service import CronService
+
+    store_path = get_data_dir() / "cron" / "jobs.json"
+    service = CronService(store_path)
+    status = service.status()
+
+    import time
+    next_wake = "none"
+    if status.get("next_wake_at_ms"):
+        next_wake = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(status["next_wake_at_ms"] / 1000))
+
+    console.print(f"Cron Service: {'running' if status['enabled'] else 'stopped'}")
+    console.print(f"Jobs: {status['jobs']}")
+    console.print(f"Next wake: {next_wake}")
+
+
+@cron_app.command("update")
+def cron_update(
+    job_id: str = typer.Argument(..., help="Job ID to update"),
+    message: str | None = typer.Option(None, "--message", "-m", help="Update job message"),
+    every: int | None = typer.Option(None, "--every", "-e", help="Update interval in seconds"),
+    cron_expr: str | None = typer.Option(None, "--cron", "-c", help="Update cron expression"),
+    at: str | None = typer.Option(None, "--at", help="Update one-shot time (ISO format)"),
+    deliver: bool | None = typer.Option(None, "--deliver/--no-deliver", help="Enable/disable delivery"),
+):
+    """Update an existing scheduled job."""
+    from kabot.config.loader import get_data_dir
+    from kabot.cron.service import CronService
+    from kabot.cron.types import CronSchedule
+
+    updates: dict = {}
+    if message is not None:
+        updates["message"] = message
+    if deliver is not None:
+        updates["deliver"] = deliver
+
+    schedule_args = [every is not None, cron_expr is not None, at is not None]
+    if sum(schedule_args) > 1:
+        console.print("[red]Error: Use only one of --every, --cron, or --at for schedule updates[/red]")
+        raise typer.Exit(1)
+
+    if every is not None:
+        updates["schedule"] = CronSchedule(kind="every", every_ms=every * 1000)
+    elif cron_expr is not None:
+        updates["schedule"] = CronSchedule(kind="cron", expr=cron_expr)
+    elif at is not None:
+        import datetime
+        dt = datetime.datetime.fromisoformat(at)
+        updates["schedule"] = CronSchedule(kind="at", at_ms=int(dt.timestamp() * 1000))
+
+    if not updates:
+        console.print("[red]Error: No updates provided[/red]")
+        raise typer.Exit(1)
+
+    store_path = get_data_dir() / "cron" / "jobs.json"
+    service = CronService(store_path)
+    job = service.update_job(job_id, **updates)
+
+    if job:
+        console.print(f"[green]OK[/green] Updated job '{job.name}' ({job.id})")
+    else:
+        console.print(f"[red]Job {job_id} not found[/red]")
+
+
+@cron_app.command("runs")
+def cron_runs(
+    job_id: str = typer.Argument(..., help="Job ID"),
+):
+    """Show run history for a job."""
+    from kabot.config.loader import get_data_dir
+    from kabot.cron.service import CronService
+
+    store_path = get_data_dir() / "cron" / "jobs.json"
+    service = CronService(store_path)
+    history = service.get_run_history(job_id)
+
+    if not history:
+        console.print(f"No run history for job {job_id}.")
+        return
+
+    table = Table(title=f"Run History: {job_id}")
+    table.add_column("Run At", style="cyan")
+    table.add_column("Status")
+    table.add_column("Error")
+
+    import time
+    for run in history:
+        run_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(run["run_at_ms"] / 1000))
+        table.add_row(run_time, run.get("status", ""), run.get("error") or "")
+
+    console.print(table)
+
+
 # ============================================================================
 # Status Commands
 # ============================================================================
@@ -1317,9 +1962,144 @@ def status():
                 else:
                     console.print(f"{spec.label}: [dim]not set[/dim]")
             else:
-                has_key = bool(p.api_key)
+                has_key = bool(p.api_key or getattr(p, "setup_token", None))
+                if not has_key:
+                    for profile in p.profiles.values():
+                        if profile.api_key or profile.oauth_token or profile.setup_token:
+                            has_key = True
+                            break
                 status_icon = "[green]OK[/green]" if has_key else "[dim]not set[/dim]"
                 console.print(f"{spec.label}: {status_icon}")
+
+
+@app.command("env-check")
+def env_check(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed platform guidance"),
+):
+    """Show runtime environment diagnostics and recommended gateway mode."""
+    from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
+
+    runtime = detect_runtime_environment()
+    mode = recommended_gateway_mode(runtime)
+
+    table = Table(title="Environment Check")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("platform", runtime.platform)
+    table.add_row("is_windows", str(runtime.is_windows))
+    table.add_row("is_macos", str(runtime.is_macos))
+    table.add_row("is_linux", str(runtime.is_linux))
+    table.add_row("is_wsl", str(runtime.is_wsl))
+    table.add_row("is_termux", str(runtime.is_termux))
+    table.add_row("is_vps", str(runtime.is_vps))
+    table.add_row("is_headless", str(runtime.is_headless))
+    table.add_row("is_ci", str(runtime.is_ci))
+    table.add_row("has_display", str(runtime.has_display))
+    console.print(table)
+
+    console.print(f"\nRecommended gateway mode: [bold cyan]{mode}[/bold cyan]")
+
+    if verbose:
+        console.print("\n[bold]Suggested next steps:[/bold]")
+        if runtime.is_termux:
+            console.print("  - Install termux-services package and run kabot under runit.")
+        elif runtime.is_windows:
+            console.print("  - Use deployment/install-kabot-service.ps1 for service setup.")
+        elif runtime.is_macos:
+            console.print("  - Use launchd user service via `kabot remote-bootstrap --apply`.")
+        elif runtime.is_linux:
+            console.print("  - Use systemd user service via `kabot remote-bootstrap --apply`.")
+
+
+@app.command("remote-bootstrap")
+def remote_bootstrap(
+    platform: str = typer.Option("auto", "--platform", help="Target platform: auto|linux|macos|windows|termux"),
+    service: str = typer.Option("auto", "--service", help="Service manager: auto|systemd|launchd|windows|termux|none"),
+    dry_run: bool = typer.Option(True, "--dry-run/--apply", help="Dry run (print steps) or apply"),
+    healthcheck: bool = typer.Option(True, "--healthcheck/--no-healthcheck", help="Run lightweight readiness checks"),
+):
+    """Bootstrap remote operations with service + healthcheck guidance."""
+    from kabot.core.daemon import (
+        install_launchd_service,
+        install_systemd_service,
+        install_windows_task_service,
+    )
+    from kabot.utils.environment import detect_runtime_environment
+
+    runtime = detect_runtime_environment()
+    target_platform = runtime.platform if platform == "auto" else platform.strip().lower()
+    service_kind = _resolve_remote_service(target_platform, service)
+
+    console.print(f"{__logo__} [bold]Remote Bootstrap[/bold]")
+    console.print(f"Platform: [cyan]{target_platform}[/cyan]")
+    console.print(f"Service manager: [cyan]{service_kind}[/cyan]")
+    console.print(f"Mode: {'dry-run' if dry_run else 'apply'}")
+
+    if healthcheck:
+        table = Table(title="Remote Readiness Checks")
+        table.add_column("Check", style="cyan")
+        table.add_column("Status")
+        table.add_column("Detail")
+        for name, ok, detail in _remote_health_snapshot():
+            table.add_row(name, "[green]OK[/green]" if ok else "[yellow]WARN[/yellow]", detail)
+        console.print(table)
+
+    console.print("\n[bold]Recommended health commands:[/bold]")
+    console.print("  1. kabot doctor --fix")
+    console.print("  2. kabot status")
+    console.print("  3. kabot approvals status")
+
+    if dry_run:
+        console.print("\n[bold]Dry-run service bootstrap plan:[/bold]")
+        if service_kind == "systemd":
+            console.print("  - systemctl --user enable kabot")
+            console.print("  - systemctl --user start kabot")
+            console.print("  - For system-level install: bash deployment/install-linux-service.sh")
+        elif service_kind == "launchd":
+            console.print("  - launchctl load ~/Library/LaunchAgents/com.kabot.agent.plist")
+            console.print("  - launchctl start com.kabot.agent")
+        elif service_kind == "windows":
+            console.print("  - powershell -ExecutionPolicy Bypass -File deployment/install-kabot-service.ps1")
+        elif service_kind == "termux":
+            console.print("  - pkg install termux-services")
+            console.print("  - sv-enable kabot (after creating service script in $PREFIX/var/service/kabot/run)")
+            console.print("  - Start with: sv up kabot")
+        else:
+            console.print("  - No service manager selected (manual process supervision).")
+        return
+
+    if service_kind == "systemd":
+        ok, msg = install_systemd_service()
+        if ok:
+            console.print(f"[green]✓[/green] {msg}")
+            return
+        console.print(f"[red]{msg}[/red]")
+        raise typer.Exit(1)
+
+    if service_kind == "launchd":
+        ok, msg = install_launchd_service()
+        if ok:
+            console.print(f"[green]✓[/green] {msg}")
+            return
+        console.print(f"[red]{msg}[/red]")
+        raise typer.Exit(1)
+
+    if service_kind == "windows":
+        ok, msg = install_windows_task_service()
+        if ok:
+            console.print(f"[green]✓[/green] {msg}")
+            return
+        console.print(f"[red]{msg}[/red]")
+        raise typer.Exit(1)
+
+    if service_kind == "termux":
+        console.print(
+            "[yellow]Automatic Termux service installation is not executed from this command.[/yellow]\n"
+            "Install termux-services and create a run script for kabot under $PREFIX/var/service."
+        )
+        return
+
+    console.print("[yellow]No service action applied (service=none).[/yellow]")
 
 
 @app.command("security-audit")
@@ -1366,40 +2146,173 @@ def doctor(
 
 @app.command("plugins")
 def plugins_cmd(
-    action: str = typer.Argument("list", help="Action to perform (list)"),
+    action: str = typer.Argument(
+        "list",
+        help="Action: list|install|update|enable|disable|remove|doctor|scaffold",
+    ),
+    target: str = typer.Option("", "--target", "-t", help="Plugin ID for update/enable/disable/remove/doctor"),
+    source: Path | None = typer.Option(None, "--source", "-s", help="Local plugin directory for install/update"),
+    git: str = typer.Option("", "--git", help="Git repository URL for install/update"),
+    ref: str = typer.Option("", "--ref", help="Pinned git ref (tag/branch/commit) for --git installs"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing install target for install"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation for destructive actions"),
 ):
-    """Manage plugins."""
-    from kabot.plugins.registry import PluginRegistry
-    from kabot.plugins.loader import load_plugins
+    """Manage plugin lifecycle (list/install/update/enable/disable/remove/doctor/scaffold)."""
     from kabot.config.loader import load_config
+    from kabot.plugins.manager import PluginManager
 
     config = load_config()
-    registry = PluginRegistry()
     plugins_dir = config.workspace_path / "plugins"
-    load_plugins(plugins_dir, registry)
+    manager = PluginManager(plugins_dir)
+    action = action.strip().lower()
 
     if action == "list":
-        plugins_list = registry.list_all()
-
+        plugins_list = manager.list_plugins()
         if not plugins_list:
             console.print("[yellow]No plugins found.[/yellow]")
-            console.print(f"[dim]Add plugins to: {plugins_dir}[/dim]")
+            console.print(f"[dim]Install from local path: kabot plugins install --source <dir>[/dim]")
             return
 
         table = Table(title="Installed Plugins")
-        table.add_column("Name", style="cyan")
+        table.add_column("ID", style="cyan")
+        table.add_column("Name")
+        table.add_column("Type")
+        table.add_column("Version")
         table.add_column("Description")
         table.add_column("Status")
+        table.add_column("Source")
 
         for p in plugins_list:
-            status = "[green]Enabled[/green]" if p.enabled else "[red]Disabled[/red]"
-            table.add_row(p.name, p.description, status)
+            status = "[green]Enabled[/green]" if p.get("enabled", False) else "[red]Disabled[/red]"
+            table.add_row(
+                str(p.get("id", "")),
+                str(p.get("name", "")),
+                str(p.get("type", "")),
+                str(p.get("version", "-")),
+                str(p.get("description", "")),
+                status,
+                str(p.get("source") or "-"),
+            )
 
         console.print(table)
         console.print(f"\n[dim]Total: {len(plugins_list)} plugin(s)[/dim]")
-    else:
-        console.print(f"[red]Unknown action: {action}[/red]")
-        console.print("[dim]Available actions: list[/dim]")
+        return
+
+    if action == "install":
+        has_source = source is not None
+        has_git = bool(git.strip())
+        if has_source == has_git:
+            console.print("[red]Provide exactly one install source: --source <dir> OR --git <repo>[/red]")
+            raise typer.Exit(1)
+        try:
+            if has_source and source is not None:
+                plugin_id = manager.install_from_path(source, overwrite=force)
+            else:
+                plugin_id = manager.install_from_git(
+                    git.strip(),
+                    ref=ref.strip() or None,
+                    overwrite=force,
+                )
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1)
+        console.print(f"[green]✓[/green] Installed plugin: [cyan]{plugin_id}[/cyan]")
+        return
+
+    if action == "update":
+        if not target:
+            console.print("[red]--target is required for update[/red]")
+            raise typer.Exit(1)
+        source_path = source
+        if git.strip():
+            try:
+                manager.install_from_git(
+                    git.strip(),
+                    ref=ref.strip() or None,
+                    target_name=target,
+                    overwrite=True,
+                )
+                ok = True
+            except ValueError:
+                ok = False
+        else:
+            ok = manager.update_plugin(target, source_path=source_path)
+        if not ok:
+            console.print("[red]Failed to update plugin (missing target or source link).[/red]")
+            raise typer.Exit(1)
+        console.print(f"[green]✓[/green] Updated plugin: [cyan]{target}[/cyan]")
+        return
+
+    if action == "enable":
+        if not target:
+            console.print("[red]--target is required for enable[/red]")
+            raise typer.Exit(1)
+        if not manager.set_enabled(target, True):
+            console.print(f"[red]Plugin not found: {target}[/red]")
+            raise typer.Exit(1)
+        console.print(f"[green]✓[/green] Enabled plugin: [cyan]{target}[/cyan]")
+        return
+
+    if action == "disable":
+        if not target:
+            console.print("[red]--target is required for disable[/red]")
+            raise typer.Exit(1)
+        if not manager.set_enabled(target, False):
+            console.print(f"[red]Plugin not found: {target}[/red]")
+            raise typer.Exit(1)
+        console.print(f"[green]✓[/green] Disabled plugin: [cyan]{target}[/cyan]")
+        return
+
+    if action in {"remove", "uninstall"}:
+        if not target:
+            console.print("[red]--target is required for remove[/red]")
+            raise typer.Exit(1)
+        if not yes and not typer.confirm(f"Remove plugin '{target}'?"):
+            raise typer.Abort()
+        if not manager.uninstall_plugin(target):
+            console.print(f"[red]Plugin not found: {target}[/red]")
+            raise typer.Exit(1)
+        console.print(f"[green]✓[/green] Removed plugin: [cyan]{target}[/cyan]")
+        return
+
+    if action == "doctor":
+        report = manager.doctor(target or None)
+        rows = report if isinstance(report, list) else [report]
+        if not rows:
+            console.print("[yellow]No plugins to diagnose.[/yellow]")
+            return
+        table = Table(title="Plugin Doctor")
+        table.add_column("Plugin", style="cyan")
+        table.add_column("Status")
+        table.add_column("Issues")
+        for item in rows:
+            issues = item.get("issues", [])
+            issue_text = "; ".join(str(v) for v in issues) if issues else "-"
+            status = "[green]OK[/green]" if item.get("ok") else "[red]FAIL[/red]"
+            table.add_row(str(item.get("plugin", "")), status, issue_text)
+        console.print(table)
+        if not all(bool(item.get("ok")) for item in rows):
+            raise typer.Exit(1)
+        return
+
+    if action == "scaffold":
+        from kabot.plugins.scaffold import scaffold_plugin
+
+        if not target:
+            console.print("[red]--target is required for scaffold[/red]")
+            raise typer.Exit(1)
+        try:
+            plugin_path = scaffold_plugin(plugins_dir, name=target, kind="dynamic", overwrite=force)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1)
+
+        console.print(f"[green]✓[/green] Scaffolded plugin: [cyan]{plugin_path}[/cyan]")
+        return
+
+    console.print(f"[red]Unknown action: {action}[/red]")
+    console.print("[dim]Available actions: list, install, update, enable, disable, remove, doctor, scaffold[/dim]")
+    raise typer.Exit(1)
 
 
 if __name__ == "__main__":

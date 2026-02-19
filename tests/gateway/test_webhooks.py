@@ -46,3 +46,47 @@ async def test_webhook_invalid_payload(aiohttp_client):
     
     resp = await client.post("/webhooks/trigger", json=payload)
     assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_webhook_requires_auth_when_token_configured(aiohttp_client):
+    """Webhook should require bearer token when auth token is configured."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(bus=mock_bus, auth_token="test-token")
+    client = await aiohttp_client(server.app)
+
+    payload = {
+        "event": "message.received",
+        "data": {"content": "Hello", "sender": "external_system"},
+    }
+
+    resp = await client.post("/webhooks/trigger", json=payload)
+    assert resp.status == 401
+
+
+@pytest.mark.asyncio
+async def test_webhook_accepts_auth_when_token_matches(aiohttp_client):
+    """Webhook should accept request with matching bearer token."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(bus=mock_bus, auth_token="test-token")
+    client = await aiohttp_client(server.app)
+
+    payload = {
+        "event": "message.received",
+        "data": {"content": "Hello", "sender": "external_system"},
+    }
+
+    resp = await client.post(
+        "/webhooks/trigger",
+        json=payload,
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 202

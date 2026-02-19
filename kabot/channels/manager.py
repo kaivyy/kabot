@@ -31,6 +31,7 @@ class ChannelManager:
         self.bus = bus
         self.session_manager = session_manager
         self.channels: dict[str, BaseChannel] = {}
+        self._instance_keys_by_type: dict[str, list[str]] = {}
         self._dispatch_task: asyncio.Task | None = None
         
         self._init_channels()
@@ -52,12 +53,14 @@ class ChannelManager:
 
                     # Convert dict config to TelegramConfig
                     tele_config = TelegramConfig(**instance.config)
-                    self.channels[channel_key] = TelegramChannel(
+                    channel = TelegramChannel(
                         tele_config,
                         self.bus,
                         groq_api_key=self.config.providers.groq.api_key,
                         session_manager=self.session_manager,
                     )
+                    self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
+                    self.channels[channel_key] = channel
                     logger.info(f"Telegram instance '{instance.id}' enabled")
 
                 elif instance.type == "discord":
@@ -65,10 +68,12 @@ class ChannelManager:
                     from kabot.config.schema import DiscordConfig
 
                     discord_config = DiscordConfig(**instance.config)
-                    self.channels[channel_key] = DiscordChannel(
+                    channel = DiscordChannel(
                         discord_config,
                         self.bus
                     )
+                    self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
+                    self.channels[channel_key] = channel
                     logger.info(f"Discord instance '{instance.id}' enabled")
 
                 elif instance.type == "whatsapp":
@@ -76,10 +81,12 @@ class ChannelManager:
                     from kabot.config.schema import WhatsAppConfig
 
                     whatsapp_config = WhatsAppConfig(**instance.config)
-                    self.channels[channel_key] = WhatsAppChannel(
+                    channel = WhatsAppChannel(
                         whatsapp_config,
                         self.bus
                     )
+                    self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
+                    self.channels[channel_key] = channel
                     logger.info(f"WhatsApp instance '{instance.id}' enabled")
 
                 elif instance.type == "slack":
@@ -87,10 +94,12 @@ class ChannelManager:
                     from kabot.config.schema import SlackConfig
 
                     slack_config = SlackConfig(**instance.config)
-                    self.channels[channel_key] = SlackChannel(
+                    channel = SlackChannel(
                         slack_config,
                         self.bus
                     )
+                    self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
+                    self.channels[channel_key] = channel
                     logger.info(f"Slack instance '{instance.id}' enabled")
 
                 else:
@@ -250,8 +259,17 @@ class ChannelManager:
                     self.bus.consume_outbound(),
                     timeout=1.0
                 )
-                
+
                 channel = self.channels.get(msg.channel)
+                if not channel and ":" not in msg.channel:
+                    candidates = self._instance_keys_by_type.get(msg.channel, [])
+                    if len(candidates) == 1:
+                        channel = self.channels.get(candidates[0])
+                    elif len(candidates) > 1:
+                        logger.warning(
+                            f"Ambiguous channel '{msg.channel}' with {len(candidates)} instances; "
+                            "send using explicit key '<type>:<id>'."
+                        )
                 if channel:
                     try:
                         await channel.send(msg)
@@ -264,6 +282,27 @@ class ChannelManager:
                 continue
             except asyncio.CancelledError:
                 break
+
+    def _decorate_instance_channel(
+        self,
+        channel: BaseChannel,
+        channel_key: str,
+        channel_type: str,
+        instance_id: str,
+        agent_binding: str | None,
+    ) -> None:
+        """Attach instance metadata so inbound routing can preserve instance identity."""
+        setattr(channel, "_channel_name", channel_key)
+        setattr(
+            channel,
+            "_channel_instance_metadata",
+            {
+                "id": instance_id,
+                "type": channel_type,
+                "agent_binding": agent_binding,
+            },
+        )
+        self._instance_keys_by_type.setdefault(channel_type, []).append(channel_key)
     
     def get_channel(self, name: str) -> BaseChannel | None:
         """Get a channel by name."""

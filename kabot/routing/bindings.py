@@ -48,9 +48,23 @@ def _normalize_id(value: str | None) -> str:
 
 def _matches_channel(binding: AgentBinding, channel: str) -> bool:
     """Check if binding matches channel."""
+    return _channel_match_priority(binding, channel) >= 0
+
+
+def _channel_match_priority(binding: AgentBinding, channel: str) -> int:
+    """Return channel match specificity (-1 no match, 1 base match, 2 exact match)."""
     if not binding.match.channel:
-        return False
-    return _normalize_token(binding.match.channel) == _normalize_token(channel)
+        return -1
+
+    binding_channel = _normalize_token(binding.match.channel)
+    normalized_channel = _normalize_token(channel)
+    normalized_base = normalized_channel.split(":", 1)[0]
+
+    if binding_channel == normalized_channel:
+        return 2
+    if binding_channel == normalized_base:
+        return 1
+    return -1
 
 
 def _matches_account_id(binding: AgentBinding, account_id: str) -> bool:
@@ -105,6 +119,7 @@ def resolve_agent_route(
     config: Config,
     channel: str,
     account_id: str | None = None,
+    forced_agent_id: str | None = None,
     peer: RoutePeer | None = None,
     parent_peer: RoutePeer | None = None,
     guild_id: str | None = None,
@@ -126,6 +141,7 @@ def resolve_agent_route(
         config: The application configuration
         channel: Channel name (telegram, discord, etc.)
         account_id: Account/user identifier
+        forced_agent_id: Optional explicit agent id override
         peer: Peer information (kind + id)
         parent_peer: Parent peer for thread inheritance
         guild_id: Discord guild identifier
@@ -143,10 +159,23 @@ def resolve_agent_route(
     identity_links = config.agents.session.identity_links
 
     # Filter bindings by channel and account
+    candidate_bindings_with_priority: list[tuple[int, int, AgentBinding]] = []
+    for idx, binding in enumerate(config.agents.bindings):
+        channel_priority = _channel_match_priority(binding, normalized_channel)
+        if channel_priority < 0:
+            continue
+        if not _matches_account_id(binding, normalized_account):
+            continue
+        candidate_bindings_with_priority.append((channel_priority, idx, binding))
+
+    # Higher channel specificity first (exact instance > base channel),
+    # then preserve config order within the same specificity.
     candidate_bindings = [
-        b for b in config.agents.bindings
-        if _matches_channel(b, normalized_channel) and
-           _matches_account_id(b, normalized_account)
+        binding
+        for _, _, binding in sorted(
+            candidate_bindings_with_priority,
+            key=lambda row: (-row[0], row[1]),
+        )
     ]
 
     def _build_route(agent_id: str, matched_by: str) -> ResolvedRoute:
@@ -178,6 +207,10 @@ def resolve_agent_route(
             "main_session_key": main_session_key.lower(),
             "matched_by": matched_by,
         }
+
+    # Explicit forced routing (for channel instance bindings in wizard/runtime).
+    if forced_agent_id:
+        return _build_route(forced_agent_id, "forced")
 
     # Priority 1: Peer matching
     if peer:

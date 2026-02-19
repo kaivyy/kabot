@@ -1,6 +1,10 @@
 """Web fetch tool for calling HTTP APIs."""
 
+import ipaddress
+import socket
 from typing import Any
+from urllib.parse import urlparse
+
 import httpx
 from bs4 import BeautifulSoup
 from kabot.agent.tools.base import Tool
@@ -13,6 +17,37 @@ USER_AGENT = "Kabot/1.0 (AI Assistant)"
 
 class WebFetchTool(Tool):
     """Fetch content from HTTP URLs — web pages, APIs, files."""
+
+    def __init__(self, http_guard: Any | None = None):
+        deny_defaults = {
+            "localhost",
+            "127.0.0.1",
+            "169.254.169.254",
+            "metadata.google.internal",
+        }
+        self.guard_enabled = True
+        self.block_private_networks = True
+        self.allow_hosts: set[str] = set()
+        self.deny_hosts: set[str] = set(deny_defaults)
+
+        if http_guard is not None:
+            self.guard_enabled = bool(getattr(http_guard, "enabled", True))
+            self.block_private_networks = bool(
+                getattr(http_guard, "block_private_networks", True)
+            )
+            self.allow_hosts = {
+                str(host).strip().lower()
+                for host in (getattr(http_guard, "allow_hosts", []) or [])
+                if str(host).strip()
+            }
+            configured_deny_hosts = getattr(http_guard, "deny_hosts", None)
+            custom_deny = {
+                str(host).strip().lower()
+                for host in (configured_deny_hosts or [])
+                if str(host).strip()
+            }
+            if configured_deny_hosts is not None:
+                self.deny_hosts = custom_deny
 
     @property
     def name(self) -> str:
@@ -84,6 +119,11 @@ Use this for:
         max_chars: int = MAX_CHARS_DEFAULT,
         **kwargs: Any,
     ) -> str:
+        try:
+            self._validate_target(url)
+        except ValueError as e:
+            return f"Error: {e}"
+
         max_chars = min(max_chars, MAX_CHARS_CAP)
         req_headers = {"User-Agent": USER_AGENT}
         if headers:
@@ -138,6 +178,63 @@ Use this for:
             return f"Error: Request timed out after {TIMEOUT_SECONDS}s"
         except Exception as e:
             return f"Error: {type(e).__name__}: {str(e)}"
+
+    def _validate_target(self, url: str) -> None:
+        if not self.guard_enabled:
+            return
+
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in {"http", "https"}:
+            raise ValueError("Only HTTP/HTTPS URLs are supported")
+
+        host = (parsed.hostname or "").strip().lower()
+        if not host:
+            raise ValueError("Missing URL host")
+
+        if self.allow_hosts and host not in self.allow_hosts:
+            raise ValueError(f"Host '{host}' is not in allowlist")
+
+        if host in self.deny_hosts:
+            raise ValueError(f"Target blocked by network guard: {host}")
+
+        if self.block_private_networks and self._is_private_or_local_host(host):
+            raise ValueError(f"Target blocked by network guard: {host}")
+
+    def _is_private_or_local_host(self, host: str) -> bool:
+        if host in {"localhost", "::1"}:
+            return True
+
+        if self._is_private_ip(host):
+            return True
+
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror:
+            return False
+        except Exception:
+            return False
+
+        for info in infos:
+            addr = info[4][0]
+            if self._is_private_ip(addr):
+                return True
+        return False
+
+    def _is_private_ip(self, value: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(value)
+        except ValueError:
+            return False
+
+        return bool(
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        )
 
     def _html_to_markdown(self, html: str) -> str:
         """Convert HTML to readable markdown-ish text."""

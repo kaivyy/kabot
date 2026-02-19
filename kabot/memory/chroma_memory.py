@@ -4,8 +4,9 @@ import uuid
 import hashlib
 import sqlite3
 import re
+import math
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from loguru import logger
@@ -250,6 +251,175 @@ class ChromaMemoryManager:
             logger.error(f"Error in BM25 search: {e}")
             return []
 
+    @staticmethod
+    def _temporal_decay_multiplier(
+        age_hours: float,
+        half_life_hours: float = 24.0 * 7.0,
+        floor: float = 0.65,
+    ) -> float:
+        """Compute a bounded temporal decay factor.
+
+        Newer memories get multiplier near 1.0 while very old memories decay
+        toward `floor` (never fully zeroed out).
+        """
+        if age_hours <= 0:
+            return 1.0
+        decay = math.exp(-math.log(2.0) * (age_hours / max(1.0, half_life_hours)))
+        return floor + ((1.0 - floor) * decay)
+
+    @staticmethod
+    def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+        """Compute cosine similarity between two vectors."""
+        if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+            return 0.0
+        dot = sum(a * b for a, b in zip(vec_a, vec_b))
+        norm_a = math.sqrt(sum(a * a for a in vec_a))
+        norm_b = math.sqrt(sum(b * b for b in vec_b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    @staticmethod
+    def _normalize_scores(values: list[float]) -> list[float]:
+        """Normalize values to 0..1 while handling degenerate ranges."""
+        if not values:
+            return []
+        lo = min(values)
+        hi = max(values)
+        if abs(hi - lo) < 1e-12:
+            return [1.0 for _ in values]
+        return [(v - lo) / (hi - lo) for v in values]
+
+    def _extract_item_datetime(self, item: dict) -> datetime | None:
+        """Extract best-effort timestamp from memory item."""
+        raw_candidates = [
+            item.get("updated_at"),
+            item.get("created_at"),
+            (item.get("metadata") or {}).get("timestamp") if isinstance(item.get("metadata"), dict) else None,
+        ]
+
+        for raw in raw_candidates:
+            if raw is None:
+                continue
+            if isinstance(raw, (int, float)):
+                try:
+                    ts = raw / 1000 if raw > 10_000_000_000 else raw
+                    return datetime.fromtimestamp(ts)
+                except Exception:
+                    continue
+            if isinstance(raw, str):
+                text = raw.strip()
+                if not text:
+                    continue
+                normalized = text.replace("Z", "+00:00")
+                try:
+                    dt = datetime.fromisoformat(normalized)
+                except ValueError:
+                    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+                        try:
+                            dt = datetime.strptime(text, fmt)
+                            break
+                        except ValueError:
+                            dt = None
+                    if dt is None:
+                        continue
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                return dt
+        return None
+
+    def _apply_temporal_decay_to_candidates(self, candidates: list[dict]) -> list[dict]:
+        """Apply temporal decay to fused candidates and resort by adjusted score."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        adjusted: list[dict] = []
+        for candidate in candidates:
+            item = candidate.get("item", {})
+            base_score = float(candidate.get("score", 0.0))
+            item_dt = self._extract_item_datetime(item) if isinstance(item, dict) else None
+            age_hours = 0.0
+            if item_dt:
+                age_hours = max(0.0, (now - item_dt).total_seconds() / 3600.0)
+            temporal_mult = self._temporal_decay_multiplier(age_hours)
+            adjusted.append({
+                **candidate,
+                "score": base_score * temporal_mult,
+                "temporal_multiplier": temporal_mult,
+            })
+        adjusted.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+        return adjusted
+
+    async def _prepare_mmr_candidates(self, candidates: list[dict]) -> list[dict]:
+        """Attach embeddings for MMR reranking with lightweight content cache."""
+        cache: dict[str, list[float] | None] = {}
+        prepared: list[dict] = []
+        for candidate in candidates:
+            item = candidate.get("item", {})
+            content = item.get("content", "") if isinstance(item, dict) else ""
+            embedding: list[float] | None = None
+            if isinstance(content, str) and content.strip():
+                if content in cache:
+                    embedding = cache[content]
+                else:
+                    try:
+                        embedding = await self.embeddings.embed(content)
+                    except Exception:
+                        embedding = None
+                    cache[content] = embedding
+            prepared.append({**candidate, "embedding": embedding})
+        return prepared
+
+    def _mmr_select_candidates(
+        self,
+        candidates: list[dict],
+        query_embedding: list[float],
+        limit: int,
+        lambda_mult: float = 0.75,
+    ) -> list[dict]:
+        """Select diverse-yet-relevant candidates using MMR."""
+        if limit <= 0 or not candidates:
+            return []
+        if len(candidates) <= 1:
+            return candidates[:limit]
+
+        score_values = [float(c.get("score", 0.0)) for c in candidates]
+        norm_scores = self._normalize_scores(score_values)
+
+        query_sims: list[float] = []
+        for candidate in candidates:
+            emb = candidate.get("embedding")
+            if isinstance(emb, list) and emb:
+                query_sims.append(self._cosine_similarity(query_embedding, emb))
+            else:
+                query_sims.append(0.0)
+        norm_query = self._normalize_scores(query_sims)
+
+        for idx, candidate in enumerate(candidates):
+            candidate["_mmr_relevance"] = (0.5 * norm_scores[idx]) + (0.5 * norm_query[idx])
+
+        selected: list[dict] = []
+        remaining = list(range(len(candidates)))
+        while remaining and len(selected) < limit:
+            if not selected:
+                pick_idx = max(remaining, key=lambda i: candidates[i]["_mmr_relevance"])
+            else:
+                def _mmr_value(i: int) -> float:
+                    relevance = candidates[i]["_mmr_relevance"]
+                    emb_i = candidates[i].get("embedding")
+                    max_sim = 0.0
+                    if isinstance(emb_i, list) and emb_i:
+                        for chosen in selected:
+                            emb_j = chosen.get("embedding")
+                            if isinstance(emb_j, list) and emb_j:
+                                max_sim = max(max_sim, self._cosine_similarity(emb_i, emb_j))
+                    return (lambda_mult * relevance) - ((1.0 - lambda_mult) * max_sim)
+
+                pick_idx = max(remaining, key=_mmr_value)
+
+            selected.append(candidates[pick_idx])
+            remaining.remove(pick_idx)
+
+        return selected[:limit]
+
     async def search_memory(self, query: str, session_id: str | None = None,
                            limit: int = 5) -> list[dict]:
         """
@@ -360,11 +530,23 @@ class ChromaMemoryManager:
                     if 'bm25_score' in item:
                         fused_scores[item_id]['item']['bm25_score'] = item['bm25_score']
 
-            # Sort by fused score
+            # Sort by fused score, then apply temporal decay weighting.
             final_results = sorted(fused_scores.values(), key=lambda x: x['score'], reverse=True)
+            ranked = self._apply_temporal_decay_to_candidates(final_results)
 
-            # Return top N
-            return [x['item'] for x in final_results[:limit]]
+            # Optional MMR reranking for diversity (top candidate pool only).
+            if query_embedding and len(ranked) > 1 and limit > 1:
+                candidate_pool_size = max(limit * 4, limit)
+                candidate_pool = ranked[:candidate_pool_size]
+                mmr_candidates = await self._prepare_mmr_candidates(candidate_pool)
+                selected = self._mmr_select_candidates(
+                    candidates=mmr_candidates,
+                    query_embedding=query_embedding,
+                    limit=limit,
+                )
+                return [x['item'] for x in selected]
+
+            return [x['item'] for x in ranked[:limit]]
 
         except Exception as e:
             logger.error(f"Error searching memory: {e}")

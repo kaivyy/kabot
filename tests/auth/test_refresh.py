@@ -105,3 +105,62 @@ async def test_do_refresh_supports_qwen_portal_provider_alias():
     assert result.refresh_token == "new_refresh_token"
     assert result.expires_at > int(time.time() * 1000)
     mock_call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_do_refresh_supports_gemini_provider_name():
+    profile = AuthProfile(
+        name="gemini",
+        oauth_token="expired_token",
+        refresh_token="valid_refresh",
+        expires_at=int(time.time() * 1000) - 60_000,
+        token_type="oauth",
+        client_id="google-client",
+    )
+
+    mock_response = {
+        "access_token": "new_access_token",
+        "refresh_token": "new_refresh_token",
+        "expires_in": 3600,
+    }
+
+    service = TokenRefreshService()
+    with patch("kabot.auth.refresh._call_token_endpoint", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+        result = await service._do_refresh("gemini", profile)
+
+    assert result is not None
+    assert result.oauth_token == "new_access_token"
+    assert result.refresh_token == "new_refresh_token"
+    assert result.expires_at > int(time.time() * 1000)
+    mock_call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_do_refresh_includes_client_secret_when_present():
+    profile = AuthProfile(
+        name="google-oauth",
+        oauth_token="expired_token",
+        refresh_token="valid_refresh",
+        expires_at=int(time.time() * 1000) - 60_000,
+        token_type="oauth",
+        client_id="google-client",
+        client_secret="google-secret",
+    )
+
+    captured: dict = {}
+
+    async def _fake_call(url: str, data: dict):
+        captured["url"] = url
+        captured["data"] = data
+        return {
+            "access_token": "new_access_token",
+            "refresh_token": "new_refresh_token",
+            "expires_in": 3600,
+        }
+
+    service = TokenRefreshService()
+    with patch("kabot.auth.refresh._call_token_endpoint", new_callable=AsyncMock, side_effect=_fake_call):
+        result = await service._do_refresh("gemini", profile)
+
+    assert result is not None
+    assert captured["data"]["client_secret"] == "google-secret"

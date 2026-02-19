@@ -16,6 +16,10 @@ class GoogleGeminiCLIHandler(AuthHandler):
     Matches OpenClaw behavior for seamless Google integration.
     """
 
+    @property
+    def name(self) -> str:
+        return "Google Gemini CLI OAuth"
+
     def authenticate(self) -> Dict[str, Any]:
         # 1. Pre-flight Check: Find gemini-cli
         module_path = find_node_module("@google/gemini-cli")

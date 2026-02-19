@@ -139,13 +139,3 @@ def test_get_service_status_macos():
             assert status["service_available"] is True
             assert status["service_type"] == "launchd"
             assert status["installed"] is True
-
-
-def test_get_service_status_windows():
-    """Test service status on Windows."""
-    with patch('sys.platform', 'win32'):
-        status = get_service_status()
-        assert status["platform"] == "win32"
-        assert status["service_available"] is False
-        assert status["service_type"] == "task_scheduler"
-        assert "coming soon" in status["note"]

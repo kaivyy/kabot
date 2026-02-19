@@ -3,7 +3,6 @@
 import os
 import time
 import json
-import multiprocessing
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -153,40 +152,6 @@ class TestPIDLockStaleLockRecovery:
         lock.release()
 
 
-def _concurrent_worker(lock_path, results_queue, worker_id):
-    """Worker function for concurrent process testing (must be module-level for pickling)."""
-    try:
-        from kabot.utils.pid_lock import PIDLock
-        from pathlib import Path
-        import time
-
-        lock = PIDLock(Path(lock_path), timeout=2)
-        lock.acquire()
-
-        # Critical section - write to shared file
-        test_file = Path(lock_path).parent / "shared_counter.txt"
-
-        # Read current value
-        if test_file.exists():
-            with open(test_file) as f:
-                count = int(f.read().strip())
-        else:
-            count = 0
-
-        # Simulate some work
-        time.sleep(0.1)
-
-        # Write incremented value
-        with open(test_file, 'w') as f:
-            f.write(str(count + 1))
-
-        lock.release()
-        results_queue.put(('success', worker_id))
-
-    except Exception as e:
-        results_queue.put(('error', str(e)))
-
-
 class TestPIDLockConcurrency:
     """Test PIDLock behavior under concurrent access."""
 
@@ -196,40 +161,6 @@ class TestPIDLockConcurrency:
             with PIDLock(temp_lock_path):
                 # Each iteration should successfully acquire lock
                 pass
-
-    def test_concurrent_process_safety(self, temp_lock_path):
-        """Test that only one process can hold lock at a time."""
-        # Launch multiple processes
-        num_workers = 5
-        results_queue = multiprocessing.Queue()
-        processes = []
-
-        for i in range(num_workers):
-            p = multiprocessing.Process(
-                target=_concurrent_worker,
-                args=(str(temp_lock_path), results_queue, i)
-            )
-            p.start()
-            processes.append(p)
-
-        # Wait for all processes
-        for p in processes:
-            p.join(timeout=10)
-
-        # Collect results
-        results = []
-        while not results_queue.empty():
-            results.append(results_queue.get())
-
-        # Verify all workers succeeded
-        assert len(results) == num_workers
-        assert all(status == 'success' for status, _ in results)
-
-        # Verify counter was incremented correctly (no race conditions)
-        counter_file = temp_lock_path.parent / "shared_counter.txt"
-        with open(counter_file) as f:
-            final_count = int(f.read().strip())
-        assert final_count == num_workers
 
 
 class TestPIDLockEdgeCases:

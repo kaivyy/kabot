@@ -41,3 +41,14 @@ This document highlights the key architectural and feature differences between t
 2.  **Short Term**: Refactor Input Layer to use **Input Adaptors** (`MsgContext` normalization).
 3.  **Short Term**: Implement **Auto-Compaction** for context management.
 4.  **Medium Term**: Build the **Plugin System** (hooks) to allow extensibility without core changes.
+
+## Revalidation Update (2026-02-19)
+
+Latest parity implementation now closes several previously open gaps:
+
+- Added HTTP integration guard defaults (`integrations.http_guard`) and SSRF protections in `web_fetch`.
+- Added Meta outbound tool (`meta_graph`) for Threads and Instagram actions.
+- Added verified Meta webhook ingress (`/webhooks/meta`) with challenge + HMAC signature checks.
+- Added setup wizard fleet template support for fast multi-bot/multi-agent creation.
+- Added plugin scaffold workflow (`kabot plugins scaffold --target <name>`).
+- Added auth parity diagnostics command (`kabot auth parity`) to validate handler/alias consistency.
