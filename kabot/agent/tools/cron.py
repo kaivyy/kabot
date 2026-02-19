@@ -165,6 +165,8 @@ EXAMPLES:
     def _add_job(self, message: str, at_time: str, every_seconds: int | None, cron_expr: str | None, one_shot: bool | None = None, context_messages: int = 0) -> str:
         if not message:
             return "Error: message is required for add"
+        
+        # logger.debug(f"Adding job: msg='{message}', channel='{self._channel}', chat_id='{self._chat_id}'")
         if not self._channel or not self._chat_id:
             return "Error: no session context (channel/chat_id)"
 

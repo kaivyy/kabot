@@ -25,7 +25,9 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
         if not schedule.every_ms or schedule.every_ms <= 0:
             return None
         # Next interval from now
-        return now_ms + schedule.every_ms
+        next_run = now_ms + schedule.every_ms
+        logger.debug(f"Computing every: now={now_ms}, interval={schedule.every_ms} -> next={next_run}")
+        return next_run
     
     if schedule.kind == "cron" and schedule.expr:
         try:
@@ -175,6 +177,8 @@ class CronService:
             return None
         times = [j.state.next_run_at_ms for j in self._store.jobs 
                  if j.enabled and j.state.next_run_at_ms]
+        
+        logger.debug(f"Next wake candidates: {times}")
         return min(times) if times else None
     
     def _arm_timer(self) -> None:
@@ -202,11 +206,16 @@ class CronService:
             return
         
         now = _now_ms()
+        logger.debug(f"Cron tick: now={now}")
+        
         due_jobs = [
             j for j in self._store.jobs
             if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
         ]
         
+        if due_jobs:
+            logger.info(f"Cron: found {len(due_jobs)} due jobs")
+
         for job in due_jobs:
             await self._execute_job(job)
         

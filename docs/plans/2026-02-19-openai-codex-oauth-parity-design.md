@@ -1,7 +1,7 @@
 # OpenAI Codex OAuth Parity (Design)
 
 ## Summary
-Align kabot with OpenClaw for OpenAI Codex OAuth while keeping the existing OpenAI API key flow intact. After OAuth login, set the default model order to:
+Align kabot with OpenClaw (code) for OpenAI Codex OAuth while keeping the existing OpenAI API key flow intact. After OAuth login, set the default model order to:
 
 - primary: `openai-codex/gpt-5.3-codex`
 - fallbacks: `openai/gpt-5.2-codex`, `openai/gpt-4o-mini`
@@ -48,6 +48,9 @@ Additionally, mirror OpenClaw's model normalization (`openai/gpt-5.3-codex` → 
   - `openai-codex/gpt-5.3-codex`
   - `openai/gpt-5.2-codex`
   - `openai/gpt-4o-mini`
+
+### Config Model Type
+- Allow `agents.defaults.model` to accept `str | AgentModelConfig` and handle both in summaries and provider matching.
 
 ## Data Flow
 1) User runs OpenAI OAuth login.

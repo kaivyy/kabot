@@ -14,6 +14,13 @@ import logging
 
 from kabot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from kabot.providers.registry import find_by_model, find_gateway
+from kabot.providers.chatgpt_backend_client import (
+    extract_account_id,
+    build_chatgpt_request,
+    build_chatgpt_headers,
+    parse_sse_stream,
+    extract_content_from_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +132,10 @@ class LiteLLMProvider(LLMProvider):
         """Execute a single model call with retries for transient errors."""
         resolved_model = self._resolve_model(model)
 
+        # OpenAI Codex specific handling (ChatGPT backend API)
+        if self._is_openai_codex(resolved_model):
+            return await self._chat_openai_codex(messages, tools, resolved_model, max_tokens, temperature)
+
         # OpenRouter specific handling
         if self._is_openrouter(resolved_model):
             return await self._chat_openrouter(messages, tools, resolved_model, max_tokens, temperature)
@@ -139,7 +150,6 @@ class LiteLLMProvider(LLMProvider):
         # Apply model-specific overrides (e.g. kimi-k2.5 temperature)
         self._apply_model_overrides(resolved_model, kwargs)
 
-        # Pass api_key directly — more reliable than env vars alone
         if self.api_key:
             kwargs["api_key"] = self.api_key
 
@@ -147,8 +157,8 @@ class LiteLLMProvider(LLMProvider):
         if self.api_base:
             kwargs["api_base"] = self.api_base
 
-        # Pass extra headers (e.g. APP-Code for AiHubMix)
-        if self.extra_headers:
+        # Pass extra headers (e.g. APP-Code for AiHubMix) if not already set above
+        if self.extra_headers and "extra_headers" not in kwargs:
             kwargs["extra_headers"] = self.extra_headers
 
         if tools:
@@ -304,6 +314,98 @@ class LiteLLMProvider(LLMProvider):
         if model.startswith("openrouter/"):
             return True
         return False
+
+    def _is_openai_codex(self, model: str) -> bool:
+        """Check if the model uses OpenAI Codex (ChatGPT backend API)."""
+        return model.startswith("openai-codex/") or "openai-codex" in model
+
+    async def _chat_openai_codex(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> LLMResponse:
+        """Handle OpenAI Codex requests using ChatGPT backend API."""
+
+        def _make_request():
+            if not self.api_key:
+                raise ValueError("No API key for OpenAI Codex")
+
+            # Verify it's a JWT token
+            if not self.api_key.startswith("eyJ"):
+                raise ValueError("OpenAI Codex requires OAuth JWT token, not API key")
+
+            try:
+                # Extract account ID from JWT token
+                account_id = extract_account_id(self.api_key)
+            except ValueError as e:
+                raise ValueError(f"Invalid OAuth token: {e}")
+
+            # Build request
+            body = build_chatgpt_request(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=False,  # Non-streaming for now
+            )
+
+            headers = build_chatgpt_headers(self.api_key, account_id)
+
+            # Make request to ChatGPT backend API
+            url = "https://chatgpt.com/backend-api/codex/responses"
+
+            try:
+                response = requests.post(
+                    url=url,
+                    headers=headers,
+                    data=json.dumps(body),
+                    timeout=120,
+                )
+                response.raise_for_status()
+
+                # Parse SSE stream from response text
+                content_parts = []
+                for event in parse_sse_stream(response.text):
+                    text = extract_content_from_event(event)
+                    if text:
+                        content_parts.append(text)
+
+                return {"content": "".join(content_parts)}
+
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None:
+                    status = e.response.status_code
+                    if status == 429:
+                        raise RateLimitError(message=str(e), llm_provider="openai-codex", model=model)
+                    elif status >= 500:
+                        raise ServiceUnavailableError(message=str(e), llm_provider="openai-codex", model=model)
+                    elif status == 401 or status == 403:
+                        raise InvalidRequestError(message=f"Authentication failed: {e}", llm_provider="openai-codex", model=model)
+                    else:
+                        raise InvalidRequestError(message=str(e), llm_provider="openai-codex", model=model)
+                else:
+                    raise APIConnectionError(message=str(e), llm_provider="openai-codex", model=model)
+            except requests.exceptions.RequestException as e:
+                raise APIConnectionError(message=str(e), llm_provider="openai-codex", model=model)
+
+        try:
+            loop = asyncio.get_running_loop()
+            response_data = await loop.run_in_executor(None, _make_request)
+
+            # Parse response
+            return LLMResponse(
+                content=response_data.get("content", ""),
+                tool_calls=[],
+                finish_reason="stop",
+                usage={},
+            )
+        except (RateLimitError, APIConnectionError, ServiceUnavailableError, InvalidRequestError):
+            raise
+        except Exception as e:
+            raise e
 
     async def _chat_openrouter(
         self,

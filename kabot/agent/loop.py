@@ -652,6 +652,7 @@ class AgentLoop:
         for tool_name in ["message", "spawn", "cron"]:
             tool = self.tools.get(tool_name)
             if hasattr(tool, "set_context"):
+                logger.debug(f"Setting context for {tool_name}: {msg.channel}:{msg.chat_id}")
                 tool.set_context(msg.channel, msg.chat_id)
 
         for tool_name in ["save_memory", "get_memory", "list_reminders"]:
