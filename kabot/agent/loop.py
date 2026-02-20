@@ -603,9 +603,7 @@ class AgentLoop:
     async def process_direct(self, content: str, session_key: str = "cli:direct", channel: str = "cli", chat_id: str = "direct") -> str:
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content, _session_key=session_key)
         response = await self._process_message(msg)
-        result = response.content if response else ""
-        logger.debug(f"process_direct returning: {repr(result[:200] if result else result)}")
-        return result
+        return response.content if response else ""
 
     async def process_isolated(
         self, content: str,

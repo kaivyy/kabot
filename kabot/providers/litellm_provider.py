@@ -468,9 +468,7 @@ class LiteLLMProvider(LLMProvider):
                 )
 
             content = response_data.get("content", "")
-            logger.info(f"[DEBUG] ChatGPT Backend API parsed content length: {len(content)}")
-            logger.info(f"[DEBUG] ChatGPT Backend API content preview: {repr(content[:200])}")
-            logger.info(f"[DEBUG] ChatGPT Backend API tool_calls count: {len(parsed_tool_calls)}")
+            logger.debug(f"ChatGPT Backend API response: {len(content)} chars, {len(parsed_tool_calls)} tool calls")
             return LLMResponse(
                 content=content,
                 tool_calls=parsed_tool_calls,

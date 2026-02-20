@@ -117,7 +117,6 @@ def _append_assistant_tool_calls(input_messages: list[dict[str, Any]], msg: Dict
             call_id = _normalize_call_id(raw_id, fallback)
             arguments = function.get("arguments") if function else tc.get("arguments")
 
-            logger.info(f"[DEBUG] Tool call: raw_id={raw_id}, normalized={call_id}, name={name}")
             input_messages.append(
                 {
                     "type": "function_call",
@@ -159,9 +158,7 @@ def build_chatgpt_request(
     system_prompts: list[str] = []
     input_messages: list[dict[str, Any]] = []
 
-    logger.info(f"[DEBUG] build_chatgpt_request: Processing {len(messages)} messages")
-    for idx, msg in enumerate(messages):
-        logger.debug(f"[DEBUG] Message {idx}: role={msg.get('role')}, keys={list(msg.keys())}")
+    for msg in messages:
         role = msg.get("role")
         if role == "system":
             content = msg.get("content")
@@ -172,7 +169,6 @@ def build_chatgpt_request(
         if role == "tool":
             raw_call_id = msg.get("tool_call_id") or msg.get("id")
             call_id = _normalize_call_id(raw_call_id, f"call_{len(input_messages) + 1}")
-            logger.info(f"[DEBUG] Tool result: raw_call_id={raw_call_id}, normalized={call_id}")
             input_messages.append(
                 {
                     "type": "function_call_output",

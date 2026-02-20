@@ -157,10 +157,7 @@ def _terminal_safe(text: str, encoding: str | None = None) -> str:
 
 def _print_agent_response(response: str, render_markdown: bool) -> None:
     """Render assistant response with consistent terminal styling."""
-    from loguru import logger
-    logger.debug(f"_print_agent_response received: {repr(response[:200] if response else response)}")
     content = _terminal_safe(response or "")
-    logger.debug(f"After _terminal_safe: {repr(content[:200] if content else content)}")
     body = Markdown(content) if render_markdown else Text(content)
     title = _terminal_safe(f"{__logo__} kabot")
     console.print()
