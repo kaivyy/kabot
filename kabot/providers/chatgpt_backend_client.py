@@ -98,8 +98,16 @@ def _stringify_content(content: Any) -> str:
         return str(content)
 
 
-def _append_assistant_tool_calls(input_messages: list[dict[str, Any]], msg: Dict[str, Any]) -> bool:
-    """Append assistant tool calls as responses-style function_call items."""
+def _append_assistant_tool_calls(
+    input_messages: list[dict[str, Any]],
+    msg: Dict[str, Any],
+    tool_result_ids: set[str]
+) -> bool:
+    """Append assistant tool calls as responses-style function_call items.
+
+    Only appends tool calls that have corresponding tool results to avoid
+    ChatGPT backend API validation errors.
+    """
     appended = False
     tool_calls = msg.get("tool_calls")
 
@@ -115,6 +123,12 @@ def _append_assistant_tool_calls(input_messages: list[dict[str, Any]], msg: Dict
             raw_id = tc.get("call_id") or tc.get("id") or msg.get("tool_call_id")
             fallback = f"call_{len(input_messages) + idx}"
             call_id = _normalize_call_id(raw_id, fallback)
+
+            # Only add tool call if there's a corresponding tool result
+            if call_id not in tool_result_ids:
+                logger.debug(f"Skipping tool call {call_id} (no matching result)")
+                continue
+
             arguments = function.get("arguments") if function else tc.get("arguments")
 
             input_messages.append(
@@ -133,6 +147,12 @@ def _append_assistant_tool_calls(input_messages: list[dict[str, Any]], msg: Dict
         if isinstance(name, str) and name.strip():
             raw_id = function_call.get("call_id") or function_call.get("id") or msg.get("tool_call_id")
             call_id = _normalize_call_id(raw_id, f"call_{len(input_messages) + 1}")
+
+            # Only add tool call if there's a corresponding tool result
+            if call_id not in tool_result_ids:
+                logger.debug(f"Skipping function_call {call_id} (no matching result)")
+                return appended
+
             input_messages.append(
                 {
                     "type": "function_call",
@@ -157,6 +177,19 @@ def build_chatgpt_request(
     """Build request body for ChatGPT backend API."""
     system_prompts: list[str] = []
     input_messages: list[dict[str, Any]] = []
+
+    # Track tool call IDs and tool result IDs to ensure they match
+    tool_call_ids: set[str] = set()
+    tool_result_ids: set[str] = set()
+
+    # First pass: collect all tool result IDs
+    for msg in messages:
+        if msg.get("role") == "tool":
+            raw_call_id = msg.get("tool_call_id") or msg.get("id")
+            if raw_call_id:
+                normalized_id = _normalize_call_id(raw_call_id, "")
+                if normalized_id:
+                    tool_result_ids.add(normalized_id)
 
     for msg in messages:
         role = msg.get("role")
@@ -188,7 +221,7 @@ def build_chatgpt_request(
                         "content": _normalize_message_content(content),
                     }
                 )
-            if _append_assistant_tool_calls(input_messages, msg):
+            if _append_assistant_tool_calls(input_messages, msg, tool_result_ids):
                 continue
             if has_content:
                 continue
