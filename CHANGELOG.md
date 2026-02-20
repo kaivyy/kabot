@@ -7,6 +7,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Tool-Calling Reliability for Weather/Reminder (2026-02-20)
+
+- Fixed OpenAI Codex OAuth backend request/response handling so tool calls can run end-to-end:
+  - Codex backend payload now forwards `tools` definitions (responses-style function tools).
+  - SSE parser now extracts function calls (`function_call`) in addition to text deltas.
+  - JSON payload fallback parser now also extracts function calls.
+  - Codex backend responses are now mapped into `LLMResponse.tool_calls` (not text-only).
+- Improved Codex history payload shaping for tool loops by preserving message fields used by tool flow:
+  - `tool_calls`, `tool_call_id`, `name`, `function_call` (when present).
+  - Added responses-style conversion for tool loop continuity:
+    - Assistant tool calls are sent as `type=function_call` items.
+    - Tool results are sent as `type=function_call_output` with matching `call_id`.
+- Improved intent routing for real-time utility prompts so they avoid simple/no-tool path:
+  - Added explicit complex triggers for weather terms (`weather`, `cuaca`, `suhu`, etc.).
+  - Added explicit complex triggers for reminder phrasing (`set sekarang`, `pengingat`, `timer`, etc.).
+- Added tool-enforcement fallback path in `AgentLoop` for weather/reminder queries:
+  - If model replies text-only for a query that requires tools, Kabot forces one retry with strict tool-call instruction.
+  - If model still refuses tool-calling, Kabot executes deterministic fallback:
+    - `weather` fallback extracts location and runs weather tool directly.
+    - `cron` fallback parses relative time and schedules reminder via cron tool.
+    - `cron` fallback now also supports recurring natural language schedules:
+      - interval patterns (`tiap 4 jam`, `every 30 minutes`)
+      - daily patterns (`setiap hari jam 09:00`, `every day at 9`)
+      - weekly patterns (`setiap senin jam 08:00`, `every monday at 8`)
+      - complex cycle patterns (`selama X hari` + `libur Y hari` blocks) for shift-like repeating routines and other multi-phase reminders.
+- Added cycle-anchored recurring support in cron core/tooling:
+  - New `start_at` support in `cron` tool (`every_seconds` + anchor) for deterministic phase-aligned long cycles.
+  - Persisted schedule anchor (`startAtMs`) in cron store and restored on reload.
+  - `every` next-run computation now supports anchor-based recurrence (`start_at_ms`) for stable repeating cadence.
+- Added grouped schedule management for better multi-reminder UX:
+  - New cron payload metadata: `group_id`, `group_title`.
+  - New cron tool actions:
+    - `list_groups`
+    - `remove_group` (delete all jobs in one schedule group)
+    - `update_group` (rename/reschedule all jobs in one schedule group)
+  - `list` and `list_reminders` now expose group title/id so users can manage schedules by title/group.
+- Added deterministic cron-management fallback in `AgentLoop` when model skips tool calls:
+  - Supports `list` schedule groups from natural language queries.
+  - Supports `remove` schedule by `group_id`, title, or job id hints.
+  - Supports `update/rename` schedule groups by `group_id`/title with recurring schedule updates.
+- Refactored large reminder fallback logic into dedicated modules for maintainability:
+  - New `kabot/agent/cron_fallback_nlp.py` for reminder/cron intent parsing and cycle extraction.
+  - New `kabot/agent/fallback_i18n.py` for language-aware fallback messaging.
+  - `AgentLoop` now delegates parser and message rendering to these modules, reducing in-file complexity.
+- Continued structural refactor to reduce large-file risk and prepare folder-based maintenance:
+  - New package `kabot/agent/loop_core/`:
+    - `tool_enforcement.py` for required-tool detection + deterministic fallback execution.
+    - `session_flow.py` for session key/init/finalize lifecycle logic.
+    - `quality_runtime.py` for planning/self-eval/critic/lesson runtime logic.
+    - `execution_runtime.py` for complex loop execution, fallback model call, and tool-call handling.
+    - `directives_runtime.py` for think/verbose/elevated directive behavior helpers.
+  - `kabot/agent/loop.py` now acts as compatibility facade for extracted modules (legacy imports/patch points kept).
+  - `AgentLoop` source reduced from 1488 lines to 894 lines while preserving runtime behavior.
+  - New package `kabot/agent/tools/cron_ops/`:
+    - `actions.py` for cron action handlers (`add/list/list_groups/update/remove/run/status`).
+    - `schedule.py` for schedule/group-id parsing helpers.
+  - `kabot/agent/tools/cron.py` now delegates to `cron_ops` handlers while preserving existing `CronTool` API.
+- Refactored cron delivery callback + fallback pipeline into dedicated module:
+  - New `kabot/cron/callbacks.py`:
+    - message cleanup/fallback guards (`strip_reminder_context`, `resolve_cron_delivery_content`)
+    - lightweight AI rewrite helper (`render_cron_delivery_with_ai`)
+    - callback builders for gateway and CLI (`build_bus_cron_callback`, `build_cli_cron_callback`)
+  - `kabot/cli/commands.py` now wires `cron.on_job` via callback builders and keeps compatibility wrappers for existing helper imports/tests.
+- Folderized cron service internals into `kabot/cron/core/` with stable facade API:
+  - New `kabot/cron/core/persistence.py` for store load/save with atomic write and run-history compatibility handling.
+  - New `kabot/cron/core/scheduling.py` for next-run computation, due-job selection, and timer arming.
+  - New `kabot/cron/core/execution.py` for job execution state/history lifecycle.
+  - `kabot/cron/service.py` now delegates internal methods (`_load_store`, `_save_store`, `_recompute_next_runs`, `_get_next_wake_ms`, `_arm_timer`, `_execute_job`) to core modules while preserving public behavior and API.
+  - `CronService` source reduced to 237 lines.
+- Added input-language-aware fallback responses (no single-language hardcoding in agent fallback path):
+  - Detects Indonesian/English/Malay/Thai/Chinese from user input and responds with matching fallback/system guidance language.
+  - Added script-aware detection for Thai and Chinese input.
+  - Expanded fallback catalog for `ms`, `th`, and `zh`.
+- Cycle fallback now auto-assigns unique schedule title + group id:
+  - Created cycles return explicit summary (`title`, `group_id`, job count, period days).
+  - Supports custom multi-phase patterns beyond fixed 12-day shift (e.g. `3 hari masuk, 1 libur, 2 masuk, 1 libur`).
+  - Tool enforcement now auto-disarms after the required tool has been emitted, preventing duplicate reminder scheduling.
+  - Critic retry is skipped for turns that already executed tools, preventing post-tool meta/hallucinated self-critique replies.
+- Expanded deterministic multilingual trigger/parse coverage:
+  - Added reminder/weather/schedule-management keywords for Malay, Thai, and Chinese in `cron_fallback_nlp`.
+  - Extended relative-time parsing in `kabot/cron/parse.py` for `minit`, Thai units, and Chinese units (e.g. `分钟后`).
+  - Improved weather location extraction for mixed queries (`tanggal + suhu` / `right now`) so city parsing no longer keeps noise tokens like `berapa` or `right`.
+- Fixed root weather-tool failure mode for noisy LLM tool arguments:
+  - `WeatherTool` now normalizes incoming `location` text before fetch (`suhu di cilacap sekarang` -> `Cilacap`).
+  - Weather location normalization now strips trailing city descriptors (`kota`, `city`, `kabupaten`, etc.) to improve geocoding compatibility.
+  - For `simple` mode, weather retrieval now prefers Open-Meteo first (structured current weather) and uses wttr as fallback.
+  - Added safer request handling (`quote_plus`, explicit User-Agent, redirect handling) and cleaner error diagnostics.
+  - Added support for `png` output mode as URL passthrough for wttr.
+- Improved weather reply quality to be more human-care oriented and actionable:
+  - `WeatherTool` now appends a practical care tip based on parsed temperature + condition (heat/cold/rain/storm/fog), e.g. sunscreen, hydration, jacket, umbrella.
+  - Added explicit extreme-heat tier (`>=36°C`) with stronger heatstroke caution and midday outdoor activity guidance.
+  - Advice output is language-aware using existing fallback language detection (`id`/`en`/`ms`/`th`/`zh`) to reduce hardcoded single-language behavior.
+  - Weather tool-call pipeline now forwards user message context (`context_text`) in both normal tool-call execution and deterministic fallback enforcement, so language matching stays consistent even when location is normalized.
+- Reduced auto-skill false positives in chat:
+  - Skills matcher now treats generic words (`tool`, `tools`, `skill`, `skills`, etc.) as stop words.
+  - Prevents irrelevant auto-loaded skills (e.g. `mcporter`, `sherpa-onnx-tts`) on generic troubleshooting questions.
+- Optimized cron delivery runtime to stay natural but lightweight:
+  - Reminder fire path now uses a small direct `provider.chat(...)` rewrite helper instead of full `AgentLoop.process_direct(...)`.
+  - Keeps AI-natural reminder phrasing while reducing per-job runtime overhead and avoiding extra tool-loop/critic/session work on delivery turns.
+- Fixed Codex backend compatibility for user-only/system-less turns:
+  - Added non-empty default `instructions` in request builder to avoid `{"detail":"Instructions are required"}` errors.
+- Continued `AgentLoop` modular refactor:
+  - Added `kabot/agent/loop_core/message_runtime.py` for message processing, approval flow, system message handling, and isolated execution.
+  - Added `kabot/agent/loop_core/routing_runtime.py` for route context and per-agent model resolution.
+  - `kabot/agent/loop.py` now delegates these flows via compatibility wrappers and is reduced to 633 lines.
+- Added regression tests:
+  - `tests/providers/test_openai_codex_backend.py` (tools forwarded + function_call parsing)
+  - `tests/agent/test_router.py` (weather/reminder forced complex route)
+  - `tests/agent/test_tool_enforcement.py` (required-tool detection + deterministic fallback execution)
+  - `tests/agent/test_loop_facade_compat.py` (loop facade delegation compatibility)
+  - `tests/agent/test_fallback_i18n.py` (multilingual fallback detection/message rendering)
+  - `tests/agent/test_cron_fallback_nlp.py` (location extraction for mixed weather queries)
+  - `tests/agent/test_skills_matching.py` (guard against irrelevant auto skill-loading)
+  - `tests/tools/test_weather_tool.py` (location normalization + fallback path behavior + care-advice output, including extreme-heat warning)
+  - `tests/cron/test_parse.py` now covers multilingual relative-time parsing
+  - `tests/cron/test_callbacks.py` (cron callback/fallback delivery behavior)
+  - `tests/cron/test_service_facade.py` (cron service -> cron/core delegation compatibility)
+- Added centralized i18n runtime foundation:
+  - New `kabot/i18n/locale.py` for language detection and `kabot/i18n/catalog.py` for translation keys.
+  - `kabot/agent/fallback_i18n.py` now acts as compatibility facade over centralized i18n.
+- Unified multilingual lexicon to reduce parser/routing drift:
+  - New `kabot/agent/language/lexicon.py` shared by router, cron NLP fallback, and quality runtime immediate-action matcher.
+- Cron tool/action responses are now user-language-aware:
+  - `kabot/agent/tools/cron_ops/actions.py` now renders status/error/success text via i18n keys.
+  - `CronTool` now carries per-request context text for language selection.
+- Hardened required-tool guardrail against wrong-tool loops:
+  - `run_agent_loop` now enforces fallback when model repeatedly calls non-required tools for weather/reminder requests.
+- Weather output now includes source transparency:
+  - Open-Meteo and wttr responses append source metadata before care advice.
+- Added lightweight cron resource policies to keep scheduler scalable:
+  - New `kabot/cron/policies.py`.
+  - `CronService` now supports per-destination capacity limit and duplicate schedule rejection.
+- Setup wizard now has simple-first mode selection:
+  - New `Simple (Recommended)` vs `Advanced` mode in menu flow.
+  - Simple mode hides advanced maintenance sections (gateway/logging/doctor) by default.
+- Added new regression tests:
+  - `tests/agent/test_i18n_locale.py`
+  - `tests/agent/test_multilingual_lexicon.py`
+  - `tests/agent/test_tool_runtime_guards.py`
+  - `tests/cron/test_resource_policies.py`
+  - Extended `tests/cron/test_cron_tool.py` and `tests/tools/test_weather_tool.py` for localization/source behavior.
+
 ### Added - Universal Integrations (Meta + Fleet + Parity) (2026-02-19)
 
 - Added hardened HTTP integration guard configuration:

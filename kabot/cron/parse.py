@@ -4,18 +4,31 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
-# Relative time patterns (Bahasa Indonesia + English)
+# Relative time patterns (Indonesian, Malay, English, Thai, Chinese)
 _RELATIVE_PATTERNS = [
     # Indonesian
     (r"(\d+)\s*menit", lambda m: int(m.group(1)) * 60 * 1000),
     (r"(\d+)\s*jam", lambda m: int(m.group(1)) * 3600 * 1000),
     (r"(\d+)\s*detik", lambda m: int(m.group(1)) * 1000),
     (r"(\d+)\s*hari", lambda m: int(m.group(1)) * 86400 * 1000),
+    # Malay
+    (r"(\d+)\s*minit", lambda m: int(m.group(1)) * 60 * 1000),
+    (r"(\d+)\s*saat", lambda m: int(m.group(1)) * 1000),
     # English
     (r"(?:in\s+)?(\d+)\s*min(?:ute)?s?", lambda m: int(m.group(1)) * 60 * 1000),
     (r"(?:in\s+)?(\d+)\s*hours?", lambda m: int(m.group(1)) * 3600 * 1000),
     (r"(?:in\s+)?(\d+)\s*sec(?:ond)?s?", lambda m: int(m.group(1)) * 1000),
     (r"(?:in\s+)?(\d+)\s*days?", lambda m: int(m.group(1)) * 86400 * 1000),
+    # Thai
+    (r"(\d+)\s*นาที", lambda m: int(m.group(1)) * 60 * 1000),
+    (r"(\d+)\s*ชั่วโมง", lambda m: int(m.group(1)) * 3600 * 1000),
+    (r"(\d+)\s*วินาที", lambda m: int(m.group(1)) * 1000),
+    (r"(\d+)\s*วัน", lambda m: int(m.group(1)) * 86400 * 1000),
+    # Chinese
+    (r"(\d+)\s*分钟(?:后)?", lambda m: int(m.group(1)) * 60 * 1000),
+    (r"(\d+)\s*(?:小时|小時)(?:后)?", lambda m: int(m.group(1)) * 3600 * 1000),
+    (r"(\d+)\s*秒(?:后)?", lambda m: int(m.group(1)) * 1000),
+    (r"(\d+)\s*天(?:后)?", lambda m: int(m.group(1)) * 86400 * 1000),
 ]
 
 

@@ -26,6 +26,18 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
+## What's New (2026-02-20)
+
+- Centralized multilingual i18n layer added (`kabot/i18n/*`) to remove hardcoded single-language fallback responses.
+- Shared multilingual lexicon now powers router + cron fallback + quality runtime, reducing tool-calling drift.
+- Tool-enforcement is stricter: if model keeps calling the wrong tools for a required weather/reminder request, deterministic fallback is executed.
+- Cron responses are now localized by user language context.
+- Weather responses now include source transparency (`Open-Meteo` / `wttr.in`) plus practical care advice.
+- Cron scheduler now has lightweight resource guardrails:
+  - duplicate job rejection for same destination/schedule payload
+  - per-destination active-job capacity limit
+- Setup wizard now supports `Simple (Recommended)` vs `Advanced` mode for more user-friendly default onboarding.
+
 ## What's New (2026-02-19)
 
 - Multi-bot setup is faster with `Quick Add Multiple` in setup wizard (`Channels -> Manage Channel Instances`).

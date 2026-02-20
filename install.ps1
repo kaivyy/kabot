@@ -44,7 +44,8 @@ function Find-Python {
                     return $cmd
                 }
             }
-        } catch {
+        }
+        catch {
             continue
         }
     }
@@ -63,24 +64,22 @@ function Get-InstallEnvironment {
     if ($isHeadless) { $tags += "headless" }
 
     return @{
-        IsRemote = $isRemote
-        IsHeadless = $isHeadless
+        IsRemote      = $isRemote
+        IsHeadless    = $isHeadless
         IsInteractive = $isInteractive
-        Tags = $tags
+        Tags          = $tags
     }
 }
 
 function Main {
     # Print Logo (Ultra-High Fidelity Gemini Shaded)
     $logo = @"
-███            █████  █████      █████████      ██████████      █████████    ███████████ 
-░░░███         ░░███  ░░███     ░░███░░░███    ░░███░░░░░███   ░░███░░░░░███ ░░░░███░░░░ 
-  ░░░███        ░███ ░███      ░███   ░███    ░███    ░███   ░███    ░███    ░███     
-    ░░░███      ░██████        ░███████████   ░██████████    ░███    ░███    ░███     
-     ███░       ░███░░███      ░███░░░░░███   ░███░░░░░███   ░███    ░███    ░███     
-   ███░         ░███  ░░███    ░███    ░███   ░███    ░███   ░███    ░███    ░███     
- ███░          █████  █████   █████   █████  ███████████    ███████████     █████    
-░░░            ░░░░░   ░░░░░   ░░░░░   ░░░░░  ░░░░░░░░░░░    ░░░░░░░░░░░     ░░░░░    
+██╗  ██╗ █████╗ ██████╗  ██████╗ ████████╗
+██║ ██╔╝██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝
+█████╔╝ ███████║██████╔╝██║   ██║   ██║   
+██╔═██╗ ██╔══██║██╔══██╗██║   ██║   ██║   
+██║  ██╗██║  ██║██████╔╝╚██████╔╝   ██║   
+╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝   
 "@
     Write-Host $logo -ForegroundColor Cyan
 
@@ -88,7 +87,8 @@ function Main {
     $runtime = Get-InstallEnvironment
     if ($runtime.Tags.Count -gt 0) {
         Write-Info "Detected environment: windows ($($runtime.Tags -join ', '))"
-    } else {
+    }
+    else {
         Write-Info "Detected environment: windows"
     }
 
@@ -159,7 +159,8 @@ function Main {
     if ($runtime.IsInteractive) {
         Write-Info "Launching interactive setup wizard..."
         & "$venvPython" -m kabot setup
-    } else {
+    }
+    else {
         Write-Warn "Non-interactive session detected. Skipping setup wizard."
         Write-Info "Run this after install: kabot setup"
     }
@@ -181,7 +182,8 @@ function Main {
 
 try {
     Main
-} catch {
+}
+catch {
     Write-Error $_.Exception.Message
     Write-Host ""
     if ([Environment]::UserInteractive) {

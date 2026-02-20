@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from kabot.agent.language.lexicon import REMINDER_TERMS, WEATHER_TERMS
 from kabot.providers.base import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,10 @@ _COMPLEX_KEYWORDS = [
     "check", "verify", "test", "validate", "inspect",
     "cek", "periksa",  # ID
     # Schedule/remind
-    "remind", "schedule", "automate",
-    "ingatkan", "jadwalkan",  # ID
+    "automate", "set reminder",
+    *REMINDER_TERMS,
+    # Weather / live lookups
+    *WEATHER_TERMS,
     # Assist
     "help me", "tolong", "please",  # EN/ID
 ]

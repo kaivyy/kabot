@@ -19,7 +19,8 @@ from kabot.providers.chatgpt_backend_client import (
     build_chatgpt_request,
     build_chatgpt_headers,
     parse_sse_stream,
-    extract_content_from_event,
+    parse_chatgpt_stream_events,
+    parse_chatgpt_response_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -354,6 +355,7 @@ class LiteLLMProvider(LLMProvider):
             body = build_chatgpt_request(
                 model=api_model,
                 messages=messages,
+                tools=tools,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True,
@@ -391,35 +393,17 @@ class LiteLLMProvider(LLMProvider):
                     except UnicodeDecodeError:
                         sse_text = raw_payload.decode("utf-8", errors="replace")
 
-                content_parts = []
-                for event in parse_sse_stream(sse_text):
-                    text = extract_content_from_event(event)
-                    if text:
-                        content_parts.append(text)
+                parsed_response = parse_chatgpt_stream_events(parse_sse_stream(sse_text))
 
                 # Fallback for non-streaming JSON payloads
-                if not content_parts:
+                if not parsed_response.get("content") and not parsed_response.get("tool_calls"):
                     try:
                         payload = response.json()
-                        output = payload.get("output", [])
-                        for item in output if isinstance(output, list) else []:
-                            if not isinstance(item, dict):
-                                continue
-                            content = item.get("content", [])
-                            if not isinstance(content, list):
-                                continue
-                            for part in content:
-                                if not isinstance(part, dict):
-                                    continue
-                                part_type = part.get("type")
-                                if part_type in {"text", "output_text"} and part.get("text"):
-                                    content_parts.append(part["text"])
-                                elif part_type == "refusal" and part.get("refusal"):
-                                    content_parts.append(part["refusal"])
+                        parsed_response = parse_chatgpt_response_payload(payload)
                     except ValueError:
                         pass
 
-                return {"content": "".join(content_parts)}
+                return parsed_response
 
             except requests.exceptions.HTTPError as e:
                 # Log error response body for debugging
@@ -449,11 +433,48 @@ class LiteLLMProvider(LLMProvider):
             loop = asyncio.get_running_loop()
             response_data = await loop.run_in_executor(None, _make_request)
 
-            # Parse response
+            parsed_tool_calls: list[ToolCallRequest] = []
+            for tc in response_data.get("tool_calls", []):
+                if not isinstance(tc, dict):
+                    continue
+
+                name = tc.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+
+                tc_id = tc.get("id")
+                if not isinstance(tc_id, str) or not tc_id.strip():
+                    tc_id = f"call_{len(parsed_tool_calls) + 1}"
+
+                arguments = tc.get("arguments")
+                if isinstance(arguments, dict):
+                    parsed_args = arguments
+                elif isinstance(arguments, str):
+                    try:
+                        parsed_args = json.loads(arguments) if arguments.strip() else {}
+                    except json.JSONDecodeError:
+                        parsed_args = {"raw": arguments}
+                elif arguments is None:
+                    parsed_args = {}
+                else:
+                    parsed_args = {"value": arguments}
+
+                parsed_tool_calls.append(
+                    ToolCallRequest(
+                        id=tc_id,
+                        name=name,
+                        arguments=parsed_args,
+                    )
+                )
+
+            content = response_data.get("content", "")
+            logger.info(f"[DEBUG] ChatGPT Backend API parsed content length: {len(content)}")
+            logger.info(f"[DEBUG] ChatGPT Backend API content preview: {repr(content[:200])}")
+            logger.info(f"[DEBUG] ChatGPT Backend API tool_calls count: {len(parsed_tool_calls)}")
             return LLMResponse(
-                content=response_data.get("content", ""),
-                tool_calls=[],
-                finish_reason="stop",
+                content=content,
+                tool_calls=parsed_tool_calls,
+                finish_reason="tool_calls" if parsed_tool_calls else "stop",
                 usage={},
             )
         except (RateLimitError, APIConnectionError, ServiceUnavailableError, InvalidRequestError):

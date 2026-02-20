@@ -16,6 +16,14 @@ from rich.table import Table
 from rich.text import Text
 
 from kabot import __version__, __logo__
+from kabot.cron.callbacks import (
+    build_bus_cron_callback,
+    build_cli_cron_callback,
+    render_cron_delivery_with_ai as _render_cron_delivery_with_ai_impl,
+    resolve_cron_delivery_content as _resolve_cron_delivery_content_impl,
+    should_use_reminder_fallback as _should_use_reminder_fallback_impl,
+    strip_reminder_context as _strip_reminder_context_impl,
+)
 
 app = typer.Typer(
     name="kabot",
@@ -149,7 +157,10 @@ def _terminal_safe(text: str, encoding: str | None = None) -> str:
 
 def _print_agent_response(response: str, render_markdown: bool) -> None:
     """Render assistant response with consistent terminal styling."""
+    from loguru import logger
+    logger.debug(f"_print_agent_response received: {repr(response[:200] if response else response)}")
     content = _terminal_safe(response or "")
+    logger.debug(f"After _terminal_safe: {repr(content[:200] if content else content)}")
     body = Markdown(content) if render_markdown else Text(content)
     title = _terminal_safe(f"{__logo__} kabot")
     console.print()
@@ -455,41 +466,24 @@ def _inject_skill_env(config):
         console.print(f"[dim]Injected {count} skill environment variables[/dim]")
 
 
-_REMINDER_CONTEXT_MARKER = "\n\nRecent context:\n"
-_REMINDER_FAILURE_MARKERS = (
-    "all models failed",
-    "error:",
-    "authentication failed",
-    "rate limit",
-    "unauthorized",
-    "forbidden",
-    "quota",
-)
-
-
 def _strip_reminder_context(message: str) -> str:
-    """Return reminder message without attached context block."""
-    if not message:
-        return ""
-    if _REMINDER_CONTEXT_MARKER in message:
-        return message.split(_REMINDER_CONTEXT_MARKER, 1)[0].strip()
-    return message.strip()
+    """Compatibility wrapper for tests and existing imports."""
+    return _strip_reminder_context_impl(message)
 
 
 def _should_use_reminder_fallback(response: str | None) -> bool:
-    """Detect provider/error outputs where reminder should fallback to raw text."""
-    if not response or not response.strip():
-        return True
-    lowered = response.lower()
-    return any(marker in lowered for marker in _REMINDER_FAILURE_MARKERS)
+    """Compatibility wrapper for tests and existing imports."""
+    return _should_use_reminder_fallback_impl(response)
 
 
 def _resolve_cron_delivery_content(job_message: str, assistant_response: str | None) -> str:
-    """Resolve outbound reminder text, falling back to deterministic payload."""
-    fallback = _strip_reminder_context(job_message)
-    if _should_use_reminder_fallback(assistant_response):
-        return fallback
-    return (assistant_response or "").strip()
+    """Compatibility wrapper for tests and existing imports."""
+    return _resolve_cron_delivery_content_impl(job_message, assistant_response)
+
+
+async def _render_cron_delivery_with_ai(provider, model: str, job_message: str) -> str | None:
+    """Compatibility wrapper for tests and existing imports."""
+    return await _render_cron_delivery_with_ai_impl(provider, model, job_message)
 
 
 def _cli_exec_approval_prompt(command: str, config_path: Path) -> str:
@@ -621,32 +615,11 @@ def gateway(
     )
 
     # Set cron callback (needs agent)
-    async def on_cron_job(job: CronJob) -> str | None:
-        """Execute a cron job through the agent."""
-        assistant_response: str | None = None
-        try:
-            assistant_response = await agent.process_direct(
-                job.payload.message,
-                session_key=f"background:cron:{job.id}",
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to or "direct",
-            )
-        except Exception as exc:
-            logger.warning(f"Cron gateway execution failed for {job.id}: {exc}")
-
-        delivery_content = _resolve_cron_delivery_content(
-            job.payload.message,
-            assistant_response,
-        )
-        if job.payload.deliver and job.payload.to:
-            from kabot.bus.events import OutboundMessage
-            await bus.publish_outbound(OutboundMessage(
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to,
-                content=delivery_content
-            ))
-        return delivery_content
-    cron.on_job = on_cron_job
+    cron.on_job = build_bus_cron_callback(
+        provider=provider,
+        model=runtime_model,
+        publish_outbound=bus.publish_outbound,
+    )
 
     # Create heartbeat service
     async def on_heartbeat(prompt: str) -> str:
@@ -802,33 +775,14 @@ def agent(
         _wire_cli_exec_approval(agent_loop)
 
     # Setup cron callback for CLI
-    async def on_cron_job(job: CronJob) -> str | None:
-        """Execute a cron job and print to CLI."""
-        # Check if this is a CLI-originated job or generic
-        target = job.payload.channel
-        if target and target != "cli":
-            return None  # Ignore jobs for other channels? Or execute anyway?
-
-        assistant_response: str | None = None
-        try:
-            assistant_response = await agent_loop.process_direct(
-                job.payload.message,
-                session_key=f"background:cron:{job.id}"
-            )
-        except Exception as exc:
-            logger.warning(f"Cron CLI execution failed for {job.id}: {exc}")
-
-        delivery_content = _resolve_cron_delivery_content(
-            job.payload.message,
-            assistant_response,
-        )
-
-        # Verify if we should print it (if in interactive mode)
-        if delivery_content and job.payload.deliver:
-            _print_agent_response(f"[Reminder] {delivery_content}", render_markdown=markdown)
-        return delivery_content
-
-    cron.on_job = on_cron_job
+    cron.on_job = build_cli_cron_callback(
+        provider=provider,
+        model=runtime_model,
+        on_print=lambda content: _print_agent_response(
+            f"[Reminder] {content}",
+            render_markdown=markdown,
+        ),
+    )
 
     # Show spinner when logs are off (no output to miss); skip when logs are on
     def _thinking_ctx():

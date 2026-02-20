@@ -24,6 +24,14 @@ from kabot.utils.network import probe_gateway
 from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
 from kabot.providers.registry import ModelRegistry
 
+import sys
+if hasattr(sys.stdout, 'encoding') and sys.stdout.encoding:
+    if sys.stdout.encoding.lower() != 'utf-8':
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+
 console = Console()
 
 class ClackUI:
@@ -32,12 +40,12 @@ class ClackUI:
     @staticmethod
     def header():
         logo = r"""
-    _  __    _    ____   ____  _______ 
-   | |/ /   / \  | __ ) / __ \|__   __|
-   | ' /   / _ \ |  _ \| |  | |  | |   
-   |  <   / ___ \| |_) | |__| |  | |   
-   | . \ / /   \ \____/ \____/   |_|   
-   |_|\_/_/     \_\                    
+ ██╗  ██╗ █████╗ ██████╗  ██████╗ ████████╗
+ ██║ ██╔╝██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝
+ █████╔╝ ███████║██████╔╝██║   ██║   ██║   
+ ██╔═██╗ ██╔══██║██╔══██╗██║   ██║   ██║   
+ ██║  ██╗██║  ██║██████╔╝╚██████╔╝   ██║   
+ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝   
 """
         console.print(f"[bold cyan]{logo}[/bold cyan]")
         console.print(f"  🐈 [bold]kabot {__version__}[/bold] — Light footprint, heavy punch.")
@@ -151,6 +159,7 @@ class SetupWizard:
         self.config = load_config()
         self.registry = ModelRegistry()
         self.ran_section = False
+        self.setup_mode = "simple"
 
     def _suggest_gateway_mode(self) -> str:
         """Suggest gateway mode based on detected runtime environment."""
@@ -339,6 +348,18 @@ class SetupWizard:
 
         ClackUI.summary_box(self.config)
 
+        setup_mode = ClackUI.clack_select(
+            "Setup mode",
+            choices=[
+                questionary.Choice("Simple (Recommended)", value="simple"),
+                questionary.Choice("Advanced", value="advanced"),
+            ],
+            default="simple",
+        )
+        if setup_mode is None:
+            return self.config
+        self._set_setup_mode(setup_mode)
+
         # Create backup before making any changes
         try:
             console.print("│")
@@ -434,22 +455,49 @@ class SetupWizard:
         ClackUI.summary_box(self.config)
         
         ClackUI.section_start("Configuration Menu")
-        
-        options = [
-            questionary.Choice("Workspace (Set path + sessions)", value="workspace"),
-            questionary.Choice("Model / Auth (Providers, Keys, OAuth)", value="model"),
-            questionary.Choice("Tools & Sandbox (Search, Docker, Shell)", value="tools"),
-            questionary.Choice("Gateway (Port, Host, Bindings)", value="gateway"),
-            questionary.Choice("Skills (Install & Configure)", value="skills"),
-            questionary.Choice("Channels (Telegram, WhatsApp, Slack)", value="channels"),
-            questionary.Choice("Logging & Debugging", value="logging"),
-            questionary.Choice("Health Check (Run system diagnostic)", value="doctor"),
-            questionary.Choice("Continue & Finish", value="finish")
-        ]
+        options = self._main_menu_choices()
         
         choice = ClackUI.clack_select("Select section to configure", choices=options)
         ClackUI.section_end()
         return choice
+
+    def _set_setup_mode(self, mode: str) -> None:
+        self.setup_mode = "advanced" if mode == "advanced" else "simple"
+
+    def _main_menu_option_values(self) -> list[str]:
+        if self.setup_mode == "advanced":
+            return [
+                "workspace",
+                "model",
+                "tools",
+                "gateway",
+                "skills",
+                "channels",
+                "logging",
+                "doctor",
+                "finish",
+            ]
+        return [
+            "workspace",
+            "model",
+            "skills",
+            "channels",
+            "finish",
+        ]
+
+    def _main_menu_choices(self) -> list:
+        labels = {
+            "workspace": "Workspace (Set path + sessions)",
+            "model": "Model / Auth (Providers, Keys, OAuth)",
+            "tools": "Tools & Sandbox (Search, Docker, Shell)",
+            "gateway": "Gateway (Port, Host, Bindings)",
+            "skills": "Skills (Install & Configure)",
+            "channels": "Channels (Telegram, WhatsApp, Slack)",
+            "logging": "Logging & Debugging",
+            "doctor": "Health Check (Run system diagnostic)",
+            "finish": "Continue & Finish",
+        }
+        return [questionary.Choice(labels[value], value=value) for value in self._main_menu_option_values()]
 
     def _configure_workspace(self):
         ClackUI.section_start("Workspace")

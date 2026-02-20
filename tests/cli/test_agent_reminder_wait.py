@@ -1,9 +1,13 @@
 import shutil
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from kabot.cli.commands import (
     _next_cli_reminder_delay_seconds,
+    _render_cron_delivery_with_ai,
     _resolve_cron_delivery_content,
     _strip_reminder_context,
 )
@@ -103,3 +107,67 @@ def test_resolve_cron_delivery_content_uses_assistant_reply_when_valid():
 
     resolved = _resolve_cron_delivery_content(message, assistant_reply)
     assert resolved == assistant_reply
+
+
+@pytest.mark.asyncio
+async def test_render_cron_delivery_with_ai_returns_natural_response_and_strips_context():
+    provider = MagicMock()
+    provider.chat = AsyncMock(
+        return_value=SimpleNamespace(
+            content="Yuk, waktunya makan sekarang.",
+            has_tool_calls=False,
+        )
+    )
+    message = "ingat makan\n\nRecent context:\n- User: tadi meeting"
+
+    result = await _render_cron_delivery_with_ai(
+        provider=provider,
+        model="openai-codex/gpt-5.3-codex",
+        job_message=message,
+    )
+
+    assert result == "Yuk, waktunya makan sekarang."
+    provider.chat.assert_awaited_once()
+    call_kwargs = provider.chat.await_args.kwargs
+    assert call_kwargs["model"] == "openai-codex/gpt-5.3-codex"
+    assert "Recent context:" not in call_kwargs["messages"][1]["content"]
+    assert "ingat makan" in call_kwargs["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_render_cron_delivery_with_ai_returns_none_on_provider_exception():
+    provider = MagicMock()
+    provider.chat = AsyncMock(side_effect=RuntimeError("provider down"))
+
+    result = await _render_cron_delivery_with_ai(
+        provider=provider,
+        model="openai-codex/gpt-5.3-codex",
+        job_message="ingat minum air",
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_render_cron_delivery_with_ai_returns_none_for_tool_call_or_failure_marker():
+    provider = MagicMock()
+    provider.chat = AsyncMock(
+        side_effect=[
+            SimpleNamespace(content="", has_tool_calls=True),
+            SimpleNamespace(content="All models failed. Last error: RateLimitError", has_tool_calls=False),
+        ]
+    )
+
+    tool_call_result = await _render_cron_delivery_with_ai(
+        provider=provider,
+        model="openai-codex/gpt-5.3-codex",
+        job_message="ingat jalan sebentar",
+    )
+    failure_result = await _render_cron_delivery_with_ai(
+        provider=provider,
+        model="openai-codex/gpt-5.3-codex",
+        job_message="ingat jalan sebentar",
+    )
+
+    assert tool_call_result is None
+    assert failure_result is None

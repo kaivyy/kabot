@@ -1,6 +1,6 @@
 @echo off
 title Kabot Watchdog
-echo 🦅 Starting Kabot Watchdog...
+echo Starting Kabot Watchdog...
 
 :loop
 python -m kabot gateway

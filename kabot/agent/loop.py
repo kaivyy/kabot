@@ -53,6 +53,17 @@ from kabot.core.resilience import ResilienceLayer
 
 # Phase 12: Critical Features
 from kabot.agent.truncator import ToolResultTruncator
+from kabot.agent.cron_fallback_nlp import (
+    REMINDER_KEYWORDS,
+    WEATHER_KEYWORDS,
+)
+from kabot.agent.loop_core import directives_runtime as loop_directives_runtime
+from kabot.agent.loop_core import execution_runtime as loop_execution_runtime
+from kabot.agent.loop_core import message_runtime as loop_message_runtime
+from kabot.agent.loop_core import quality_runtime as loop_quality_runtime
+from kabot.agent.loop_core import routing_runtime as loop_routing_runtime
+from kabot.agent.loop_core import session_flow as loop_session_flow
+from kabot.agent.loop_core import tool_enforcement as loop_tool_enforcement
 
 # Phase 13: Resilience & Security
 from kabot.core.sentinel import CrashSentinel, format_recovery_message
@@ -168,7 +179,7 @@ class AgentLoop:
         self._running = False
         self._register_default_tools()
 
-        # Phase 8: System Internals — Command Router
+        # Phase 8: System Internals â€” Command Router
         self.command_router = CommandRouter()
         self._status_service = StatusService(agent_loop=self)
         self._benchmark_service = BenchmarkService(provider=provider, models=self.fallbacks)
@@ -484,80 +495,7 @@ class AgentLoop:
         )
 
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
-
-
-        if msg.channel == "system":
-            return await self._process_system_message(msg)
-
-        approval_action = self._parse_approval_command(msg.content)
-        if approval_action:
-            action, approval_id = approval_action
-            return await self._process_pending_exec_approval(msg, action=action, approval_id=approval_id)
-
-        # Phase 8: Intercept slash commands BEFORE routing to LLM
-        if self.command_router.is_command(msg.content):
-            ctx = CommandContext(
-                message=msg.content,
-                args=[],
-                sender_id=msg.sender_id,
-                channel=msg.channel,
-                chat_id=msg.chat_id,
-                session_key=msg.session_key,
-                agent_loop=self,
-            )
-            result = await self.command_router.route(msg.content, ctx)
-            if result:
-                return OutboundMessage(
-                    channel=msg.channel,
-                    chat_id=msg.chat_id,
-                    content=result,
-                )
-
-        session = await self._init_session(msg)
-
-        # Phase 9: Parse directives from message body
-        clean_body, directives = self.directive_parser.parse(msg.content)
-        effective_content = clean_body or msg.content
-
-        # Store directives in session metadata
-        if directives.raw_directives:
-            active = self.directive_parser.format_active_directives(directives)
-            logger.info(f"Directives active: {active}")
-            
-            session.metadata['directives'] = {
-                'think': directives.think,
-                'verbose': directives.verbose,
-                'elevated': directives.elevated,
-            }
-            # Ensure metadata persists
-            self.sessions.save(session)
-
-        # Phase 9: Model override via directive
-        if directives.model:
-            logger.info(f"Directive override: model → {directives.model}")
-
-        conversation_history = self.memory.get_conversation_context(msg.session_key, max_messages=30)
-
-        # Router triase: SIMPLE vs COMPLEX
-        decision = await self.router.route(effective_content)
-        logger.info(f"Route: profile={decision.profile}, complex={decision.is_complex}")
-
-        messages = self.context.build_messages(
-            history=conversation_history,
-            current_message=effective_content,
-            media=msg.media if hasattr(msg, 'media') else None,
-            channel=msg.channel,
-            chat_id=msg.chat_id,
-            profile=decision.profile,
-            tool_names=self.tools.tool_names,
-        )
-
-        if decision.is_complex:
-            final_content = await self._run_agent_loop(msg, messages, session)
-        else:
-            final_content = await self._run_simple_response(msg, messages)
-
-        return await self._finalize_session(msg, session, final_content)
+        return await loop_message_runtime.process_message(self, msg)
 
     @staticmethod
     def _parse_approval_command(content: str) -> tuple[str, str | None] | None:
@@ -577,699 +515,97 @@ class AgentLoop:
         action: str,
         approval_id: str | None = None,
     ) -> OutboundMessage:
-        """Handle explicit approval commands for pending exec actions."""
-        session = await self._init_session(msg)
-        exec_tool = self.tools.get("exec")
-        if not exec_tool or not hasattr(exec_tool, "consume_pending_approval"):
-            return await self._finalize_session(
-                msg,
-                session,
-                "No executable approval flow is available in this session.",
-            )
-
-        if action == "deny":
-            cleared = exec_tool.clear_pending_approval(msg.session_key, approval_id)
-            if cleared:
-                return await self._finalize_session(
-                    msg,
-                    session,
-                    "Pending command approval denied.",
-                )
-            return await self._finalize_session(
-                msg,
-                session,
-                "No matching pending command approval found.",
-            )
-
-        pending = exec_tool.consume_pending_approval(msg.session_key, approval_id)
-        if not pending:
-            return await self._finalize_session(
-                msg,
-                session,
-                "No matching pending command approval found.",
-            )
-
-        command = pending.get("command")
-        if not isinstance(command, str) or not command.strip():
-            return await self._finalize_session(
-                msg,
-                session,
-                "Pending approval entry is invalid.",
-            )
-
-        working_dir = pending.get("working_dir")
-        result = await exec_tool.execute(
-            command=command,
-            working_dir=working_dir if isinstance(working_dir, str) else None,
-            _session_key=msg.session_key,
-            _approved_by_user=True,
+        return await loop_message_runtime.process_pending_exec_approval(
+            self,
+            msg,
+            action=action,
+            approval_id=approval_id,
         )
-        return await self._finalize_session(msg, session, result)
 
     def _route_context_for_message(self, msg: InboundMessage) -> dict[str, Any]:
-        """Build normalized routing context from message + channel instance metadata."""
-        metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
-        instance_meta = metadata.get("channel_instance") if isinstance(metadata.get("channel_instance"), dict) else {}
-
-        account_id = msg.account_id
-        instance_id = instance_meta.get("id")
-        if not account_id and isinstance(instance_id, (str, int)):
-            account_id = str(instance_id)
-
-        peer_kind = msg.peer_kind
-        peer_id = msg.peer_id
-        if not peer_kind and metadata.get("is_group") is True:
-            peer_kind = "group"
-        elif not peer_kind and msg.chat_id:
-            peer_kind = "direct"
-        if not peer_id and msg.chat_id:
-            peer_id = msg.chat_id
-
-        peer = None
-        if isinstance(peer_kind, str) and peer_kind and isinstance(peer_id, str) and peer_id:
-            peer = {"kind": peer_kind, "id": peer_id}
-
-        parent_peer = msg.parent_peer if isinstance(msg.parent_peer, dict) else None
-
-        forced_agent_id = None
-        if isinstance(instance_meta.get("agent_binding"), str) and instance_meta["agent_binding"].strip():
-            forced_agent_id = instance_meta["agent_binding"].strip()
-
-        return {
-            "channel": msg.channel,
-            "account_id": account_id,
-            "forced_agent_id": forced_agent_id,
-            "peer": peer,
-            "parent_peer": parent_peer,
-            "guild_id": msg.guild_id,
-            "team_id": msg.team_id,
-            "thread_id": msg.thread_id,
-        }
+        return loop_routing_runtime.route_context_for_message(self, msg)
 
     def _resolve_route_for_message(self, msg: InboundMessage) -> dict[str, str]:
-        """Resolve OpenClaw-compatible route for a message with instance-aware context."""
-        from kabot.routing.bindings import resolve_agent_route
-
-        ctx = self._route_context_for_message(msg)
-        return resolve_agent_route(
-            config=self.config,
-            channel=ctx["channel"],
-            account_id=ctx["account_id"],
-            forced_agent_id=ctx["forced_agent_id"],
-            peer=ctx["peer"],
-            parent_peer=ctx["parent_peer"],
-            guild_id=ctx["guild_id"],
-            team_id=ctx["team_id"],
-            thread_id=ctx["thread_id"],
-        )
+        return loop_routing_runtime.resolve_route_for_message(self, msg)
 
     def _get_session_key(self, msg: InboundMessage) -> str:
-        """Get session key with OpenClaw-compatible agent routing."""
-        route = self._resolve_route_for_message(msg)
-        return route["session_key"]
+        return loop_session_flow.get_session_key(self, msg)
 
     def _resolve_models_for_message(self, msg: InboundMessage) -> list[str]:
-        """Resolve model chain for this message, including per-agent fallback overrides."""
-        from kabot.agent.agent_scope import resolve_agent_model, resolve_agent_model_fallbacks
-
-        route = self._resolve_route_for_message(msg)
-        agent_id = route["agent_id"]
-
-        primary = self.model
-        fallback_models = list(self.fallbacks)
-
-        agent_model = resolve_agent_model(self.config, agent_id)
-        if agent_model:
-            primary = self.registry.resolve(agent_model)
-
-            # OpenClaw-compatible behavior: per-agent fallbacks override global fallbacks.
-            agent_fallbacks = resolve_agent_model_fallbacks(self.config, agent_id)
-            if agent_fallbacks:
-                fallback_models = [self.registry.resolve(m) for m in agent_fallbacks]
-
-        chain: list[str] = []
-        seen: set[str] = set()
-        for model in [primary, *fallback_models]:
-            resolved = self.registry.resolve(model)
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            chain.append(resolved)
-        return chain
+        return loop_routing_runtime.resolve_models_for_message(self, msg)
 
     def _resolve_model_for_message(self, msg: InboundMessage) -> str:
-        """Resolve the model to use for this message based on agent routing.
-
-        This implements per-agent model assignment with fallbacks (OpenClaw-compatible):
-        - If the agent has a model override, use it
-        - If the agent has fallbacks, they override global fallbacks
-        - Otherwise, use the default model (self.model)
-
-        Args:
-            msg: The inbound message to resolve model for
-
-        Returns:
-            The model string to use for this message
-        """
-        return self._resolve_models_for_message(msg)[0]
+        return loop_routing_runtime.resolve_model_for_message(self, msg)
 
     def _resolve_agent_id_for_message(self, msg: InboundMessage) -> str:
-        """Resolve routed agent id for this message."""
-        route = self._resolve_route_for_message(msg)
-        return route["agent_id"]
+        return loop_routing_runtime.resolve_agent_id_for_message(self, msg)
 
     async def _init_session(self, msg: InboundMessage) -> Any:
-        logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {msg.content[:80]}...")
-
-        # Get session key with agent routing and set it on the message
-        # Only generate new session key if one isn't already set
-        if not msg._session_key:
-            session_key = self._get_session_key(msg)
-            msg._session_key = session_key
-        else:
-            session_key = msg._session_key
-
-        # Phase 14: Set run_id for tool event tracking
-        run_id = f"msg-{session_key}-{msg.timestamp.timestamp()}"
-        self.tools._run_id = run_id
-
-        # Phase 13: Mark session active before processing (crash recovery)
-        message_id = f"{msg.channel}:{msg.chat_id}:{msg.sender_id}"
-        self.sentinel.mark_session_active(
-            session_id=session_key,
-            message_id=message_id,
-            user_message=msg.content
-        )
-
-        session = self.sessions.get_or_create(session_key)
-        self.memory.create_session(session_key, msg.channel, msg.chat_id, msg.sender_id)
-        await self.memory.add_message(session_key, "user", msg.content)
-
-        for tool_name in ["message", "spawn", "cron"]:
-            tool = self.tools.get(tool_name)
-            if hasattr(tool, "set_context"):
-                logger.debug(f"Setting context for {tool_name}: {msg.channel}:{msg.chat_id}")
-                tool.set_context(msg.channel, msg.chat_id)
-
-        for tool_name in ["save_memory", "get_memory", "list_reminders"]:
-            tool = self.tools.get(tool_name)
-            if hasattr(tool, "set_context"):
-                tool.set_context(session_key)
-
-        # Phase 13: Set session context for spawn tool (for persistent registry)
-        spawn_tool = self.tools.get("spawn")
-        if spawn_tool and hasattr(spawn_tool, "set_session_context"):
-            spawn_tool.set_session_context(session_key)
-
-        return session
+        return await loop_session_flow.init_session(self, msg)
 
     async def _run_simple_response(self, msg: InboundMessage, messages: list) -> str | None:
-        """Direct single-shot response for simple queries (no loop, no tools)."""
-        try:
-            # Resolve model for this agent
-            model = self._resolve_model_for_message(msg)
-
-            # Check for context overflow and compact if needed
-            if self.context_guard.check_overflow(messages, model):
-                logger.warning("Context overflow detected in simple response, compacting history")
-                messages = await self.compactor.compact(
-                    messages, self.provider, model, keep_recent=10
-                )
-                # Verify compaction was successful
-                if self.context_guard.check_overflow(messages, model):
-                    logger.warning("Context still over limit after compaction")
-
-            response = await self.provider.chat(
-                messages=messages,
-                model=model,
-            )
-            return response.content or ""
-        except Exception as e:
-            logger.error(f"Simple response failed: {e}")
-            return f"Sorry, an error occurred: {str(e)}"
+        return await loop_execution_runtime.run_simple_response(self, msg, messages)
 
     async def _run_agent_loop(self, msg: InboundMessage, messages: list, session: Any) -> str | None:
-        """
-        Full Planner→Executor→Critic loop for complex tasks.
-
-        Phase 1 (Plan): Ask LLM to decompose task + success criteria
-        Phase 2 (Execute): Tool calling loop (existing behavior)
-        Phase 3 (Critic): Score result 0-10, retry if < 7
-        """
-        iteration = 0
-
-        # Resolve model chain for this agent.
-        models_to_try = self._resolve_models_for_message(msg)
-        model = models_to_try[0]
-
-        self_eval_retried = False
-        critic_retried = 0
-
-        # Adaptive critic system: weaker models get more lenient thresholds
-        is_weak_model = self._is_weak_model(model)
-        max_critic_retries = 1 if is_weak_model else 2  # Reduce retries for weak models
-        critic_threshold = 5 if is_weak_model else 7    # Lower threshold for weak models
-
-        first_score = None
-        already_published = False  # Track if we already sent content to user
-
-        # Phase 1: Planning — inject plan into context (skip for simple tool tasks)
-        plan = await self._plan_task(msg.content)
-        if plan:
-            messages.append({"role": "user", "content": f"[SYSTEM PLAN]\n{plan}\n\nNow execute this plan step by step."})
-
-        # Phase 12: Apply think mode before loop starts (only once)
-        messages = self._apply_think_mode(messages, session)
-
-        while iteration < self.max_iterations:
-            iteration += 1
-
-            # Check for context overflow and compact if needed
-            if self.context_guard.check_overflow(messages, model):
-                logger.warning("Context overflow detected, compacting history")
-                messages = await self.compactor.compact(
-                    messages, self.provider, model, keep_recent=10
-                )
-                # Verify compaction was successful
-                if self.context_guard.check_overflow(messages, model):
-                    logger.warning("Context still over limit after compaction")
-
-            response, error = await self._call_llm_with_fallback(messages, models_to_try)
-            if not response:
-                return f"Sorry, all available models failed. Last error: {str(error)}"
-
-            if response.content:
-                # Self-evaluation: detect refusal patterns before sending to user
-                if not response.has_tool_calls and not self_eval_retried:
-                    passed, nudge = self._self_evaluate(msg.content, response.content)
-                    if not passed and nudge:
-                        self_eval_retried = True
-                        logger.warning(f"Self-eval: refusal detected, retrying (iter {iteration})")
-                        messages = self.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
-                        messages.append({"role": "user", "content": nudge})
-                        continue
-
-                # Phase 3: Critic — score before sending final response (adaptive for weak models)
-                if not response.has_tool_calls and critic_retried < max_critic_retries and not is_weak_model:
-                    score, feedback = await self._critic_evaluate(msg.content, response.content, model)
-                    if first_score is None:
-                        first_score = score
-
-                    if score < critic_threshold and critic_retried < max_critic_retries:
-                        critic_retried += 1
-                        logger.warning(f"Critic: score {score}/10 (threshold: {critic_threshold}), retrying ({critic_retried}/{max_critic_retries})")
-                        messages = self.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
-                        messages.append({"role": "user", "content": (
-                            f"[CRITIC FEEDBACK - Score: {score}/10]\n{feedback}\n\n"
-                            f"Please improve your response based on this feedback."
-                        )})
-                        continue
-                    else:
-                        # Log lesson if we had to retry
-                        if critic_retried > 0:
-                            await self._log_lesson(
-                                question=msg.content,
-                                feedback=feedback,
-                                score_before=first_score or 0,
-                                score_after=score,
-                            )
-
-                # Only publish intermediate content if there are more tool calls coming
-                if response.has_tool_calls:
-                    await self.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel, chat_id=msg.chat_id, content=response.content
-                    ))
-                    already_published = True
-
-                messages = self.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
-                if not response.has_tool_calls:
-                    # Final response — DON'T publish here, let _finalize_session handle it
-                    return response.content
-
-            if response.has_tool_calls:
-                messages = await self._process_tool_calls(msg, messages, response, session)
-            else:
-                return response.content
-        return "I've completed processing but have no response to give."
+        return await loop_execution_runtime.run_agent_loop(self, msg, messages, session)
 
     def _self_evaluate(self, question: str, answer: str) -> tuple[bool, str | None]:
-        """Quick heuristic: detect common failure patterns (no extra LLM call)."""
-        if not answer or len(answer) < 30:
-            return True, None
+        return loop_quality_runtime.self_evaluate(self, question, answer)
 
-        answer_lower = answer.lower()
+    _IMMEDIATE_ACTION_PATTERNS = loop_quality_runtime.IMMEDIATE_ACTION_PATTERNS
 
-        # Multilingual refusal patterns (EN, ID, ES, FR, DE, PT, RU, JA, ZH, KO)
-        refusal_patterns = [
-            # English
-            "i cannot", "i can't", "i don't have access", "i'm unable to",
-            "i am unable to", "cannot access", "i'm not able to",
-            # Indonesian
-            "saya tidak bisa", "saya tidak dapat", "saya tidak memiliki akses",
-            "tidak dapat mengakses",
-            # Spanish
-            "no puedo", "no tengo acceso",
-            # French
-            "je ne peux pas", "je n'ai pas accès",
-            # German
-            "ich kann nicht", "ich habe keinen zugriff",
-            # Portuguese
-            "não consigo", "não tenho acesso",
-            # Russian
-            "я не могу", "у меня нет доступа",
-            # Japanese
-            "できません", "アクセスできません",
-            # Chinese
-            "我无法", "我不能", "无法访问",
-            # Korean
-            "할 수 없", "접근할 수 없",
-        ]
+    _REMINDER_KEYWORDS = REMINDER_KEYWORDS
+    _WEATHER_KEYWORDS = WEATHER_KEYWORDS
 
-        has_refusal = any(p in answer_lower for p in refusal_patterns)
-        if has_refusal and len(self.tools.tool_names) > 0:
-            tool_list = ", ".join(self.tools.tool_names)
-            return False, (
-                f"SYSTEM: You said you cannot do something, but you have these tools: {tool_list}. "
-                f"Use the appropriate tool instead of refusing. For example, use 'read_file' to read files, "
-                f"'exec' to run commands, 'web_search' to search the web. Try again and actually use a tool."
-            )
+    def _existing_schedule_titles(self) -> list[str]:
+        return loop_tool_enforcement.existing_schedule_titles(self)
 
-        return True, None
+    def _required_tool_for_query(self, question: str) -> str | None:
+        return loop_tool_enforcement.required_tool_for_query_for_loop(self, question)
 
-    # Patterns for immediate-action tasks that should NEVER go through planning
-    _IMMEDIATE_ACTION_PATTERNS = [
-        # Reminders / scheduling (multilingual)
-        "remind", "reminder", "schedule", "alarm",
-        "ingatkan", "bangunkan", "jadwalkan", "pengingat",
-        "timer", "wake me",
-        # Weather
-        "weather", "cuaca", "suhu", "temperature",
-        # Quick lookups
-        "stock", "crypto", "saham", "harga",
-        # Time queries
-        "what time", "jam berapa",
-    ]
+    def _make_unique_schedule_title(self, base_title: str) -> str:
+        return loop_tool_enforcement.make_unique_schedule_title_for_loop(self, base_title)
+
+    def _build_group_id(self, title: str) -> str:
+        return loop_tool_enforcement.build_group_id_for_loop(self, title)
+
+    async def _execute_required_tool_fallback(self, required_tool: str, msg: InboundMessage) -> str | None:
+        return await loop_tool_enforcement.execute_required_tool_fallback(self, required_tool, msg)
 
     async def _plan_task(self, question: str) -> str | None:
-        """Phase 1: Ask LLM to create a brief execution plan.
-        
-        Skips planning for immediate-action tasks (reminders, weather, etc.)
-        that just need a single tool call.
-        """
-        if len(question) < 30:
-            return None  # Too short to need planning
-
-        # Skip planning for immediate-action tasks — these should call tools directly
-        q_lower = question.lower()
-        for pattern in self._IMMEDIATE_ACTION_PATTERNS:
-            if pattern in q_lower:
-                logger.info(f"Skipping plan for immediate-action task: matched '{pattern}'")
-                return None
-
-        try:
-            plan_prompt = f"""Create a brief plan (max 5 steps) to answer this request.
-For each step, specify:
-1. What to do
-2. Which tool to use (if any)
-3. Success criteria
-
-CRITICAL: If the request is for creating code, skills, or complex actions, Step 1 MUST be "Ask user for approval/details".
-Do not plan to write/execute immediately.
-
-Request: {question[:500]}
-
-Reply with a numbered plan. Be concise."""
-
-            response = await self.provider.chat(
-                messages=[{"role": "user", "content": plan_prompt}],
-                model=self.model,
-                max_tokens=300,
-                temperature=0.3
-            )
-            logger.info(f"Plan generated: {response.content[:100]}...")
-            return response.content
-        except Exception as e:
-            logger.warning(f"Planning failed: {e}")
-            return None
+        return await loop_quality_runtime.plan_task(self, question)
 
     def _is_weak_model(self, model: str) -> bool:
-        """Check if model is considered weak and needs adaptive critic thresholds."""
-        weak_models = [
-            "llama-4-scout", "llama-3.1-8b", "llama-3-8b", "gemma-7b",
-            "mistral-7b", "phi-3", "qwen-7b", "codellama-7b"
-        ]
-        model_lower = model.lower()
-        return any(weak in model_lower for weak in weak_models)
+        return loop_quality_runtime.is_weak_model(self, model)
 
     async def _critic_evaluate(self, question: str, answer: str, model: str | None = None) -> tuple[int, str]:
-        """Phase 3: Score response quality 0-10 with rubric. Uses separate model for weak models."""
-        try:
-            # For weak models, use a stronger model for evaluation if available
-            eval_model = model or self.model
-            if self._is_weak_model(eval_model):
-                # Try to use a stronger model for evaluation
-                stronger_models = ["openai/gpt-4o", "anthropic/claude-3-5-sonnet-20241022", "openai/gpt-4o-mini"]
-                for strong_model in stronger_models:
-                    try:
-                        # Test if this model is available
-                        test_response = await self.provider.chat(
-                            messages=[{"role": "user", "content": "test"}],
-                            model=strong_model,
-                            max_tokens=5,
-                            temperature=0.0
-                        )
-                        eval_model = strong_model
-                        logger.info(f"Using stronger model {strong_model} for critic evaluation")
-                        break
-                    except Exception:
-                        continue
-            eval_prompt = f"""Score this AI response 0-10 based on:
-- Correctness: Does it accurately answer the question?
-- Completeness: Is anything important missing?
-- Evidence: Did it use tools/data or fabricate information?
-- Clarity: Is it well-structured and clear?
-
-Question: {question[:300]}
-Response: {answer[:800]}
-
-Reply in this EXACT format:
-SCORE: X
-FEEDBACK: <one sentence explaining the score>"""
-
-            response = await self.provider.chat(
-                messages=[{"role": "user", "content": eval_prompt}],
-                model=eval_model,
-                max_tokens=100,
-                temperature=0.0
-            )
-
-            # Parse score
-            import re
-            score_match = re.search(r'SCORE:\s*(\d+)', response.content)
-            score = int(score_match.group(1)) if score_match else 7
-            score = max(0, min(10, score))  # Clamp 0-10
-
-            feedback_match = re.search(r'FEEDBACK:\s*(.+)', response.content)
-            feedback = feedback_match.group(1).strip() if feedback_match else response.content
-
-            logger.info(f"Critic score: {score}/10 — {feedback[:80]}")
-            return score, feedback
-
-        except Exception as e:
-            logger.warning(f"Critic evaluation failed: {e}")
-            return 7, "Evaluation skipped"  # Pass by default on error
+        return await loop_quality_runtime.critic_evaluate(self, question, answer, model)
 
     async def _log_lesson(self, question: str, feedback: str,
                           score_before: int, score_after: int) -> None:
-        """Log a metacognition lesson from critic-driven retries."""
-        try:
-            import uuid
-            lesson_id = str(uuid.uuid4())[:12]
-            self.memory.metadata.add_lesson(
-                lesson_id=lesson_id,
-                trigger=question[:200],
-                mistake=f"Initial response scored {score_before}/10",
-                fix=feedback[:200],
-                guardrail=f"Improved to {score_after}/10 after retry",
-                score_before=score_before,
-                score_after=score_after,
-                task_type="complex",
-            )
-            logger.info(f"Lesson logged: {lesson_id} ({score_before}→{score_after})")
-        except Exception as e:
-            logger.warning(f"Failed to log lesson: {e}")
+        await loop_quality_runtime.log_lesson(self, question, feedback, score_before, score_after)
 
     async def _call_llm_with_fallback(self, messages: list, models: list) -> tuple[Any | None, Exception | None]:
-        last_error = None
-        for current_model in models:
-            try:
-                # Use rotated key if available
-                original_key = None
-                if self.auth_rotation:
-                    current_key = self.auth_rotation.current_key()
-                    # Update provider key temporarily
-                    if hasattr(self.provider, 'api_key'):
-                        original_key = self.provider.api_key
-                        self.provider.api_key = current_key
-
-                response = await self.provider.chat(
-                    messages=messages,
-                    tools=self.tools.get_definitions(),
-                    model=current_model
-                )
-
-                # Restore original key
-                if self.auth_rotation and original_key is not None:
-                    self.provider.api_key = original_key
-
-                # Phase 9: Reset resilience on success
-                self.resilience.on_success()
-
-                return response, None
-            except Exception as e:
-                error_str = str(e).lower()
-
-                # Check if auth/rate limit error
-                if self.auth_rotation and hasattr(self.provider, 'api_key'):
-                    if "401" in error_str or "429" in error_str or "rate" in error_str:
-                        reason = "rate_limit" if "429" in error_str or "rate" in error_str else "auth_error"
-                        current_key = self.auth_rotation.current_key()
-                        self.auth_rotation.mark_failed(current_key, reason)
-
-                        # Try rotating to next key
-                        next_key = self.auth_rotation.rotate()
-                        if next_key != current_key:
-                            logger.info(f"Retrying with rotated key due to {reason}")
-                            # Restore original key before retry
-                            if original_key is not None:
-                                self.provider.api_key = original_key
-                            continue  # Retry with new key
-
-                # Restore original key on error
-                if self.auth_rotation and original_key is not None:
-                    self.provider.api_key = original_key
-
-                logger.warning(f"Model {current_model} failed: {e}")
-                last_error = e
-                # Phase 9: Try resilience recovery
-                status_code = getattr(e, 'status_code', None)
-                recovery = await self.resilience.handle_error(e, status_code=status_code)
-                if recovery["action"] == "model_fallback" and recovery["new_model"]:
-                    models.append(recovery["new_model"])
-        return None, last_error
+        return await loop_execution_runtime.call_llm_with_fallback(self, messages, models)
 
     async def _process_tool_calls(self, msg: InboundMessage, messages: list, response: Any, session: Any) -> list:
-        tool_call_dicts = [
-            {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
-            for tc in response.tool_calls
-        ]
-        if not response.content:
-            messages = self.context.add_assistant_message(messages, None, tool_call_dicts, reasoning_content=response.reasoning_content)
-
-        tc_data = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in response.tool_calls]
-        await self.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data)
-
-        # Phase 12: Get tool permissions based on elevated mode directive
-        permissions = self._get_tool_permissions(session)
-        if permissions.get('auto_approve') or self.exec_auto_approve:
-            logger.debug("Elevated mode active: auto_approve=True, restrict_to_workspace=False")
-
-        exec_tool = self.tools.get("exec")
-        if exec_tool and hasattr(exec_tool, "auto_approve"):
-            exec_tool.auto_approve = bool(
-                self.exec_auto_approve or permissions.get("auto_approve", False)
-            )
-
-        for tc in response.tool_calls:
-            status = self._get_tool_status_message(tc.name, tc.arguments)
-            if status:
-                await self.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id, content=f"_{status}_", metadata={"type": "status_update"}
-                ))
-            tool_params = dict(tc.arguments)
-            if tc.name == "exec":
-                tool_params["_session_key"] = msg.session_key
-                tool_params["_channel"] = msg.channel
-                tool_params["_chat_id"] = msg.chat_id
-                tool_params["_agent_id"] = self._resolve_agent_id_for_message(msg)
-                tool_params["_account_id"] = msg.account_id or ""
-                tool_params["_thread_id"] = msg.thread_id or ""
-                tool_params["_peer_kind"] = msg.peer_kind or ""
-                tool_params["_peer_id"] = msg.peer_id or ""
-
-            result = await self.tools.execute(tc.name, tool_params)
-
-            # Phase 12: Apply truncation after tool execution
-            result_str = str(result)
-            truncated_result = self.truncator.truncate(result_str, tc.name)
-
-            # Phase 12: Add verbose mode output if enabled
-            if self._should_log_verbose(session):
-                token_count = self.truncator._count_tokens(result_str)
-                verbose_output = self._format_verbose_output(tc.name, result_str, token_count)
-                truncated_result += verbose_output
-
-            result_for_llm = self._format_tool_result(truncated_result)
-            messages = self.context.add_tool_result(messages, tc.id, tc.name, result_for_llm)
-            await self.memory.add_message(
-                msg.session_key, "tool", str(result),
-                tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": str(result)[:1000]}]
-            )
-        return messages
+        return await loop_execution_runtime.process_tool_calls(self, msg, messages, response, session)
 
     def _format_tool_result(self, result: Any) -> str:
-        """Format tool result for LLM context.
-
-        Note: Truncation is handled by ToolResultTruncator before this method is called.
-        This method only converts the result to string format.
-        """
-        return str(result)
+        return loop_execution_runtime.format_tool_result(self, result)
 
     async def _finalize_session(self, msg: InboundMessage, session: Any, final_content: str | None) -> OutboundMessage:
-        if final_content and not final_content.startswith("I've completed"):
-            await self.memory.add_message(msg.session_key, "assistant", final_content)
-
-        if not msg.session_key.startswith("background:"):
-            session.add_message("user", msg.content)
-            if final_content:
-                session.add_message("assistant", final_content)
-            try:
-                self.sessions.save(session)
-            except Exception as exc:
-                logger.warning(f"Session save failed for {msg.session_key}: {exc}")
-
-        return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=final_content or "")
+        return await loop_session_flow.finalize_session(self, msg, session, final_content)
 
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
-        logger.info(f"Processing system message from {msg.sender_id}")
-        if ":" in msg.chat_id:
-            parts = msg.chat_id.split(":", 1)
-            origin_channel, origin_chat_id = parts[0], parts[1]
-        else:
-            origin_channel, origin_chat_id = "cli", msg.chat_id
-
-        session_key = f"{origin_channel}:{origin_chat_id}"
-        session = self.sessions.get_or_create(session_key)
-
-        for t in ["message", "spawn", "cron"]:
-            tool = self.tools.get(t)
-            if hasattr(tool, "set_context"): tool.set_context(origin_channel, origin_chat_id)
-
-        messages = self.context.build_messages(history=session.get_history(), current_message=msg.content, channel=origin_channel, chat_id=origin_chat_id)
-
-        final_content = await self._run_agent_loop(msg, messages, session)
-        session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
-        if final_content: session.add_message("assistant", final_content)
-        try:
-            self.sessions.save(session)
-        except Exception as exc:
-            logger.warning(f"Session save failed for {session_key}: {exc}")
-        return OutboundMessage(channel=origin_channel, chat_id=origin_chat_id, content=final_content or "")
+        return await loop_message_runtime.process_system_message(self, msg)
 
     async def process_direct(self, content: str, session_key: str = "cli:direct", channel: str = "cli", chat_id: str = "direct") -> str:
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content, _session_key=session_key)
         response = await self._process_message(msg)
-        return response.content if response else ""
+        result = response.content if response else ""
+        logger.debug(f"process_direct returning: {repr(result[:200] if result else result)}")
+        return result
 
     async def process_isolated(
         self, content: str,
@@ -1277,202 +613,23 @@ FEEDBACK: <one sentence explaining the score>"""
         chat_id: str = "direct",
         job_id: str = ""
     ) -> str:
-        """Process a message in a fully isolated session.
-
-        Unlike process_direct, this:
-        - Does NOT load conversation history
-        - Does NOT save to conversation memory
-        - Uses a temporary session that's discarded after execution
-        """
-        import time
-        session_key = f"isolated:cron:{job_id}" if job_id else f"isolated:{int(time.time())}"
-        msg = InboundMessage(
-            channel=channel, sender_id="system",
-            chat_id=chat_id, content=content,
-            _session_key=session_key
-        )
-
-        # Set context for tools without loading history
-        for tool_name in ["message", "spawn", "cron"]:
-            tool = self.tools.get(tool_name)
-            if hasattr(tool, "set_context"):
-                tool.set_context(channel, chat_id)
-
-        # Build messages without history — fresh context
-        messages = self.context.build_messages(
-            history=[],  # No history for isolated sessions
-            current_message=content,
+        return await loop_message_runtime.process_isolated(
+            self,
+            content,
             channel=channel,
             chat_id=chat_id,
-            profile="GENERAL",
-            tool_names=self.tools.tool_names,
+            job_id=job_id,
         )
-
-        # Create a minimal session for isolated execution
-        session = self.sessions.get_or_create(session_key)
-
-        # Run simple response (no planning for isolated jobs)
-        final_content = await self._run_agent_loop(msg, messages, session)
-        return final_content or ""
 
     # Phase 12: Directives Behavior Implementation
     def _apply_think_mode(self, messages: list, session: Any) -> list:
-        """Apply think mode directive by injecting reasoning prompt into message context.
-
-        Think mode enhances the LLM's reasoning capabilities by instructing it to:
-        - Show step-by-step reasoning before taking action
-        - Consider edge cases and alternative approaches
-        - Read related files for full context understanding
-        - Explicitly explain its thought process
-
-        This method should be called ONCE before the agent loop starts, not on every iteration,
-        to avoid injecting the reasoning prompt multiple times.
-
-        Args:
-            messages: List of message dictionaries in OpenAI format
-            session: Session object containing metadata with directives
-
-        Returns:
-            Modified messages list with reasoning prompt inserted at the beginning if think mode
-            is active, otherwise returns messages unchanged
-
-        Note:
-            - Gracefully handles corrupted or missing directives metadata
-            - Logs debug message when think mode is applied
-            - Returns original messages on any error to prevent loop disruption
-        """
-        try:
-            directives = session.metadata.get('directives', {})
-            if not isinstance(directives, dict):
-                logger.warning("Directives metadata corrupted, using defaults")
-                directives = {}
-
-            if not directives.get('think'):
-                return messages
-
-            reasoning_prompt = {
-                "role": "system",
-                "content": (
-                    "Think step-by-step. Show your reasoning process explicitly before taking action. "
-                    "Consider edge cases, alternative approaches, and potential issues. "
-                    "When analyzing code, read related files to understand full context."
-                )
-            }
-
-            messages.insert(0, reasoning_prompt)
-            logger.debug("Think mode applied: reasoning prompt injected")
-            return messages
-
-        except Exception as e:
-            logger.error(f"Failed to apply think mode: {e}")
-            return messages
+        return loop_directives_runtime.apply_think_mode(self, messages, session)
 
     def _should_log_verbose(self, session: Any) -> bool:
-        """Check if verbose logging directive is enabled for the current session.
-
-        Verbose mode provides detailed debug output including:
-        - Tool execution details
-        - Token usage statistics
-        - Full tool results before truncation
-        - Internal processing information
-
-        This is useful for debugging, development, and understanding the agent's
-        decision-making process.
-
-        Args:
-            session: Session object containing metadata with directives
-
-        Returns:
-            True if verbose mode is enabled, False otherwise
-
-        Note:
-            - Returns False if directives metadata is corrupted or missing
-            - Returns False on any error to prevent disrupting normal operation
-            - Safe to call frequently as it only reads session metadata
-        """
-        try:
-            directives = session.metadata.get('directives', {})
-            if not isinstance(directives, dict):
-                return False
-            return directives.get('verbose', False)
-        except Exception as e:
-            logger.error(f"Failed to check verbose mode: {e}")
-            return False
+        return loop_directives_runtime.should_log_verbose(self, session)
 
     def _format_verbose_output(self, tool_name: str, tool_result: str, tokens_used: int) -> str:
-        """Format verbose debug output for tool execution details.
-
-        Creates a structured debug message containing tool execution information
-        that can be sent to the user when verbose mode is enabled. This helps
-        users understand what tools are being called, how much context they consume,
-        and what results they produce.
-
-        Args:
-            tool_name: Name of the tool that was executed (e.g., "read_file", "exec")
-            tool_result: The result returned by the tool (may be truncated)
-            tokens_used: Estimated number of tokens consumed by the tool result
-
-        Returns:
-            Formatted string with DEBUG prefix containing tool name, token count,
-            and the full result
-
-        Example output:
-            [DEBUG] Tool: read_file
-            [DEBUG] Tokens: 1234
-            [DEBUG] Result:
-            <tool result content here>
-        """
-        return (
-            f"\n\n[DEBUG] Tool: {tool_name}\n"
-            f"[DEBUG] Tokens: {tokens_used}\n"
-            f"[DEBUG] Result:\n{tool_result}\n"
-        )
+        return loop_directives_runtime.format_verbose_output(self, tool_name, tool_result, tokens_used)
 
     def _get_tool_permissions(self, session: Any) -> dict:
-        """Get tool execution permissions based on elevated directive status.
-
-        The elevated directive grants the agent expanded permissions for tool execution,
-        allowing it to perform operations that would normally be restricted. This is
-        useful for administrative tasks, system maintenance, or when the user explicitly
-        trusts the agent to perform sensitive operations.
-
-        Permission levels:
-        - Normal mode (elevated=False):
-          * auto_approve: False - requires user confirmation for risky operations
-          * restrict_to_workspace: True - limits file operations to workspace directory
-          * allow_high_risk: False - blocks potentially dangerous operations
-
-        - Elevated mode (elevated=True):
-          * auto_approve: True - automatically approves tool executions
-          * restrict_to_workspace: False - allows file operations outside workspace
-          * allow_high_risk: True - permits high-risk operations
-
-        Args:
-            session: Session object containing metadata with directives
-
-        Returns:
-            Dictionary with permission flags:
-            - auto_approve: Whether to skip confirmation prompts
-            - restrict_to_workspace: Whether to limit file operations to workspace
-            - allow_high_risk: Whether to allow potentially dangerous operations
-
-        Note:
-            - Returns safe defaults (all restrictions enabled) on any error
-            - Elevated mode should only be used when the user explicitly requests it
-            - Tools should check these permissions before executing sensitive operations
-        """
-        try:
-            elevated = session.metadata.get('directives', {}).get('elevated', False)
-
-            return {
-                'auto_approve': elevated,
-                'restrict_to_workspace': not elevated,
-                'allow_high_risk': elevated
-            }
-        except Exception as e:
-            logger.error(f"Failed to get tool permissions: {e}")
-            return {
-                'auto_approve': False,
-                'restrict_to_workspace': True,
-                'allow_high_risk': False
-            }
+        return loop_directives_runtime.get_tool_permissions(self, session)

@@ -28,8 +28,10 @@ _STOP_WORDS = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "be", "been",
     "to", "of", "in", "for", "on", "with", "at", "by", "from",
     "or", "and", "not", "no", "it", "its", "this", "that",
-    "use", "when", "you", "your", "via", "can", "do",
+    "use", "using", "when", "you", "your", "via", "can", "do",
+    "tool", "tools", "skill", "skills",
     "yang", "dan", "di", "ke", "dari", "ini", "itu", "untuk",
+    "pakai", "pake", "pakaiin",
 })
 
 

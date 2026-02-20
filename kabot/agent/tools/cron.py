@@ -3,6 +3,8 @@
 from typing import Any
 
 from kabot.agent.tools.base import Tool
+from kabot.agent.tools.cron_ops import actions as cron_actions
+from kabot.agent.tools.cron_ops import schedule as cron_schedule
 from kabot.cron.service import CronService
 from kabot.cron.types import CronSchedule
 
@@ -47,11 +49,13 @@ class CronTool(Tool):
         self._channel = ""
         self._chat_id = ""
         self._history: list[dict] = []  # For context messages
+        self._context_text = ""
 
     def set_context(self, channel: str, chat_id: str, history: list[dict] | None = None) -> None:
         """Set the current session context for delivery."""
         self._channel = channel
         self._chat_id = chat_id
+        self._context_text = ""
         if history is not None:
             self._history = history
     
@@ -66,15 +70,19 @@ class CronTool(Tool):
 ACTIONS:
 - status: Check cron scheduler status
 - list: List all scheduled jobs
+- list_groups: List grouped schedules/cycles with titles
 - add: Create a new scheduled job (requires message + schedule)
 - update: Modify an existing job (requires job_id)
+- update_group: Modify all jobs in a group (requires group_id or title)
 - remove: Delete a job (requires job_id)
+- remove_group: Delete all jobs in a group (requires group_id or title)
 - run: Execute a job immediately (requires job_id)
 - runs: Get job run history (requires job_id)
 
 SCHEDULE TYPES (use ONE of these):
 - at_time: One-shot at specific time (ISO-8601: "2026-02-15T10:00:00+07:00")
 - every_seconds: Recurring interval (e.g. 3600 for every hour)
+- start_at: Optional first-run anchor for every_seconds (ISO-8601 or "YYYY-MM-DD HH:MM")
 - cron_expr: Cron expression (e.g. "0 9 * * *" for daily 9am)
 
 IMPORTANT RULES:
@@ -95,12 +103,35 @@ EXAMPLES:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["add", "list", "remove", "update", "run", "runs", "status"],
+                    "enum": [
+                        "add",
+                        "list",
+                        "list_groups",
+                        "remove",
+                        "remove_group",
+                        "update",
+                        "update_group",
+                        "run",
+                        "runs",
+                        "status",
+                    ],
                     "description": "Action to perform"
                 },
                 "message": {
                     "type": "string",
                     "description": "Reminder message (for add)"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional group title for grouped schedules/cycles"
+                },
+                "new_title": {
+                    "type": "string",
+                    "description": "New title for group update/rename"
+                },
+                "group_id": {
+                    "type": "string",
+                    "description": "Group ID for grouped schedule actions"
                 },
                 "at_time": {
                     "type": "string",
@@ -109,6 +140,10 @@ EXAMPLES:
                 "every_seconds": {
                     "type": "integer",
                     "description": "Interval in seconds (for recurring tasks)"
+                },
+                "start_at": {
+                    "type": "string",
+                    "description": "Optional start anchor time for every_seconds (ISO or 'YYYY-MM-DD HH:MM')"
                 },
                 "cron_expr": {
                     "type": "string",
@@ -136,23 +171,54 @@ EXAMPLES:
             self,
             action: str,
             message: str = "",
+            title: str | None = None,
+            new_title: str | None = None,
+            group_id: str | None = None,
             at_time: str = "",
             every_seconds: int | None = None,
+            start_at: str | None = None,
             cron_expr: str | None = None,
             job_id: str | None = None,
             one_shot: bool | None = None,
             context_messages: int = 0,
+            context_text: str | None = None,
             **kwargs: Any
     ) -> str:
+        self._context_text = (context_text or message or "").strip()
         match action:
             case "add":
-                return self._add_job(message, at_time, every_seconds, cron_expr, one_shot, context_messages)
+                return self._add_job(
+                    message=message,
+                    title=title,
+                    group_id=group_id,
+                    at_time=at_time,
+                    every_seconds=every_seconds,
+                    start_at=start_at,
+                    cron_expr=cron_expr,
+                    one_shot=one_shot,
+                    context_messages=context_messages,
+                )
             case "list":
                 return self._list_jobs()
+            case "list_groups":
+                return self._list_groups()
             case "remove":
                 return self._remove_job(job_id)
+            case "remove_group":
+                return self._remove_group(group_id=group_id, title=title)
             case "update":
                 return self._update_job(job_id, **kwargs)
+            case "update_group":
+                return self._update_group(
+                    group_id=group_id,
+                    title=title,
+                    new_title=new_title,
+                    message=message,
+                    at_time=at_time,
+                    every_seconds=every_seconds,
+                    start_at=start_at,
+                    cron_expr=cron_expr,
+                )
             case "run":
                 return await self._run_job(job_id)
             case "runs":
@@ -162,98 +228,100 @@ EXAMPLES:
             case _:
                 return f"Unknown action: {action}"
     
-    def _add_job(self, message: str, at_time: str, every_seconds: int | None, cron_expr: str | None, one_shot: bool | None = None, context_messages: int = 0) -> str:
-        if not message:
-            return "Error: message is required for add"
-        
-        # logger.debug(f"Adding job: msg='{message}', channel='{self._channel}', chat_id='{self._chat_id}'")
-        if not self._channel or not self._chat_id:
-            return "Error: no session context (channel/chat_id)"
-
-        # Attach context if requested
-        if context_messages > 0 and self._history:
-            context = build_reminder_context(self._history, max_messages=context_messages)
-            if context:
-                message = message + context
-
-        # Default one_shot behavior
-        delete_after_run = one_shot if one_shot is not None else (True if at_time else False)
-
-        # Build schedule
-        if at_time:
-            # Parse at_time (expected format: "YYYY-MM-DD HH:MM" or ISO)
-            from datetime import datetime
-            try:
-                if "T" in at_time:
-                    dt = datetime.fromisoformat(at_time.replace("Z", "+00:00"))
-                else:
-                    dt = datetime.strptime(at_time, "%Y-%m-%d %H:%M")
-                at_ms = int(dt.timestamp() * 1000)
-                schedule = CronSchedule(kind="at", at_ms=at_ms)
-            except ValueError:
-                return f"Error: invalid at_time format. Use 'YYYY-MM-DD HH:MM' or ISO format"
-        elif every_seconds:
-            schedule = CronSchedule(kind="every", every_ms=every_seconds * 1000)
-        elif cron_expr:
-            schedule = CronSchedule(kind="cron", expr=cron_expr)
-        else:
-            return "Error: either at_time, every_seconds, or cron_expr is required"
-        
-        job = self._cron.add_job(
-            name=message[:30],
-            schedule=schedule,
+    def _add_job(
+        self,
+        message: str,
+        title: str | None,
+        group_id: str | None,
+        at_time: str,
+        every_seconds: int | None,
+        start_at: str | None,
+        cron_expr: str | None,
+        one_shot: bool | None = None,
+        context_messages: int = 0,
+    ) -> str:
+        return cron_actions.handle_add_job(
+            self,
             message=message,
-            deliver=True,
-            channel=self._channel,
-            to=self._chat_id,
-            delete_after_run=delete_after_run,
+            title=title,
+            group_id=group_id,
+            at_time=at_time,
+            every_seconds=every_seconds,
+            start_at=start_at,
+            cron_expr=cron_expr,
+            one_shot=one_shot,
+            context_messages=context_messages,
         )
-        return f"Created job '{job.name}' (id: {job.id})"
     
     def _list_jobs(self) -> str:
-        jobs = self._cron.list_jobs()
-        if not jobs:
-            return "No scheduled jobs."
-        lines = [f"- {j.name} (id: {j.id}, {j.schedule.kind})" for j in jobs]
-        return "Scheduled jobs:\n" + "\n".join(lines)
+        return cron_actions.handle_list_jobs(self)
+
+    def _list_groups(self) -> str:
+        return cron_actions.handle_list_groups(self)
     
     def _remove_job(self, job_id: str | None) -> str:
-        if not job_id:
-            return "Error: job_id is required for remove"
-        if self._cron.remove_job(job_id):
-            return f"Removed job {job_id}"
-        return f"Job {job_id} not found"
+        return cron_actions.handle_remove_job(self, job_id)
+
+    def _find_group_jobs(self, group_id: str | None = None, title: str | None = None):
+        return cron_actions._find_group_jobs(self, group_id=group_id, title=title)
+
+    def _remove_group(self, group_id: str | None = None, title: str | None = None) -> str:
+        return cron_actions.handle_remove_group(self, group_id=group_id, title=title)
 
     def _update_job(self, job_id: str | None, **kwargs) -> str:
-        if not job_id:
-            return "Error: job_id is required for update"
-        job = self._cron.update_job(job_id, **kwargs)
-        if job:
-            return f"Updated job '{job.name}' ({job.id})"
-        return f"Job {job_id} not found"
+        return cron_actions.handle_update_job(self, job_id, **kwargs)
+
+    def _update_group(
+        self,
+        group_id: str | None = None,
+        title: str | None = None,
+        new_title: str | None = None,
+        message: str = "",
+        at_time: str = "",
+        every_seconds: int | None = None,
+        start_at: str | None = None,
+        cron_expr: str | None = None,
+    ) -> str:
+        return cron_actions.handle_update_group(
+            self,
+            group_id=group_id,
+            title=title,
+            new_title=new_title,
+            message=message,
+            at_time=at_time,
+            every_seconds=every_seconds,
+            start_at=start_at,
+            cron_expr=cron_expr,
+        )
 
     async def _run_job(self, job_id: str | None) -> str:
-        if not job_id:
-            return "Error: job_id is required for run"
-        if await self._cron.run_job(job_id, force=True):
-            return f"Executed job {job_id}"
-        return f"Job {job_id} not found or disabled"
+        return await cron_actions.handle_run_job(self, job_id)
 
     def _get_runs(self, job_id: str | None) -> str:
-        if not job_id:
-            return "Error: job_id is required for runs"
-        history = self._cron.get_run_history(job_id)
-        if not history:
-            return f"No run history for job {job_id}"
-        from datetime import datetime
-        lines = []
-        for run in history:
-            dt = datetime.fromtimestamp(run["run_at_ms"] / 1000)
-            lines.append(f"  {dt.isoformat()} — {run['status']}")
-        return f"Run history for {job_id}:\n" + "\n".join(lines)
+        return cron_actions.handle_get_runs(self, job_id)
 
     def _get_status(self) -> str:
-        status = self._cron.status()
-        return (f"Cron Service: {'Running' if status['enabled'] else 'Stopped'}\n"
-                f"Jobs: {status['jobs']}\n"
-                f"Next wake: {status.get('next_wake_at_ms', 'None')}")
+        return cron_actions.handle_get_status(self)
+
+    def _generate_group_id(self, title: str) -> str:
+        return cron_schedule.generate_group_id(title)
+
+    def _build_schedule(
+        self,
+        at_time: str = "",
+        every_seconds: int | None = None,
+        start_at: str | None = None,
+        cron_expr: str | None = None,
+        allow_empty: bool = False,
+    ) -> tuple[CronSchedule | None, str | None]:
+        return cron_schedule.build_schedule(
+            at_time=at_time,
+            every_seconds=every_seconds,
+            start_at=start_at,
+            cron_expr=cron_expr,
+            allow_empty=allow_empty,
+        )
+
+    def _format_timestamp(self, ts_ms: int) -> str:
+        return cron_schedule.format_timestamp(ts_ms)
+
