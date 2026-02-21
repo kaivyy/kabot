@@ -280,10 +280,22 @@ class AgentLoop:
             auto_approve=self.exec_auto_approve,
         ))
 
-        self.tools.register(WebSearchTool(api_key=self.brave_api_key))
+        self.tools.register(WebSearchTool(
+            api_key=self.config.tools.web.search.api_key,
+            max_results=self.config.tools.web.search.max_results,
+            provider=self.config.tools.web.search.provider,
+            perplexity_api_key=self.config.tools.web.search.perplexity_api_key,
+            perplexity_model=self.config.tools.web.search.perplexity_model,
+            xai_api_key=self.config.tools.web.search.xai_api_key,
+            xai_model=self.config.tools.web.search.xai_model,
+            cache_ttl_minutes=self.config.tools.web.search.cache_ttl_minutes,
+        ))
         self.tools.register(
             WebFetchTool(
-                http_guard=getattr(getattr(self.config, "integrations", None), "http_guard", None)
+                http_guard=getattr(getattr(self.config, "integrations", None), "http_guard", None),
+                firecrawl_api_key=self.config.tools.web.fetch.firecrawl_api_key,
+                firecrawl_base_url=self.config.tools.web.fetch.firecrawl_base_url,
+                cache_ttl_minutes=self.config.tools.web.fetch.cache_ttl_minutes,
             )
         )
         self.tools.register(BrowserTool())

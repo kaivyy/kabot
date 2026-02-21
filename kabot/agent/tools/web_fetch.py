@@ -7,7 +7,9 @@ from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+from loguru import logger
 from kabot.agent.tools.base import Tool
+from kabot.agent.tools.web_cache import TTLCache
 
 MAX_CHARS_DEFAULT = 8000
 MAX_CHARS_CAP = 50000
@@ -49,6 +51,43 @@ class WebFetchTool(Tool):
             if configured_deny_hosts is not None:
                 self.deny_hosts = custom_deny
 
+        self.firecrawl_api_key = firecrawl_api_key or os.environ.get("FIRECRAWL_API_KEY", "")
+        self.firecrawl_base_url = firecrawl_base_url
+        self._cache = TTLCache(default_ttl_seconds=cache_ttl_minutes * 60)
+
+    def _wrap_external_content(self, text: str, source_url: str) -> str:
+        """Wrap fetched content to mark it as untrusted external data."""
+        return (
+            f"[EXTERNAL_CONTENT source={source_url}]\n"
+            f"{text}\n"
+            f"[/EXTERNAL_CONTENT]"
+        )
+
+    async def _fetch_firecrawl(self, url: str, max_chars: int) -> str | None:
+        """Fallback: use FireCrawl to render JS-heavy pages."""
+        if not self.firecrawl_api_key:
+            return None
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.post(
+                    f"{self.firecrawl_base_url}/v1/scrape",
+                    json={"url": url, "formats": ["markdown"], "onlyMainContent": True},
+                    headers={
+                        "Authorization": f"Bearer {self.firecrawl_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=30.0,
+                )
+                r.raise_for_status()
+            data = r.json()
+            md = data.get("data", {}).get("markdown", "")
+            if md and len(md) > max_chars:
+                md = md[:max_chars] + "\\n\\n[truncated]"
+            return md if md else None
+        except Exception as e:
+            logger.warning(f"FireCrawl fallback failed: {e}")
+            return None
+    
     @property
     def name(self) -> str:
         return "web_fetch"
@@ -131,6 +170,11 @@ Use this for:
         if body and content_type:
             req_headers["Content-Type"] = content_type
 
+        cache_key = f"{method}:{url}"
+        cached = self._cache.get(cache_key)
+        if cached:
+            return cached
+
         try:
             async with httpx.AsyncClient(
                 timeout=TIMEOUT_SECONDS, follow_redirects=True
@@ -171,8 +215,19 @@ Use this for:
                 if len(text) > max_chars:
                     text = text[:max_chars] + "\n\n[truncated]"
 
+                # After extraction, check if content is suspiciously empty
+                if extract_mode == "markdown" and len(text.strip()) < 100 and self.firecrawl_api_key:
+                    firecrawl_result = await self._fetch_firecrawl(url, max_chars)
+                    if firecrawl_result:
+                        text = firecrawl_result
+
+                # Wrap external content to prevent prompt injection
+                text = self._wrap_external_content(text, url)
+
                 status_line = f"HTTP {resp.status_code}"
-                return f"{status_line}\n\n{text}"
+                result = f"{status_line}\n\n{text}"
+                self._cache.set(cache_key, result)
+                return result
 
         except httpx.TimeoutException:
             return f"Error: Request timed out after {TIMEOUT_SECONDS}s"

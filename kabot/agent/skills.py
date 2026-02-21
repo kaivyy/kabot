@@ -193,7 +193,25 @@ class SkillsLoader:
                 if chain_skill not in expanded and len(expanded) < max_results + 2:
                     expanded.append(chain_skill)
 
-        return expanded[:max_results + 2]  # Allow up to 5 with chains
+        # Validate requirements for selected skills
+        validated = []
+        for skill_name in expanded:
+            meta = self._get_skill_meta(skill_name)
+            if self._check_requirements(meta):
+                validated.append(skill_name)
+            else:
+                missing = self._get_missing_requirements(meta)
+                install_info = meta.get("install", {})
+                install_cmd = install_info.get("cmd", "")
+                hint = f"[SKILL_UNAVAILABLE] {skill_name} needs: {missing}"
+                if install_cmd:
+                    hint += f" (install: {install_cmd})"
+                from loguru import logger
+                logger.info(hint)
+                # Still include the skill name but mark it
+                validated.append(f"{skill_name} [NEEDS: {missing}]")
+
+        return validated[:max_results + 2]  # Allow up to 5 with chains
     
     def list_skills(self, filter_unavailable: bool = True) -> list[dict]:
         """
