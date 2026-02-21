@@ -108,6 +108,14 @@ class ClackUI:
         if tools:
             lines.append(f"tools: {', '.join(tools)}")
 
+        # Advanced tools
+        adv = []
+        if c.tools.web.fetch.firecrawl_api_key: adv.append("firecrawl")
+        if c.tools.web.search.perplexity_api_key: adv.append("perplexity")
+        if c.tools.web.search.xai_api_key: adv.append("grok")
+        if adv:
+            lines.append(f"advanced: {', '.join(adv)}")
+
         # Workspace (Shorten user home?)
         ws_path = str(c.workspace_path)
         home = os.path.expanduser("~")
@@ -480,6 +488,7 @@ class SetupWizard:
         return [
             "workspace",
             "model",
+            "tools",     # <-- Added advanced tools to simple mode
             "skills",
             "channels",
             "finish",
@@ -866,6 +875,64 @@ class SetupWizard:
             self.config.tools.exec.docker.network_disabled = Confirm.ask("│  Disable Network in Sandbox?", default=self.config.tools.exec.docker.network_disabled)
         else:
             self.config.tools.exec.docker.enabled = False
+
+        # Advanced Tools (Optional)
+        console.print("│")
+        console.print("│  [bold]Advanced Tools (Optional)[/bold]")
+        console.print("│  [dim]Premium API keys for enhanced capabilities. Press Enter to skip.[/dim]")
+        console.print("│")
+
+        # FireCrawl
+        firecrawl_key = Prompt.ask(
+            "│  FireCrawl API Key (JS rendering)",
+            default=self.config.tools.web.fetch.firecrawl_api_key or "",
+        )
+        if firecrawl_key.strip():
+            self.config.tools.web.fetch.firecrawl_api_key = firecrawl_key.strip()
+            console.print("│  [green]✓ FireCrawl configured[/green]")
+        else:
+            console.print("│  [dim]  Skipped (BeautifulSoup only)[/dim]")
+
+        # Perplexity
+        perplexity_key = Prompt.ask(
+            "│  Perplexity API Key (AI search)",
+            default=self.config.tools.web.search.perplexity_api_key or "",
+        )
+        if perplexity_key.strip():
+            self.config.tools.web.search.perplexity_api_key = perplexity_key.strip()
+            self.config.tools.web.search.provider = "perplexity"
+            console.print("│  [green]✓ Perplexity configured (set as default search)[/green]")
+        else:
+            console.print("│  [dim]  Skipped (Brave Search only)[/dim]")
+
+        # xAI / Grok
+        xai_key = Prompt.ask(
+            "│  xAI API Key (Grok search)",
+            default=self.config.tools.web.search.xai_api_key or "",
+        )
+        if xai_key.strip():
+            self.config.tools.web.search.xai_api_key = xai_key.strip()
+            if not perplexity_key.strip():
+                self.config.tools.web.search.provider = "grok"
+                console.print("│  [green]✓ Grok configured (set as default search)[/green]")
+            else:
+                console.print("│  [green]✓ Grok configured (available as fallback)[/green]")
+        else:
+            console.print("│  [dim]  Skipped[/dim]")
+
+        # Summary
+        console.print("│")
+        adv_tools = []
+        if self.config.tools.web.fetch.firecrawl_api_key:
+            adv_tools.append("FireCrawl")
+        if self.config.tools.web.search.perplexity_api_key:
+            adv_tools.append("Perplexity")
+        if self.config.tools.web.search.xai_api_key:
+            adv_tools.append("Grok")
+        if adv_tools:
+            console.print(f"│  [bold green]Military-grade tools active: {', '.join(adv_tools)}[/bold green]")
+        else:
+            console.print("│  [dim]Standard mode (all tools work with defaults)[/dim]")
 
         # Mark as completed and save configuration
         self._save_setup_state("tools", completed=True,
