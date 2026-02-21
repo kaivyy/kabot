@@ -285,13 +285,28 @@ class GatewayConfig(BaseModel):
 
 class WebSearchConfig(BaseModel):
     """Web search tool configuration."""
-    api_key: str = ""  # Brave Search API key
+    api_key: str = ""  # Brave Search API key (default provider)
     max_results: int = 5
+    provider: str = "brave"  # "brave" | "perplexity" | "grok"
+    cache_ttl_minutes: int = 5
+    perplexity_api_key: str = ""
+    perplexity_model: str = "sonar-pro"
+    xai_api_key: str = ""
+    xai_model: str = "grok-3-mini"
+
+
+class WebFetchConfig(BaseModel):
+    """Web fetch tool configuration."""
+    firecrawl_api_key: str = ""
+    firecrawl_base_url: str = "https://api.firecrawl.dev"
+    cache_ttl_minutes: int = 5
+    max_response_bytes: int = 2_000_000
 
 
 class WebToolsConfig(BaseModel):
     """Web tools configuration."""
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    fetch: WebFetchConfig = Field(default_factory=WebFetchConfig)
 
 
 class DockerConfig(BaseModel):
@@ -317,6 +332,21 @@ class ToolsConfig(BaseModel):
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
 
 
+class BootstrapParityConfig(BaseModel):
+    """Bootstrap parity policy for dev/production consistency checks."""
+
+    enabled: bool = True
+    required_files: list[str] = Field(
+        default_factory=lambda: [
+            "AGENTS.md",
+            "SOUL.md",
+            "USER.md",
+        ]
+    )
+    baseline_dir: str = ""  # Optional path to canonical bootstrap templates
+    enforce_hash: bool = False
+
+
 class HttpGuardConfig(BaseModel):
     """HTTP target guard configuration for integration tools."""
 
@@ -338,6 +368,7 @@ class MetaIntegrationConfig(BaseModel):
 
     enabled: bool = False
     access_token: str = ""
+    access_token_env: str = ""
     app_secret: str = ""
     verify_token: str = ""
     threads_user_id: str = ""
@@ -371,6 +402,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    bootstrap: BootstrapParityConfig = Field(default_factory=BootstrapParityConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     skills: dict[str, dict[str, Any]] = Field(default_factory=dict)
     
