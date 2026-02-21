@@ -80,10 +80,17 @@ class DiscordChannel(BaseChannel):
 
         url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
         payload: dict[str, Any] = {"content": msg.content}
+        components = None
+        if isinstance(msg.metadata, dict):
+            value = msg.metadata.get("components")
+            if isinstance(value, list) and value:
+                components = value
 
         if msg.reply_to:
             payload["message_reference"] = {"message_id": msg.reply_to}
             payload["allowed_mentions"] = {"replied_user": False}
+        if components:
+            payload["components"] = components
 
         headers = {"Authorization": f"Bot {self.config.token}"}
 
@@ -94,6 +101,8 @@ class DiscordChannel(BaseChannel):
                 if msg.reply_to:
                     payload["message_reference"] = {"message_id": msg.reply_to}
                     payload["allowed_mentions"] = {"replied_user": False}
+                if components:
+                    payload["components"] = components
 
                 await self._http.post(url, headers=headers, json=payload)
                 return
@@ -114,6 +123,8 @@ class DiscordChannel(BaseChannel):
                 payload_json = {"content": msg.content or ""}
                 if msg.reply_to:
                     payload_json["message_reference"] = {"message_id": msg.reply_to}
+                if components:
+                    payload_json["components"] = components
 
                 # httpx handles multipart boundary automatically
                 await self._http.post(
@@ -124,7 +135,10 @@ class DiscordChannel(BaseChannel):
                 )
             else:
                 # Fallback if files don't exist
-                await self._http.post(url, headers=headers, json={"content": msg.content})
+                fallback_payload = {"content": msg.content}
+                if components:
+                    fallback_payload["components"] = components
+                await self._http.post(url, headers=headers, json=fallback_payload)
 
         except Exception as e:
             logger.error(f"Error sending Discord message: {e}")
@@ -160,6 +174,8 @@ class DiscordChannel(BaseChannel):
                 logger.info("Discord gateway READY")
             elif op == 0 and event_type == "MESSAGE_CREATE":
                 await self._handle_message_create(payload)
+            elif op == 0 and event_type == "INTERACTION_CREATE":
+                await self._handle_interaction_create(payload)
             elif op == 7:
                 # RECONNECT: exit loop to reconnect
                 logger.info("Discord gateway requested reconnect")
@@ -259,6 +275,40 @@ class DiscordChannel(BaseChannel):
                 "message_id": str(payload.get("id", "")),
                 "guild_id": payload.get("guild_id"),
                 "reply_to": reply_to,
+            },
+        )
+
+    async def _handle_interaction_create(self, payload: dict[str, Any]) -> None:
+        """Handle Discord INTERACTION_CREATE events."""
+        member = payload.get("member") or {}
+        user = member.get("user") or payload.get("user") or {}
+        sender_id = str(user.get("id", "")).strip()
+        channel_id = str(payload.get("channel_id", "")).strip()
+        interaction_data = payload.get("data") or {}
+
+        if not sender_id or not channel_id:
+            return
+        if not self.is_allowed(sender_id):
+            return
+
+        custom_id = str(interaction_data.get("custom_id", "")).strip()
+        values = interaction_data.get("values")
+        if not custom_id and isinstance(values, list) and values:
+            custom_id = str(values[0]).strip()
+        content = custom_id or "/interaction"
+
+        await self._handle_message(
+            sender_id=sender_id,
+            chat_id=channel_id,
+            content=content,
+            metadata={
+                "is_interaction": True,
+                "interaction_id": str(payload.get("id", "")),
+                "interaction_type": payload.get("type"),
+                "custom_id": custom_id,
+                "component_type": interaction_data.get("component_type"),
+                "values": values if isinstance(values, list) else [],
+                "guild_id": payload.get("guild_id"),
             },
         )
 

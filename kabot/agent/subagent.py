@@ -40,8 +40,9 @@ class SubagentManager:
         restrict_to_workspace: bool = False,
         http_guard: Any | None = None,
         meta_config: Any | None = None,
+        subagent_config: "SubagentDefaults | None" = None,
     ):
-        from kabot.config.schema import ExecToolConfig
+        from kabot.config.schema import ExecToolConfig, SubagentDefaults
         self.provider = provider
         self.workspace = workspace
         self.bus = bus
@@ -51,6 +52,8 @@ class SubagentManager:
         self.restrict_to_workspace = restrict_to_workspace
         self.http_guard = http_guard
         self.meta_config = meta_config
+        self.subagent_config = subagent_config or SubagentDefaults()
+        self.current_depth: int = 0
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
 
         # Phase 13: Persistent subagent registry
@@ -58,7 +61,9 @@ class SubagentManager:
         self.registry = SubagentRegistry(registry_path)
 
         # Cleanup old completed runs on startup
-        self.registry.cleanup_old_runs(max_age_seconds=86400)
+        self.registry.cleanup_old_runs(
+            max_age_seconds=self.subagent_config.archive_after_minutes * 60
+        )
     
     async def spawn(
         self,
@@ -81,6 +86,19 @@ class SubagentManager:
         Returns:
             Status message indicating the subagent was started.
         """
+        if self.get_running_count() >= self.subagent_config.max_children_per_agent:
+            return (
+                f"Cannot spawn: limit of {self.subagent_config.max_children_per_agent} "
+                "concurrent subagents reached. Wait for a running task to complete."
+            )
+
+        if self.current_depth >= self.subagent_config.max_spawn_depth:
+            return (
+                f"Cannot spawn: maximum nesting depth of "
+                f"{self.subagent_config.max_spawn_depth} reached. "
+                "Nested sub-agent spawning is not allowed at this depth."
+            )
+
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
 

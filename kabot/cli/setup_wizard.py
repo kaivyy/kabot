@@ -1201,9 +1201,7 @@ class SetupWizard:
 
     def _configure_channels(self):
         # Mark section as in progress
-        self._save_setup_state("channels",
-            "autostart",
-                "autostart", completed=False, in_progress=True)
+        self._save_setup_state("channels", completed=False, in_progress=True)
 
         configured_channels = []
 
@@ -1348,11 +1346,12 @@ class SetupWizard:
             ClackUI.section_end()
 
         # Mark as completed and save configuration
-        self._save_setup_state("channels",
-            "autostart",
-                "autostart", completed=True,
-                             configured_channels=configured_channels,
-                             instance_count=len(c.instances) if c.instances else 0)
+        self._save_setup_state(
+            "channels",
+            completed=True,
+            configured_channels=configured_channels,
+            instance_count=len(c.instances) if c.instances else 0,
+        )
 
     def _inject_configured_skill_env(self) -> int:
         configured_skills = getattr(self.config, "skills", {}) or {}

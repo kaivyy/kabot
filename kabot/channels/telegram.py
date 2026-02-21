@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from telegram import BotCommand, Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from kabot.bus.events import OutboundMessage
 from kabot.bus.queue import MessageBus
@@ -80,6 +87,33 @@ def _markdown_to_telegram_html(text: str) -> str:
         text = text.replace(f"\x00CB{i}\x00", f"<pre><code>{escaped}</code></pre>")
     
     return text
+
+
+def build_inline_keyboard(rows: list[list[dict]]) -> InlineKeyboardMarkup | None:
+    """Build Telegram inline keyboard markup from button specs."""
+    if not rows:
+        return None
+
+    keyboard: list[list[InlineKeyboardButton]] = []
+    for row in rows:
+        keyboard_row: list[InlineKeyboardButton] = []
+        for button in row:
+            text = str(button.get("text", "")).strip()
+            if not text:
+                continue
+            if "url" in button and button.get("url"):
+                keyboard_row.append(InlineKeyboardButton(text=text, url=str(button["url"])))
+            else:
+                callback_data = str(button.get("callback_data", text))
+                keyboard_row.append(
+                    InlineKeyboardButton(text=text, callback_data=callback_data)
+                )
+        if keyboard_row:
+            keyboard.append(keyboard_row)
+
+    if not keyboard:
+        return None
+    return InlineKeyboardMarkup(keyboard)
 
 
 class TelegramChannel(BaseChannel):
@@ -162,6 +196,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("start", self._on_start))
         self._app.add_handler(CommandHandler("reset", self._on_reset))
         self._app.add_handler(CommandHandler("help", self._on_help))
+        self._app.add_handler(CallbackQueryHandler(self._on_callback_query))
         
         # Add message handler for text, photos, voice, documents
         self._app.add_handler(
@@ -196,7 +231,7 @@ class TelegramChannel(BaseChannel):
         
         # Start polling (this runs until stopped)
         await self._app.updater.start_polling(
-            allowed_updates=["message"],
+            allowed_updates=["message", "callback_query"],
             drop_pending_updates=True  # Ignore old messages on startup
         )
         
@@ -231,6 +266,11 @@ class TelegramChannel(BaseChannel):
         try:
             # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
+            reply_markup = None
+            if isinstance(msg.metadata, dict):
+                inline_rows = msg.metadata.get("inline_keyboard")
+                if isinstance(inline_rows, list):
+                    reply_markup = build_inline_keyboard(inline_rows)
 
             # 1. Send text content if present (and not just a placeholder)
             if msg.content and msg.content.strip():
@@ -239,7 +279,8 @@ class TelegramChannel(BaseChannel):
                 await self._app.bot.send_message(
                     chat_id=chat_id,
                     text=html_content,
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
                 )
 
             # 2. Send media files if present
@@ -279,10 +320,58 @@ class TelegramChannel(BaseChannel):
             try:
                 await self._app.bot.send_message(
                     chat_id=int(msg.chat_id),
-                    text=msg.content
+                    text=msg.content,
+                    reply_markup=reply_markup,
                 )
             except Exception as e2:
                 logger.error(f"Error sending Telegram message: {e2}")
+
+    async def _on_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle inline button callback query events."""
+        query = update.callback_query
+        if not query or not query.from_user:
+            return
+
+        try:
+            await query.answer()
+        except Exception as e:
+            logger.debug(f"Failed to acknowledge callback query: {e}")
+
+        if query.message:
+            chat_id = str(query.message.chat_id)
+            message_id = query.message.message_id
+            is_group = query.message.chat.type != "private"
+        elif update.effective_chat:
+            chat_id = str(update.effective_chat.id)
+            message_id = None
+            is_group = update.effective_chat.type != "private"
+        else:
+            return
+
+        user = query.from_user
+        sender_id = str(user.id)
+        if user.username:
+            sender_id = f"{sender_id}|{user.username}"
+        self._chat_ids[sender_id] = int(chat_id)
+
+        callback_data = (query.data or "").strip()
+        content = callback_data or "[telegram_callback]"
+
+        await self._handle_message(
+            sender_id=sender_id,
+            chat_id=chat_id,
+            content=content,
+            metadata={
+                "is_callback_query": True,
+                "callback_data": callback_data,
+                "callback_query_id": query.id,
+                "message_id": message_id,
+                "user_id": user.id,
+                "username": user.username,
+                "first_name": user.first_name,
+                "is_group": is_group,
+            },
+        )
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""

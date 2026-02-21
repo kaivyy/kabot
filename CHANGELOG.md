@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - OpenClaw-Inspired Enhancements (2026-02-21)
+
+- **Sub-agent Safety Limits:**
+  - Added `SubagentDefaults` config with `max_spawn_depth`, `max_children_per_agent`, and `archive_after_minutes`.
+  - `SubagentManager.spawn()` now enforces max-children and nesting-depth limits.
+  - Completed subagent runs now auto-archive based on configurable timeout.
+- **Heartbeat Delivery and Active Hours:**
+  - Added `HeartbeatDefaults` config with `target_channel`, `target_to`, and `active_hours_start/end`.
+  - Heartbeat loop now skips execution outside configured active-hours window.
+- **Cron Delivery Modes and Webhook:**
+  - Added `CronDeliveryConfig` with `announce`, `webhook`, and `none` modes.
+  - Added resolver fallback compatibility for legacy `payload.deliver` format.
+  - Added webhook POST helper with optional HMAC-SHA256 signature in `X-Kabot-Signature`.
+- **Telegram Inline Interactions:**
+  - Added `build_inline_keyboard()` helper for inline buttons.
+  - Added callback query handling path that publishes button events into `MessageBus`.
+  - Added outbound metadata support for inline keyboard rendering.
+- **Discord Interactive Components:**
+  - Added `kabot/channels/discord_components.py` with `ButtonStyle` and `build_action_row()`.
+  - Added support for sending `components` in Discord outbound payload metadata.
+  - Added `INTERACTION_CREATE` gateway handling and bus integration.
+- **Docker Sandbox Module (Optional):**
+  - Added `kabot/sandbox/` with `DockerSandbox` async command execution helper.
+  - Added `Dockerfile.sandbox` image template for isolated runtime usage.
+
 ### Added - Military-Grade Progressive Enhancement & Security Hardening (2026-02-21)
 
 - **Multi-Provider Deep Search:** 

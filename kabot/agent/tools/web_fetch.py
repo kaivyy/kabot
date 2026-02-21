@@ -1,6 +1,8 @@
 """Web fetch tool for calling HTTP APIs."""
 
+import hashlib
 import ipaddress
+import json
 import socket
 from typing import Any
 from urllib.parse import urlparse
@@ -65,7 +67,7 @@ class WebFetchTool(Tool):
     def _wrap_external_content(self, text: str, source_url: str) -> str:
         """Wrap fetched content to mark it as untrusted external data."""
         return (
-            f"[EXTERNAL_CONTENT source={source_url}]\n"
+            "[EXTERNAL_CONTENT]\n"
             f"{text}\n"
             f"[/EXTERNAL_CONTENT]"
         )
@@ -89,7 +91,9 @@ class WebFetchTool(Tool):
             data = r.json()
             md = data.get("data", {}).get("markdown", "")
             if md and len(md) > max_chars:
-                md = md[:max_chars] + "\\n\\n[truncated]"
+                trunc_suffix = "\\n\\n[truncated]"
+                keep = max(0, max_chars - len(trunc_suffix))
+                md = md[:keep] + trunc_suffix
             return md if md else None
         except Exception as e:
             logger.warning(f"FireCrawl fallback failed: {e}")
@@ -177,7 +181,19 @@ Use this for:
         if body and content_type:
             req_headers["Content-Type"] = content_type
 
-        cache_key = f"{method}:{url}"
+        cache_payload = {
+            "method": method,
+            "url": url,
+            "extract_mode": extract_mode,
+            "max_chars": max_chars,
+            "content_type": content_type,
+            "headers": req_headers,
+            "body": body or "",
+        }
+        cache_key = (
+            f"{method}:{url}:"
+            f"{hashlib.sha256(json.dumps(cache_payload, sort_keys=True).encode('utf-8')).hexdigest()}"
+        )
         cached = self._cache.get(cache_key)
         if cached:
             return cached
@@ -205,7 +221,6 @@ Use this for:
 
                 # Extract content
                 if extract_mode == "json":
-                    import json
                     try:
                         data = resp.json()
                         text = json.dumps(data, indent=2, ensure_ascii=False)
@@ -220,7 +235,9 @@ Use this for:
 
                 # Truncate
                 if len(text) > max_chars:
-                    text = text[:max_chars] + "\n\n[truncated]"
+                    trunc_suffix = "\n\n[truncated]"
+                    keep = max(0, max_chars - len(trunc_suffix))
+                    text = text[:keep] + trunc_suffix
 
                 # After extraction, check if content is suspiciously empty
                 if extract_mode == "markdown" and len(text.strip()) < 100 and self.firecrawl_api_key:

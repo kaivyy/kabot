@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any
 
 from loguru import logger
 
-from kabot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
+from kabot.cron.types import (
+    CronDeliveryConfig,
+    CronJob,
+    CronJobState,
+    CronPayload,
+    CronSchedule,
+    CronStore,
+)
 from kabot.utils.pid_lock import PIDLock
 
 
@@ -32,6 +40,16 @@ def load_store(service: Any, *, max_run_history: int) -> CronStore:
                         "error": state_data.get("lastError"),
                     }]
                 run_history = run_history[-max_run_history:]
+                delivery_data = item.get("delivery")
+                delivery = None
+                if isinstance(delivery_data, dict):
+                    delivery = CronDeliveryConfig(
+                        mode=delivery_data.get("mode", "announce"),
+                        channel=delivery_data.get("channel", "last"),
+                        to=delivery_data.get("to", ""),
+                        webhook_url=delivery_data.get("webhookUrl", ""),
+                        webhook_secret=delivery_data.get("webhookSecret", ""),
+                    )
 
                 jobs.append(CronJob(
                     id=item["id"],
@@ -54,6 +72,7 @@ def load_store(service: Any, *, max_run_history: int) -> CronStore:
                         group_id=item["payload"].get("groupId"),
                         group_title=item["payload"].get("groupTitle"),
                     ),
+                    delivery=delivery,
                     state=CronJobState(
                         next_run_at_ms=state_data.get("nextRunAtMs"),
                         last_run_at_ms=state_data.get("lastRunAtMs"),
@@ -106,6 +125,17 @@ def save_store(service: Any, *, max_run_history: int) -> None:
                     "groupId": job.payload.group_id,
                     "groupTitle": job.payload.group_title,
                 },
+                "delivery": (
+                    {
+                        "mode": job.delivery.mode,
+                        "channel": job.delivery.channel,
+                        "to": job.delivery.to,
+                        "webhookUrl": job.delivery.webhook_url,
+                        "webhookSecret": job.delivery.webhook_secret,
+                    }
+                    if job.delivery
+                    else None
+                ),
                 "state": {
                     "nextRunAtMs": job.state.next_run_at_ms,
                     "lastRunAtMs": job.state.last_run_at_ms,
@@ -126,4 +156,11 @@ def save_store(service: Any, *, max_run_history: int) -> None:
 
     with PIDLock(service.store_path):
         temp_path.write_text(payload)
-        os.replace(temp_path, service.store_path)
+        for attempt in range(5):
+            try:
+                os.replace(temp_path, service.store_path)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))

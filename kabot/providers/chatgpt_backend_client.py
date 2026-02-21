@@ -148,8 +148,9 @@ def _append_assistant_tool_calls(
             raw_id = function_call.get("call_id") or function_call.get("id") or msg.get("tool_call_id")
             call_id = _normalize_call_id(raw_id, f"call_{len(input_messages) + 1}")
 
-            # Only add tool call if there's a corresponding tool result
-            if call_id not in tool_result_ids:
+            # Keep strict matching when tool results are present, but allow
+            # legacy function_call-only histories that have no tool messages.
+            if tool_result_ids and call_id not in tool_result_ids:
                 logger.debug(f"Skipping function_call {call_id} (no matching result)")
                 return appended
 
