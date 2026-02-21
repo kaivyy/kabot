@@ -303,6 +303,9 @@ class AgentLoop:
         from kabot.agent.tools.system import SystemInfoTool
         self.tools.register(SystemInfoTool())
 
+        from kabot.agent.tools.cleanup import CleanupTool
+        self.tools.register(CleanupTool())
+
         message_tool = MessageTool(send_callback=self.bus.publish_outbound)
         self.tools.register(message_tool)
 

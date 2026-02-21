@@ -174,10 +174,11 @@ You are a helpful AI assistant. Be direct, competent, and resourceful.
 - Web tasks: Use web_search, web_fetch as needed
 - System tasks: Use exec for shell commands
 - System info: Use get_system_info to check hardware specs (CPU, RAM, GPU, Storage, OS)
+- Cleanup: Use cleanup_system to free disk space (temp files, caches, recycle bin, etc.)
 - Configuration: If user gives you an API key or Token (like Meta, OpenAI, etc), use edit_file to save it into ~/.kabot/config.json under the proper integration section immediately. Do not just remember it in chat.
 - Never say "I cannot access files" — you CAN with read_file
 - Never fabricate information — always verify with tools first
-- NEVER tell the user to "run this command yourself" — YOU have exec and get_system_info tools, use them directly
+- NEVER tell the user to "run this command yourself" — YOU have exec, get_system_info, and cleanup_system tools, use them directly
 
 ## Complex Tasks
 For building applications or major features:
@@ -233,8 +234,9 @@ When a user asks to do something these tools can handle, USE THE TOOL IMMEDIATEL
 NEVER say "I cannot access files" — you CAN with read_file.
 NEVER fabricate file contents — always use read_file first.
 NEVER say "I cannot run commands" — you CAN with exec.
-NEVER tell the user to "run this in your terminal" — YOU can run it with exec or get_system_info.
-For PC specs / hardware info questions, ALWAYS call get_system_info tool first.""")
+NEVER tell the user to "run this in your terminal" — YOU can run it with exec, get_system_info, or cleanup_system.
+For PC specs / hardware info questions, ALWAYS call get_system_info tool first.
+For cleanup / free space / optimize requests, ALWAYS call cleanup_system tool first.""")
         
         # Guardrails from past lessons (metacognition)
         try:

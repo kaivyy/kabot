@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Windows Shell Execution:** Fixed `ExecTool` to natively use `powershell.exe` on Windows instead of `cmd.exe`.
 - **System Information Tool:** Added `SystemInfoTool` to fetch detailed hardware specs (CPU, RAM, GPU, Storage, OS) across Windows, Linux, Termux, and macOS.
 - **Telegram Large Messages:** Implemented automatic message splitting in `TelegramChannel` to handle responses larger than 4096 characters without breaking formatting or code blocks.
+- **System Cleanup Tool:** Added `CleanupTool` (`cleanup_system`) with 3 levels (quick/standard/deep) for Windows, Linux, macOS, and Termux to free disk space (temp, cache, recycle bin, Windows Update, browser caches, DISM).
+- **Improved Tool Usage Behavior:** Updated system prompt to force the LLM to proactively use tools (`exec`, `get_system_info`, `cleanup_system`) instead of telling users to run commands manually.
 - **WebFetch/Setup Fixes:** Refined web fetch hash caching and chunking, and fixed setup wizard channel configuration states.
 
 ### Added - OpenClaw-Inspired Enhancements (2026-02-21)

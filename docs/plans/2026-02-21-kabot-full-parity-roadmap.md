@@ -24,6 +24,56 @@
 
 ---
 
+## Post-Implementation Verification (2026-02-21)
+
+This section captures the verified repository state after running a direct code-and-test audit against this plan.
+
+### Overall Status
+
+- Completed: Task 1, 2, 3, 4, 5, 6, 7, 9
+- Partial: Task 8, 10, 12
+- Missing: Task 11
+- Not yet green: Task 13 (full test suite still failing)
+
+### Task Status Snapshot
+
+| Task | Status | Evidence (Kabot) | Notes |
+|---|---|---|---|
+| 1 | Done | `kabot/config/schema.py`, `tests/config/test_subagent_config.py` | `SubagentDefaults` implemented and tested. |
+| 2 | Done | `kabot/agent/subagent.py`, `tests/agent/test_subagent_limits.py` | Spawn depth and children guards present. |
+| 3 | Done | `kabot/heartbeat/service.py`, `tests/heartbeat/test_heartbeat_config.py` | Active-hours logic exists; test filename differs from plan. |
+| 4 | Done | `kabot/cron/types.py`, `kabot/cron/delivery.py`, `tests/cron/test_cron_delivery_modes.py` | Delivery mode resolver implemented. |
+| 5 | Done | `kabot/cron/service.py`, `tests/cron/test_cron_webhook_post.py` | Webhook POST and `X-Kabot-Signature` covered. |
+| 6 | Done | `kabot/channels/telegram.py`, `tests/channels/test_telegram_buttons.py` | Inline keyboard builder implemented; test filename differs from plan. |
+| 7 | Done | `kabot/channels/telegram.py`, `tests/channels/test_telegram_callback.py` | Callback query handler implemented; test filename differs from plan. |
+| 8 | Partial | `kabot/channels/discord_components.py`, `tests/channels/test_discord_components.py` | `build_action_row()` exists, but `build_select_menu()` from plan is absent. |
+| 9 | Done | `kabot/channels/discord.py`, `tests/channels/test_discord_interaction.py` | Interaction handling implemented; test filename differs from plan. |
+| 10 | Partial | `kabot/sandbox/docker_sandbox.py`, `tests/sandbox/test_docker_sandbox.py`, `Dockerfile.sandbox` | Module exists but behavior differs from plan (default mode/return semantics). |
+| 11 | Missing | _Not found:_ `kabot/security/audit_trail.py`, `tests/security/test_audit_trail.py` | Planned audit trail logger not implemented. |
+| 12 | Partial | `CHANGELOG.md` | Changelog section exists but heading/content differs from this plan text. |
+| 13 | Failing | `pytest tests/ -q` | Full suite result: `757 passed, 9 failed, 6 skipped` (firewall tests). |
+
+### Verification Commands Executed
+
+```bash
+pytest tests/config/test_subagent_config.py tests/agent/test_subagent_limits.py tests/heartbeat/test_heartbeat_config.py tests/cron/test_cron_delivery_modes.py tests/cron/test_cron_webhook_post.py tests/channels/test_telegram_buttons.py tests/channels/test_telegram_callback.py tests/channels/test_discord_components.py tests/channels/test_discord_interaction.py tests/sandbox/test_docker_sandbox.py -q
+```
+
+Result: `31 passed`
+
+```bash
+pytest tests/ -q
+```
+
+Result: `757 passed, 9 failed, 6 skipped`
+
+### Detailed Evidence Report
+
+For full evidence mapping (including OpenClaw reference locations), see:
+`docs/openclaw-analysis/2026-02-21-kabot-full-parity-verification.md`
+
+---
+
 ## Task 1: Sub-agent Safety Limits Config
 
 **Files:**
