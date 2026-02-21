@@ -115,6 +115,59 @@ def build_inline_keyboard(rows: list[list[dict]]) -> InlineKeyboardMarkup | None
         return None
     return InlineKeyboardMarkup(keyboard)
 
+def _split_message(text: str, max_length: int = 4000) -> list[str]:
+    """Split a long message into chunks, preserving code blocks if possible."""
+    if len(text) <= max_length:
+        return [text]
+    
+    chunks = []
+    lines = text.split("\n")
+    current_chunk = []
+    current_length = 0
+    in_code_block = False
+    code_block_lang = ""
+    
+    for line in lines:
+        is_fence = line.strip().startswith("```")
+        if is_fence:
+            if not in_code_block:
+                in_code_block = True
+                code_block_lang = line.strip()[3:]
+            else:
+                in_code_block = False
+                code_block_lang = ""
+            
+        line_len = len(line) + 1 # +1 for newline
+        
+        # If adding this line exceeds max length
+        if current_length + line_len > max_length and current_chunk:
+            if in_code_block and not is_fence:
+                # Close the code block in the current chunk and reopen in the next
+                current_chunk.append("```")
+                chunks.append("\n".join(current_chunk))
+                current_chunk = [f"```{code_block_lang}", line]
+                current_length = len(current_chunk[0]) + 1 + line_len
+            else:
+                chunks.append("\n".join(current_chunk))
+                current_chunk = [line]
+                current_length = line_len
+        else:
+            current_chunk.append(line)
+            current_length += line_len
+            
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+        
+    # Safety fallback for extremely long lines that are still > max_length
+    final_chunks = []
+    for chunk in chunks:
+        if len(chunk) > max_length:
+            for i in range(0, len(chunk), max_length):
+                final_chunks.append(chunk[i:i+max_length])
+        else:
+            final_chunks.append(chunk)
+
+    return final_chunks
 
 class TelegramChannel(BaseChannel):
     """
@@ -274,14 +327,31 @@ class TelegramChannel(BaseChannel):
 
             # 1. Send text content if present (and not just a placeholder)
             if msg.content and msg.content.strip():
-                # Convert markdown to Telegram HTML
-                html_content = _markdown_to_telegram_html(msg.content)
-                await self._app.bot.send_message(
-                    chat_id=chat_id,
-                    text=html_content,
-                    parse_mode="HTML",
-                    reply_markup=reply_markup,
-                )
+                chunks = _split_message(msg.content, max_length=4000)
+                
+                for i, chunk in enumerate(chunks):
+                    # Only attach reply_markup to the last chunk
+                    chunk_markup = reply_markup if i == len(chunks) - 1 else None
+                    
+                    try:
+                        # Convert markdown to Telegram HTML
+                        html_content = _markdown_to_telegram_html(chunk)
+                        await self._app.bot.send_message(
+                            chat_id=chat_id,
+                            text=html_content,
+                            parse_mode="HTML",
+                            reply_markup=chunk_markup,
+                        )
+                    except Exception as e:
+                        logger.warning(f"HTML parse failed for chunk {i+1}/{len(chunks)}, falling back to plain text: {e}")
+                        try:
+                            await self._app.bot.send_message(
+                                chat_id=chat_id,
+                                text=chunk,
+                                reply_markup=chunk_markup,
+                            )
+                        except Exception as e2:
+                            logger.error(f"Error sending Telegram chunk {i+1}/{len(chunks)}: {e2}")
 
             # 2. Send media files if present
             if msg.media:
@@ -315,16 +385,7 @@ class TelegramChannel(BaseChannel):
         except ValueError:
             logger.error(f"Invalid chat_id: {msg.chat_id}")
         except Exception as e:
-            # Fallback to plain text if HTML parsing fails
-            logger.warning(f"HTML parse failed, falling back to plain text: {e}")
-            try:
-                await self._app.bot.send_message(
-                    chat_id=int(msg.chat_id),
-                    text=msg.content,
-                    reply_markup=reply_markup,
-                )
-            except Exception as e2:
-                logger.error(f"Error sending Telegram message: {e2}")
+            logger.error(f"Critical error in Telegram send routine: {e}")
 
     async def _on_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle inline button callback query events."""

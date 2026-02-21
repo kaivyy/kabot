@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added & Fixed - Windows & Telegram Support (2026-02-21)
+
+- **Windows Shell Execution:** Fixed `ExecTool` to natively use `powershell.exe` on Windows instead of `cmd.exe`.
+- **System Information Tool:** Added `SystemInfoTool` to fetch detailed hardware specs (CPU, RAM, GPU, Storage, OS) across Windows, Linux, Termux, and macOS.
+- **Telegram Large Messages:** Implemented automatic message splitting in `TelegramChannel` to handle responses larger than 4096 characters without breaking formatting or code blocks.
+- **WebFetch/Setup Fixes:** Refined web fetch hash caching and chunking, and fixed setup wizard channel configuration states.
+
 ### Added - OpenClaw-Inspired Enhancements (2026-02-21)
 
 - **Sub-agent Safety Limits:**
