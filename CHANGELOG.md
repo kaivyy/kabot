@@ -21,8 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enhanced skills validation to check for missing binaries and environment variables.
   - Added explicit installation hints for missing dependencies (e.g., "needs ffmpeg (install: sudo apt install ffmpeg)").
   - Fixed YAML frontmatter parsing in `SkillsLoader` to support multiline JSON metadata blocks.
-- **Setup Wizard "Military-Grade" Section:**
+- **Setup Wizard & Auto-Start "Military-Grade" Section:**
   - Added "Advanced Tools" section to `kabot setup` for optional Perplexity, Grok, and FireCrawl keys.
+  - Added **Auto-start (Enable boot-up service)** integration in `kabot setup` for 1-click persistence.
+  - Automated Termux `runit` service creation via `kabot remote-bootstrap`.
+  - Upgraded `get_service_status` to accurately detect active boot services uniformly across Windows, macOS, Linux, and Termux.
   - Integrated "Freedom Mode" toggle to disable HTTP guards and auto-approve commands for trusted environments.
 - **Fixed:**
   - Resolved `TypeError` in `WebFetchTool` initialization that crashed the gateway process.

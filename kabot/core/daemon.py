@@ -243,6 +243,56 @@ def install_windows_task_service(
     return True, f"Windows startup task created: {task_name}"
 
 
+def install_termux_service(
+    service_name: str = "kabot",
+    workdir: Optional[str] = None,
+    python_path: Optional[str] = None,
+) -> tuple[bool, str]:
+    """
+    Install Termux service using termux-services (sv).
+
+    Args:
+        service_name: Name of the service
+        workdir: Working directory (defaults to current directory)
+        python_path: Python executable path (defaults to current interpreter)
+
+    Returns:
+        Tuple of (success, message)
+    """
+    from kabot.utils.environment import detect_runtime_environment
+    runtime = detect_runtime_environment()
+    if not runtime.is_termux:
+        return False, "Termux services are only available on Termux"
+
+    if not shutil.which("sv"):
+        return False, "termux-services package is not installed. Please run: pkg install termux-services"
+
+    workdir = workdir or os.getcwd()
+    python_path = python_path or sys.executable
+    prefix = os.getenv("PREFIX", "/data/data/com.termux/files/usr")
+    service_dir = Path(prefix) / "var" / "service" / service_name
+    
+    try:
+        service_dir.mkdir(parents=True, exist_ok=True)
+        run_file = service_dir / "run"
+        
+        # Create the run script
+        run_content = f"""#!/bin/sh
+exec 2>&1
+export KABOT_WORKDIR="{workdir}"
+exec {python_path} -m kabot.cli start
+"""
+        run_file.write_text(run_content)
+        run_file.chmod(0o755)
+
+        # Enable the service
+        subprocess.run(["sv-enable", service_name], capture_output=True)
+        
+        return True, f"Termux service installed and enabled: {service_name}\nStart with: sv up {service_name}"
+    except Exception as e:
+        return False, f"Failed to create Termux service: {e}"
+
+
 def get_service_status() -> dict:
     """
     Get current service installation status.
@@ -276,6 +326,16 @@ def get_service_status() -> dict:
     elif sys.platform == "win32":
         status["service_available"] = True
         status["service_type"] = "task_scheduler"
-        status["note"] = "Use remote-bootstrap --platform windows --service windows --apply"
+        # Check if task exists
+        result = subprocess.run(["schtasks", "/Query", "/TN", "kabot"], capture_output=True, text=True)
+        if result.returncode == 0:
+            status["installed"] = True
+
+    elif "termux" in sys.platform or os.getenv("PREFIX"):
+        status["service_available"] = True
+        status["service_type"] = "termux"
+        prefix = os.getenv("PREFIX", "/data/data/com.termux/files/usr")
+        if (Path(prefix) / "var" / "service" / "kabot").exists():
+            status["installed"] = True
 
     return status

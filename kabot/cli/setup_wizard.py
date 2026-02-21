@@ -437,7 +437,8 @@ class SetupWizard:
                 self._configure_tools()
             elif choice == "gateway":
                 self._configure_gateway()
-            elif choice == "channels":
+            elif choice == "channels",
+            "autostart":
                 self._configure_channels()
             elif choice == "skills":
                 self._configure_skills()
@@ -481,6 +482,8 @@ class SetupWizard:
                 "gateway",
                 "skills",
                 "channels",
+            "autostart",
+                "autostart",
                 "logging",
                 "doctor",
                 "finish",
@@ -491,6 +494,8 @@ class SetupWizard:
             "tools",     # <-- Added advanced tools to simple mode
             "skills",
             "channels",
+            "autostart",
+                "autostart",
             "finish",
         ]
 
@@ -501,7 +506,8 @@ class SetupWizard:
             "tools": "Tools & Sandbox (Search, Docker, Shell)",
             "gateway": "Gateway (Port, Host, Bindings)",
             "skills": "Skills (Install & Configure)",
-            "channels": "Channels (Telegram, WhatsApp, Slack)",
+            "channels",
+            "autostart": "Channels (Telegram, WhatsApp, Slack)",
             "logging": "Logging & Debugging",
             "doctor": "Health Check (Run system diagnostic)",
             "finish": "Continue & Finish",
@@ -1194,7 +1200,9 @@ class SetupWizard:
 
     def _configure_channels(self):
         # Mark section as in progress
-        self._save_setup_state("channels", completed=False, in_progress=True)
+        self._save_setup_state("channels",
+            "autostart",
+                "autostart", completed=False, in_progress=True)
 
         configured_channels = []
 
@@ -1339,7 +1347,9 @@ class SetupWizard:
             ClackUI.section_end()
 
         # Mark as completed and save configuration
-        self._save_setup_state("channels", completed=True,
+        self._save_setup_state("channels",
+            "autostart",
+                "autostart", completed=True,
                              configured_channels=configured_channels,
                              instance_count=len(c.instances) if c.instances else 0)
 
@@ -2005,6 +2015,48 @@ class SetupWizard:
                              file_retention=retention,
                              db_retention_days=self.config.logging.db_retention_days)
 
+        ClackUI.section_end()
+
+    
+    def _configure_autostart(self):
+        ClackUI.section_start("Auto-start Configuration")
+        
+        from kabot.core.daemon import get_service_status, install_systemd_service, install_launchd_service, install_windows_task_service, install_termux_service
+        
+        status = get_service_status()
+        installed = status.get("installed", False)
+        service_type = status.get("service_type", "unknown")
+
+        if installed:
+            console.print(f"|  [green]✓ Auto-start is already INSTALLED ({service_type})[/green]")
+            if not Confirm.ask("|  Reinstall/Update service?", default=False):
+                ClackUI.section_end()
+                return
+        else:
+            console.print(f"|  [yellow]! Auto-start is NOT installed[/yellow]")
+        
+        if not Confirm.ask(f"|  Enable Kabot to start automatically on boot ({service_type})?", default=True):
+            ClackUI.section_end()
+            return
+
+        with console.status("|  Installing service..."):
+            if service_type == "systemd":
+                ok, msg = install_systemd_service()
+            elif service_type == "launchd":
+                ok, msg = install_launchd_service()
+            elif service_type == "task_scheduler":
+                ok, msg = install_windows_task_service()
+            elif service_type == "termux":
+                ok, msg = install_termux_service()
+            else:
+                ok, msg = False, f"Unsupported service type: {service_type}"
+
+        if ok:
+            console.print(f"|  [green]✓ {msg}[/green]")
+        else:
+            console.print(f"|  [red]✗ {msg}[/red]")
+        
+        self._save_setup_state("autostart", completed=ok, service_type=service_type)
         ClackUI.section_end()
 
     def _run_doctor(self):

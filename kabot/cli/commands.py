@@ -2044,11 +2044,13 @@ def remote_bootstrap(
         raise typer.Exit(1)
 
     if service_kind == "termux":
-        console.print(
-            "[yellow]Automatic Termux service installation is not executed from this command.[/yellow]\n"
-            "Install termux-services and create a run script for kabot under $PREFIX/var/service."
-        )
-        return
+        from kabot.core.daemon import install_termux_service
+        ok, msg = install_termux_service()
+        if ok:
+            console.print(f"[green]✓[/green] {msg}")
+            return
+        console.print(f"[red]{msg}[/red]")
+        raise typer.Exit(1)
 
     console.print("[yellow]No service action applied (service=none).[/yellow]")
 
