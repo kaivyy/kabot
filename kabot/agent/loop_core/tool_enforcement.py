@@ -45,6 +45,8 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         question=question,
         has_weather_tool=loop.tools.has("weather"),
         has_cron_tool=loop.tools.has("cron"),
+        has_system_info_tool=loop.tools.has("get_system_info"),
+        has_cleanup_tool=loop.tools.has("cleanup_system"),
     )
 
 
@@ -67,6 +69,21 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             "weather",
             {"location": location, "context_text": msg.content},
         )
+        return str(result)
+
+    if required_tool == "get_system_info":
+        result = await loop.tools.execute("get_system_info", {})
+        return str(result)
+
+    if required_tool == "cleanup_system":
+        # Detect cleanup level from user message
+        q_lower = (msg.content or "").lower()
+        level = "standard"
+        if any(k in q_lower for k in ("deep", "dalam", "mendalam", "full", "lengkap")):
+            level = "deep"
+        elif any(k in q_lower for k in ("quick", "cepat", "ringan", "light")):
+            level = "quick"
+        result = await loop.tools.execute("cleanup_system", {"level": level})
         return str(result)
 
     if required_tool != "cron":

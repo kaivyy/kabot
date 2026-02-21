@@ -70,6 +70,27 @@ WEATHER_KEYWORDS = (
     "预报",
 )
 
+SYSTEM_INFO_KEYWORDS = (
+    "spek", "spec", "specs", "spesifikasi", "specification",
+    "hardware", "cpu", "gpu", "ram",
+    "pc mu", "pc kamu", "your pc", "your computer",
+    "komputer mu", "komputer kamu", "mesin mu", "mesin kamu",
+    "detail pc", "cek pc", "check pc",
+    "system info", "sysinfo",
+)
+
+CLEANUP_KEYWORDS = (
+    "cleanup", "clean up", "bersihin", "bersihkan", "pembersihan",
+    "free space", "freespace", "free disk",
+    "hapus cache", "hapus temp", "clear cache", "clear temp",
+    "disk cleanup", "disk clean",
+    "recycle bin", "tempat sampah",
+    "optimasi", "optimize", "optimise",
+    "cleanup pc", "cleanup ssd", "cleanup hdd",
+    "bersihin ssd", "bersihin hdd", "bersihin disk",
+    "kosongkan", "free up",
+)
+
 CRON_MANAGEMENT_OPS = (
     "list",
     "lihat",
@@ -126,11 +147,23 @@ CRON_MANAGEMENT_OPS = LEXICON_CRON_MANAGEMENT_OPS
 CRON_MANAGEMENT_TERMS = LEXICON_CRON_MANAGEMENT_TERMS
 
 
-def required_tool_for_query(question: str, has_weather_tool: bool, has_cron_tool: bool) -> str | None:
+def required_tool_for_query(
+    question: str,
+    has_weather_tool: bool,
+    has_cron_tool: bool,
+    has_system_info_tool: bool = False,
+    has_cleanup_tool: bool = False,
+) -> str | None:
     """Return required tool name for immediate-action prompts."""
     q_lower = (question or "").lower()
     if has_weather_tool and any(k in q_lower for k in WEATHER_KEYWORDS):
         return "weather"
+
+    if has_system_info_tool and any(k in q_lower for k in SYSTEM_INFO_KEYWORDS):
+        return "get_system_info"
+
+    if has_cleanup_tool and any(k in q_lower for k in CLEANUP_KEYWORDS):
+        return "cleanup_system"
 
     is_cron_mgmt = (
         has_cron_tool

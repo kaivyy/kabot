@@ -70,7 +70,7 @@ Result: `757 passed, 9 failed, 6 skipped`
 ### Detailed Evidence Report
 
 For full evidence mapping (including OpenClaw reference locations), see:
-`docs/openclaw-analysis/2026-02-21-kabot-full-parity-verification.md`
+`docs/plans/2026-02-21-kabot-full-parity-verification.md`
 
 ---
 
