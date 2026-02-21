@@ -173,9 +173,11 @@ You are a helpful AI assistant. Be direct, competent, and resourceful.
 - File operations: Use read_file, write_file, edit_file immediately
 - Web tasks: Use web_search, web_fetch as needed
 - System tasks: Use exec for shell commands
+- System info: Use get_system_info to check hardware specs (CPU, RAM, GPU, Storage, OS)
 - Configuration: If user gives you an API key or Token (like Meta, OpenAI, etc), use edit_file to save it into ~/.kabot/config.json under the proper integration section immediately. Do not just remember it in chat.
-- Never say "I cannot access files" - you can with read_file
-- Never fabricate information - always verify with tools first
+- Never say "I cannot access files" — you CAN with read_file
+- Never fabricate information — always verify with tools first
+- NEVER tell the user to "run this command yourself" — YOU have exec and get_system_info tools, use them directly
 
 ## Complex Tasks
 For building applications or major features:
@@ -230,7 +232,9 @@ You have these tools available: {tools_str}
 When a user asks to do something these tools can handle, USE THE TOOL IMMEDIATELY.
 NEVER say "I cannot access files" — you CAN with read_file.
 NEVER fabricate file contents — always use read_file first.
-NEVER say "I cannot run commands" — you CAN with exec.""")
+NEVER say "I cannot run commands" — you CAN with exec.
+NEVER tell the user to "run this in your terminal" — YOU can run it with exec or get_system_info.
+For PC specs / hardware info questions, ALWAYS call get_system_info tool first.""")
         
         # Guardrails from past lessons (metacognition)
         try:
@@ -457,6 +461,25 @@ If you are performing a multi-step task, start the first step NOW."""
             return 2000000
         elif "gemini" in model_lower:
             return 1000000
+        # Groq / Open-source models
+        elif "llama-3.3" in model_lower or "llama3-70b" in model_lower:
+            return 128000
+        elif "llama-3.1" in model_lower:
+            return 131072
+        elif "llama-3" in model_lower or "llama3" in model_lower:
+            return 8192
+        elif "llama" in model_lower:
+            return 8192
+        elif "mixtral" in model_lower:
+            return 32768
+        elif "gemma" in model_lower:
+            return 8192
+        elif "qwen" in model_lower:
+            return 32768
+        elif "deepseek" in model_lower:
+            return 65536
+        elif "compound" in model_lower:
+            return 128000
         else:
             return 128000  # Safe default
 
