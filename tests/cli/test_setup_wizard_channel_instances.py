@@ -55,3 +55,38 @@ def test_ensure_agent_exists_updates_existing_model(monkeypatch, tmp_path):
     assert resolved == "research"
     agent = next(agent for agent in wizard.config.agents.agents if agent.id == "research")
     assert agent.model == "openai/gpt-4.1"
+
+
+def test_configure_channels_discord_advanced_parses_intents_bitmask(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+
+    menu_choices = iter(["discord", "back"])
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.ClackUI.clack_select",
+        lambda *args, **kwargs: next(menu_choices),
+    )
+
+    confirms = iter([True, True])  # enable discord, configure advanced
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Confirm.ask",
+        lambda *args, **kwargs: next(confirms),
+    )
+
+    prompts = iter(
+        [
+            "discord-token-123",
+            "wss://gateway.discord.gg/?v=10&encoding=json",
+            "32768,512",
+        ]
+    )
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Prompt.ask",
+        lambda *args, **kwargs: next(prompts),
+    )
+
+    wizard._configure_channels()
+
+    assert wizard.config.channels.discord.enabled is True
+    assert wizard.config.channels.discord.token == "discord-token-123"
+    assert wizard.config.channels.discord.intents == (32768 | 512)

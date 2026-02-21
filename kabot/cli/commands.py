@@ -2088,11 +2088,16 @@ def security_audit():
 def doctor(
     agent: str = typer.Option("main", "--agent", "-a", help="Agent ID to check"),
     fix: bool = typer.Option(False, "--fix", help="Automatically fix critical integrity issues"),
+    bootstrap_sync: bool = typer.Option(
+        False,
+        "--bootstrap-sync",
+        help="With --fix, also sync mismatched bootstrap files from baseline templates.",
+    ),
 ):
     """Run system health and integrity checks."""
     from kabot.utils.doctor import KabotDoctor
     doc = KabotDoctor(agent_id=agent)
-    doc.render_report(fix=fix)
+    doc.render_report(fix=fix, sync_bootstrap=bootstrap_sync)
 
 
 @app.command("plugins")

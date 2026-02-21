@@ -26,11 +26,24 @@ class MetaGraphClient:
             raise ValueError("Meta access token is missing")
 
         normalized = "/" + path.lstrip("/")
-        url = f"{self.api_base}{normalized}"
+        
+        # Threads endpoints use a different host and API version
+        if "threads" in normalized:
+            url = f"https://graph.threads.net/v1.0{normalized}"
+            # Threads API requires access_token in the payload/query instead of just Auth header for some endpoints
+            payload["access_token"] = self.access_token
+        else:
+            url = f"{self.api_base}{normalized}"
+            
         headers = {"Authorization": f"Bearer {self.access_token}"}
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.request(method=method, url=url, json=payload, headers=headers)
+            if "threads" in normalized:
+                # Threads requires application/x-www-form-urlencoded
+                response = await client.request(method=method, url=url, data=payload)
+            else:
+                # Regular Meta API uses JSON
+                response = await client.request(method=method, url=url, json=payload, headers=headers)
 
         try:
             data = response.json()

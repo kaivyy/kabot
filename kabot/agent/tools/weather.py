@@ -348,7 +348,8 @@ class WeatherTool(Tool):
         "Get CURRENT weather information for a location using wttr.in or Open-Meteo "
         "(no API key required). ALWAYS use this tool when the user asks about weather, "
         "temperature, or climate conditions. Do not use training data - always fetch "
-        "real-time data from this tool."
+        "real-time data from this tool. IMPORTANT: The tool output includes a care "
+        "advice/suggestion (e.g., 'Saran: ...'). You MUST include this advice in your response."
     )
     parameters = {
         "type": "object",

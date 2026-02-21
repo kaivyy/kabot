@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from kabot.agent.tools.base import Tool
@@ -17,9 +18,12 @@ class MetaGraphTool(Tool):
         self.enabled = bool(getattr(cfg, "enabled", False))
         self.threads_user_id = (getattr(cfg, "threads_user_id", "") or "").strip() or "me"
         self.instagram_user_id = (getattr(cfg, "instagram_user_id", "") or "").strip() or "me"
+        self._access_token_env = (getattr(cfg, "access_token_env", "") or "").strip()
         access_token = (getattr(cfg, "access_token", "") or "").strip()
+        self._access_token = access_token
 
         self.client = client
+        self._client_provided = client is not None
         if self.client is None and access_token:
             self.client = MetaGraphClient(access_token=access_token)
 
@@ -73,6 +77,18 @@ class MetaGraphTool(Tool):
                     "type": "string",
                     "description": "Optional Threads parent post ID",
                 },
+                "access_token": {
+                    "type": "string",
+                    "description": "Optional per-request token override (preferred over saved config)",
+                },
+                "threads_user_id": {
+                    "type": "string",
+                    "description": "Optional per-request Threads user ID override",
+                },
+                "instagram_user_id": {
+                    "type": "string",
+                    "description": "Optional per-request Instagram user ID override",
+                },
                 "extra": {
                     "type": "object",
                     "description": "Additional key/value fields passed to Graph API payload",
@@ -90,11 +106,34 @@ class MetaGraphTool(Tool):
         image_url: str | None = None,
         video_url: str | None = None,
         reply_to_id: str | None = None,
+        access_token: str | None = None,
+        threads_user_id: str | None = None,
+        instagram_user_id: str | None = None,
         extra: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> str:
+        if threads_user_id:
+            self.threads_user_id = str(threads_user_id).strip() or self.threads_user_id
+        if instagram_user_id:
+            self.instagram_user_id = str(instagram_user_id).strip() or self.instagram_user_id
+
+        token_to_use = self._resolve_access_token(access_token)
+        if token_to_use:
+            should_build_client = (
+                self.client is None
+                or (not self._client_provided and token_to_use != self._access_token)
+            )
+            if should_build_client:
+                self.client = MetaGraphClient(access_token=token_to_use)
+            self._access_token = token_to_use
+
         if self.client is None:
-            return "Error: Meta integration is not configured (missing access_token)."
+            return (
+                "Error: Meta integration is missing access token. "
+                "Provide `access_token` in the call, set "
+                "`THREADS_ACCESS_TOKEN`/`KABOT_META_ACCESS_TOKEN`, or set "
+                "`integrations.meta.access_token` in `~/.kabot/config.json`."
+            )
 
         action_map = {
             "threads_create": self._build_threads_create,
@@ -120,6 +159,46 @@ class MetaGraphTool(Tool):
             return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as exc:
             return f"Error: {exc}"
+
+    def _resolve_access_token(self, inline_token: str | None = None) -> str:
+        """Resolve token with precedence: inline > configured-env > env > current > config."""
+        if inline_token and inline_token.strip():
+            return inline_token.strip()
+
+        configured_env_token = self._resolve_env_token_by_name(self._access_token_env)
+        if configured_env_token:
+            return configured_env_token
+
+        env_token = (os.getenv("THREADS_ACCESS_TOKEN") or os.getenv("KABOT_META_ACCESS_TOKEN") or "").strip()
+        if env_token:
+            return env_token
+
+        if self._access_token:
+            return self._access_token
+
+        # Try lazy loading from config if configured during the session
+        try:
+            from kabot.config.loader import load_config
+            cfg = self._resolve_meta_config(load_config())
+            self._access_token_env = (getattr(cfg, "access_token_env", "") or "").strip() or self._access_token_env
+            configured_env_token = self._resolve_env_token_by_name(self._access_token_env)
+            if configured_env_token:
+                return configured_env_token
+            token = (getattr(cfg, "access_token", "") or "").strip()
+            if token:
+                self.threads_user_id = (getattr(cfg, "threads_user_id", "") or "").strip() or self.threads_user_id
+                self.instagram_user_id = (getattr(cfg, "instagram_user_id", "") or "").strip() or self.instagram_user_id
+                self.enabled = bool(getattr(cfg, "enabled", False))
+                return token
+        except Exception:
+            return ""
+        return ""
+
+    def _resolve_env_token_by_name(self, env_name: str | None) -> str:
+        """Resolve token from a configured env var name."""
+        if not env_name:
+            return ""
+        return (os.getenv(env_name) or "").strip()
 
     def _resolve_meta_config(self, config: Any | None) -> Any | None:
         if config is None:
@@ -154,8 +233,15 @@ class MetaGraphTool(Tool):
         payload: dict[str, Any] = {}
         if text:
             payload["text"] = text
-        if media_type:
-            payload["media_type"] = media_type
+        effective_media_type = media_type
+        if not effective_media_type:
+            if video_url:
+                effective_media_type = "VIDEO"
+            elif image_url:
+                effective_media_type = "IMAGE"
+            else:
+                effective_media_type = "TEXT"
+        payload["media_type"] = effective_media_type
         if image_url:
             payload["image_url"] = image_url
         if video_url:

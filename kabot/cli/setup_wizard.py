@@ -988,7 +988,11 @@ class SetupWizard:
                 self.config.gateway.host = "127.0.0.1"
                 self.config.gateway.tailscale = True
 
-        self.config.gateway.port = int(Prompt.ask("│  Port", default=str(self.config.gateway.port)))
+        port_input = Prompt.ask("│  Port", default=str(self.config.gateway.port))
+        try:
+            self.config.gateway.port = int(port_input)
+        except (TypeError, ValueError):
+            console.print("│  [yellow]Invalid port, keeping previous value[/yellow]")
 
         # Auth Config
         auth_mode = ClackUI.clack_select("Authentication", choices=[
@@ -1025,6 +1029,10 @@ class SetupWizard:
 
         # Mark section as in progress
         self._save_setup_state("skills", completed=False, in_progress=True)
+
+        injected_env_count = self._inject_configured_skill_env()
+        if injected_env_count > 0:
+            console.print(f"│  [dim]Loaded {injected_env_count} configured skill env var(s)[/dim]")
 
         from kabot.agent.skills import SkillsLoader
         loader = SkillsLoader(self.config.workspace_path)
@@ -1088,8 +1096,10 @@ class SetupWizard:
                 ])
             ).ask()
 
-            if selected_names and "skip" not in selected_names:
-                for name in selected_names:
+            selected_names = selected_names or []
+            selected_install_names = [name for name in selected_names if name != "skip"]
+            if selected_install_names:
+                for name in selected_install_names:
                     skill = next((s for s in installable if s['name'] == name), None)
                     if not skill: continue
 
@@ -1251,12 +1261,16 @@ class SetupWizard:
                     # Optional advanced fields
                     if Confirm.ask("│  Configure Gateway/Intents (Advanced)?"):
                         c.discord.gateway_url = Prompt.ask("│  Gateway URL", default=c.discord.gateway_url)
-                        intents_str = Prompt.ask("│  Intents (comma separated)", default=",".join([str(i) for i in c.discord.intents or []]))
+                        intents_str = Prompt.ask(
+                            "│  Intents (bitmask or comma separated)",
+                            default=self._discord_intents_default_value(c.discord.intents),
+                        )
                         if intents_str:
-                            try:
-                                c.discord.intents = [int(i.strip()) for i in intents_str.split(",") if i.strip()]
-                            except ValueError:
+                            parsed_intents = self._parse_discord_intents(intents_str)
+                            if parsed_intents is None:
                                 console.print("│  [red]Invalid intents format[/red]")
+                            else:
+                                c.discord.intents = parsed_intents
                 else:
                     c.discord.enabled = False
 
@@ -1328,6 +1342,51 @@ class SetupWizard:
         self._save_setup_state("channels", completed=True,
                              configured_channels=configured_channels,
                              instance_count=len(c.instances) if c.instances else 0)
+
+    def _inject_configured_skill_env(self) -> int:
+        configured_skills = getattr(self.config, "skills", {}) or {}
+        if not isinstance(configured_skills, dict):
+            return 0
+
+        injected = 0
+        for skill_cfg in configured_skills.values():
+            if not isinstance(skill_cfg, dict):
+                continue
+            env_vars = skill_cfg.get("env", {})
+            if not isinstance(env_vars, dict):
+                continue
+            for key, value in env_vars.items():
+                if not key or value in (None, ""):
+                    continue
+                if key not in os.environ:
+                    os.environ[key] = str(value)
+                    injected += 1
+        return injected
+
+    def _discord_intents_default_value(self, current: Any) -> str:
+        if isinstance(current, int):
+            return str(current)
+        if isinstance(current, list):
+            values = [str(item) for item in current if isinstance(item, int)]
+            return ",".join(values) if values else "37377"
+        return "37377"
+
+    def _parse_discord_intents(self, raw_value: str) -> int | None:
+        cleaned = (raw_value or "").strip()
+        if not cleaned:
+            return None
+        try:
+            if "," not in cleaned:
+                return int(cleaned, 0)
+            value = 0
+            for segment in cleaned.split(","):
+                bit = segment.strip()
+                if not bit:
+                    continue
+                value |= int(bit, 0)
+            return value
+        except ValueError:
+            return None
 
     def _validate_api_key(self, provider: str, api_key: str) -> bool:
         """Validate API key by making a test call."""

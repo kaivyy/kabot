@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Military-Grade Progressive Enhancement & Security Hardening (2026-02-21)
+
+- **Multi-Provider Deep Search:** 
+  - Rewrote `WebSearchTool` to support multi-provider chain (Perplexity Sonar, Grok-3, Brave).
+  - Implemented automatic fallback: if premium provider fails, it attempts to use Brave Search.
+  - Added in-memory thread-safe `TTLCache` to reduce API costs and improve performance.
+- **Enhanced Web Fetching & Security:**
+  - Added **SSRF Guard** to `WebFetchTool` with host denylists and DNS resolution checks.
+  - Implemented **FireCrawl fallback** for JavaScript-heavy websites when BeautifulSoup fails.
+  - Added **External Content Wrapping** (`[EXTERNAL_CONTENT]`) to mitigate prompt injection risks from untrusted data.
+- **Improved Skills UX:**
+  - Enhanced skills validation to check for missing binaries and environment variables.
+  - Added explicit installation hints for missing dependencies (e.g., "needs ffmpeg (install: sudo apt install ffmpeg)").
+  - Fixed YAML frontmatter parsing in `SkillsLoader` to support multiline JSON metadata blocks.
+- **Setup Wizard "Military-Grade" Section:**
+  - Added "Advanced Tools" section to `kabot setup` for optional Perplexity, Grok, and FireCrawl keys.
+  - Integrated "Freedom Mode" toggle to disable HTTP guards and auto-approve commands for trusted environments.
+- **Fixed:**
+  - Resolved `TypeError` in `WebFetchTool` initialization that crashed the gateway process.
+  - Fixed `[WinError 2]` during WhatsApp bridge setup on Windows by resolving `npm.cmd` absolute path.
+  - Fixed logic bug where `kabot setup` failed to prompt for API keys of complex skills (Nano Banana, etc.).
+  - Fixed `AttributeError` exception when running `kabot doctor` Health Check from setup wizard by adding `check_requirements` to the tool base class.
+
+### Fixed - Setup Wizard OpenClaw Config Flow (2026-02-21)
+
+- Fixed Discord advanced channel configuration in setup wizard:
+  - Prevented crash when opening `Intents` prompt from advanced Discord settings.
+  - Intents input now supports both bitmask form (`37377`) and comma-separated flags (`32768,512`) and stores a valid integer bitmask.
+- Fixed skills dependency selection logic:
+  - Selecting `Skip for now` together with specific selected skills no longer cancels all installs.
+  - Wizard now installs selected skills and only ignores the `skip` marker itself.
+- Improved skills API-key behavior in setup wizard:
+  - Wizard now injects preconfigured `config.skills.*.env` values into process environment before evaluating missing skill env requirements.
+  - Prevents unnecessary repeated API-key prompts for skills already configured in config.
+- Hardened gateway setup prompt:
+  - Invalid/non-numeric gateway port input no longer crashes wizard flow.
+  - Wizard keeps the previous valid port and continues.
+- Added regression tests:
+  - `tests/cli/test_setup_wizard_channel_instances.py` (Discord intents parsing path).
+  - `tests/cli/test_setup_wizard_skills.py` (skip+install behavior and preconfigured env usage).
+  - `tests/cli/test_setup_wizard_gateway.py` (invalid gateway port handling).
+
 ### Fixed - Tool-Calling Reliability for Weather/Reminder (2026-02-20)
 
 - Fixed OpenAI Codex OAuth backend request/response handling so tool calls can run end-to-end:
