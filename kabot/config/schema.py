@@ -137,6 +137,25 @@ class ChannelsConfig(BaseModel):
     instances: list[ChannelInstance] = Field(default_factory=list)
 
 
+class SubagentDefaults(BaseModel):
+    """Sub-agent safety limits."""
+
+    max_spawn_depth: int = 1
+    max_children_per_agent: int = 5
+    archive_after_minutes: int = 60
+
+
+class HeartbeatDefaults(BaseModel):
+    """Heartbeat delivery and scheduling configuration."""
+
+    enabled: bool = True
+    interval_minutes: int = 30
+    target_channel: str = "last"
+    target_to: str = ""
+    active_hours_start: str = ""
+    active_hours_end: str = ""
+
+
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
     workspace: str = "~/.kabot/workspace"
@@ -144,6 +163,8 @@ class AgentDefaults(BaseModel):
     max_tokens: int = 8192
     temperature: float = 0.7
     max_tool_iterations: int = 20
+    subagents: SubagentDefaults = Field(default_factory=SubagentDefaults)
+    heartbeat: HeartbeatDefaults = Field(default_factory=HeartbeatDefaults)
 
 
 class AgentModelConfig(BaseModel):

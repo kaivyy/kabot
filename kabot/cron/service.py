@@ -1,17 +1,28 @@
 """Cron service for scheduling agent tasks."""
 
 import asyncio
+import hashlib
+import hmac
+import json as _json
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
+import httpx
 from loguru import logger
 
 from kabot.cron.core import execution as core_execution
 from kabot.cron.core import persistence as core_persistence
 from kabot.cron.core import scheduling as core_scheduling
 from kabot.cron import policies as core_policies
-from kabot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
+from kabot.cron.types import (
+    CronDeliveryConfig,
+    CronJob,
+    CronJobState,
+    CronPayload,
+    CronSchedule,
+    CronStore,
+)
 
 MAX_RUN_HISTORY = 20
 
@@ -22,6 +33,25 @@ def _now_ms() -> int:
 
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     return core_scheduling.compute_next_run(schedule, now_ms)
+
+
+async def _deliver_webhook(
+    url: str,
+    job_id: str,
+    job_name: str,
+    output: str,
+    secret: str = "",
+) -> bool:
+    """Send cron result to external webhook endpoint."""
+    body = _json.dumps({"job_id": job_id, "job_name": job_name, "output": output})
+    headers = {"Content-Type": "application/json"}
+    if secret:
+        signature = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
+        headers["X-Kabot-Signature"] = f"sha256={signature}"
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(url, content=body, headers=headers)
+        return 200 <= response.status_code < 300
 
 
 class CronService:
@@ -112,6 +142,7 @@ class CronService:
         deliver: bool = False,
         channel: str | None = None,
         to: str | None = None,
+        delivery: CronDeliveryConfig | None = None,
         delete_after_run: bool = False,
         group_id: str | None = None,
         group_title: str | None = None,
@@ -154,6 +185,7 @@ class CronService:
                 group_id=group_id,
                 group_title=group_title,
             ),
+            delivery=delivery,
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,
             updated_at_ms=now,
@@ -226,6 +258,8 @@ class CronService:
                         job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
                 if "deliver" in kwargs:
                     job.payload.deliver = kwargs["deliver"]
+                if "delivery" in kwargs:
+                    job.delivery = kwargs["delivery"]
                 if "group_id" in kwargs:
                     job.payload.group_id = kwargs["group_id"]
                 if "group_title" in kwargs:

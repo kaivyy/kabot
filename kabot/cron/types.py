@@ -35,6 +35,17 @@ class CronPayload:
 
 
 @dataclass
+class CronDeliveryConfig:
+    """Delivery configuration for a cron job."""
+
+    mode: Literal["announce", "webhook", "none"] = "announce"
+    channel: str = "last"
+    to: str = ""
+    webhook_url: str = ""
+    webhook_secret: str = ""
+
+
+@dataclass
 class CronJobState:
     """Runtime state of a job."""
     next_run_at_ms: int | None = None
@@ -52,6 +63,7 @@ class CronJob:
     enabled: bool = True
     schedule: CronSchedule = field(default_factory=lambda: CronSchedule(kind="every"))
     payload: CronPayload = field(default_factory=CronPayload)
+    delivery: CronDeliveryConfig | None = None
     state: CronJobState = field(default_factory=CronJobState)
     created_at_ms: int = 0
     updated_at_ms: int = 0
