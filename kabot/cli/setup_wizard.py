@@ -437,9 +437,10 @@ class SetupWizard:
                 self._configure_tools()
             elif choice == "gateway":
                 self._configure_gateway()
-            elif choice == "channels",
-            "autostart":
+            elif choice == "channels":
                 self._configure_channels()
+            elif choice == "autostart":
+                self._configure_autostart()
             elif choice == "skills":
                 self._configure_skills()
             elif choice == "logging":
@@ -506,8 +507,8 @@ class SetupWizard:
             "tools": "Tools & Sandbox (Search, Docker, Shell)",
             "gateway": "Gateway (Port, Host, Bindings)",
             "skills": "Skills (Install & Configure)",
-            "channels",
-            "autostart": "Channels (Telegram, WhatsApp, Slack)",
+            "channels": "Channels (Telegram, WhatsApp, Slack)",
+            "autostart": "Auto-start (Enable boot-up service)",
             "logging": "Logging & Debugging",
             "doctor": "Health Check (Run system diagnostic)",
             "finish": "Continue & Finish",
