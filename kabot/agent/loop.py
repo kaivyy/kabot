@@ -300,6 +300,9 @@ class AgentLoop:
         )
         self.tools.register(BrowserTool())
 
+        from kabot.agent.tools.system import SystemInfoTool
+        self.tools.register(SystemInfoTool())
+
         message_tool = MessageTool(send_callback=self.bus.publish_outbound)
         self.tools.register(message_tool)
 
