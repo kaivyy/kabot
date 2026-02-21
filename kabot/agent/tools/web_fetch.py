@@ -20,7 +20,14 @@ USER_AGENT = "Kabot/1.0 (AI Assistant)"
 class WebFetchTool(Tool):
     """Fetch content from HTTP URLs — web pages, APIs, files."""
 
-    def __init__(self, http_guard: Any | None = None):
+    def __init__(
+        self,
+        http_guard: Any | None = None,
+        firecrawl_api_key: str | None = None,
+        firecrawl_base_url: str = "https://api.firecrawl.dev",
+        cache_ttl_minutes: int = 5,
+    ):
+        import os
         deny_defaults = {
             "localhost",
             "127.0.0.1",
