@@ -20,7 +20,8 @@ def get_bridge_dir() -> Path:
         return user_bridge
 
     # Check for npm
-    if not shutil.which("npm"):
+    npm_path = shutil.which("npm")
+    if not npm_path:
         console.print("[red]npm not found. Please install Node.js >= 18.[/red]")
         raise typer.Exit(1)
 
@@ -51,10 +52,10 @@ def get_bridge_dir() -> Path:
     # Install and build
     try:
         console.print("  Installing dependencies...")
-        subprocess.run(["npm", "install"], cwd=user_bridge, check=True, capture_output=True)   
+        subprocess.run([npm_path, "install"], cwd=user_bridge, check=True, capture_output=True)   
         
         console.print("  Building...")
-        subprocess.run(["npm", "run", "build"], cwd=user_bridge, check=True, capture_output=True)
+        subprocess.run([npm_path, "run", "build"], cwd=user_bridge, check=True, capture_output=True)
 
         console.print("[green]✓[/green] Bridge ready\n")
     except subprocess.CalledProcessError as e:
@@ -73,9 +74,12 @@ def run_bridge_login():
     console.print(f"{__logo__} Starting bridge...")
     console.print("Scan the QR code to connect.\n")
 
+    npm_path = shutil.which("npm")
+    if not npm_path:
+        console.print("[red]npm not found. Please install Node.js.[/red]")
+        return
+        
     try:
-        subprocess.run(["npm", "start"], cwd=bridge_dir, check=True)
+        subprocess.run([npm_path, "start"], cwd=bridge_dir, check=True)
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Bridge failed: {e}[/red]")
-    except FileNotFoundError:
-        console.print("[red]npm not found. Please install Node.js.[/red]")
