@@ -100,3 +100,13 @@ class Tool(ABC):
                 "parameters": self.parameters,
             }
         }
+
+    def check_requirements(self) -> tuple[bool, str]:
+        """
+        Check if tool requirements are met.
+        
+        Returns:
+            Tuple of (is_eligible, error_message).
+        """
+        return True, ""
+

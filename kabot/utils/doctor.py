@@ -13,8 +13,15 @@ from rich import box
 from rich.console import Console
 from rich.panel import Panel
 
-from kabot.config.loader import get_agent_dir, get_global_data_dir
+from kabot.agent.agent_scope import resolve_agent_workspace
+from kabot.config.loader import get_agent_dir, get_global_data_dir, load_config
 from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
+from kabot.utils.bootstrap_parity import (
+    BootstrapParityPolicy,
+    apply_bootstrap_fixes,
+    check_bootstrap_parity,
+    policy_from_config,
+)
 
 console = Console()
 
@@ -26,17 +33,40 @@ class KabotDoctor:
         self.agent_id = agent_id
         self.global_dir = get_global_data_dir()
         self.agent_dir = get_agent_dir(agent_id)
+        self.config = self._load_config_safe()
+        self.workspace = self._resolve_workspace()
+        self.bootstrap_policy = self._resolve_bootstrap_policy()
 
-    def run_full_diagnostic(self, fix: bool = False) -> dict[str, Any]:
+    def _load_config_safe(self) -> Any | None:
+        try:
+            return load_config()
+        except Exception:
+            return None
+
+    def _resolve_workspace(self) -> Path:
+        if self.config is not None:
+            try:
+                return resolve_agent_workspace(self.config, self.agent_id)
+            except Exception:
+                pass
+        return self.agent_dir / "workspace"
+
+    def _resolve_bootstrap_policy(self) -> BootstrapParityPolicy:
+        return policy_from_config(self.config)
+
+    def run_full_diagnostic(self, fix: bool = False, sync_bootstrap: bool = False) -> dict[str, Any]:
         """Execute health checks and optionally fix issues."""
         integrity = self.check_state_integrity()
+        bootstrap_parity = self.check_bootstrap_parity()
 
         if fix:
-            self.apply_fixes(integrity)
+            self.apply_fixes(integrity, bootstrap_parity, sync_bootstrap=sync_bootstrap)
             integrity = self.check_state_integrity()
+            bootstrap_parity = self.check_bootstrap_parity()
 
         return {
             "integrity": integrity,
+            "bootstrap_parity": bootstrap_parity,
             "environment": self.check_environment_matrix(),
             "dependencies": self.check_dependencies(),
             "connectivity": asyncio.run(self.check_connectivity()),
@@ -49,10 +79,10 @@ class KabotDoctor:
             ("Agent Root", self.agent_dir),
             ("Sessions", self.agent_dir / "sessions"),
             ("Memory", self.agent_dir / "memory_db"),
-            ("Workspace", self.agent_dir / "workspace"),
+            ("Workspace", self.workspace),
             ("Logs", self.agent_dir / "logs"),
-            ("Workspace Plugins", self.agent_dir / "workspace" / "plugins"),
-            ("Workspace Temp", self.agent_dir / "workspace" / "tmp"),
+            ("Workspace Plugins", self.workspace / "plugins"),
+            ("Workspace Temp", self.workspace / "tmp"),
         ]
 
     def check_state_integrity(self) -> list[dict[str, Any]]:
@@ -71,7 +101,17 @@ class KabotDoctor:
             checks.append({"item": name, "status": status, "detail": detail, "path": path})
         return checks
 
-    def apply_fixes(self, integrity_report: list[dict[str, Any]]) -> None:
+    def check_bootstrap_parity(self) -> list[dict[str, Any]]:
+        """Check bootstrap files for workspace parity."""
+        return check_bootstrap_parity(self.workspace, self.bootstrap_policy)
+
+    def apply_fixes(
+        self,
+        integrity_report: list[dict[str, Any]],
+        bootstrap_report: list[dict[str, Any]] | None = None,
+        *,
+        sync_bootstrap: bool = False,
+    ) -> None:
         """Fix critical integrity issues by creating missing folders."""
         for issue in integrity_report:
             if issue.get("status") != "CRITICAL":
@@ -91,6 +131,16 @@ class KabotDoctor:
                 path.mkdir(parents=True, exist_ok=True)
             except Exception:
                 pass
+
+        parity_issues = bootstrap_report if bootstrap_report is not None else self.check_bootstrap_parity()
+        if parity_issues:
+            changes = apply_bootstrap_fixes(
+                self.workspace,
+                self.bootstrap_policy,
+                sync_mismatch=sync_bootstrap,
+            )
+            for change in changes:
+                console.print(f"  [green]OK[/green] {change}")
 
     def check_environment_matrix(self) -> list[dict[str, Any]]:
         """Run environment-level checks for service/runtime operations."""
@@ -186,7 +236,7 @@ class KabotDoctor:
         eligible: list[str] = []
         missing: list[dict[str, str]] = []
 
-        for name in agent.tools.list_tools():
+        for name in agent.tools.tool_names:
             tool = agent.tools.get(name)
             ok, err = tool.check_requirements()
             if ok:
@@ -195,9 +245,9 @@ class KabotDoctor:
                 missing.append({"name": name, "error": err})
         return {"eligible": eligible, "missing": missing}
 
-    def render_report(self, fix: bool = False) -> None:
+    def render_report(self, fix: bool = False, sync_bootstrap: bool = False) -> None:
         """Render diagnostic report."""
-        report = self.run_full_diagnostic(fix=fix)
+        report = self.run_full_diagnostic(fix=fix, sync_bootstrap=sync_bootstrap)
 
         console.print("\n[bold cyan]+ Kabot doctor[/bold cyan]")
 
@@ -206,6 +256,15 @@ class KabotDoctor:
             color = "green" if item["status"] == "OK" else "red"
             integrity_text += f"[{color}]- {item['status']}: {item['item']} -> {item['detail']}[/{color}]\n"
         console.print(Panel(integrity_text.strip(), title=" State Integrity ", border_style="dim", box=box.ROUNDED))
+
+        parity_text = ""
+        for item in report["bootstrap_parity"]:
+            status = item["status"]
+            color = "green" if status == "OK" else ("yellow" if status == "WARN" else "red")
+            parity_text += f"[{color}]- {status}: {item['file']} -> {item['detail']}[/{color}]\n"
+        if not parity_text:
+            parity_text = "[green]- OK: bootstrap parity checks disabled[/green]"
+        console.print(Panel(parity_text.strip(), title=" Bootstrap Parity ", border_style="dim", box=box.ROUNDED))
 
         env_text = ""
         for item in report["environment"]:
@@ -221,3 +280,8 @@ class KabotDoctor:
 
         if not fix and any(item["status"] == "CRITICAL" for item in report["integrity"]):
             console.print("[yellow]Tip: Run 'kabot doctor --fix' to automatically create missing directories.[/yellow]\n")
+        if not fix and any(item["status"] in {"CRITICAL", "WARN"} for item in report["bootstrap_parity"]):
+            console.print(
+                "[yellow]Tip: Configure bootstrap baseline and run 'kabot doctor --fix --bootstrap-sync' "
+                "to enforce dev/prod prompt parity.[/yellow]\n"
+            )
