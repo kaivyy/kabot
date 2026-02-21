@@ -420,8 +420,10 @@ class SkillsLoader:
                 return content[match.end():].strip()
         return content
     
-    def _parse_kabot_metadata(self, raw: str) -> dict:
+    def _parse_kabot_metadata(self, raw: str | dict) -> dict:
         """Parse kabot metadata JSON from frontmatter."""
+        if isinstance(raw, dict):
+            return raw.get("kabot", {})
         try:
             data = json.loads(raw)
             return data.get("kabot", {}) if isinstance(data, dict) else {}
@@ -471,12 +473,20 @@ class SkillsLoader:
         if content.startswith("---"):
             match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
             if match:
-                # Simple YAML parsing
-                metadata = {}
-                for line in match.group(1).split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        metadata[key.strip()] = value.strip().strip('"\'')
-                return metadata
+                yaml_text = match.group(1)
+                try:
+                    import yaml
+                    return yaml.safe_load(yaml_text) or {}
+                except ImportError:
+                    # Fallback if PyYAML somehow isn't installed
+                    metadata = {}
+                    for line in yaml_text.split("\n"):
+                        if ":" in line and not line.strip().startswith("{") and not line.strip().startswith("}"):
+                            # Very basic single-line parse fallback
+                            key, value = line.split(":", 1)
+                            metadata[key.strip()] = value.strip().strip('"\'')
+                    return metadata
+                except Exception:
+                    return {}
         
         return None
