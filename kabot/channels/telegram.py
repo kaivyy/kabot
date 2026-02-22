@@ -239,8 +239,12 @@ class TelegramChannel(BaseChannel):
         
         self._running = True
         
-        # Build the application
-        builder = Application.builder().token(self.config.token)
+        # Build the application with increased timeouts to prevent httpx.ReadError
+        from telegram.request import HTTPXRequest
+        
+        req = HTTPXRequest(connection_pool_size=8, connect_timeout=15.0, read_timeout=30.0)
+        builder = Application.builder().token(self.config.token).request(req).get_updates_request(req)
+        
         if self.config.proxy:
             builder = builder.proxy(self.config.proxy).get_updates_proxy(self.config.proxy)
         self._app = builder.build()
