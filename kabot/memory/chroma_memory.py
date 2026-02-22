@@ -12,10 +12,10 @@ from loguru import logger
 from rank_bm25 import BM25Okapi
 
 from .ollama_embeddings import OllamaEmbeddingProvider
-from .sentence_embeddings import SentenceEmbeddingProvider
-from .sqlite_store import SQLiteMetadataStore
-from .smart_router import SmartRouter
 from .reranker import Reranker
+from .sentence_embeddings import SentenceEmbeddingProvider
+from .smart_router import SmartRouter
+from .sqlite_store import SQLiteMetadataStore
 
 
 class HybridMemoryManager:
@@ -446,7 +446,7 @@ class HybridMemoryManager:
             # 0. Route query intent
             route = self.router.route(query)
             logger.debug(f"Search memory route: {route} for query '{query}'")
-            
+
             # 1. Run Vector Search
             vector_results = []
             # Generate query embedding
@@ -502,7 +502,7 @@ class HybridMemoryManager:
                 if route == "episodic":
                     # Explicit intention to hit episodic DB
                     logger.debug("Executing episodic-only search (BM25 exact match)")
-                    
+
                     if not self._bm25_built:
                         self._build_bm25_index()
 

@@ -12,7 +12,7 @@ class GoogleDocsClient:
     def __init__(self, auth_manager: GoogleAuthManager | None = None):
         if not auth_manager:
             auth_manager = GoogleAuthManager()
-            
+
         creds = auth_manager.get_credentials()
         self.service = build("docs", "v1", credentials=creds)
 
@@ -35,14 +35,14 @@ class GoogleDocsClient:
         try:
             document = self.service.documents().get(documentId=document_id).execute()
             text_content = ""
-            
+
             # Very basic extraction: traverse structural elements
             for element in document.get("body", {}).get("content", []):
                 if "paragraph" in element:
                     for p_element in element["paragraph"].get("elements", []):
                         if "textRun" in p_element:
                             text_content += p_element["textRun"].get("content", "")
-                            
+
             return text_content
         except Exception as e:
             logger.error(f"Failed to read Google Doc: {e}")
@@ -59,7 +59,7 @@ class GoogleDocsClient:
             content_list = document.get("body", {}).get("content", [])
             if content_list:
                 end_index = content_list[-1].get("endIndex", 1) - 1
-            
+
             requests = [
                 {
                     "insertText": {

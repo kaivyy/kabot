@@ -14,7 +14,7 @@ class GmailClient:
     def __init__(self, auth_manager: GoogleAuthManager | None = None):
         if not auth_manager:
             auth_manager = GoogleAuthManager()
-            
+
         creds = auth_manager.get_credentials()
         self.service = build("gmail", "v1", credentials=creds)
 
@@ -26,7 +26,7 @@ class GmailClient:
                 userId="me", q=query, maxResults=max_results
             ).execute()
             messages = results.get("messages", [])
-            
+
             # Fetch details for each message
             full_messages = []
             for msg in messages:

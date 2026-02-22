@@ -14,7 +14,7 @@ class GoogleDriveClient:
     def __init__(self, auth_manager: GoogleAuthManager | None = None):
         if not auth_manager:
             auth_manager = GoogleAuthManager()
-            
+
         creds = auth_manager.get_credentials()
         self.service = build("drive", "v3", credentials=creds)
 
@@ -23,7 +23,7 @@ class GoogleDriveClient:
         # Simple default query if none provided
         if not query:
             query = "trashed = false"
-            
+
         logger.info(f"Querying native Google Drive API: '{query}' (max: {max_results})")
         try:
             results = self.service.files().list(
@@ -40,10 +40,10 @@ class GoogleDriveClient:
     def upload_text_file(self, name: str, content: str, mime_type: str = "text/plain") -> dict[str, Any] | None:
         """Upload a newly created text/markdown file directly to Google Drive."""
         file_metadata = {"name": name, "mimeType": mime_type}
-        
+
         # Convert string to file-like stream
         media = MediaIoBaseUpload(io.BytesIO(content.encode("utf-8")), mimetype=mime_type, resumable=True)
-        
+
         logger.info(f"Uploading file '{name}' to Google Drive...")
         try:
             file = self.service.files().create(

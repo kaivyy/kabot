@@ -1,6 +1,7 @@
 # tests/memory/test_smart_router.py
 """Tests for SmartRouter query classification."""
 import pytest
+
 from kabot.memory.smart_router import SmartRouter
 
 

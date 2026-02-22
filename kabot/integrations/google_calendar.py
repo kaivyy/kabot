@@ -13,7 +13,7 @@ class GoogleCalendarClient:
     def __init__(self, auth_manager: GoogleAuthManager | None = None):
         if not auth_manager:
             auth_manager = GoogleAuthManager()
-        
+
         creds = auth_manager.get_credentials()
         self.service = build("calendar", "v3", credentials=creds)
 
@@ -22,7 +22,7 @@ class GoogleCalendarClient:
         if not time_min:
             # Default to now
             time_min = datetime.datetime.utcnow().isoformat() + "Z"
-            
+
         logger.info(f"Fetching up to {max_results} events from Google Calendar '{calendar_id}'...")
         try:
             events_result = self.service.events().list(

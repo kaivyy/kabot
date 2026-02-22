@@ -28,7 +28,7 @@ class SQLiteMetadataStore:
             conn.execute("PRAGMA synchronous=NORMAL;")
             conn.execute("PRAGMA mmap_size=30000000;") # 30MB
             conn.execute("PRAGMA temp_store=MEMORY;")
-            
+
             # Sessions table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (

@@ -87,7 +87,7 @@ class BrowserTool(Tool):
                 # Simple extraction of text
                 text = await self.page.evaluate("document.body.innerText")
                 return f"URL: {self.page.url}\nTitle: {await self.page.title()}\nContent:\n{text[:5000]}"
-                
+
             elif action == "get_dom_snapshot":
                 # Inject JS to extract interactive elements and their selectors
                 script = """

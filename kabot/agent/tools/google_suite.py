@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -72,15 +72,15 @@ class GoogleCalendarTool(Tool):
                 time_min = kwargs.get("time_min")
                 events = self.client.list_events(max_results=max_results, time_min=time_min)
                 return events if events else "No events found."
-            
+
             elif action == "create_event":
                 summary = kwargs.get("summary")
                 start = kwargs.get("start_time_iso")
                 end = kwargs.get("end_time_iso")
-                
+
                 if not summary or not start or not end:
                     return "Error: 'summary', 'start_time_iso', and 'end_time_iso' are required to create an event."
-                
+
                 result = self.client.create_event(
                     summary=summary,
                     start_time_iso=start,
@@ -90,7 +90,7 @@ class GoogleCalendarTool(Tool):
                 if result:
                     return f"Event created: {result.get('htmlLink')}"
                 return "Failed to create event."
-                
+
             return f"Unknown calendar action: {action}"
         except Exception as e:
             logger.error(f"GoogleCalendarTool failed: {e}")
@@ -164,15 +164,15 @@ class GmailTool(Tool):
                     sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
                     summaries.append(f"[{msg['id']}] From: {sender} | Subject: {subject} | Snippet: {msg.get('snippet')}")
                 return "\n".join(summaries) if summaries else "No emails found matching query."
-            
+
             elif action in ["send_email", "save_draft"]:
                 to = kwargs.get("to")
                 subject = kwargs.get("subject")
                 body = kwargs.get("body_text")
-                
+
                 if not to or not subject or not body:
                     return "Error: 'to', 'subject', and 'body_text' are required."
-                
+
                 is_draft = action == "save_draft"
                 result = self.client.send_email(
                     to=to,
@@ -184,7 +184,7 @@ class GmailTool(Tool):
                     status = "Draft saved" if is_draft else "Email sent"
                     return f"{status} successfully with ID: {result.get('id')}"
                 return f"Failed to {'save draft' if is_draft else 'send email'}."
-                
+
             return f"Unknown gmail action: {action}"
         except Exception as e:
             logger.error(f"GmailTool failed: {e}")
@@ -250,26 +250,26 @@ class GoogleDriveTool(Tool):
                 query = kwargs.get("query", "trashed = false")
                 max_results = kwargs.get("max_results", 10)
                 files = self.client.search_files(query=query, max_results=max_results)
-                
+
                 if not files:
                     return "No files found matching query."
-                    
+
                 summaries = []
                 for f in files:
                     summaries.append(f"[{f['id']}] {f['name']} (URL: {f.get('webViewLink')})")
                 return "\n".join(summaries)
-            
+
             elif action == "upload_text":
                 name = kwargs.get("name")
                 content = kwargs.get("content")
                 if not name or not content:
                     return "Error: 'name' and 'content' required for upload_text."
-                    
+
                 result = self.client.upload_text_file(name, content)
                 if result:
                     return f"File '{name}' uploaded successfully. Link: {result.get('webViewLink')}"
                 return "Failed to upload file."
-                
+
             return f"Unknown drive action: {action}"
         except Exception as e:
             logger.error(f"GoogleDriveTool failed: {e}")
@@ -335,13 +335,13 @@ class GoogleDocsTool(Tool):
                 if result:
                     return f"Document created! ID: {result.get('documentId')} | Link: {result.get('webViewLink')}"
                 return "Failed to create document."
-                
+
             elif action == "read_document":
                 doc_id = kwargs.get("document_id")
                 if not doc_id:
                     return "Error: 'document_id' is required for read_document."
                 return self.client.read_document(doc_id)
-                
+
             elif action == "append_text":
                 doc_id = kwargs.get("document_id")
                 text = kwargs.get("text")
@@ -349,7 +349,7 @@ class GoogleDocsTool(Tool):
                     return "Error: 'document_id' and 'text' required for append_text."
                 success = self.client.append_text(doc_id, text)
                 return "Text appended successfully." if success else "Failed to append text."
-                
+
             return f"Unknown docs action: {action}"
         except Exception as e:
             logger.error(f"GoogleDocsTool failed: {e}")

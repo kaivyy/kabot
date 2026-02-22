@@ -1,8 +1,4 @@
-import json
-import os
-import time
 from pathlib import Path
-from typing import Any
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -25,10 +21,10 @@ class GoogleAuthManager:
 
     def __init__(self, workspace: Path | None = None):
         self.workspace = workspace or Path.home() / ".kabot"
-        
+
         # Path to user-provided credentials (downloaded from GCP Console)
         self.credentials_path = self.workspace / "google_credentials.json"
-        
+
         # Path where the resulting OAuth token is stored for reuse
         self.token_path = self.workspace / "google_token.json"
 
@@ -38,7 +34,7 @@ class GoogleAuthManager:
         If nothing exists or token expired, trigger the OAuth flow.
         """
         creds = None
-        
+
         # 1. Check if token already exists
         if self.token_path.exists():
             try:
@@ -56,7 +52,7 @@ class GoogleAuthManager:
                 except Exception as e:
                     logger.warning(f"Failed to refresh token, prompting re-auth: {e}")
                     creds = None
-            
+
             if not creds:
                 if not self.credentials_path.exists():
                     msg = (

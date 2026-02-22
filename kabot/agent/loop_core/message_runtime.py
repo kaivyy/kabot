@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -67,6 +68,19 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     # Phase 9: Model override via directive
     if directives.model:
         logger.info(f"Directive override: model -> {directives.model}")
+
+    # Phase 13: Detect document uploads and inject hint for KnowledgeLearnTool
+    if hasattr(msg, "media") and msg.media:
+        document_paths = []
+        for path in msg.media:
+            ext = Path(path).suffix.lower()
+            if ext in [".pdf", ".txt", ".md", ".csv"]:
+                document_paths.append(path)
+
+        if document_paths:
+            hint = "\n\n[System Note: Document(s) detected: " + ", ".join(document_paths) + ". If the user wants you to 'learn' or 'memorize' these permanently, use the 'knowledge_learn' tool.]"
+            effective_content += hint
+            logger.info(f"Document hint injected: {len(document_paths)} files")
 
     conversation_history = loop.memory.get_conversation_context(msg.session_key, max_messages=30)
 

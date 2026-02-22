@@ -1,7 +1,7 @@
 # kabot/memory/__init__.py
 """Memory system for Kabot — Hybrid Architecture (ChromaDB + BM25 + SmartRouter + Reranker)."""
 
-from .chroma_memory import HybridMemoryManager, ChromaMemoryManager
+from .chroma_memory import ChromaMemoryManager, HybridMemoryManager
 from .episodic_extractor import EpisodicExtractor, ExtractedFact
 from .memory_pruner import MemoryPruner
 from .ollama_embeddings import OllamaEmbeddingProvider

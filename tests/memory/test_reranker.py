@@ -1,6 +1,7 @@
 # tests/memory/test_reranker.py
 """Tests for Reranker and TokenGuard."""
 import pytest
+
 from kabot.memory.reranker import Reranker
 
 

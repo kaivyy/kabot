@@ -256,17 +256,18 @@ def google_auth(
     )
 ):
     """Setup Google Suite OAuth credentials interactively."""
-    from pathlib import Path
     import shutil
+    from pathlib import Path
+
     from kabot.auth.google_auth import GoogleAuthManager
-    
+
     cred_file = Path(credentials_path)
     if not cred_file.exists():
         console.print(f"[red]Error: Credentials file not found at {cred_file}[/red]")
         raise typer.Exit(1)
-        
+
     auth_manager = GoogleAuthManager()
-    
+
     # Copy credentials to the workspace
     target_path = auth_manager.credentials_path
     try:
@@ -275,7 +276,7 @@ def google_auth(
     except Exception as e:
         console.print(f"[red]Failed to copy credentials: {e}[/red]")
         raise typer.Exit(1)
-    
+
     # Trigger auth flow
     console.print("[cyan]Initiating Google OAuth login flow in your browser...[/cyan]")
     try:
@@ -297,15 +298,16 @@ def train(
 ):
     """Auto-Onboard an agent by uploading a document directly into its memory."""
     from pathlib import Path
-    from kabot.utils.document_parser import DocumentParser
+
     from kabot.memory.chroma_memory import ChromaMemoryManager
+    from kabot.utils.document_parser import DocumentParser
     from kabot.utils.helpers import get_workspace_path
-    
+
     path = Path(file_path)
     if not path.exists():
         console.print(f"[red]Error: File not found at {path}[/red]")
         raise typer.Exit(1)
-        
+
     console.print(f"[cyan]Reading document: {path.name}...[/cyan]")
     try:
         text = DocumentParser.extract_text(path)
@@ -313,18 +315,18 @@ def train(
     except Exception as e:
         console.print(f"[red]Failed to extract text: {e}[/red]")
         raise typer.Exit(1)
-        
+
     if not chunks:
         console.print("[yellow]No text could be extracted from the file.[/yellow]")
         raise typer.Exit(1)
-        
+
     console.print(f"[cyan]Extracted {len(chunks)} chunks. Injecting into workspace '{workspace}'...[/cyan]")
-    
+
     # Initialize chroma DB for the specific workspace
     base_dir = get_workspace_path()
     chroma_dir = base_dir / "sessions" / workspace / "chroma"
     chroma_manager = ChromaMemoryManager(persist_directory=str(chroma_dir))
-    
+
     try:
         # Save each chunk as a memory
         for i, chunk in enumerate(chunks):
@@ -334,7 +336,7 @@ def train(
             chroma_manager.add_messages([
                 {"role": "system", "content": doc_content}
             ])
-            
+
         console.print(f"[green]✓[/green] Successfully trained '{workspace}' with {len(chunks)} chunks from {path.name}!")
     except Exception as e:
         console.print(f"[red]Memory injection failed: {e}[/red]")

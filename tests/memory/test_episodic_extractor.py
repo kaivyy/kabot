@@ -1,8 +1,9 @@
 # tests/memory/test_episodic_extractor.py
 """Tests for EpisodicExtractor."""
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from kabot.memory.episodic_extractor import EpisodicExtractor, ExtractedFact
 

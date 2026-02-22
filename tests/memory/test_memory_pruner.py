@@ -1,8 +1,6 @@
 # tests/memory/test_memory_pruner.py
 """Tests for MemoryPruner."""
-import sqlite3
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import pytest
 

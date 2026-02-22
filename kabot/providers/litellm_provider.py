@@ -140,19 +140,10 @@ class LiteLLMProvider(LLMProvider):
     ) -> LLMResponse:
         """Execute a single model call with retries for transient errors."""
         # Lazy imports for performance
-        import litellm
-        from litellm import acompletion
         from litellm.exceptions import (
             APIConnectionError,
             RateLimitError,
             ServiceUnavailableError,
-        )
-        from tenacity import (
-            before_sleep_log,
-            retry,
-            retry_if_exception_type,
-            stop_after_attempt,
-            wait_exponential,
         )
 
         resolved_model = self._resolve_model(model)

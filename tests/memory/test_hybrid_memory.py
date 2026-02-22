@@ -1,7 +1,7 @@
 # tests/memory/test_hybrid_memory.py
 """Integration tests for HybridMemoryManager."""
+
 import pytest
-from pathlib import Path
 
 from kabot.memory.chroma_memory import HybridMemoryManager
 

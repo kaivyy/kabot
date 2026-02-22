@@ -13,7 +13,7 @@ If this is the very first time you are running Kabot on your machine, you must i
 Open your Terminal (Command Prompt/PowerShell on Windows, or Terminal on Mac/Linux) and type:
 
 ```bash
-kabot onboard
+kabot setup
 ```
 
 **What does this do?**
@@ -28,9 +28,8 @@ This is Kabot's secret weapon. Instead of forcing you to edit complex configurat
 To summon the settings menu, type this command:
 
 ```bash
-kabot config
+kabot setup
 ```
-*(Note: You can also use the command `kabot setup`—they do the exact same thing).*
 
 Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use your keyboard arrows to navigate. Let's break down exactly what every option does and how to use it:
 
@@ -40,11 +39,11 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 
 ### b) Model / Auth (Providers, Keys, OAuth)
 *   **What it does:** Connects Kabot to its "Main Brain" (the LLM API, such as Claude, Gemini, or OpenAI) and securely stores your API keys.
-*   **How to use it:** Kabot utilizes an intelligent routing system (OpenRouter and LiteLLM). Simply input your OpenRouter API key here. Kabot features a **Smart Router** that can automatically route casual conversations to cheaper models (like Gemini Flash) while routing complex coding/analysis tasks to highly intelligent models (like Claude 3.5 Sonnet). This maximizes intelligence while drastically reducing your API costs.
+*   **How to use it:** Select your provider/model and add your API key (OpenAI, Anthropic, OpenRouter, Groq, etc.). Kabot supports fallbacks, so you can set a primary model and a backup model if the first one fails. For quick switches in chat, use `/switch <model>`.
 
 ### c) Tools & Sandbox (Search, Docker, Shell)
 *   **What it does:** Gives physical superpowers to your agent. Without tools, Kabot is just a chatbot. With tools, Kabot becomes a proactive assistant.
-*   **How to use it:** Here, you toggle access to Kabot's abilities. You can grant it permission to type Terminal commands, read files on your hard drive, or utilize the *Advanced Web Explorer* (giving the agent the ability to autonomously open a browser, click links, and scrape structured data from the internet).
+*   **How to use it:** Here, you toggle access to Kabot's abilities. You can grant it permission to type Terminal commands, read files on your hard drive, or use web search and fetch tools. Docker sandboxing can be enabled for safer command execution.
 
 ### d) Skills (Install & Configure)
 *   **What it does:** Injects "SOPs" (Standard Operating Procedures) or foundational expertise directly into the agent's initial prompt.
@@ -52,15 +51,15 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 
 ### e) Google Suite (Auth & Credentials)
 *   **What it does:** Grants Kabot secure, native access to act on behalf of your Google Account.
-*   **How to use it:** Once authorized, Kabot can send emails, schedule Calendar meetings, and even read from or create files in Google Drive and Google Docs. 
-    *   **The Process:** You will need to provide the path to a `google_credentials.json` file (downloaded from your Google Cloud Console). Kabot will then automatically open a browser tab asking you to click "Allow". Once allowed, the token is saved privately, and Kabot will never ask you to log in again.
+*   **How to use it:** Once authorized, Kabot can send emails, schedule Calendar meetings, and read/create files in Google Drive and Google Docs via the Google integrations. 
+    *   **The Process:** Provide the path to a `google_credentials.json` file (downloaded from your Google Cloud Console). Kabot opens a browser tab for consent, then stores the token locally. You can also run `kabot google-auth <path>` for the fastest setup.
 
 ### f) Channels (Telegram, WhatsApp, Slack)
 *   **What it does:** Connects Kabot's brain to your mobile phone so you don't have to stay glued to your computer terminal.
 *   **How to use it:** You can insert your Telegram Bot Token or WhatsApp configuration here. Once connected, your family or business partners can simply text the bot on Telegram, and Kabot will process the requests on your local server and reply directly to their phones! 
 
 ### g) Auto-start (Enable boot-up service)
-*   **What it does:** Ensures Kabot automatically starts running in the background whenever you turn on or restart your computer/server (via systemd on Linux, PM2, etc.).
+*   **What it does:** Ensures Kabot automatically starts running in the background whenever you turn on or restart your computer/server (systemd on Linux, launchd on macOS, Task Scheduler on Windows, Termux on Android).
 
 ### h) Doctor (Health Check)
 *   **What it does:** Runs an automatic system diagnostic. If Kabot isn't responding or throws an error, click this menu to instantly check if an API connection is broken or if a local database file is corrupted.
@@ -81,7 +80,20 @@ If you simply type `kabot agent` without the `-m` message flag, you will enter t
 
 ---
 
-## 4. Two Powerful Shortcut Commands (Advanced CLI)
+## 4. Chat-Based Learning (Learn from Attachments)
+
+This is one of Kabot's most intuitive features. Instead of using the command line, you can simply "send" knowledge to your agent via chat (Telegram, WhatsApp, etc.).
+
+*   **How to use it:**
+    1. Attach a document (.pdf, .md, .txt, or .csv) to your message in the chat app.
+    2. Add a message like: *"Please memorize this document"* or *"Learn this guide"*.
+    3. Kabot will detect the file and use the `knowledge_learn` tool.
+    4. Once processed, Kabot will confirm: *"Success! I have learned knowledge chunks from [filename]."*
+*   **What happens?** The agent autonomously reads, chunks, and injects the document into its permanent memory. From that point on, across all future sessions, that agent will have that knowledge at its fingertips.
+
+---
+
+## 5. Two Powerful Shortcut Commands (Advanced CLI)
 
 While the Setup Wizard (`kabot config`) covers 99% of your needs, Kabot offers two specialized command-line shortcuts for advanced "Power Users".
 
