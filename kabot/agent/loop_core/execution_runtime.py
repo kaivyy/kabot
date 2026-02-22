@@ -61,7 +61,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     # === FAST PATH: Execute deterministic tools directly, skip LLM tool-call step ===
     # This bypasses the broken tool-calling API (e.g. codex models returning 400),
     # but still uses the LLM to produce a nice natural-language summary of the result.
-    _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "weather"}
+    _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "weather", "speedtest", "stock", "crypto"}
     if required_tool and required_tool in _DIRECT_TOOLS:
         direct_result = await loop._execute_required_tool_fallback(required_tool, msg)
         if direct_result is not None:

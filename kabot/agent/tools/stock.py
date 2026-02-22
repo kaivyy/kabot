@@ -1,7 +1,7 @@
 """Stock tool for fetching stock market information."""
 
-from typing import Any
-
+from typing import Any, Dict
+import asyncio
 import httpx
 
 from kabot.agent.tools.base import Tool
@@ -30,25 +30,38 @@ class StockTool(Tool):
 
     async def execute(self, symbol: str, market: str = "", **kwargs: Any) -> str:
         """
-        Fetch stock data for the given symbol.
-
+        Fetch stock data for the given symbol(s).
+        
         Args:
-            symbol: Stock ticker symbol
+            symbol: Stock ticker symbol or comma-separated list of symbols.
+                    Special keyword: 'TOP10_ID' for top Indonesian stocks.
             market: Optional market/exchange code
-
-        Returns:
-            Stock information as formatted string
         """
         try:
-            # Clean symbol
-            clean_symbol = symbol.upper().strip()
+            # Handle special keywords
+            if symbol.upper() == "TOP10_ID":
+                # Top 10 IDX by Market Cap (approximate list for quick access)
+                symbols = ["BBCA.JK", "BBRI.JK", "BMRI.JK", "TLKM.JK", "AMMN.JK", 
+                           "BBNI.JK", "ASII.JK", "TPIA.JK", "BRIS.JK", "ICBP.JK"]
+            else:
+                # Split by comma if multiple symbols provided
+                symbols = [s.strip() for s in symbol.split(",") if s.strip()]
 
-            # Try Yahoo Finance API
-            result = await self._fetch_yahoo_finance(clean_symbol)
-            if result:
-                return result
+            if not symbols:
+                return "Error: No stock symbols provided."
 
-            return f"Error: Could not fetch stock data for {symbol}. Please check the ticker symbol."
+            results = []
+            # Fetch in parallel for speed
+            tasks = [self._fetch_yahoo_finance(s.upper()) for s in symbols]
+            fetched = await asyncio.gather(*tasks)
+
+            for i, res in enumerate(fetched):
+                if res:
+                    results.append(res)
+                else:
+                    results.append(f"Could not fetch data for {symbols[i]}")
+
+            return "\n\n".join(results)
 
         except Exception as e:
             return f"Error fetching stock data: {str(e)}"

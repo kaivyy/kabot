@@ -1,14 +1,18 @@
 # Changelog
 
 All notable changes to Kabot will be documented in this file.
-# Changelog
-
-All notable changes to Kabot will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Fixed
+- **Codex 400 Error Handling**: Implemented auto-retry without tools in `execution_runtime.py` for models that don't support function calling (like chatgpt.com/codex). This allows conversational queries to still be answered naturally by these models.
+- **Market Data Resilience (Stock/Crypto)**: Upgraded `StockTool` to handle multi-ticker symbols in parallel and implemented a Fast Path for market queries. Kabot now automatically detects "top 10" or Indonesian market requests and fetches live Yahoo Finance/CoinGecko data without hitting LLM tool-calling errors.
+- **RAM Monitoring Routing**: Added missing Indonesian natural language patterns ("periksa ram", "cek ram", "ram pc") to fix routing to `get_process_memory`.
+- **Ambiguous Keyword Conflict**: Removed the generic "ram" keyword from `SYSTEM_INFO_KEYWORDS` to ensure RAM-specific queries are always captured by the process-level monitoring tool.
+- **Direct Tool Execution (Fast Path)**: Deterministic tools like `get_process_memory` and `get_system_info` now execute directly to bypass LLM tool-calling latency/errors, while still using the AI for the final formatted response.
 
 ### Performance & Optimization
 - **Startup Latency Fix**: Resolved the ~20s delay during the "Starting Kabot Watchdog..." phase. This was achieved by refactoring the core dependency graph to use lazy-loading for heavy third-party libraries.

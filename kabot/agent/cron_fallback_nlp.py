@@ -20,6 +20,12 @@ from kabot.agent.language.lexicon import (
     REMINDER_TERMS as LEXICON_REMINDER_TERMS,
 )
 from kabot.agent.language.lexicon import (
+    STOCK_TERMS as LEXICON_STOCK_TERMS,
+)
+from kabot.agent.language.lexicon import (
+    CRYPTO_TERMS as LEXICON_CRYPTO_TERMS,
+)
+from kabot.agent.language.lexicon import (
     WEATHER_TERMS as LEXICON_WEATHER_TERMS,
 )
 
@@ -137,6 +143,14 @@ CLEANUP_KEYWORDS = (
     "kosongkan", "free up",
 )
 
+SPEEDTEST_KEYWORDS = (
+    "speedtest", "speed test", "cek speed", "cek koneksi",
+    "cek internet", "tes internet", "tes speed", "tes koneksi",
+    "berapa speed", "berapa kecepatan", "kecepatan internet",
+    "internet speed", "connection speed", "network speed",
+    "ping pc", "cek ping", "tes ping",
+)
+
 CRON_MANAGEMENT_OPS = (
     "list",
     "lihat",
@@ -191,6 +205,8 @@ REMINDER_KEYWORDS = LEXICON_REMINDER_TERMS
 WEATHER_KEYWORDS = LEXICON_WEATHER_TERMS
 CRON_MANAGEMENT_OPS = LEXICON_CRON_MANAGEMENT_OPS
 CRON_MANAGEMENT_TERMS = LEXICON_CRON_MANAGEMENT_TERMS
+STOCK_KEYWORDS = LEXICON_STOCK_TERMS
+CRYPTO_KEYWORDS = LEXICON_CRYPTO_TERMS
 
 
 def required_tool_for_query(
@@ -199,7 +215,10 @@ def required_tool_for_query(
     has_cron_tool: bool,
     has_system_info_tool: bool = False,
     has_cleanup_tool: bool = False,
+    has_speedtest_tool: bool = False,
     has_process_memory_tool: bool = False,
+    has_stock_tool: bool = False,
+    has_crypto_tool: bool = False,
 ) -> str | None:
     """Return required tool name for immediate-action prompts."""
     q_lower = (question or "").lower()
@@ -222,6 +241,15 @@ def required_tool_for_query(
 
     if has_process_memory_tool and any(k in q_lower for k in PROCESS_RAM_KEYWORDS):
         return "get_process_memory"
+
+    if has_stock_tool and any(k in q_lower for k in STOCK_KEYWORDS):
+        return "stock"
+
+    if has_crypto_tool and any(k in q_lower for k in CRYPTO_KEYWORDS):
+        return "crypto"
+
+    if has_speedtest_tool and any(k in q_lower for k in SPEEDTEST_KEYWORDS):
+        return "speedtest"
 
     if has_system_info_tool and any(k in q_lower for k in SYSTEM_INFO_KEYWORDS):
         return "get_system_info"

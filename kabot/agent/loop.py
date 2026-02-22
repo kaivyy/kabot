@@ -41,6 +41,7 @@ from kabot.agent.tools.shell import ExecTool
 from kabot.agent.tools.spawn import SpawnTool
 from kabot.agent.tools.stock import CryptoTool, StockTool
 from kabot.agent.tools.stock_analysis import StockAnalysisTool
+from kabot.agent.tools.speedtest import SpeedtestTool
 from kabot.agent.tools.weather import WeatherTool
 from kabot.agent.tools.web_fetch import WebFetchTool
 from kabot.agent.tools.web_search import WebSearchTool
@@ -373,6 +374,7 @@ class AgentLoop:
                 cache_ttl_minutes=self.config.tools.web.fetch.cache_ttl_minutes,
             )
         )
+        self.tools.register(SpeedtestTool(workspace_path=str(self.workspace)))
         self.tools.register(BrowserTool())
 
         from kabot.agent.tools.system import SystemInfoTool, ProcessMemoryTool

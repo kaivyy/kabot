@@ -106,3 +106,14 @@ CRON_MANAGEMENT_TERMS = (
     "计划",
 )
 
+STOCK_TERMS = (
+    "stock", "saham", "ticker", "price", "harga", "market", "ihsg", "idx",
+    "market cap", "dividend", "yield", "ratio", "pe ratio",
+    "bursa", "efek", "obligasi", "surat berharga",
+)
+
+CRYPTO_TERMS = (
+    "crypto", "cryptocurrency", "kripto", "bitcoin", "ethereum", "btc", "eth",
+    "token", "coin", "blockchain", "wallet", "staking", "mining",
+)
+
