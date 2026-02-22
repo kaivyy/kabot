@@ -56,15 +56,16 @@ class HybridMemoryManager:
         db_path = self.workspace / "metadata.db"
         self.metadata = SQLiteMetadataStore(db_path)
 
-        # Initialize BM25 index
+        # Initialize BM25 index components lazily
         self.bm25 = None
         self.bm25_documents = []
         self.bm25_ids = []  # List of (type, id) tuples
+        self._bm25_built = False
 
-        if self.enable_hybrid_memory:
-            self._build_bm25_index()
-        else:
+        if not self.enable_hybrid_memory:
             logger.info("Hybrid memory (BM25) disabled via config")
+        else:
+            logger.debug("BM25 index will be built lazily on first search")
 
         # ChromaDB will be initialized lazily
         self._chroma_client = None
@@ -133,6 +134,9 @@ class HybridMemoryManager:
 
             if not documents:
                 self.bm25 = None
+                self.bm25_documents = []
+                self.bm25_ids = []
+                self._bm25_built = True # Mark as built, even if empty
                 return
 
             # Tokenize and build index
@@ -140,6 +144,7 @@ class HybridMemoryManager:
             self.bm25 = BM25Okapi(tokenized_corpus)
             self.bm25_documents = documents
             self.bm25_ids = doc_ids
+            self._bm25_built = True
 
             logger.info(f"Built BM25 index with {len(documents)} documents")
 
@@ -177,9 +182,9 @@ class HybridMemoryManager:
             # 2. Generate embedding and store in ChromaDB
             await self._index_message(session_id, message_id, content, metadata)
 
-            # 3. Update BM25 index
+            # 3. Invalidate BM25 index to force rebuild on next search
             if self.enable_hybrid_memory:
-                self._build_bm25_index()
+                self._bm25_built = False
 
             return True
 
@@ -493,8 +498,32 @@ class HybridMemoryManager:
 
             # 2. Run BM25 Search
             bm25_results = []
-            if self.enable_hybrid_memory and route != "knowledge":
-                bm25_results = self._perform_bm25_search(query, limit=limit)
+            if self.enable_hybrid_memory:
+                if route == "episodic":
+                    # Explicit intention to hit episodic DB
+                    logger.debug("Executing episodic-only search (BM25 exact match)")
+                    
+                    if not self._bm25_built:
+                        self._build_bm25_index()
+
+                    if self.bm25 and self.bm25_documents:
+                        bm25_results = self._perform_bm25_search(query, limit=limit)
+                elif route == "hybrid":
+                    logger.debug("Executing hybrid search (Semantic + BM25)")
+
+                    # Lazy BM25 building
+                    if not self._bm25_built:
+                        self._build_bm25_index()
+
+                    # Execute BM25 search
+                    if self.bm25 and self.bm25_documents:
+                        bm25_results = self._perform_bm25_search(query, limit=limit)
+                elif route != "knowledge": # For other routes, if hybrid is enabled, do BM25
+                    if not self._bm25_built:
+                        self._build_bm25_index()
+                    if self.bm25 and self.bm25_documents:
+                        bm25_results = self._perform_bm25_search(query, limit=limit)
+
 
             # Filter BM25 results by session_id if needed
             if session_id:

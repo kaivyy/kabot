@@ -130,13 +130,6 @@ class LiteLLMProvider(LLMProvider):
                     kwargs.update(overrides)
                     return
 
-    @retry(
-        retry=retry_if_exception_type((RateLimitError, APIConnectionError, ServiceUnavailableError)),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
-        stop=stop_after_attempt(3),
-        reraise=True,
-        before_sleep=before_sleep_log(logger, logging.WARNING)
-    )
     async def _execute_model_call(
         self,
         model: str,
@@ -146,6 +139,22 @@ class LiteLLMProvider(LLMProvider):
         temperature: float,
     ) -> LLMResponse:
         """Execute a single model call with retries for transient errors."""
+        # Lazy imports for performance
+        import litellm
+        from litellm import acompletion
+        from litellm.exceptions import (
+            APIConnectionError,
+            RateLimitError,
+            ServiceUnavailableError,
+        )
+        from tenacity import (
+            before_sleep_log,
+            retry,
+            retry_if_exception_type,
+            stop_after_attempt,
+            wait_exponential,
+        )
+
         resolved_model = self._resolve_model(model)
 
         # OpenAI Codex specific handling (ChatGPT backend API)
@@ -173,7 +182,7 @@ class LiteLLMProvider(LLMProvider):
         if self.api_base:
             kwargs["api_base"] = self.api_base
 
-        # Pass extra headers (e.g. APP-Code for AiHubMix) if not already set above
+        # Pass extra headers
         if self.extra_headers and "extra_headers" not in kwargs:
             kwargs["extra_headers"] = self.extra_headers
 
@@ -181,7 +190,18 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
-        response = await acompletion(**kwargs)
+        # Dynamically create the retry wrapper for acompletion
+        @retry(
+            retry=retry_if_exception_type((RateLimitError, APIConnectionError, ServiceUnavailableError)),
+            wait=wait_exponential(multiplier=1, min=2, max=60),
+            stop=stop_after_attempt(3),
+            reraise=True,
+            before_sleep=before_sleep_log(logger, logging.WARNING)
+        )
+        async def _do_call():
+            return await acompletion(**kwargs)
+
+        response = await _do_call()
         return self._parse_response(response)
 
     async def chat(

@@ -21,8 +21,14 @@ class SQLiteMetadataStore:
         self._init_db()
 
     def _init_db(self):
-        """Initialize database tables."""
+        """Initialize database tables and performance PRAGMAs."""
         with self._get_connection() as conn:
+            # Performance Tuning: WAL Mode & Memory optimizations
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA mmap_size=30000000;") # 30MB
+            conn.execute("PRAGMA temp_store=MEMORY;")
+            
             # Sessions table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
