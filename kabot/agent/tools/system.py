@@ -47,8 +47,16 @@ class SystemInfoTool(Tool):
         $ramTotal = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
         $ramStr = "$ramTotal GB Total`n" + ($ram | ForEach-Object { "  - $($_.Capacity / 1GB)GB $($_.Manufacturer) @ $($_.Speed)MHz" } | Out-String)
         $gpuStr = ($gpu | ForEach-Object { "- $($_.Name) ($([math]::Round($_.AdapterRAM / 1GB, 2))GB VRAM)" } | Out-String)
-        $diskStr = ($disks | ForEach-Object { "- $($_.Model) ($([math]::Round($_.Size / 1GB, 2))GB)" } | Out-String)
+        $diskStr = ($disks | ForEach-Object { "- $($_.Model) ($([math]::Round($_.Size / 1GB, 2))GB total)" } | Out-String)
         $osStr = "$($os.Caption) $($os.OSArchitecture) (Build $($os.BuildNumber))"
+
+        $freeStr = (Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -ne $null } | ForEach-Object {
+            $free = [math]::Round($_.Free / 1GB, 2)
+            $used = [math]::Round($_.Used / 1GB, 2)
+            $total = [math]::Round(($_.Free + $_.Used) / 1GB, 2)
+            $pct = if ($total -gt 0) { [math]::Round($used / $total * 100, 1) } else { 0 }
+            "  $($_.Name): $free GB free / $total GB total ($pct% used)"
+        } | Out-String)
 
         @"
 ### 💻 Hardware Specifications
@@ -56,11 +64,14 @@ class SystemInfoTool(Tool):
 **RAM:** $ramStr
 **GPU:**
 $gpuStr
-**Storage:**
+**Storage (Physical):**
 $diskStr
+**Free Space by Drive:**
+$freeStr
 **OS:** $osStr
 "@
         """
+
         try:
             process = await asyncio.create_subprocess_exec(
                 "powershell.exe",

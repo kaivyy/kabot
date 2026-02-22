@@ -83,6 +83,14 @@ SYSTEM_INFO_KEYWORDS = (
     "komputer mu", "komputer kamu", "mesin mu", "mesin kamu",
     "detail pc", "cek pc", "check pc",
     "system info", "sysinfo",
+    # --- Disk / Storage free-space queries ---
+    "ssd", "hdd", "storage", "penyimpanan", "disk",
+    "space ssd", "space hdd", "sisa ssd", "sisa hdd",
+    "space", "free space", "sisa ruang", "ruang disk", "ruang kosong",
+    "kapasitas disk", "kapasitas ssd", "kapasitas hdd",
+    "disk space", "disk usage", "penggunaan disk",
+    "check disk", "cek disk", "cek storage", "cek ssd",
+    "berapa sisa", "sisa storage",
 )
 
 CLEANUP_KEYWORDS = (
