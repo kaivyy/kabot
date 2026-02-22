@@ -18,7 +18,7 @@
 
 **Kabot** is a _personal AI assistant_ engineered for **resilience**, **complex task execution**, and **long-term memory**. It isn't just a chatbot; it's an autonomous agent that runs on your own hardware, remembering context across restarts and methodically planning its actions.
 
-It bridges the gap between simple chatbots and autonomous software engineers. While typical agents operate blindly, Kabot implements a **Methodical Engineering Workflow** (Brainstorm → Plan → Execute) and relies on a proprietary **Hybrid Memory Architecture** (SQLite + Vector) to handle long-running projects without "amnesia".
+It bridges the gap between simple chatbots and autonomous software engineers. While typical agents operate blindly, Kabot implements a **Methodical Engineering Workflow** (Brainstorm → Plan → Execute) and relies on a proprietary **Hybrid Memory Architecture** (Smart Routing + LLM Episodic Extraction + Vector) to handle long-running projects with hyper-efficient token usage and zero "amnesia".
 
 If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
 
