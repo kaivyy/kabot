@@ -22,53 +22,7 @@ It bridges the gap between simple chatbots and autonomous software engineers. Wh
 
 If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
 
-[Website](https://kabot.ai) · [Docs](docs/) · [Architecture](docs/openclaw-analysis/openclaw-deepest-architecture.md) · [Getting Started](#quick-start) · [Telegram](https://t.me/kabot_support) · [FAQ](#faq)
-
----
-
-## What's New (2026-02-20)
-
-- Centralized multilingual i18n layer added (`kabot/i18n/*`) to remove hardcoded single-language fallback responses.
-- Shared multilingual lexicon now powers router + cron fallback + quality runtime, reducing tool-calling drift.
-- Tool-enforcement is stricter: if model keeps calling the wrong tools for a required weather/reminder request, deterministic fallback is executed.
-- Cron responses are now localized by user language context.
-- Weather responses now include source transparency (`Open-Meteo` / `wttr.in`) plus practical care advice.
-- Cron scheduler now has lightweight resource guardrails:
-  - duplicate job rejection for same destination/schedule payload
-  - per-destination active-job capacity limit
-- Setup wizard now supports `Simple (Recommended)` vs `Advanced` mode for more user-friendly default onboarding.
-
-## What's New (2026-02-19)
-
-- Multi-bot setup is faster with `Quick Add Multiple` in setup wizard (`Channels -> Manage Channel Instances`).
-- Multi-AI routing is stronger: instance binding is enforced at runtime and exact instance routing has higher priority.
-- New operations command: `kabot env-check` (runtime profile + recommended gateway mode).
-- `remote-bootstrap` now includes real Windows apply path via Task Scheduler.
-- Plugins now support full lifecycle: `install/update/enable/disable/remove/doctor`.
-- Plugin install supports git + pinned ref: `kabot plugins install --git <repo> --ref <tag|branch|commit>`.
-
-### Quick Ops Cheatsheet
-
-```bash
-# 1) Setup many bots quickly (wizard)
-kabot config
-# Channels -> Manage Channel Instances -> Quick Add Multiple
-
-# 2) Check runtime environment + recommended mode
-kabot env-check --verbose
-
-# 3) Remote bootstrap
-kabot remote-bootstrap --platform linux --service systemd --apply
-kabot remote-bootstrap --platform windows --service windows --apply
-
-# 4) Plugin lifecycle
-kabot plugins install --git https://example.com/repo.git --ref v1.2.3
-kabot plugins update --target my_plugin
-kabot plugins doctor --target my_plugin
-
-# 5) Health check + auto-fix
-kabot doctor --fix
-```
+[Website](https://kabot.ai) · [Docs](docs/) · [Getting Started](#quick-start) · [Telegram](https://t.me/kabot_support) · [FAQ](#faq)
 
 ---
 
@@ -141,7 +95,7 @@ Kabot doesn't just answer; it thinks.
 *   **Planning**: Specifically designed for "multi-step" tasks. Ask it to "Plan a new module", and it will generate a `task.md` file and execute it step-by-step.
 
 ### 🛡️ **Enterprise Resilience**
-Inspired by [OpenClaw](https://openclaw.ai)'s robustness but built for Python.
+Built for robustness and strict security in Python.
 *   **Crash Sentinel**: Kabot writes a "sentinel file" before processing each message. If the host machine loses power or crashes, Kabot detects the unclean shutdown on the next boot and offers to resume the exact session state.
 *   **Session Locking**: Uses `PIDLock` (process-based locking) to ensure atomic writes to the session database, preventing corruption even if multiple cron jobs fire simultaneously.
 *   **Persistent Subagents**: Delegate tasks like "Research this library" to background agents. These subagents persist their state to disk (`.json` registry), so they survive system reboots and can be queried days later.
@@ -163,7 +117,7 @@ One brain, many bodies. Kabot acts as a central control plane.
 
 Kabot supports two advanced multi-agent systems that can work independently or together, enabling sophisticated task execution and context separation.
 
-### System 1: OpenClaw-Style Multi-Agent (Context Separation)
+### System 1: Standard Multi-Agent (Context Separation)
 
 Multiple independent agents with separate contexts, each specialized for different domains or purposes.
 
@@ -357,11 +311,11 @@ kabot mode set single --user-id user:telegram:research_chat
 
 | Scenario | Recommended System |
 | :--- | :--- |
-| Separate work/personal contexts | OpenClaw-Style (System 1) |
+| Separate work/personal contexts | Standard (System 1) |
 | Complex multi-step coding tasks | Collaborative (System 2) |
-| Testing different models | OpenClaw-Style (System 1) |
+| Testing different models | Standard (System 1) |
 | Quality-critical projects | Collaborative (System 2) |
-| Multi-user deployment | OpenClaw-Style (System 1) |
+| Multi-user deployment | Standard (System 1) |
 | Brainstorming + Implementation | Collaborative (System 2) |
 | Simple queries | Single-agent (default) |
 
@@ -618,14 +572,14 @@ Kabot now supports Meta outbound actions and verified webhook ingress:
 
 See full setup and examples in `docs/integrations/meta-threads-instagram.md`.
 
-### OpenClaw-Style Freedom Mode (Trusted Environment)
+### Freedom Mode (Trusted Environment)
 
 If you want "do anything" behavior for private/trusted deployments:
 
 - Setup wizard:
   - `kabot config`
   - `Tools & Sandbox`
-  - Enable `OpenClaw-style freedom mode`
+  - Enable `Freedom mode`
 
 This mode:
 - enables `exec` auto approval,
