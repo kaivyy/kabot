@@ -76,9 +76,35 @@ WEATHER_KEYWORDS = (
     "预报",
 )
 
+PROCESS_RAM_KEYWORDS = (
+    # Direct RAM check - EN
+    "ram usage", "memory usage", "check ram", "check memory",
+    "how much ram", "what's using ram", "top memory", "top ram",
+    "process memory", "process ram", "process list",
+    "ram per app", "task manager",
+    # Direct RAM check - ID/MS (Indonesian/Malay)
+    "periksa ram", "cek ram", "lihat ram", "tampilkan ram",
+    "penggunaan ram", "penggunaan memori",
+    "ram per app", "ram per aplikasi", "ram per proses",
+    "ram terbesar", "aplikasi boros", "aplikasi makan ram",
+    "proses boros", "proses makan ram", "proses terbesar",
+    "daftar proses", "top proses",
+    "berapa ram", "ram pc", "ram laptop", "ram komputer",
+    # Multilingual
+    "memoria", "uso de memoria", "uso de ram",
+    "utilisation mémoire", "utilisation ram",
+    "verwendung ram", "speichernutzung",
+    "использование памяти", "использование озу",
+    "uso de memória", "su dung ram", "su dung bo nho",
+    "หน่วยความจำ", "การใช้แรม", "ใช้แรม",
+    "内存", "内存使用", "内存占用", "进程",
+    "메모리", "메모리 사용", "프로세스",
+    "メモリ", "メモリ使用", "プロセス",
+)
+
 SYSTEM_INFO_KEYWORDS = (
     "spek", "spec", "specs", "spesifikasi", "specification",
-    "hardware", "cpu", "gpu", "ram",
+    "hardware", "cpu", "gpu",
     "pc mu", "pc kamu", "your pc", "your computer",
     "komputer mu", "komputer kamu", "mesin mu", "mesin kamu",
     "detail pc", "cek pc", "check pc",
@@ -173,6 +199,7 @@ def required_tool_for_query(
     has_cron_tool: bool,
     has_system_info_tool: bool = False,
     has_cleanup_tool: bool = False,
+    has_process_memory_tool: bool = False,
 ) -> str | None:
     """Return required tool name for immediate-action prompts."""
     q_lower = (question or "").lower()
@@ -192,6 +219,9 @@ def required_tool_for_query(
 
     if has_weather_tool and any(k in q_lower for k in WEATHER_KEYWORDS):
         return "weather"
+
+    if has_process_memory_tool and any(k in q_lower for k in PROCESS_RAM_KEYWORDS):
+        return "get_process_memory"
 
     if has_system_info_tool and any(k in q_lower for k in SYSTEM_INFO_KEYWORDS):
         return "get_system_info"
