@@ -58,6 +58,15 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
 
     messages = loop._apply_think_mode(messages, session)
 
+    # === FAST PATH: Execute deterministic tools directly, skip LLM tool-call step ===
+    _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "weather"}
+    if required_tool and required_tool in _DIRECT_TOOLS:
+        direct_result = await loop._execute_required_tool_fallback(required_tool, msg)
+        if direct_result is not None:
+            logger.info(f"Direct tool execution (bypassed LLM): {required_tool}")
+            return direct_result
+    # === END FAST PATH ===
+
     while iteration < loop.max_iterations:
         iteration += 1
 
