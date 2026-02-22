@@ -5,7 +5,13 @@ All notable changes to Kabot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-02-22
+
+### Fixed & Audited - Routing Resilience & Full Roadmap Completion (2026-02-22)
+
+- **Loop Routing Fix:** Modified `message_runtime.py` to force `run_agent_loop` for any message requiring tools or meeting complexity thresholds. This ensures deterministic tool-enforcement logic is always applied.
+- **Roadmap Final Audit:** Completed 100% verification audit for 'Full-Parity', 'OpenClaw Design', and 'Military-Grade' implementation plans. All tasks confirmed as functional and integration-tested.
+
 
 ### Added & Fixed - Windows & Telegram Support (2026-02-21)
 
