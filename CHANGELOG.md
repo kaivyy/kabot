@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Chat-Based Knowledge Training**: Added `KnowledgeLearnTool` (`kabot/agent/tools/knowledge.py`) allowing agents to permanently learn from documents (.pdf, .md, .txt, .csv) sent directly via chat (Telegram, WhatsApp, etc.). The message runtime (`message_runtime.py`) now auto-detects document uploads and hints the AI to offer memorization.
 - **Beginner's Guide**: Added comprehensive English `how-to-use.md` tutorial covering the Setup Wizard, Interactive Chat, `kabot train`, `kabot google-auth`, and Chat-Based Learning.
 
+### Fixed
+- **Telegram /help Only Showing 3 Commands**: The `/help` handler in `telegram.py` was hardcoded with only `/start`, `/reset`, and `/help`. It now dynamically queries all registered slash commands from the `CommandRouter` (e.g., `/status`, `/benchmark`, `/switch`, `/doctor`, `/sysinfo`, `/uptime`, `/clip`, etc.).
+
 ### Changed
 - **Zero-Latency Cold Start**: Migrated heavy LLM libraries (`litellm`, etc.) to lazy-loading scopes, dropping CLI startup time to `< 0.7s`.
 - **Asynchronous BM25 Indexing**: Deferred the synchronous `BM25Okapi` indexing to trigger only upon the first explicit user `search()`, removing background startup blocking.

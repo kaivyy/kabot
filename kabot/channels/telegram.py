@@ -476,13 +476,26 @@ class TelegramChannel(BaseChannel):
         if not update.message:
             return
 
-        help_text = (
-            "🐈 <b>kabot commands</b>\n\n"
-            "/start — Start the bot\n"
-            "/reset — Reset conversation history\n"
-            "/help — Show this help message\n\n"
-            "Just send me a text message to chat!"
-        )
+        # Build dynamic help text from all registered sources
+        lines = ["🐈 <b>kabot commands</b>\n"]
+
+        # 1. Built-in Telegram commands (always present)
+        lines.append("/start — Start the bot")
+        lines.append("/reset — Reset conversation history")
+        lines.append("/help — Show this help message")
+
+        # 2. Dynamic commands from CommandRouter
+        if self.command_router and hasattr(self.command_router, '_commands'):
+            for cmd_name, reg in sorted(self.command_router._commands.items()):
+                cmd_clean = cmd_name.lstrip('/')
+                # Skip if already listed above
+                if cmd_clean in ("start", "reset", "help"):
+                    continue
+                admin_badge = " 🔒" if reg.admin_only else ""
+                lines.append(f"/{cmd_clean} — {reg.description}{admin_badge}")
+
+        lines.append("\nJust send me a text message to chat!")
+        help_text = "\n".join(lines)
         await update.message.reply_text(help_text, parse_mode="HTML")
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
