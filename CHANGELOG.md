@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Advanced Web Explorer (Playwright)**: Upgraded `BrowserTool` to support interactive actions: `click(selector)`, `fill(selector, text)`, and `get_dom_snapshot()`. The `get_dom_snapshot` method extracts interactive elements and returns simplified, LLM-friendly DOM maps to enable autonomous web interaction.
 - **Google Auth CLI & Wizard**: Added interactive Google Suite OAuth setup directly into `kabot config` (Setup Wizard) and as a standalone `kabot google-auth` CLI command.
 
+- **Chat-Based Knowledge Training**: Added `KnowledgeLearnTool` (`kabot/agent/tools/knowledge.py`) allowing agents to permanently learn from documents (.pdf, .md, .txt, .csv) sent directly via chat (Telegram, WhatsApp, etc.). The message runtime (`message_runtime.py`) now auto-detects document uploads and hints the AI to offer memorization.
+- **Beginner's Guide**: Added comprehensive English `how-to-use.md` tutorial covering the Setup Wizard, Interactive Chat, `kabot train`, `kabot google-auth`, and Chat-Based Learning.
+
 ### Changed
 - **Zero-Latency Cold Start**: Migrated heavy LLM libraries (`litellm`, etc.) to lazy-loading scopes, dropping CLI startup time to `< 0.7s`.
 - **Asynchronous BM25 Indexing**: Deferred the synchronous `BM25Okapi` indexing to trigger only upon the first explicit user `search()`, removing background startup blocking.

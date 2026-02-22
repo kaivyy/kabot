@@ -25,10 +25,18 @@ This command safely creates the foundational folder structure for Kabot's "brain
 
 This is Kabot's secret weapon. Instead of forcing you to edit complex configuration files or code, Kabot provides a beautifully interactive, user-friendly Configuration Menu right in your terminal.
 
-To summon the settings menu, type this command:
+To summon the settings menu, type one of these commands:
 
 ```bash
 kabot setup
+```
+
+```bash
+kabot config
+```
+
+```bash
+kabot config --edit
 ```
 
 Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use your keyboard arrows to navigate. Let's break down exactly what every option does and how to use it:
@@ -93,9 +101,31 @@ This is one of Kabot's most intuitive features. Instead of using the command lin
 
 ---
 
-## 5. Two Powerful Shortcut Commands (Advanced CLI)
+## 5. System Health & Maintenance (Advanced CLI)
 
-While the Setup Wizard (`kabot config`) covers 99% of your needs, Kabot offers two specialized command-line shortcuts for advanced "Power Users".
+Kabot ships with self-diagnostics so you can quickly verify if your setup is healthy.
+
+### KABOT DOCTOR (Health Check + Auto Fix)
+*   **When to use it:** When Kabot is acting weird, credentials fail, or you want a full health report.
+*   **The Command (read-only):**
+    ```bash
+    kabot doctor
+    ```
+*   **The Command (auto-fix critical issues):**
+    ```bash
+    kabot doctor --fix
+    ```
+*   **Optional (sync bootstrap files):**
+    ```bash
+    kabot doctor --fix --bootstrap-sync
+    ```
+*   **What happens?** Kabot checks config integrity, workspace setup, and runtime dependencies, then prints a clear health report. With `--fix`, it auto-repairs critical issues.
+
+---
+
+## 6. Two Powerful Shortcut Commands (Advanced CLI)
+
+While the Setup Wizard (`kabot setup` / `kabot config`) covers 99% of your needs, Kabot offers two specialized command-line shortcuts for advanced "Power Users".
 
 ### KABOT TRAIN (The Auto-Onboarding System)
 *   **When to use it:** When you want to instantly inject massive amounts of knowledge (like a 300-page book) into your agent's permanent memory without spending hours typing manual prompts.
@@ -112,6 +142,33 @@ While the Setup Wizard (`kabot config`) covers 99% of your needs, Kabot offers t
     kabot google-auth C:\Downloads\my_google_credentials.json
     ```
 *   **What happens?** Instead of navigating menus, this command instantly grabs your downloaded API key, opens the secure Google Consent screen in your browser, and locks the permanent authentication token directly into Kabot's memory. *(If you are deploying on a headless VPS/Linux server without a screen, see the Advanced FAQ on how to authorize first on a laptop and transfer the `token.json` file securely to the server).*
+
+---
+
+## 7. Chat Slash Commands (Quick Controls)
+
+Inside the chat (CLI, Telegram, WhatsApp, etc.) you can control Kabot using slash commands.
+
+**Core commands:**
+*   `/help` — list available commands.
+*   `/status` — system snapshot (CPU/RAM, provider, model, uptime).
+*   `/switch <model>` — switch active LLM model (example: `/switch openai/gpt-4o`).
+*   `/doctor` — run diagnostics from chat (same as CLI doctor).
+*   `/benchmark` — quick model performance benchmark.
+*   `/sysinfo` — detailed system info.
+*   `/uptime` — show how long Kabot has been running.
+*   `/clip <text>` — copy text to system clipboard (where supported).
+
+**Admin commands (restricted):**
+*   `/update` — pull updates and restart (admin only).
+*   `/restart` — restart Kabot process (admin only).
+
+**Example:**
+```
+/status
+/switch anthropic/claude-3-5-sonnet-20241022
+/doctor
+```
 
 ---
 
