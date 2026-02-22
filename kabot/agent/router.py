@@ -80,6 +80,17 @@ _COMPLEX_KEYWORDS = [
     *WEATHER_TERMS,
     # Assist
     "help me", "tolong", "please",  # EN/ID
+    # System info / hardware / disk (multilingual)
+    "spek", "spec", "specs", "sysinfo", "system info", "hardware",
+    "cpu", "gpu", "ram", "memory",
+    "disk", "ssd", "hdd", "storage", "penyimpanan",
+    "space", "free space", "disk space", "disk usage",
+    "sisa storage", "sisa ssd", "sisa hdd", "sisa ruang", "ruang kosong", "ruang disk",
+    "cek disk", "cek ssd", "cek storage", "check disk", "cek pc", "check pc",
+    "kapasitas", "penggunaan disk", "berapa sisa",
+    # Cleanup
+    "cleanup", "clean up", "bersihin", "bersihkan",
+    "clear cache", "hapus cache", "hapus temp",
 ]
 
 

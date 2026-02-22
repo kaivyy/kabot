@@ -83,7 +83,7 @@ SYSTEM_INFO_KEYWORDS = (
     "komputer mu", "komputer kamu", "mesin mu", "mesin kamu",
     "detail pc", "cek pc", "check pc",
     "system info", "sysinfo",
-    # --- Disk / Storage free-space queries ---
+    # --- Disk / Storage free-space queries (ID, EN, MS, TH, ZH) ---
     "ssd", "hdd", "storage", "penyimpanan", "disk",
     "space ssd", "space hdd", "sisa ssd", "sisa hdd",
     "space", "free space", "sisa ruang", "ruang disk", "ruang kosong",
@@ -91,6 +91,12 @@ SYSTEM_INFO_KEYWORDS = (
     "disk space", "disk usage", "penggunaan disk",
     "check disk", "cek disk", "cek storage", "cek ssd",
     "berapa sisa", "sisa storage",
+    # Malay
+    "storan", "ruang bebas", "penggunaan cakera",
+    # Thai
+    "พื้นที่ดิสก์", "พื้นที่ว่าง", "สตอเรจ", "ฮาร์ดดิสก์",
+    # Chinese
+    "硬盘", "存储", "磁盘空间", "剩余空间", "可用空间",
 )
 
 CLEANUP_KEYWORDS = (

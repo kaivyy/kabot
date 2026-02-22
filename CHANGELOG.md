@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Telegram /help Only Showing 3 Commands**: The `/help` handler in `telegram.py` was hardcoded with only `/start`, `/reset`, and `/help`. It now dynamically queries all registered slash commands from the `CommandRouter` (e.g., `/status`, `/benchmark`, `/switch`, `/doctor`, `/sysinfo`, `/uptime`, `/clip`, etc.).
-- **Disk Space Query Not Triggering Tool**: `SYSTEM_INFO_KEYWORDS` in `cron_fallback_nlp.py` was missing disk/storage terms (`ssd`, `hdd`, `space`, `storage`, `penyimpanan`, etc.). Asking "berapa space SSD" now correctly enforces the `get_system_info` tool call instead of the LLM hallucinating.
+- **Disk Space / Sysinfo Query Not Triggering Tool (Full Fix)**: Traced the complete execution path and found **two** root causes: (1) `SYSTEM_INFO_KEYWORDS` in `cron_fallback_nlp.py` was missing disk/storage terms. (2) `_COMPLEX_KEYWORDS` in `router.py` also lacked these terms, so the `IntentRouter` routed queries like *"berapa space SSD"* as SIMPLE, bypassing the agent loop where tool-enforcement lives. Fixed with full multilingual coverage across EN, ID (Indonesian), MS (Malay), TH (Thai), ZH (Chinese).
 - **SystemInfoTool Not Showing Free Space**: The Windows PowerShell script used `Win32_DiskDrive` (total physical size only). It now also runs `Get-PSDrive` to report free/used GB per logical drive (C:, D:, etc.).
 
 ### Changed
