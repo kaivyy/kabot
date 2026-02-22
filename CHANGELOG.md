@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added - MHA Squad "Awakening"
+- **Native Google Suite Integration**: Built-in support for Gmail and Google Calendar via OAuth 2.0 without relying on external `gog` CLI. Includes `GoogleAuthManager` for token storage and automatic refresh.
+- **Google Drive & Docs Expansion**: Added `GoogleDriveTool` and `GoogleDocsTool` to natively search, read, write, and create files/documents on Google Cloud.
+- **Auto-Onboarding Agent (CLI)**: Added `kabot train <file>` CLI command to automatically parse (`.pdf`, `.txt`, `.md`) using `DocumentParser`, chunk the text, and inject it directly into a specific agent workspace's ChromaDB memory for instant context.
+- **Advanced Web Explorer (Playwright)**: Upgraded `BrowserTool` to support interactive actions: `click(selector)`, `fill(selector, text)`, and `get_dom_snapshot()`. The `get_dom_snapshot` method extracts interactive elements and returns simplified, LLM-friendly DOM maps to enable autonomous web interaction.
+- **Google Auth CLI & Wizard**: Added interactive Google Suite OAuth setup directly into `kabot config` (Setup Wizard) and as a standalone `kabot google-auth` CLI command.
+
 ### Changed
 - **Zero-Latency Cold Start**: Migrated heavy LLM libraries (`litellm`, etc.) to lazy-loading scopes, dropping CLI startup time to `< 0.7s`.
 - **Asynchronous BM25 Indexing**: Deferred the synchronous `BM25Okapi` indexing to trigger only upon the first explicit user `search()`, removing background startup blocking.
