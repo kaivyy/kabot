@@ -176,8 +176,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                         )
 
             if response.has_tool_calls:
+                # If the AI generated tool calls but forgot to say anything,
+                # send a progressive status update to the user automatically.
+                display_content = response.content or "Sedang memproses permintaan Anda, mohon tunggu sebentar... ⏳"
                 await loop.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id, content=response.content
+                    channel=msg.channel, chat_id=msg.chat_id, content=display_content
                 ))
 
             messages = loop.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
@@ -212,6 +215,9 @@ async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tup
             if loop.auth_rotation and original_key is not None:
                 loop.provider.api_key = original_key
 
+            loop.last_model_used = current_model
+            loop.last_fallback_used = bool(models and current_model != models[0])
+            loop.last_model_chain = list(models)
             loop.resilience.on_success()
             return response, None
         except Exception as e:

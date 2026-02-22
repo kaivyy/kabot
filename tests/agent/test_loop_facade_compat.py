@@ -12,7 +12,7 @@ from kabot.cron.service import CronService
 def test_loop_facade_exports_legacy_symbols():
     assert hasattr(loop_module, "AgentLoop")
     assert hasattr(loop_module, "ContextBuilder")
-    assert hasattr(loop_module, "ChromaMemoryManager")
+    assert hasattr(loop_module, "HybridMemoryManager")
     assert hasattr(loop_module, "IntentRouter")
     assert hasattr(loop_module, "SubagentManager")
 

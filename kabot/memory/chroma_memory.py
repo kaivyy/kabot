@@ -14,9 +14,11 @@ from rank_bm25 import BM25Okapi
 from .ollama_embeddings import OllamaEmbeddingProvider
 from .sentence_embeddings import SentenceEmbeddingProvider
 from .sqlite_store import SQLiteMetadataStore
+from .smart_router import SmartRouter
+from .reranker import Reranker
 
 
-class ChromaMemoryManager:
+class HybridMemoryManager:
     """
     Hybrid memory system combining:
     - ChromaDB: Vector storage for semantic search
@@ -35,6 +37,9 @@ class ChromaMemoryManager:
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.enable_hybrid_memory = enable_hybrid_memory
+
+        self.router = SmartRouter()
+        self.reranker = Reranker(threshold=0.6, top_k=3, max_tokens=500)
 
         # Initialize embedding provider (sentence-transformers or ollama)
         if embedding_provider == "sentence":
@@ -433,6 +438,10 @@ class ChromaMemoryManager:
             List of relevant messages with fused scores
         """
         try:
+            # 0. Route query intent
+            route = self.router.route(query)
+            logger.debug(f"Search memory route: {route} for query '{query}'")
+            
             # 1. Run Vector Search
             vector_results = []
             # Generate query embedding
@@ -484,7 +493,7 @@ class ChromaMemoryManager:
 
             # 2. Run BM25 Search
             bm25_results = []
-            if self.enable_hybrid_memory:
+            if self.enable_hybrid_memory and route != "knowledge":
                 bm25_results = self._perform_bm25_search(query, limit=limit)
 
             # Filter BM25 results by session_id if needed
@@ -545,9 +554,9 @@ class ChromaMemoryManager:
                     query_embedding=query_embedding,
                     limit=limit,
                 )
-                return [x['item'] for x in selected]
+                return self.reranker.rank(query, [x['item'] for x in selected])
 
-            return [x['item'] for x in ranked[:limit]]
+            return self.reranker.rank(query, [x['item'] for x in ranked[:limit]])
 
         except Exception as e:
             logger.error(f"Error searching memory: {e}")
@@ -779,3 +788,6 @@ class ChromaMemoryManager:
     def get_guardrails(self, limit: int = 5) -> list[str]:
         """Get distilled guardrail strings for prompt injection."""
         return self.metadata.get_guardrails(limit=limit)
+
+# Backward compatibility alias
+ChromaMemoryManager = HybridMemoryManager

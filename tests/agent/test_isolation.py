@@ -25,7 +25,7 @@ async def test_background_session_not_saved():
 
     # Patch internal components that are instantiated in __init__
     with patch('kabot.agent.loop.ContextBuilder') as mock_context_cls, \
-         patch('kabot.agent.loop.ChromaMemoryManager') as mock_memory_cls, \
+         patch('kabot.agent.loop.HybridMemoryManager') as mock_memory_cls, \
          patch('kabot.agent.loop.IntentRouter') as mock_router_cls, \
          patch('kabot.agent.loop.SubagentManager'):
 
@@ -76,7 +76,7 @@ async def test_normal_session_saved():
     mock_sessions.get_or_create.return_value = MagicMock()
 
     with patch('kabot.agent.loop.ContextBuilder') as mock_context_cls, \
-         patch('kabot.agent.loop.ChromaMemoryManager') as mock_memory_cls, \
+         patch('kabot.agent.loop.HybridMemoryManager') as mock_memory_cls, \
          patch('kabot.agent.loop.IntentRouter') as mock_router_cls, \
          patch('kabot.agent.loop.SubagentManager'):
 

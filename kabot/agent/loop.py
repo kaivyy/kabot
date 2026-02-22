@@ -51,13 +51,14 @@ from kabot.core.commands_setup import register_builtin_commands
 from kabot.core.directives import DirectiveParser
 from kabot.core.doctor import DoctorService
 from kabot.core.heartbeat import HeartbeatInjector
+from kabot.core.msg_context import MsgContext
 from kabot.core.resilience import ResilienceLayer
 
 # Phase 13: Resilience & Security
 from kabot.core.sentinel import CrashSentinel, format_recovery_message
 from kabot.core.status import BenchmarkService, StatusService
 from kabot.core.update import SystemControl, UpdateService
-from kabot.memory.chroma_memory import ChromaMemoryManager
+from kabot.memory import HybridMemoryManager
 from kabot.memory.vector_store import VectorStore
 from kabot.plugins.hooks import HookManager
 from kabot.plugins.loader import load_dynamic_plugins, load_plugins
@@ -120,6 +121,9 @@ class AgentLoop:
 
         # Resolve fallbacks
         self.fallbacks = [self.registry.resolve(f) for f in (fallbacks or [])]
+        self.last_model_used = self.model
+        self.last_fallback_used = False
+        self.last_model_chain = [self.model, *self.fallbacks]
 
         self.max_iterations = max_iterations
         self.brave_api_key = brave_api_key
@@ -130,7 +134,7 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
-        self.memory = ChromaMemoryManager(
+        self.memory = HybridMemoryManager(
             workspace / "memory_db",
             enable_hybrid_memory=enable_hybrid_memory
         )
@@ -199,6 +203,7 @@ class AgentLoop:
         # Phase 9: Architecture Overhaul
         self.directive_parser = DirectiveParser()
         self.heartbeat = HeartbeatInjector()
+        self.heartbeat.set_publisher(self._publish_heartbeat_event)
         self.resilience = ResilienceLayer(
             primary_model=self.model,
             fallback_models=self.fallbacks,
@@ -218,6 +223,24 @@ class AgentLoop:
             keys.append(provider.api_key)
         # Add support for multiple keys from config in future
         return keys
+
+    async def _publish_heartbeat_event(self, ctx: MsgContext) -> None:
+        from kabot.bus.events import InboundMessage
+        channel = ctx.event_data.get("target_channel") or "cli"
+        chat_id = ctx.event_data.get("target_chat") or "direct"
+        msg = InboundMessage(
+            channel=channel,
+            sender_id="system",
+            chat_id=chat_id,
+            content=ctx.body,
+            timestamp=ctx.timestamp,
+            metadata={
+                "system_event": True,
+                "event_type": ctx.event_type or "",
+                "event_data": ctx.event_data or {},
+            },
+        )
+        await self.bus.publish_inbound(msg)
 
     def _load_plugins(self) -> None:
         """Load plugins from workspace and builtin directories."""

@@ -86,6 +86,7 @@ def build_bus_cron_callback(
     provider: Any,
     model: str,
     publish_outbound: Callable[[OutboundMessage], Awaitable[None]],
+    on_system_event: Callable[[CronJob, str | None], Awaitable[None]] | None = None,
 ) -> Callable[[CronJob], Awaitable[str | None]]:
     """Create cron callback that publishes reminder delivery to message bus."""
 
@@ -108,6 +109,8 @@ def build_bus_cron_callback(
                     content=delivery_content,
                 )
             )
+        if on_system_event:
+            await on_system_event(job, delivery_content)
         return delivery_content
 
     return _on_cron_job
@@ -118,6 +121,7 @@ def build_cli_cron_callback(
     provider: Any,
     model: str,
     on_print: Callable[[str], None],
+    on_system_event: Callable[[CronJob, str | None], Awaitable[None]] | None = None,
 ) -> Callable[[CronJob], Awaitable[str | None]]:
     """Create cron callback for CLI mode with local reminder print."""
 
@@ -138,6 +142,8 @@ def build_cli_cron_callback(
 
         if delivery_content and job.payload.deliver:
             on_print(delivery_content)
+        if on_system_event:
+            await on_system_event(job, delivery_content)
         return delivery_content
 
     return _on_cron_job

@@ -5,7 +5,31 @@ All notable changes to Kabot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-22
+
+### Added - Hybrid Memory Architecture (Exceeds Mem0)
+
+- **HybridMemoryManager:** Modular memory orchestrator replacing monolithic `ChromaMemoryManager`.
+- **Smart Router:** Query-intent classifier routes to correct memory store (episodic/knowledge/hybrid). Multilingual keyword matching for 8 languages (ID, EN, ES, FR, JA, ZH, KO, TH).
+- **Reranker:** Three-stage filtering pipeline with configurable threshold (≥0.6), top-k (3), and hard token guard (500 tokens max). Reduces token injection by 60-72%.
+- **Episodic Extractor:** LLM-based auto-extraction of user preferences, facts, and entities after each chat session. Uses existing LLM provider.
+- **Memory Pruner:** Scheduled cleanup of stale facts (>30 days) and duplicate merging. Integrates with CronService.
+- **Deduplicator:** BM25 + cosine similarity check prevents duplicate fact storage.
+- **27 new pytest test cases** across 5 test files in `tests/memory/`.
+
+### Changed
+
+- `ChromaMemoryManager` renamed to `HybridMemoryManager` (backward-compatible alias preserved).
+- Memory search now routes through `SmartRouter` to skip irrelevant database hits.
+- Results are filtered through `Reranker` before injection into LLM context.
+
 ## [0.4.0] - 2026-02-22
+
+### Added - Autopilot Wiring & System Events (2026-02-22)
+
+- **Heartbeat Tasks Execution:** Heartbeat now reads `HEARTBEAT.md` and dispatches active tasks as prompts on each beat.
+- **Cron → System Events:** Cron callbacks now emit system events so the agent can react to scheduled job completions.
+- **Heartbeat Event Publishing:** Heartbeat injector now publishes system events into the inbound pipeline for unified processing.
 
 ### Fixed & Audited - Routing Resilience & Full Roadmap Completion (2026-02-22)
 

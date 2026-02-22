@@ -1,6 +1,8 @@
 """Heartbeat service for periodic agent wake-ups."""
 
 import asyncio
+import re
+from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 from loguru import logger
@@ -42,6 +44,7 @@ class HeartbeatService:
         enabled: bool = True,
         active_hours_start: str = "",
         active_hours_end: str = "",
+        max_tasks_per_beat: int = 5,
     ):
         self.workspace = workspace
         self.interval_ms = interval_s * 1000
@@ -49,6 +52,7 @@ class HeartbeatService:
         self._enabled = enabled
         self.active_hours_start = active_hours_start
         self.active_hours_end = active_hours_end
+        self.max_tasks_per_beat = max(1, int(max_tasks_per_beat))
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -71,12 +75,47 @@ class HeartbeatService:
                 continue
             if self.on_beat:
                 try:
-                    # Pass a default prompt if on_beat expects arguments,
-                    # while keeping zero-arg callbacks compatible.
-                    if self.on_beat.__code__.co_argcount > 0:
-                        await self.on_beat("Current time heartbeat check.")
+                    tasks = self._load_tasks()
+                    if tasks:
+                        for task in tasks[:self.max_tasks_per_beat]:
+                            await self._dispatch_heartbeat(task)
                     else:
-                        await self.on_beat()
+                        await self._dispatch_heartbeat("Current time heartbeat check.")
                 except Exception as e:
                     logger.error(f"Heartbeat callback error: {e}")
             await asyncio.sleep(self.interval_ms / 1000)
+
+    def _load_tasks(self) -> list[str]:
+        if not self.workspace:
+            return []
+        path = Path(self.workspace) / "HEARTBEAT.md"
+        if not path.exists():
+            return []
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception:
+            return []
+        in_active = False
+        tasks: list[str] = []
+        for line in content.splitlines():
+            header = line.strip().lower()
+            if header.startswith("## "):
+                if "active tasks" in header:
+                    in_active = True
+                elif "completed" in header:
+                    in_active = False
+                continue
+            if not in_active:
+                continue
+            match = re.match(r"\s*-\s*\[\s\]\s+(.*)", line)
+            if match:
+                task = match.group(1).strip()
+                if task:
+                    tasks.append(task)
+        return tasks
+
+    async def _dispatch_heartbeat(self, payload: str) -> None:
+        if self.on_beat.__code__.co_argcount > 0:
+            await self.on_beat(f"Heartbeat task: {payload}")
+        else:
+            await self.on_beat()

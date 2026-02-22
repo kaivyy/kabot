@@ -620,10 +620,19 @@ def gateway(
     )
 
     # Set cron callback (needs agent)
+    async def _emit_cron_event(job, result):
+        await agent.heartbeat.inject_cron_result(
+            job_name=job.name,
+            result=result,
+            channel=job.payload.channel or "cli",
+            chat_id=job.payload.to or "direct",
+        )
+
     cron.on_job = build_bus_cron_callback(
         provider=provider,
         model=runtime_model,
         publish_outbound=bus.publish_outbound,
+        on_system_event=_emit_cron_event,
     )
 
     # Create heartbeat service
@@ -779,6 +788,14 @@ def agent(
         _wire_cli_exec_approval(agent_loop)
 
     # Setup cron callback for CLI
+    async def _emit_cli_cron_event(job, result):
+        await agent_loop.heartbeat.inject_cron_result(
+            job_name=job.name,
+            result=result,
+            channel=job.payload.channel or "cli",
+            chat_id=job.payload.to or "direct",
+        )
+
     cron.on_job = build_cli_cron_callback(
         provider=provider,
         model=runtime_model,
@@ -786,6 +803,7 @@ def agent(
             f"[Reminder] {content}",
             render_markdown=markdown,
         ),
+        on_system_event=_emit_cli_cron_event,
     )
 
     # Show spinner when logs are off (no output to miss); skip when logs are on

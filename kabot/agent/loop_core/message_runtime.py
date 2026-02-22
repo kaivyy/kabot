@@ -87,6 +87,25 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     # Check if this query REQUIRES a specific tool (cleanup, sysinfo, weather, cron)
     required_tool = loop._required_tool_for_query(effective_content)
 
+    # CRITICAL FIX: If user gives a short confirmation, elevate to complex
+    # if the AI was offering an action in the previous turn. (Multilingual)
+    if not decision.is_complex and not required_tool:
+        short_confirmations = (
+            "ya", "yes", "y", "iya", "ok", "oke", "boleh", "silakan", "lanjut", "sip", "yep", "yup", "sure",
+            "si", "sí", "oui", "ja", "da", "net",
+            "はい", "네", "是", "对", "好的", "baik"
+        )
+        offer_keywords = (
+            "reminder", "ingatkan", "set", "jadwal", "cleanup", "bersihkan", "download", "unduh",
+            "schedule", "alarm", "timer", "jadual", "peringatan", "เตือน", "ตาราง", "提醒", "日程",
+            "clean", "optimasi", "hapus", "delete", "remove"
+        )
+        if effective_content.strip().lower() in short_confirmations:
+            last_asst = next((m.get("content", "") for m in reversed(conversation_history) if m.get("role") == "assistant"), "")
+            if any(k in str(last_asst).lower() for k in offer_keywords):
+                logger.info("Elevating short confirmation to complex route based on recent AI offer")
+                decision.is_complex = True
+
     if decision.is_complex or required_tool:
         if required_tool and not decision.is_complex:
             logger.info(f"Route override: simple -> complex (required_tool={required_tool})")

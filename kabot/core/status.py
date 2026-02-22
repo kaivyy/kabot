@@ -88,13 +88,19 @@ class StatusService:
         # Model info
         if self._agent_loop:
             model = getattr(self._agent_loop, 'model', 'unknown')
+            last_used = getattr(self._agent_loop, 'last_model_used', model)
+            fallback_used = getattr(self._agent_loop, 'last_fallback_used', False)
+            chain = getattr(self._agent_loop, 'last_model_chain', [model])
             provider = getattr(self._agent_loop, 'provider', None)
             provider_name = type(provider).__name__ if provider else 'unknown'
             lines.extend([
                 "",
                 "🧠 *Active Model*",
                 f"  Provider: {provider_name}",
-                f"  Model: {model}",
+                f"  Configured: {model}",
+                f"  Last used: {last_used}",
+                f"  Fallback used: {'yes' if fallback_used else 'no'}",
+                f"  Chain: {' -> '.join(chain)}",
             ])
 
         return "\n".join(lines)

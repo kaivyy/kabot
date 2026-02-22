@@ -6,7 +6,7 @@ from typing import Any
 from loguru import logger
 
 from kabot.agent.tools.base import Tool
-from kabot.memory.chroma_memory import ChromaMemoryManager
+from kabot.memory import ChromaMemoryManager  # Uses alias for HybridMemoryManager
 
 
 class SaveMemoryTool(Tool):
