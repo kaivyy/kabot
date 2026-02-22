@@ -20,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Telegram /help Only Showing 3 Commands**: The `/help` handler in `telegram.py` was hardcoded with only `/start`, `/reset`, and `/help`. It now dynamically queries all registered slash commands from the `CommandRouter` (e.g., `/status`, `/benchmark`, `/switch`, `/doctor`, `/sysinfo`, `/uptime`, `/clip`, etc.).
 - **Disk Space / Sysinfo Query Not Triggering Tool (Full Fix)**: Traced the complete execution path and found **two** root causes: (1) `SYSTEM_INFO_KEYWORDS` in `cron_fallback_nlp.py` was missing disk/storage terms. (2) `_COMPLEX_KEYWORDS` in `router.py` also lacked these terms, so the `IntentRouter` routed queries like *"berapa space SSD"* as SIMPLE, bypassing the agent loop where tool-enforcement lives. Fixed with full multilingual coverage across EN, ID (Indonesian), MS (Malay), TH (Thai), ZH (Chinese).
-- **SystemInfoTool Not Showing Free Space**: The Windows PowerShell script used `Win32_DiskDrive` (total physical size only). It now also runs `Get-PSDrive` to report free/used GB per logical drive (C:, D:, etc.).
+- **Crash: 'list object has no attribute get' on Tool Calls**: `json.loads(arguments)` in `litellm_provider.py` could return a `list` (e.g., `[]`) when an LLM sends empty arguments for no-parameter tools like `get_system_info`. This list then propagated into `validate_params()` and `dict(tc.arguments)`, crashing with `'list' object has no attribute 'get'`. Fixed with defense-in-depth: `litellm_provider.py` now guards `isinstance(loaded, dict)` after JSON parse, and `execution_runtime.py` now safely handles non-dict arguments.
+
 
 ### Changed
 - **Zero-Latency Cold Start**: Migrated heavy LLM libraries (`litellm`, etc.) to lazy-loading scopes, dropping CLI startup time to `< 0.7s`.

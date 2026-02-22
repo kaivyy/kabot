@@ -276,7 +276,9 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
             await loop.bus.publish_outbound(OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id, content=f"_{status}_", metadata={"type": "status_update"}
             ))
-        tool_params = dict(tc.arguments)
+        args_raw = tc.arguments
+        tool_params = args_raw if isinstance(args_raw, dict) else {}
+
         if tc.name == "weather":
             tool_params.setdefault("context_text", msg.content)
         if tc.name == "cron":

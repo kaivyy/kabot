@@ -473,13 +473,15 @@ class LiteLLMProvider(LLMProvider):
                     parsed_args = arguments
                 elif isinstance(arguments, str):
                     try:
-                        parsed_args = json.loads(arguments) if arguments.strip() else {}
+                        loaded = json.loads(arguments) if arguments.strip() else {}
+                        # Guard: LLM sometimes sends [] for no-param tools instead of {}
+                        parsed_args = loaded if isinstance(loaded, dict) else {}
                     except json.JSONDecodeError:
                         parsed_args = {"raw": arguments}
                 elif arguments is None:
                     parsed_args = {}
                 else:
-                    parsed_args = {"value": arguments}
+                    parsed_args = {}
 
                 parsed_tool_calls.append(
                     ToolCallRequest(

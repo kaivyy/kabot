@@ -83,6 +83,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             logger.info(f"Document hint injected: {len(document_paths)} files")
 
     conversation_history = loop.memory.get_conversation_context(msg.session_key, max_messages=30)
+    if conversation_history:
+        conversation_history = [m for m in conversation_history if isinstance(m, dict)]
 
     # Router triase: SIMPLE vs COMPLEX
     decision = await loop.router.route(effective_content)

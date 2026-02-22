@@ -79,8 +79,6 @@ class HeartbeatService:
                     if tasks:
                         for task in tasks[:self.max_tasks_per_beat]:
                             await self._dispatch_heartbeat(task)
-                    else:
-                        await self._dispatch_heartbeat("Current time heartbeat check.")
                 except Exception as e:
                     logger.error(f"Heartbeat callback error: {e}")
             await asyncio.sleep(self.interval_ms / 1000)

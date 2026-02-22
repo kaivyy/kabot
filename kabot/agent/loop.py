@@ -539,10 +539,26 @@ class AgentLoop:
         # Collect results
         result = await self.coordinator.collect_results(task_id)
 
+        content = "Task completed"
+        if isinstance(result, dict):
+            content = str(result.get("output") or result.get("summary") or content)
+        elif isinstance(result, list):
+            outputs = []
+            for item in result:
+                if isinstance(item, dict):
+                    outputs.append(str(item.get("output") or item.get("summary") or ""))
+                else:
+                    outputs.append(str(item))
+            compacted = [o for o in outputs if o]
+            if compacted:
+                content = "\n\n".join(compacted)
+        else:
+            content = str(result)
+
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
-            content=result.get("output", "Task completed"),
+            content=content,
             reply_to=msg.message_id
         )
 
