@@ -15,13 +15,24 @@ class ButtonStyle(IntEnum):
     LINK = 5
 
 
+class ComponentType(IntEnum):
+    """Discord component type values."""
+
+    ACTION_ROW = 1
+    BUTTON = 2
+    STRING_SELECT = 3
+
+
 def build_action_row(buttons: list[dict]) -> dict:
     """Build a Discord action row from button specs."""
+    if not buttons:
+        raise ValueError("Action row requires at least one button")
+
     components: list[dict] = []
     for button in buttons:
         style = int(button["style"])
         component = {
-            "type": 2,
+            "type": int(ComponentType.BUTTON),
             "label": button["label"],
             "style": style,
         }
@@ -30,4 +41,30 @@ def build_action_row(buttons: list[dict]) -> dict:
         else:
             component["custom_id"] = button.get("custom_id", str(button["label"]).lower())
         components.append(component)
-    return {"type": 1, "components": components}
+    return {"type": int(ComponentType.ACTION_ROW), "components": components}
+
+
+def build_select_menu(
+    custom_id: str,
+    options: list[dict],
+    placeholder: str = "",
+    min_values: int = 1,
+    max_values: int = 1,
+) -> dict:
+    """Build a Discord string select wrapped in an action row."""
+    select = {
+        "type": int(ComponentType.STRING_SELECT),
+        "custom_id": custom_id,
+        "options": [
+            {
+                "label": option["label"],
+                "value": option["value"],
+                "description": option.get("description", ""),
+            }
+            for option in options
+        ],
+        "placeholder": placeholder,
+        "min_values": min_values,
+        "max_values": max_values,
+    }
+    return {"type": int(ComponentType.ACTION_ROW), "components": [select]}

@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Improved Tool Usage Behavior:** Updated system prompt to force the LLM to proactively use tools (`exec`, `get_system_info`, `cleanup_system`) instead of telling users to run commands manually.
 - **WebFetch/Setup Fixes:** Refined web fetch hash caching and chunking, and fixed setup wizard channel configuration states.
 
-### Added - OpenClaw-Inspired Enhancements (2026-02-21)
+### Added - Kabot Full-Parity Enhancements (2026-02-21)
 
 - **Sub-agent Safety Limits:**
   - Added `SubagentDefaults` config with `max_spawn_depth`, `max_children_per_agent`, and `archive_after_minutes`.
@@ -34,12 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added callback query handling path that publishes button events into `MessageBus`.
   - Added outbound metadata support for inline keyboard rendering.
 - **Discord Interactive Components:**
-  - Added `kabot/channels/discord_components.py` with `ButtonStyle` and `build_action_row()`.
+  - Added `kabot/channels/discord_components.py` with `ButtonStyle`, `build_action_row()`, and `build_select_menu()`.
   - Added support for sending `components` in Discord outbound payload metadata.
   - Added `INTERACTION_CREATE` gateway handling and bus integration.
 - **Docker Sandbox Module (Optional):**
   - Added `kabot/sandbox/` with `DockerSandbox` async command execution helper.
   - Added `Dockerfile.sandbox` image template for isolated runtime usage.
+- **Security Audit Trail:**
+  - Added `AuditTrail` JSONL logger (`kabot/security/audit_trail.py`) with append/query support.
+  - Added regression tests in `tests/security/test_audit_trail.py`.
 
 ### Added - Military-Grade Progressive Enhancement & Security Hardening (2026-02-21)
 

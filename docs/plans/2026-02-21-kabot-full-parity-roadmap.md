@@ -30,10 +30,8 @@ This section captures the verified repository state after running a direct code-
 
 ### Overall Status
 
-- Completed: Task 1, 2, 3, 4, 5, 6, 7, 9
-- Partial: Task 8, 10, 12
-- Missing: Task 11
-- Not yet green: Task 13 (full test suite still failing)
+- Completed: Task 1 through Task 13
+- Verification gate: full suite green (`774 passed, 6 skipped`)
 
 ### Task Status Snapshot
 
@@ -46,31 +44,34 @@ This section captures the verified repository state after running a direct code-
 | 5 | Done | `kabot/cron/service.py`, `tests/cron/test_cron_webhook_post.py` | Webhook POST and `X-Kabot-Signature` covered. |
 | 6 | Done | `kabot/channels/telegram.py`, `tests/channels/test_telegram_buttons.py` | Inline keyboard builder implemented; test filename differs from plan. |
 | 7 | Done | `kabot/channels/telegram.py`, `tests/channels/test_telegram_callback.py` | Callback query handler implemented; test filename differs from plan. |
-| 8 | Partial | `kabot/channels/discord_components.py`, `tests/channels/test_discord_components.py` | `build_action_row()` exists, but `build_select_menu()` from plan is absent. |
+| 8 | Done | `kabot/channels/discord_components.py`, `tests/channels/test_discord_components.py` | Added `build_select_menu()` and validation tests. |
 | 9 | Done | `kabot/channels/discord.py`, `tests/channels/test_discord_interaction.py` | Interaction handling implemented; test filename differs from plan. |
-| 10 | Partial | `kabot/sandbox/docker_sandbox.py`, `tests/sandbox/test_docker_sandbox.py`, `Dockerfile.sandbox` | Module exists but behavior differs from plan (default mode/return semantics). |
-| 11 | Missing | _Not found:_ `kabot/security/audit_trail.py`, `tests/security/test_audit_trail.py` | Planned audit trail logger not implemented. |
-| 12 | Partial | `CHANGELOG.md` | Changelog section exists but heading/content differs from this plan text. |
-| 13 | Failing | `pytest tests/ -q` | Full suite result: `757 passed, 9 failed, 6 skipped` (firewall tests). |
+| 10 | Done | `kabot/sandbox/docker_sandbox.py`, `tests/sandbox/test_docker_sandbox.py`, `Dockerfile.sandbox` | Aligned defaults/noop semantics with roadmap and added test coverage. |
+| 11 | Done | `kabot/security/audit_trail.py`, `tests/security/test_audit_trail.py` | Added structured JSONL audit trail + query support. |
+| 12 | Done | `CHANGELOG.md` | Parity section updated to full-parity heading and content coverage. |
+| 13 | Done | `pytest tests/ -q` | Full suite result: `774 passed, 6 skipped` (no failures). |
 
 ### Verification Commands Executed
 
 ```bash
-pytest tests/config/test_subagent_config.py tests/agent/test_subagent_limits.py tests/heartbeat/test_heartbeat_config.py tests/cron/test_cron_delivery_modes.py tests/cron/test_cron_webhook_post.py tests/channels/test_telegram_buttons.py tests/channels/test_telegram_callback.py tests/channels/test_discord_components.py tests/channels/test_discord_interaction.py tests/sandbox/test_docker_sandbox.py -q
+pytest tests/config/test_subagent_config.py tests/agent/test_subagent_limits.py tests/heartbeat/test_heartbeat_config.py tests/cron/test_cron_delivery_modes.py tests/cron/test_cron_webhook_post.py tests/channels/test_telegram_buttons.py tests/channels/test_telegram_callback.py tests/channels/test_discord_components.py tests/channels/test_discord_interaction.py tests/sandbox/test_docker_sandbox.py tests/security/test_audit_trail.py -q
 ```
 
-Result: `31 passed`
+Result: `39 passed`
 
 ```bash
 pytest tests/ -q
 ```
 
-Result: `757 passed, 9 failed, 6 skipped`
+Result: `774 passed, 6 skipped`
 
 ### Detailed Evidence Report
 
 For full evidence mapping (including OpenClaw reference locations), see:
 `docs/plans/2026-02-21-kabot-full-parity-verification.md`
+
+For execution timeline and closure summary, see:
+`docs/plans/2026-02-21-kabot-full-parity-execution.md`
 
 ---
 

@@ -19,7 +19,7 @@ class DockerSandbox:
         self,
         image: str,
         *,
-        mode: str = "non-main",
+        mode: str = "off",
         workspace: str | Path | None = None,
         workspace_access: str = "rw",
         network_disabled: bool = False,
@@ -29,9 +29,12 @@ class DockerSandbox:
         self.workspace = Path(workspace).expanduser().resolve() if workspace else None
         self.workspace_access = workspace_access
         self.network_disabled = network_disabled
-        self.is_active = mode != "off"
         self._client: Any | None = None
         self._container: Any | None = None
+
+    @property
+    def is_active(self) -> bool:
+        return self.mode in ("all", "non-main")
 
     def _ensure_client(self):
         if self._client is not None:
@@ -67,11 +70,8 @@ class DockerSandbox:
         self._container = client.containers.run(**kwargs)
         return self._container
 
-    async def exec_command(self, command: str) -> str:
-        """Execute a command in sandbox and return decoded output."""
-        if not self.is_active:
-            return ""
-
+    async def _run_in_container(self, command: str) -> str:
+        """Run command in sandbox container and return stdout/stderr text."""
         container = self._create_container()
 
         def _run():
@@ -79,10 +79,15 @@ class DockerSandbox:
 
         exit_code, output = await asyncio.to_thread(_run)
         text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else str(output)
-
         if exit_code != 0:
             raise RuntimeError(f"sandbox command failed ({exit_code}): {text.strip()}")
         return text
+
+    async def exec_command(self, command: str) -> str | None:
+        """Execute a command in sandbox and return decoded output."""
+        if not self.is_active:
+            return None
+        return await self._run_in_container(command)
 
     async def close(self) -> None:
         """Stop and remove container resources."""

@@ -263,12 +263,19 @@ class ExecTool(Tool):
                 # Standard Local Execution
                 import platform
                 if platform.system() == "Windows":
-                    process = await asyncio.create_subprocess_exec(
-                        "powershell.exe",
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-Command",
-                        command,
+                    import subprocess
+
+                    powershell_cmd = subprocess.list2cmdline(
+                        [
+                            "powershell.exe",
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-Command",
+                            command,
+                        ]
+                    )
+                    process = await asyncio.create_subprocess_shell(
+                        powershell_cmd,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         cwd=cwd,

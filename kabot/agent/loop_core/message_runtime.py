@@ -84,7 +84,12 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         tool_names=loop.tools.tool_names,
     )
 
-    if decision.is_complex:
+    # Check if this query REQUIRES a specific tool (cleanup, sysinfo, weather, cron)
+    required_tool = loop._required_tool_for_query(effective_content)
+
+    if decision.is_complex or required_tool:
+        if required_tool and not decision.is_complex:
+            logger.info(f"Route override: simple -> complex (required_tool={required_tool})")
         final_content = await loop._run_agent_loop(msg, messages, session)
     else:
         final_content = await loop._run_simple_response(msg, messages)

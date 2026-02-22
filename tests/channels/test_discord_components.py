@@ -1,6 +1,12 @@
 """Tests for Discord component builders."""
 
-from kabot.channels.discord_components import ButtonStyle, build_action_row
+import pytest
+
+from kabot.channels.discord_components import (
+    ButtonStyle,
+    build_action_row,
+    build_select_menu,
+)
 
 
 class TestDiscordComponents:
@@ -26,3 +32,22 @@ class TestDiscordComponents:
             ]
         )
         assert row["components"][0]["url"] == "https://example.com"
+
+    def test_empty_buttons_raises(self):
+        with pytest.raises(ValueError):
+            build_action_row(buttons=[])
+
+    def test_build_select_menu(self):
+        row = build_select_menu(
+            custom_id="model_pick",
+            options=[
+                {"label": "GPT-4", "value": "gpt4"},
+                {"label": "Claude", "value": "claude"},
+            ],
+            placeholder="Pick a model",
+        )
+        assert row["type"] == 1
+        select = row["components"][0]
+        assert select["type"] == 3
+        assert select["custom_id"] == "model_pick"
+        assert len(select["options"]) == 2
