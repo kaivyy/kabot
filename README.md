@@ -280,7 +280,25 @@ Verifier Agent: Reviews code, checks security
 Master Agent: Aggregates results → Returns to user
 ```
 
-### Combining Both Systems
+### System 3: Autonomous Sub-agents (Background Delegation)
+
+Kabot can spawn lightweight, specialized sub-agents to handle long-running or complex background tasks while the main agent remains responsive to your immediate chats.
+
+**Key Features:**
+- **Background Execution:** Delegate heavy research, coding, or data processing tasks without blocking your main conversation.
+- **Isolated Context:** Each sub-agent runs with a laser-focused objective and its own memory, preventing context pollution in your main chat.
+- **Persistent Registry:** Sub-agent states are saved to disk (`.json`). If the server restarts, they resume where they left off.
+- **Safety Limits:** Built-in safeguards (`maxSpawnDepth`, `maxChildrenPerAgent`) prevent infinite spawning loops and control resource usage.
+
+**Use Cases:**
+- "Research these 5 URLs in the background and give me a summary when done."
+- "Start a sub-agent to monitor this error log and figure out what caused the crash."
+
+**How It Works:**
+The main agent uses the internal `spawn` tool to spin up a sub-agent worker. Once the worker finishes the task, it reports the final result back to the main agent's context or directly to your chat.
+
+### Combining All Systems
+
 
 Both systems work together seamlessly:
 - **Multiple agents** (System 1) can each use **collaborative mode** (System 2)
