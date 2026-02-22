@@ -461,6 +461,8 @@ class SetupWizard:
                 self._configure_logging()
             elif choice == "doctor":
                 self._run_doctor()
+            elif choice == "google":
+                self._configure_google()
 
             self.ran_section = True
 
@@ -496,6 +498,7 @@ class SetupWizard:
                 "tools",
                 "gateway",
                 "skills",
+                "google",
                 "channels",
                 "autostart",
                 "logging",
@@ -507,6 +510,7 @@ class SetupWizard:
             "model",
             "tools",     # <-- Added advanced tools to simple mode
             "skills",
+            "google",
             "channels",
             "autostart",
             "finish",
@@ -519,6 +523,7 @@ class SetupWizard:
             "tools": "Tools & Sandbox (Search, Docker, Shell)",
             "gateway": "Gateway (Port, Host, Bindings)",
             "skills": "Skills (Install & Configure)",
+            "google": "Google Suite (Auth & Credentials)",
             "channels": "Channels (Telegram, WhatsApp, Slack)",
             "autostart": "Auto-start (Enable boot-up service)",
             "logging": "Logging & Debugging",
@@ -526,6 +531,46 @@ class SetupWizard:
             "finish": "Continue & Finish",
         }
         return [questionary.Choice(labels[value], value=value) for value in self._main_menu_option_values()]
+
+    def _configure_google(self):
+        ClackUI.section_start("Google Suite Configuration")
+        console.print("│  [dim]Setup native Google Suite integration (Gmail & Calendar)[/dim]")
+
+        from kabot.auth.google_auth import GoogleAuthManager
+        auth_manager = GoogleAuthManager()
+
+        # Check if already authenticated
+        if auth_manager.token_path.exists():
+            console.print("│")
+            console.print("│  [green]✓ Google Suite is already authenticated[/green]")
+            reset = questionary.confirm("Do you want to re-authenticate and replace current credentials?", default=False).unsafe_ask()
+            if not reset:
+                ClackUI.section_end()
+                return
+
+        console.print("│")
+        console.print("│  To proceed, you need a 'credentials.json' from Google Cloud Console.")
+        path = questionary.path("Path to your google_credentials.json file:").unsafe_ask()
+
+        import shutil
+        from pathlib import Path
+        cred_file = Path(path)
+
+        if not cred_file.exists():
+            console.print(f"│  [red]Error: Credentials file not found at {cred_file}[/red]")
+            ClackUI.section_end()
+            return
+
+        try:
+            shutil.copy(cred_file, auth_manager.credentials_path)
+            console.print(f"│  [green]✓ Copied credentials to {auth_manager.credentials_path}[/green]")
+            console.print("│  [cyan]Initiating Google OAuth login flow in your browser...[/cyan]")
+            auth_manager.get_credentials()
+            console.print("│  [green]✓ Successfully authenticated with Google Suite![/green]")
+        except Exception as e:
+            console.print(f"│  [red]Authentication failed: {e}[/red]")
+
+        ClackUI.section_end()
 
     def _configure_workspace(self):
         ClackUI.section_start("Workspace")
