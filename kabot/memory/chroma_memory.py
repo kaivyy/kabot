@@ -71,6 +71,16 @@ class HybridMemoryManager:
         self._chroma_client = None
         self._collection = None
 
+    async def warmup(self):
+        """Pre-load embedding model and ChromaDB in background (non-blocking)."""
+        try:
+            if isinstance(self.embeddings, SentenceEmbeddingProvider):
+                await self.embeddings.warmup()
+            self._init_chroma()
+            logger.info("Memory warmup completed")
+        except Exception as e:
+            logger.warning(f"Memory warmup failed (will lazy-load later): {e}")
+
     def _init_chroma(self):
         """Initialize ChromaDB connection lazily."""
         if self._chroma_client is None:

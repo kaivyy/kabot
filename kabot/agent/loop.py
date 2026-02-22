@@ -443,10 +443,20 @@ class AgentLoop:
         except Exception:
             return None
 
+    async def _warmup_memory(self):
+        """Background warmup of embedding model so first message is fast."""
+        try:
+            await self.memory.warmup()
+        except Exception as e:
+            logger.warning(f"Memory warmup failed (will lazy-load later): {e}")
+
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
         self._running = True
         logger.info("Agent loop started")
+
+        # Pre-warm embedding model in background (non-blocking)
+        asyncio.create_task(self._warmup_memory())
 
         # Phase 14: Emit lifecycle start event
         from kabot.bus.events import SystemEvent

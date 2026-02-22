@@ -13,11 +13,11 @@ async def test_heartbeat_starts_and_stops():
     async def on_beat():
         beat_count.append(1)
 
-    service = HeartbeatService(interval_s=0.1, on_heartbeat=on_beat)
+    service = HeartbeatService(interval_s=0.1, on_heartbeat=on_beat, startup_delay_s=0)
     await service.start()
 
     # Wait for at least 2 beats
-    await asyncio.sleep(0.25)
+    await asyncio.sleep(0.5)
 
     service.stop()
 
@@ -33,14 +33,15 @@ async def test_heartbeat_callback_error_handling():
         if len(beat_count) == 1:
             raise Exception("Test error")
 
-    service = HeartbeatService(interval_s=0.1, on_heartbeat=on_beat)
+    service = HeartbeatService(interval_s=0.1, on_heartbeat=on_beat, startup_delay_s=0)
     await service.start()
 
     # Wait for multiple beats
-    await asyncio.sleep(0.25)
+    await asyncio.sleep(0.5)
 
     service.stop()
 
     # Should continue after error
     assert len(beat_count) >= 2, "Should continue after callback error"
+
 

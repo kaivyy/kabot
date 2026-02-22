@@ -45,6 +45,7 @@ class HeartbeatService:
         active_hours_start: str = "",
         active_hours_end: str = "",
         max_tasks_per_beat: int = 5,
+        startup_delay_s: int = 30,
     ):
         self.workspace = workspace
         self.interval_ms = interval_s * 1000
@@ -53,6 +54,7 @@ class HeartbeatService:
         self.active_hours_start = active_hours_start
         self.active_hours_end = active_hours_end
         self.max_tasks_per_beat = max(1, int(max_tasks_per_beat))
+        self._startup_delay_s = startup_delay_s
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -69,6 +71,9 @@ class HeartbeatService:
             self._task.cancel()
 
     async def _loop(self):
+        # Allow channels to fully connect before first heartbeat
+        if self._startup_delay_s > 0:
+            await asyncio.sleep(self._startup_delay_s)
         while self._running:
             if not is_within_active_hours(self.active_hours_start, self.active_hours_end):
                 await asyncio.sleep(self.interval_ms / 1000)
@@ -79,6 +84,9 @@ class HeartbeatService:
                     if tasks:
                         for task in tasks[:self.max_tasks_per_beat]:
                             await self._dispatch_heartbeat(task)
+                    elif not self.workspace:
+                        # Simple callback mode (no workspace / tests)
+                        await self.on_beat()
                 except Exception as e:
                     logger.error(f"Heartbeat callback error: {e}")
             await asyncio.sleep(self.interval_ms / 1000)

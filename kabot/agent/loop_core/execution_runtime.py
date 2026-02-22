@@ -271,13 +271,14 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
         )
 
     for tc in response.tool_calls:
-        status = loop._get_tool_status_message(tc.name, tc.arguments)
+        args_raw = tc.arguments
+        tool_params = args_raw if isinstance(args_raw, dict) else {}
+
+        status = loop._get_tool_status_message(tc.name, tool_params)
         if status:
             await loop.bus.publish_outbound(OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id, content=f"_{status}_", metadata={"type": "status_update"}
             ))
-        args_raw = tc.arguments
-        tool_params = args_raw if isinstance(args_raw, dict) else {}
 
         if tc.name == "weather":
             tool_params.setdefault("context_text", msg.content)

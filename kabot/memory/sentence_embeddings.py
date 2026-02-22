@@ -38,6 +38,12 @@ class SentenceEmbeddingProvider:
                 logger.error(f"Error loading model: {e}")
                 raise
 
+    async def warmup(self):
+        """Pre-load the embedding model in a background thread (non-blocking)."""
+        import asyncio
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._load_model)
+
     async def embed(self, text: str) -> list[float] | None:
         """
         Generate embedding for text using Sentence-Transformers.
