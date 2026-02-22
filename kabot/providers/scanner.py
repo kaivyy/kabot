@@ -1,6 +1,5 @@
 ﻿from typing import Any, Dict, List, Optional
 
-import litellm
 from loguru import logger
 
 from kabot.providers.models import ModelMetadata
@@ -16,6 +15,7 @@ class ModelScanner:
 
     def scan_provider(self, provider_name: str, api_key: str, api_base: Optional[str] = None) -> List[ModelMetadata]:
         """Fetch models from a specific provider API."""
+        import litellm
         logger.info(f"Scanning models for provider: {provider_name}")
         scanned_models = []
 

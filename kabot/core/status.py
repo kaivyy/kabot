@@ -13,12 +13,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Try importing psutil for system metrics
-try:
-    import psutil
-    HAS_PSUTIL = True
-except ImportError:
-    HAS_PSUTIL = False
+# (Lazy) System metrics below
+
+
 
 
 class StatusService:
@@ -55,8 +52,9 @@ class StatusService:
             f"💻 *Platform*: {platform.system()} {platform.release()}",
         ]
 
-        # System metrics (if psutil available)
-        if HAS_PSUTIL:
+        # System metrics (lazy import psutil)
+        try:
+            import psutil
             proc = psutil.Process()
             mem = proc.memory_info()
             cpu = psutil.cpu_percent(interval=0.1)
@@ -67,6 +65,8 @@ class StatusService:
                 f"  RAM (bot): {mem.rss / 1024 / 1024:.1f} MB",
                 f"  RAM (total): {psutil.virtual_memory().percent}%",
             ])
+        except ImportError:
+            pass
 
         # Request stats
         avg_latency = (

@@ -53,6 +53,7 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_cron_tool=loop.tools.has("cron"),
         has_system_info_tool=loop.tools.has("get_system_info"),
         has_cleanup_tool=loop.tools.has("cleanup_system"),
+        has_process_memory_tool=loop.tools.has("get_process_memory"),
     )
 
 
@@ -79,6 +80,22 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
 
     if required_tool == "get_system_info":
         result = await loop.tools.execute("get_system_info", {})
+        return str(result)
+
+    if required_tool == "get_process_memory":
+        q_lower = (msg.content or "").lower()
+        limit = 15
+        match = re.search(r"\b(\d{1,3})\b", q_lower)
+        if match:
+            try:
+                limit = int(match.group(1))
+            except Exception:
+                limit = 15
+        if limit < 1:
+            limit = 1
+        if limit > 200:
+            limit = 200
+        result = await loop.tools.execute("get_process_memory", {"limit": limit})
         return str(result)
 
     if required_tool == "cleanup_system":

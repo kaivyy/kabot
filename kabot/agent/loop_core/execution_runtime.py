@@ -59,11 +59,34 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     messages = loop._apply_think_mode(messages, session)
 
     # === FAST PATH: Execute deterministic tools directly, skip LLM tool-call step ===
+    # This bypasses the broken tool-calling API (e.g. codex models returning 400),
+    # but still uses the LLM to produce a nice natural-language summary of the result.
     _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "weather"}
     if required_tool and required_tool in _DIRECT_TOOLS:
         direct_result = await loop._execute_required_tool_fallback(required_tool, msg)
         if direct_result is not None:
-            logger.info(f"Direct tool execution (bypassed LLM): {required_tool}")
+            logger.info(f"Direct tool execution (bypassed LLM tool-call): {required_tool}")
+            # Now ask the LLM to format the result naturally
+            summary_messages = messages + [
+                {
+                    "role": "user",
+                    "content": (
+                        f"[TOOL RESULT: {required_tool}]\n{direct_result}\n\n"
+                        "Summarize this data in a clear, friendly response in the same language "
+                        "the user used. Be concise and highlight the most important information."
+                    ),
+                }
+            ]
+            try:
+                summary_response = await loop.provider.chat(
+                    messages=summary_messages,
+                    model=model,
+                )
+                if summary_response and summary_response.content:
+                    return summary_response.content
+            except Exception as e:
+                logger.warning(f"LLM summary failed for {required_tool}, returning raw result: {e}")
+            # Fallback: return raw result if LLM still fails
             return direct_result
     # === END FAST PATH ===
 

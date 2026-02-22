@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
-from rank_bm25 import BM25Okapi
+
 
 from .ollama_embeddings import OllamaEmbeddingProvider
 from .reranker import Reranker
@@ -160,6 +160,7 @@ class HybridMemoryManager:
 
             # Tokenize and build index
             tokenized_corpus = [self._tokenize(doc) for doc in documents]
+            from rank_bm25 import BM25Okapi
             self.bm25 = BM25Okapi(tokenized_corpus)
             self.bm25_documents = documents
             self.bm25_ids = doc_ids

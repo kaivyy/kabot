@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-import chromadb
+
 
 
 @dataclass
@@ -23,6 +23,7 @@ class VectorStore:
             path: Path to store ChromaDB data
             collection_name: Name of the collection
         """
+        import chromadb
         self.client = chromadb.PersistentClient(path=path)
         self.collection = self.client.get_or_create_collection(collection_name)
 

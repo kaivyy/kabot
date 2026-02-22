@@ -1,11 +1,23 @@
 # Changelog
 
 All notable changes to Kabot will be documented in this file.
+# Changelog
+
+All notable changes to Kabot will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Performance & Optimization
+- **Startup Latency Fix**: Resolved the ~20s delay during the "Starting Kabot Watchdog..." phase. This was achieved by refactoring the core dependency graph to use lazy-loading for heavy third-party libraries.
+- **Lazy-Loading Architecture**:
+    - Implemented PEP 562 `__getattr__` in `kabot.memory` for on-demand submodule loading.
+    - Deferred initialization of `ChromaDB`, `psutil`, `rank_bm25`, and `LiteLLM` until actually needed by a specific tool or service.
+    - Moved service instantiation (Status, Benchmark, Doctor) in `AgentLoop` to lazy properties.
+- **Race Condition Mitigation**: Added thread locks to `SentenceEmbeddingProvider` and `HybridMemoryManager` to prevent double-loading of the 400MB+ embedding model when multiple tasks trigger initialization simultaneously.
+- **Background Warmup Optimization**: Moved the embedding model pre-warming task to the absolute top of the `AgentLoop.run()` method to maximize parallel processing while the bot initializes its remaining components.
 
 ### Added - MHA Squad "Awakening"
 - **Native Google Suite Integration**: Built-in support for Gmail and Google Calendar via OAuth 2.0 without relying on external `gog` CLI. Includes `GoogleAuthManager` for token storage and automatic refresh.
@@ -13,14 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Auto-Onboarding Agent (CLI)**: Added `kabot train <file>` CLI command to automatically parse (`.pdf`, `.txt`, `.md`) using `DocumentParser`, chunk the text, and inject it directly into a specific agent workspace's ChromaDB memory for instant context.
 - **Advanced Web Explorer (Playwright)**: Upgraded `BrowserTool` to support interactive actions: `click(selector)`, `fill(selector, text)`, and `get_dom_snapshot()`. The `get_dom_snapshot` method extracts interactive elements and returns simplified, LLM-friendly DOM maps to enable autonomous web interaction.
 - **Google Auth CLI & Wizard**: Added interactive Google Suite OAuth setup directly into `kabot config` (Setup Wizard) and as a standalone `kabot google-auth` CLI command.
-
-- **Chat-Based Knowledge Training**: Added `KnowledgeLearnTool` (`kabot/agent/tools/knowledge.py`) allowing agents to permanently learn from documents (.pdf, .md, .txt, .csv) sent directly via chat (Telegram, WhatsApp, etc.). The message runtime (`message_runtime.py`) now auto-detects document uploads and hints the AI to offer memorization.
-- **Beginner's Guide**: Added comprehensive English `how-to-use.md` tutorial covering the Setup Wizard, Interactive Chat, `kabot train`, `kabot google-auth`, and Chat-Based Learning.
-
-### Fixed
-- **Telegram /help Only Showing 3 Commands**: The `/help` handler in `telegram.py` was hardcoded with only `/start`, `/reset`, and `/help`. It now dynamically queries all registered slash commands from the `CommandRouter` (e.g., `/status`, `/benchmark`, `/switch`, `/doctor`, `/sysinfo`, `/uptime`, `/clip`, etc.).
-- **Disk Space / Sysinfo Query Not Triggering Tool (Full Fix)**: Traced the complete execution path and found **two** root causes: (1) `SYSTEM_INFO_KEYWORDS` in `cron_fallback_nlp.py` was missing disk/storage terms. (2) `_COMPLEX_KEYWORDS` in `router.py` also lacked these terms, so the `IntentRouter` routed queries like *"berapa space SSD"* as SIMPLE, bypassing the agent loop where tool-enforcement lives. Fixed with full multilingual coverage across EN, ID (Indonesian), MS (Malay), TH (Thai), ZH (Chinese).
-- **Crash: 'list object has no attribute get' on Tool Calls**: `json.loads(arguments)` in `litellm_provider.py` could return a `list` (e.g., `[]`) when an LLM sends empty arguments for no-parameter tools like `get_system_info`. This list then propagated into `validate_params()` and `dict(tc.arguments)`, crashing with `'list' object has no attribute 'get'`. Fixed with defense-in-depth: `litellm_provider.py` now guards `isinstance(loaded, dict)` after JSON parse, and `execution_runtime.py` now safely handles non-dict arguments.
+- **Process RAM Usage Tool**: Added `get_process_memory` for top RAM-per-process on Windows, Linux, and macOS with multilingual keyword triggers.
 
 
 ### Changed

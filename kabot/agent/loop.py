@@ -60,13 +60,15 @@ from kabot.core.doctor import DoctorService
 from kabot.core.heartbeat import HeartbeatInjector
 from kabot.core.msg_context import MsgContext
 from kabot.core.resilience import ResilienceLayer
-
-# Phase 13: Resilience & Security
-from kabot.core.sentinel import CrashSentinel, format_recovery_message
 from kabot.core.status import BenchmarkService, StatusService
 from kabot.core.update import SystemControl, UpdateService
 from kabot.memory import HybridMemoryManager
 from kabot.memory.vector_store import VectorStore
+
+# Phase 13: Resilience & Security
+from kabot.core.sentinel import CrashSentinel, format_recovery_message
+
+
 from kabot.plugins.hooks import HookManager
 from kabot.plugins.loader import load_dynamic_plugins, load_plugins
 from kabot.plugins.registry import PluginRegistry
@@ -141,6 +143,7 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
+        from kabot.memory import HybridMemoryManager
         self.memory = HybridMemoryManager(
             workspace / "memory_db",
             enable_hybrid_memory=enable_hybrid_memory
@@ -189,18 +192,18 @@ class AgentLoop:
 
         # Phase 8: System Internals â€” Command Router
         self.command_router = CommandRouter()
-        self._status_service = StatusService(agent_loop=self)
-        self._benchmark_service = BenchmarkService(provider=provider, models=self.fallbacks)
-        self._doctor_service = DoctorService(workspace=workspace)
-        self._update_service = UpdateService(workspace=workspace)
-        self._system_control = SystemControl(workspace=workspace)
+        self._status_service = None
+        self._benchmark_service = None
+        self._doctor_service = None
+        self._update_service = None
+        self._system_control = None
         register_builtin_commands(
             router=self.command_router,
-            status_service=self._status_service,
-            benchmark_service=self._benchmark_service,
-            doctor_service=self._doctor_service,
-            update_service=self._update_service,
-            system_control=self._system_control,
+            status_service=self.status_service,
+            benchmark_service=self.benchmark_service,
+            doctor_service=self.doctor_service,
+            update_service=self.update_service,
+            system_control=self.system_control,
         )
 
         # Check if we just restarted
@@ -208,6 +211,7 @@ class AgentLoop:
             logger.info("Bot restarted successfully (restart flag detected)")
 
         # Phase 9: Architecture Overhaul
+        from kabot.core.directives import DirectiveParser
         self.directive_parser = DirectiveParser()
         self.heartbeat = HeartbeatInjector()
         self.heartbeat.set_publisher(self._publish_heartbeat_event)
@@ -249,6 +253,62 @@ class AgentLoop:
         )
         await self.bus.publish_inbound(msg)
 
+    @property
+    def status_service(self) -> Any:
+        if self._status_service is None:
+            from kabot.core.status import StatusService
+            self._status_service = StatusService(self)
+        return self._status_service
+
+    @property
+    def benchmark_service(self) -> Any:
+        if self._benchmark_service is None:
+            from kabot.core.status import BenchmarkService
+            self._benchmark_service = BenchmarkService(self.provider)
+        return self._benchmark_service
+
+    @property
+    def doctor_service(self) -> Any:
+        if self._doctor_service is None:
+            from kabot.core.doctor import DoctorService
+            self._doctor_service = DoctorService(self.workspace)
+        return self._doctor_service
+
+    @property
+    def update_service(self) -> Any:
+        if self._update_service is None:
+            from kabot.core.update import UpdateService
+            self._update_service = UpdateService(self.workspace)
+        return self._update_service
+
+    @property
+    def system_control(self) -> Any:
+        if self._system_control is None:
+            from kabot.core.update import SystemControl
+            self._system_control = SystemControl(self.workspace)
+        return self._system_control
+
+    @property
+    def vector_store(self) -> Any:
+        if self._vector_store is None:
+            from kabot.memory.vector_store import VectorStore
+            try:
+                self._vector_store = VectorStore(
+                    path=self._vector_store_path,
+                    collection_name="kabot_memory"
+                )
+                logger.info("Vector store initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize vector store: {e}")
+                # Return a dummy store that does nothing
+                class DummyVectorStore:
+                    def search(self, query: str, k: int = 3):
+                        return []
+                    def add(self, documents: list[str], ids: list[str]):
+                        pass
+                self._vector_store = DummyVectorStore()
+        return self._vector_store
+
     def _load_plugins(self) -> None:
         """Load plugins from workspace and builtin directories."""
         # Load from workspace plugins directory
@@ -271,26 +331,7 @@ class AgentLoop:
             loaded_dynamic = load_dynamic_plugins(builtin_plugins, self.plugin_registry, self.hooks)
             logger.info(f"Loaded {len(loaded_dynamic)} dynamic builtin plugins")
 
-    @property
-    def vector_store(self) -> VectorStore:
-        """Lazy initialization of vector store."""
-        if self._vector_store is None:
-            try:
-                self._vector_store = VectorStore(
-                    path=self._vector_store_path,
-                    collection_name="kabot_memory"
-                )
-                logger.info("Vector store initialized successfully")
-            except Exception as e:
-                logger.warning(f"Failed to initialize vector store: {e}")
-                # Return a dummy store that does nothing
-                class DummyVectorStore:
-                    def search(self, query: str, k: int = 3):
-                        return []
-                    def add(self, documents: list[str], ids: list[str]):
-                        pass
-                self._vector_store = DummyVectorStore()
-        return self._vector_store
+
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -334,8 +375,9 @@ class AgentLoop:
         )
         self.tools.register(BrowserTool())
 
-        from kabot.agent.tools.system import SystemInfoTool
+        from kabot.agent.tools.system import SystemInfoTool, ProcessMemoryTool
         self.tools.register(SystemInfoTool())
+        self.tools.register(ProcessMemoryTool())
 
         from kabot.agent.tools.cleanup import CleanupTool
         self.tools.register(CleanupTool())
@@ -402,6 +444,8 @@ class AgentLoop:
             elif tool_name == "exec":
                 cmd = args.get("command")
                 return f"Running: `{cmd}`"
+            elif tool_name == "get_process_memory":
+                return "Checking RAM usage by process"
             elif tool_name == "web_search":
                 query = args.get("query")
                 return f"Searching: '{query}'"
