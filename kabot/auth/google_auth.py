@@ -9,12 +9,14 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from loguru import logger
 
-# Essential scopes for full integrations. Read & write for Mail & Calendar.
+# Essential scopes for full integrations. Read & write for Mail & Calendar, Drive, and Docs.
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/tasks"
+    "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/documents"
 ]
 
 

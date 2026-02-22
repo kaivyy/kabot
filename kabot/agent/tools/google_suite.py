@@ -189,3 +189,168 @@ class GmailTool(Tool):
         except Exception as e:
             logger.error(f"GmailTool failed: {e}")
             return f"Action failed: {str(e)}"
+
+class GoogleDriveTool(Tool):
+    """Tool for native Google Drive interactions."""
+
+    def __init__(self):
+        self._client = None
+
+    @property
+    def client(self):
+        if not self._client:
+            from kabot.integrations.google_drive import GoogleDriveClient
+            self._client = GoogleDriveClient()
+        return self._client
+
+    @property
+    def name(self) -> str:
+        return "google_drive"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Interact natively with Google Drive. "
+            "Supported actions: search_files, upload_text."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Action to perform: search_files, upload_text.",
+                    "enum": ["search_files", "upload_text"]
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Google Drive search query (used in search_files)."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "File name for upload (required for upload_text)."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Text/Markdown content to upload (required for upload_text)."
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of files to return (default: 10)."
+                }
+            },
+            "required": ["action"]
+        }
+
+    async def execute(self, action: str, **kwargs) -> Any:
+        try:
+            if action == "search_files":
+                query = kwargs.get("query", "trashed = false")
+                max_results = kwargs.get("max_results", 10)
+                files = self.client.search_files(query=query, max_results=max_results)
+                
+                if not files:
+                    return "No files found matching query."
+                    
+                summaries = []
+                for f in files:
+                    summaries.append(f"[{f['id']}] {f['name']} (URL: {f.get('webViewLink')})")
+                return "\n".join(summaries)
+            
+            elif action == "upload_text":
+                name = kwargs.get("name")
+                content = kwargs.get("content")
+                if not name or not content:
+                    return "Error: 'name' and 'content' required for upload_text."
+                    
+                result = self.client.upload_text_file(name, content)
+                if result:
+                    return f"File '{name}' uploaded successfully. Link: {result.get('webViewLink')}"
+                return "Failed to upload file."
+                
+            return f"Unknown drive action: {action}"
+        except Exception as e:
+            logger.error(f"GoogleDriveTool failed: {e}")
+            return f"Action failed: {str(e)}"
+
+class GoogleDocsTool(Tool):
+    """Tool for native Google Docs interactions."""
+
+    def __init__(self):
+        self._client = None
+
+    @property
+    def client(self):
+        if not self._client:
+            from kabot.integrations.google_docs import GoogleDocsClient
+            self._client = GoogleDocsClient()
+        return self._client
+
+    @property
+    def name(self) -> str:
+        return "google_docs"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Interact natively with Google Docs. "
+            "Supported actions: create_document, read_document, append_text."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Action to perform: create_document, read_document, append_text.",
+                    "enum": ["create_document", "read_document", "append_text"]
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Title of the new document (required for create_document)."
+                },
+                "document_id": {
+                    "type": "string",
+                    "description": "ID of the Google Doc (required for read_document and append_text)."
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to append (required for append_text)."
+                }
+            },
+            "required": ["action"]
+        }
+
+    async def execute(self, action: str, **kwargs) -> Any:
+        try:
+            if action == "create_document":
+                title = kwargs.get("title")
+                if not title:
+                    return "Error: 'title' is required for create_document."
+                result = self.client.create_document(title)
+                if result:
+                    return f"Document created! ID: {result.get('documentId')} | Link: {result.get('webViewLink')}"
+                return "Failed to create document."
+                
+            elif action == "read_document":
+                doc_id = kwargs.get("document_id")
+                if not doc_id:
+                    return "Error: 'document_id' is required for read_document."
+                return self.client.read_document(doc_id)
+                
+            elif action == "append_text":
+                doc_id = kwargs.get("document_id")
+                text = kwargs.get("text")
+                if not doc_id or not text:
+                    return "Error: 'document_id' and 'text' required for append_text."
+                success = self.client.append_text(doc_id, text)
+                return "Text appended successfully." if success else "Failed to append text."
+                
+            return f"Unknown docs action: {action}"
+        except Exception as e:
+            logger.error(f"GoogleDocsTool failed: {e}")
+            return f"Action failed: {str(e)}"

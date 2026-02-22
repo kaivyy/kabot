@@ -286,6 +286,60 @@ def google_auth(
         raise typer.Exit(1)
 
 
+@app.command("train")
+def train(
+    file_path: str = typer.Argument(
+        ..., help="Path to the .pdf, .txt, or .md file to train the agent on."
+    ),
+    workspace: str = typer.Option(
+        "cli", "--workspace", "-w", help="Workspace to inject the memory into (e.g. Aizawa, Hawk)."
+    )
+):
+    """Auto-Onboard an agent by uploading a document directly into its memory."""
+    from pathlib import Path
+    from kabot.utils.document_parser import DocumentParser
+    from kabot.memory.chroma_memory import ChromaMemoryManager
+    from kabot.utils.helpers import get_workspace_path
+    
+    path = Path(file_path)
+    if not path.exists():
+        console.print(f"[red]Error: File not found at {path}[/red]")
+        raise typer.Exit(1)
+        
+    console.print(f"[cyan]Reading document: {path.name}...[/cyan]")
+    try:
+        text = DocumentParser.extract_text(path)
+        chunks = DocumentParser.chunk_text(text, chunk_size=1500, overlap=300)
+    except Exception as e:
+        console.print(f"[red]Failed to extract text: {e}[/red]")
+        raise typer.Exit(1)
+        
+    if not chunks:
+        console.print("[yellow]No text could be extracted from the file.[/yellow]")
+        raise typer.Exit(1)
+        
+    console.print(f"[cyan]Extracted {len(chunks)} chunks. Injecting into workspace '{workspace}'...[/cyan]")
+    
+    # Initialize chroma DB for the specific workspace
+    base_dir = get_workspace_path()
+    chroma_dir = base_dir / "sessions" / workspace / "chroma"
+    chroma_manager = ChromaMemoryManager(persist_directory=str(chroma_dir))
+    
+    try:
+        # Save each chunk as a memory
+        for i, chunk in enumerate(chunks):
+            # Prefix it to signify it's training data, not conversation history
+            doc_content = f"Training Reference ({path.name} part {i+1}): {chunk}"
+            # Inject it
+            chroma_manager.add_messages([
+                {"role": "system", "content": doc_content}
+            ])
+            
+        console.print(f"[green]✓[/green] Successfully trained '{workspace}' with {len(chunks)} chunks from {path.name}!")
+    except Exception as e:
+        console.print(f"[red]Memory injection failed: {e}[/red]")
+        raise typer.Exit(1)
+
 @app.command()
 def setup(
     interactive: bool = typer.Option(True, "--interactive/--no-interactive", help="Run interactive setup wizard"),

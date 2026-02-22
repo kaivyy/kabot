@@ -24,8 +24,9 @@ class BrowserTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Browse the web, take screenshots, and extract content. "
-            "Supported actions: launch, goto, screenshot, get_content, close."
+            "Advanced Web Explorer using Playwright. "
+            "Supported actions: launch, goto, screenshot, get_content, get_dom_snapshot, click, fill, close. "
+            "Use get_dom_snapshot to see what elements are clickable on the screen along with their CSS selectors."
         )
 
     @property
@@ -35,8 +36,8 @@ class BrowserTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "Action to perform: launch, goto, screenshot, get_content, close",
-                    "enum": ["launch", "goto", "screenshot", "get_content", "close"]
+                    "description": "Action to perform: launch, goto, screenshot, get_content, get_dom_snapshot, click, fill, close",
+                    "enum": ["launch", "goto", "screenshot", "get_content", "get_dom_snapshot", "click", "fill", "close"]
                 },
                 "url": {
                     "type": "string",
@@ -49,6 +50,14 @@ class BrowserTool(Tool):
                 "headless": {
                     "type": "boolean",
                     "description": "Whether to run browser in headless mode (default: true)"
+                },
+                "selector": {
+                    "type": "string",
+                    "description": "CSS Selector to target (required for click, fill)"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to input into a field (required for fill)"
                 }
             },
             "required": ["action"]
@@ -78,6 +87,45 @@ class BrowserTool(Tool):
                 # Simple extraction of text
                 text = await self.page.evaluate("document.body.innerText")
                 return f"URL: {self.page.url}\nTitle: {await self.page.title()}\nContent:\n{text[:5000]}"
+                
+            elif action == "get_dom_snapshot":
+                # Inject JS to extract interactive elements and their selectors
+                script = """
+                () => {
+                    const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"]'));
+                    let result = [];
+                    for(let el of elements) {
+                        let text = el.innerText || el.value || el.placeholder || el.getAttribute('aria-label') || '';
+                        text = text.trim();
+                        // simplistic selector generation
+                        let selector = el.tagName.toLowerCase();
+                        if (el.id) { selector += '#' + el.id; }
+                        else if (el.className && typeof el.className === 'string') { selector += '.' + el.className.split(' ').join('.'); }
+                        if (text && text.length > 0) {
+                            result.push(`[${selector}] -> ${text.substring(0, 50)}`);
+                        }
+                    }
+                    return result.join('\\n');
+                }
+                """
+                dom_tree = await self.page.evaluate(script)
+                return f"URL: {self.page.url}\\nInteractive Elements:\\n{dom_tree}"
+
+            elif action == "click":
+                selector = kwargs.get("selector")
+                if not selector:
+                    return "Error: 'selector' is required for click action."
+                await self.page.click(selector, timeout=5000)
+                await self.page.wait_for_load_state("networkidle", timeout=5000)
+                return f"Successfully clicked {selector}"
+
+            elif action == "fill":
+                selector = kwargs.get("selector")
+                text_input = kwargs.get("text")
+                if not selector or not text_input:
+                    return "Error: 'selector' and 'text' are required for fill action."
+                await self.page.fill(selector, str(text_input), timeout=5000)
+                return f"Successfully filled {selector} with '{text_input}'"
 
             elif action == "close":
                 await self._cleanup()
