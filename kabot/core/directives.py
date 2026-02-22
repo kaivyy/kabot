@@ -7,7 +7,7 @@ Directives use the syntax: /directive [args] within the message text.
 Examples:
     "Explain quantum physics /think /verbose"
     → Enables chain-of-thought + debug output for this turn
-    
+
     "/model gpt-4 What's the weather?"
     → Forces gpt-4 model for this turn
 """
@@ -29,7 +29,7 @@ _DIRECTIVE_PATTERN = re.compile(
 @dataclass
 class DirectiveSet:
     """Parsed directives from a message."""
-    
+
     # Behavior modifiers
     think: bool = False           # Enable chain-of-thought reasoning
     verbose: bool = False         # Enable debug-level output in chat
@@ -45,7 +45,7 @@ class DirectiveSet:
 
     # System
     debug: bool = False           # Full debug dump
-    
+
     # Raw parsed values
     raw_directives: dict[str, Any] = field(default_factory=dict)
 
@@ -53,15 +53,15 @@ class DirectiveSet:
 class DirectiveParser:
     """
     Parses directives from message bodies.
-    
+
     Directives are inline commands like /think, /verbose, /model gpt-4
     that modify agent behavior for a single turn.
     """
-    
+
     # Known directives and their types
     KNOWN_DIRECTIVES = {
         "think": "bool",
-        "verbose": "bool", 
+        "verbose": "bool",
         "elevated": "bool",
         "json": "bool",
         "notools": "bool",
@@ -75,10 +75,10 @@ class DirectiveParser:
     def parse(self, message: str) -> tuple[str, DirectiveSet]:
         """
         Parse directives from a message and return the clean body.
-        
+
         Args:
             message: Raw message text, possibly containing directives.
-        
+
         Returns:
             Tuple of (clean_body, DirectiveSet).
             clean_body has all directive tokens removed.
@@ -88,19 +88,19 @@ class DirectiveParser:
 
         directives = DirectiveSet()
         found_directives: dict[str, Any] = {}
-        
+
         # Find all directive matches
         matches = list(_DIRECTIVE_PATTERN.finditer(message))
-        
+
         for match in matches:
             name = match.group(1).lower()
             value = match.group(2)  # May be None for boolean directives
-            
+
             if name not in self.KNOWN_DIRECTIVES:
                 continue  # Skip unknown directives (might be part of code/text)
-            
+
             dtype = self.KNOWN_DIRECTIVES[name]
-            
+
             if dtype == "bool":
                 found_directives[name] = True
             elif dtype == "str" and value:
@@ -129,7 +129,7 @@ class DirectiveParser:
             directives.temperature = found_directives.get("temp")
             directives.max_tokens = found_directives.get("maxtokens")
             directives.raw_directives = found_directives
-            
+
             logger.debug(f"Parsed directives: {found_directives}")
 
         # Remove directive tokens from message body
@@ -138,7 +138,7 @@ class DirectiveParser:
             name = match.group(1).lower()
             if name in self.KNOWN_DIRECTIVES:
                 clean_body = clean_body[:match.start()] + clean_body[match.end():]
-        
+
         clean_body = clean_body.strip()
         # Collapse multiple spaces
         clean_body = re.sub(r"\s{2,}", " ", clean_body)
@@ -149,7 +149,7 @@ class DirectiveParser:
         """Format active directives for display."""
         if not directives.raw_directives:
             return ""
-        
+
         parts = []
         if directives.think:
             parts.append("🧠 Think Mode")
@@ -163,5 +163,5 @@ class DirectiveParser:
             parts.append(f"🤖 Model: {directives.model}")
         if directives.debug:
             parts.append("🔍 Debug")
-        
+
         return " | ".join(parts)

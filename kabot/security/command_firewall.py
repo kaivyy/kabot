@@ -8,12 +8,12 @@ Provides allowlist/deny/ask policies with tamper-proof configuration.
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 import yaml
 from loguru import logger

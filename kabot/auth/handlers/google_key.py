@@ -1,9 +1,11 @@
 """Google Gemini API Key authentication handler."""
 
-from typing import Dict, Any
 import os
-from rich.prompt import Prompt
+from typing import Any, Dict
+
 from rich.console import Console
+from rich.prompt import Prompt
+
 from kabot.auth.handlers.base import AuthHandler
 from kabot.auth.utils import secure_input
 

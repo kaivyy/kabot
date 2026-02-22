@@ -1,6 +1,5 @@
 """Web search tool with multi-provider support (Brave, Perplexity, Grok)."""
 
-import json
 import os
 from typing import Any
 

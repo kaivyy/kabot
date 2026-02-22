@@ -4,10 +4,10 @@ Windows Native Integration (Phase 12 - Task 36).
 Provides native Windows capabilities including clipboard access and WSL detection.
 """
 
-import subprocess
 import os
+import subprocess
 import sys
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 def wsl_detect() -> Dict[str, Any]:

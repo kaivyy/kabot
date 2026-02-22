@@ -5,10 +5,11 @@ Provider Registry — single source of truth for LLM provider metadata.
 from __future__ import annotations
 
 import importlib
-import pkgutil
 import os
+import pkgutil
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+
 from kabot.providers.models import ModelMetadata, ModelPricing
 
 
@@ -22,7 +23,7 @@ class ProviderSpec:
 
     # model prefixing
     litellm_prefix: str = ""                 # "dashscope" → model becomes "dashscope/{model}"
-    skip_prefixes: tuple[str, ...] = ()      # don't prefix if model already starts with these 
+    skip_prefixes: tuple[str, ...] = ()      # don't prefix if model already starts with these
 
     # extra env vars
     env_extras: tuple[tuple[str, str], ...] = ()
@@ -47,9 +48,9 @@ class ProviderSpec:
 
 class ModelRegistry:
     """Central registry for all AI models and their metadata."""
-    
+
     _instance = None
-    
+
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super(ModelRegistry, cls).__new__(cls)
@@ -83,7 +84,7 @@ class ModelRegistry:
     def resolve(self, name: str, user_aliases: Optional[Dict[str, str]] = None) -> str:
         """
         Resolve a name (alias, short ID, or full ID) to a full model ID.
-        
+
         Priority:
         1. User-defined aliases (from config)
         2. Registry aliases (from plugins/catalog)
@@ -93,16 +94,16 @@ class ModelRegistry:
         # 1. User aliases
         if user_aliases and name in user_aliases:
             return user_aliases[name]
-            
+
         # 2. Registry aliases
         if name in self._aliases:
             return self._aliases[name]
-            
+
         # 3. Registry short ID
         model = self.get_model(name)
         if model:
             return model.id
-            
+
         # 4. Fallback
         return name
 
@@ -118,7 +119,7 @@ class ModelRegistry:
         """Load scanned models from the database."""
         if not self._db:
             return
-        
+
         scanned = self._db.get_scanned_models()
         for m in scanned:
             metadata = ModelMetadata(
@@ -139,10 +140,10 @@ class ModelRegistry:
     def load_plugins(self):
         """Automatically discover and load plugins from kabot.providers.plugins."""
         import kabot.providers.plugins as plugins_pkg
-        
+
         # Get the path to the plugins package
         pkg_path = os.path.dirname(plugins_pkg.__file__)
-        
+
         for _, name, is_pkg in pkgutil.iter_modules([pkg_path]):
             if is_pkg:
                 module_name = f"kabot.providers.plugins.{name}"
@@ -151,7 +152,7 @@ class ModelRegistry:
                     # Look for a register function in the plugin
                     if hasattr(module, "register"):
                         module.register(self)
-                except Exception as e:
+                except Exception:
                     # Log error or handle gracefully
                     pass
 
@@ -164,7 +165,7 @@ class ModelRegistry:
         # Try full ID first
         if model_id in self._models:
             return self._models[model_id]
-        
+
         # Try short ID (e.g. "gpt-4o" matches "openai/gpt-4o")
         for metadata in self._models.values():
             if metadata.short_id == model_id:

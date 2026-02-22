@@ -1,13 +1,11 @@
-﻿from dataclasses import dataclass
-from typing import Optional, List
+﻿import subprocess
+import sys
+from dataclasses import dataclass
+from typing import Optional
+
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
-import shutil
-import subprocess
-import os
-import sys
 
 console = Console()
 
@@ -28,7 +26,7 @@ def render_help_panel(tool_name: str, install_cmd: str, docs_url: Optional[str] 
         f" [bold cyan]Install it first:[/bold cyan]\n"
         f" [yellow]{install_cmd}[/yellow]\n"
     )
-    
+
     if docs_url:
         help_text.append(f"\n [bold cyan]Documentation:[/bold cyan]\n {docs_url}\n")
 
@@ -42,7 +40,7 @@ def render_help_panel(tool_name: str, install_cmd: str, docs_url: Optional[str] 
 
 class GuidedInstaller:
     """OS-aware utility to help users install missing dependencies."""
-    
+
     @staticmethod
     def get_install_command(tool_id: str) -> str:
         """Get the appropriate install command for the current OS."""

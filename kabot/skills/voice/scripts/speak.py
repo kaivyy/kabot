@@ -2,9 +2,9 @@
 """
 Text-to-Speech (TTS) script using OpenAI TTS.
 """
-import sys
 import argparse
 import os
+import sys
 from pathlib import Path
 
 try:

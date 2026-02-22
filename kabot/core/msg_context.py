@@ -72,7 +72,7 @@ class MsgContext:
     def from_inbound(cls, msg: Any) -> "MsgContext":
         """
         Create MsgContext from an existing InboundMessage.
-        
+
         This is the bridge for backward compatibility during migration.
         """
         from kabot.bus.events import InboundMessage

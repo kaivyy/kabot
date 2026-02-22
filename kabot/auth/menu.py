@@ -1,6 +1,6 @@
 """Multi-method authentication menu structure."""
 
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 # Provider definitions with multiple auth methods per provider
 AUTH_PROVIDERS: Dict[str, Dict[str, Any]] = {

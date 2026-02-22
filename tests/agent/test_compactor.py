@@ -1,6 +1,7 @@
 """Tests for message compactor."""
 
 import pytest
+
 from kabot.agent.compactor import Compactor
 
 

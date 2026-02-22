@@ -16,9 +16,9 @@ def test_google_oauth_handler_has_name():
 def test_google_oauth_constants():
     """Google OAuth should use real Antigravity credentials."""
     from kabot.auth.handlers.google_oauth import (
+        GOOGLE_AUTH_URL,
         GOOGLE_CLIENT_ID,
         GOOGLE_CLIENT_SECRET,
-        GOOGLE_AUTH_URL,
         GOOGLE_TOKEN_URL,
         REDIRECT_PORT,
     )

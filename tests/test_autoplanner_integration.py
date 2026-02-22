@@ -1,14 +1,13 @@
 """Integration tests for AutoPlanner in AgentLoop."""
 
+from unittest.mock import AsyncMock, Mock
+
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, AsyncMock
 
 from kabot.agent.loop import AgentLoop
 from kabot.agent.tools.autoplanner import AutoPlanner
 from kabot.agent.tools.registry import ToolRegistry
 from kabot.bus.queue import MessageBus
-from kabot.bus.events import InboundMessage, OutboundMessage
 
 
 class MockLLMProvider:

@@ -5,10 +5,9 @@ Implements automatic API key rotation and model fallback logic
 to achieve zero-downtime during API errors, quota limits, or outages.
 """
 
-import asyncio
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +36,10 @@ class KeyRotator:
         """Get the currently active API key."""
         if not self._keys:
             return None
-        
+
         # Try current key
         key = self._keys[self._current_index]
-        
+
         # If current key is on cooldown, find the next available one
         if self._current_index in self._failed_keys:
             cooldown_until = self._failed_keys[self._current_index]
@@ -51,7 +50,7 @@ class KeyRotator:
             else:
                 # Cooldown expired, remove from failed
                 del self._failed_keys[self._current_index]
-        
+
         return key
 
     def add_key(self, key: str) -> None:
@@ -63,10 +62,10 @@ class KeyRotator:
     def rotate(self, error_code: int | None = None) -> str | None:
         """
         Rotate to the next available key.
-        
+
         Args:
             error_code: HTTP error code that triggered rotation (429, 401, etc.)
-        
+
         Returns:
             The new active key, or None if no keys available.
         """
@@ -76,7 +75,7 @@ class KeyRotator:
 
         # Mark current key as failed with cooldown
         self._failed_keys[self._current_index] = time.time() + self._cooldown_seconds
-        
+
         # Find next available key
         next_idx = self._find_available_key()
         if next_idx is not None:
@@ -87,7 +86,7 @@ class KeyRotator:
                 f"(error={error_code}, pool={len(self._keys)})"
             )
             return self._keys[self._current_index]
-        
+
         logger.error("All API keys exhausted (on cooldown)")
         return None
 
@@ -152,7 +151,7 @@ class ModelFallback:
     def fallback(self, error: str = "") -> str | None:
         """
         Move to the next model in the fallback chain.
-        
+
         Returns:
             The fallback model name, or None if chain exhausted.
         """
@@ -165,7 +164,7 @@ class ModelFallback:
             new = self._chain[self._current_index]
             logger.warning(f"Model fallback: {old} → {new} (error: {error[:50]})")
             return new
-        
+
         logger.error(f"Model fallback chain exhausted after {self._attempt_count} attempts")
         return None
 
@@ -212,11 +211,11 @@ class ResilienceLayer:
     async def handle_error(self, error: Exception, status_code: int | None = None) -> dict[str, Any]:
         """
         Handle an API error by attempting recovery.
-        
+
         Args:
             error: The exception that occurred.
             status_code: HTTP status code if available.
-        
+
         Returns:
             Dict with recovery action taken:
             {

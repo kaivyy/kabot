@@ -1,7 +1,8 @@
 """Tests for plugin loader."""
 
+
 import pytest
-from pathlib import Path
+
 from kabot.plugins.loader import load_plugins
 from kabot.plugins.registry import PluginRegistry
 

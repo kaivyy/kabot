@@ -3,10 +3,10 @@
 import asyncio
 import atexit
 import os
-import signal
-from pathlib import Path
 import select
+import signal
 import sys
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -15,13 +15,22 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from kabot import __version__, __logo__
+from kabot import __logo__, __version__
+from kabot.cli import agents, mode
 from kabot.cron.callbacks import (
     build_bus_cron_callback,
     build_cli_cron_callback,
+)
+from kabot.cron.callbacks import (
     render_cron_delivery_with_ai as _render_cron_delivery_with_ai_impl,
+)
+from kabot.cron.callbacks import (
     resolve_cron_delivery_content as _resolve_cron_delivery_content_impl,
+)
+from kabot.cron.callbacks import (
     should_use_reminder_fallback as _should_use_reminder_fallback_impl,
+)
+from kabot.cron.callbacks import (
     strip_reminder_context as _strip_reminder_context_impl,
 )
 
@@ -254,7 +263,7 @@ def setup(
     if interactive:
         from kabot.cli.setup_wizard import run_interactive_setup
 
-        console.print(f"\n{__logo__} [bold cyan]Welcome to Kabot Setup![/bold cyan]\n")        
+        console.print(f"\n{__logo__} [bold cyan]Welcome to Kabot Setup![/bold cyan]\n")
 
         if config_path.exists():
             console.print(f"[yellow]Config already exists at {config_path}[/yellow]")
@@ -290,14 +299,14 @@ def config(
 ):
     """Configure kabot settings."""
     from kabot.config.loader import get_config_path
-    
+
     if edit:
         config_path = get_config_path()
         if not config_path.exists():
             console.print(f"[yellow]Config not found at {config_path}. Running setup first...[/yellow]")
             setup(interactive=True)
             return
-            
+
         console.print(f"Opening {config_path}...")
         typer.launch(str(config_path))
     else:
@@ -451,7 +460,7 @@ def _inject_skill_env(config):
     """Inject skill environment variables from config into os.environ."""
     if not hasattr(config, "skills"):
         return
-    
+
     count = 0
     for skill_name, skill_cfg in config.skills.items():
         env_vars = skill_cfg.get("env", {})
@@ -551,16 +560,15 @@ def gateway(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the kabot gateway."""
-    from kabot.config.loader import load_config, get_data_dir
-    from kabot.bus.queue import MessageBus
+
     from kabot.agent.loop import AgentLoop
+    from kabot.bus.queue import MessageBus
     from kabot.channels.manager import ChannelManager
-    from kabot.session.manager import SessionManager
+    from kabot.config.loader import get_data_dir, load_config
     from kabot.cron.service import CronService
-    from kabot.cron.types import CronJob
-    from kabot.heartbeat.service import HeartbeatService
     from kabot.gateway.webhook_server import WebhookServer
-    from loguru import logger
+    from kabot.heartbeat.service import HeartbeatService
+    from kabot.session.manager import SessionManager
 
     if verbose:
         import logging
@@ -570,11 +578,11 @@ def gateway(
 
     config = load_config()
     _inject_skill_env(config)
-    
+
     # Configure logger
     from kabot.core.logger import configure_logger
     from kabot.memory.sqlite_store import SQLiteMetadataStore
-    
+
     db_path = get_data_dir() / "metadata.db"
     store = SQLiteMetadataStore(db_path)
     configure_logger(config, store)
@@ -655,7 +663,7 @@ def gateway(
     if cron_status["jobs"] > 0:
         console.print(f"[green]*[/green] Cron: {cron_status['jobs']} scheduled jobs")
 
-    console.print(f"[green]*[/green] Heartbeat: every 30m")
+    console.print("[green]*[/green] Heartbeat: every 30m")
     console.print(f"[green]*[/green] Webhooks: listening on port {port}")
 
     async def run():
@@ -663,8 +671,8 @@ def gateway(
             await cron.start()
             await heartbeat.start()
 
-            # Start webhook server (using same port as gateway for simplicity in this phase)   
-            # In a real production setup, we might want separate ports or a reverse proxy      
+            # Start webhook server (using same port as gateway for simplicity in this phase)
+            # In a real production setup, we might want separate ports or a reverse proxy
             # But here we are integrating into the main event loop
             webhook_runner = await webhook_server.start(
                 host=config.gateway.host,
@@ -711,19 +719,18 @@ def gateway(
 
 @app.command()
 def agent(
-    message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"), 
-    session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),       
+    message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
+    session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),
     markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
     logs: bool = typer.Option(False, "--logs/--no-logs", help="Show kabot runtime logs during chat"),
 ):
     """Interact with the agent directly."""
-    from kabot.config.loader import load_config
-    from kabot.bus.queue import MessageBus
-    from kabot.agent.loop import AgentLoop
-    from kabot.cron.service import CronService
-    from kabot.cron.types import CronJob
-    from kabot.config.loader import get_data_dir
     from loguru import logger
+
+    from kabot.agent.loop import AgentLoop
+    from kabot.bus.queue import MessageBus
+    from kabot.config.loader import get_data_dir, load_config
+    from kabot.cron.service import CronService
 
     config = load_config()
     _inject_skill_env(config)
@@ -731,7 +738,7 @@ def agent(
     # Configure logger
     from kabot.core.logger import configure_logger
     from kabot.memory.sqlite_store import SQLiteMetadataStore
-    
+
     db_path = get_data_dir() / "metadata.db"
     store = SQLiteMetadataStore(db_path)
     configure_logger(config, store)
@@ -886,7 +893,7 @@ def agent(
                             break
 
                         with _thinking_ctx():
-                            response = await agent_loop.process_direct(user_input, session_id)     
+                            response = await agent_loop.process_direct(user_input, session_id)
                         _print_agent_response(response, render_markdown=markdown)
                     except KeyboardInterrupt:
                         _save_history()
@@ -905,21 +912,7 @@ def agent(
         asyncio.run(run_interactive())
 
 
-# ============================================================================
-# Agent Commands
-# ============================================================================
-
-from kabot.cli import agents
-
 app.add_typer(agents.app, name="agents")
-
-
-# ============================================================================
-# Mode Commands
-# ============================================================================
-
-from kabot.cli import mode
-
 app.add_typer(mode.app, name="mode")
 
 
@@ -937,9 +930,9 @@ def models_list(
     premium: bool = typer.Option(False, "--premium", help="Show only premium models"),
 ):
     """List all available models with pricing and capabilities."""
-    from kabot.providers.registry import ModelRegistry
-    from kabot.memory.sqlite_store import SQLiteMetadataStore
     from kabot.config.loader import get_data_dir
+    from kabot.memory.sqlite_store import SQLiteMetadataStore
+    from kabot.providers.registry import ModelRegistry
 
     db_path = get_data_dir() / "metadata.db"
     db = SQLiteMetadataStore(db_path)
@@ -1001,10 +994,10 @@ def models_list(
 @models_app.command("scan")
 def models_scan():
     """Scan provider APIs to discover available models."""
+    from kabot.config.loader import get_data_dir, load_config
+    from kabot.memory.sqlite_store import SQLiteMetadataStore
     from kabot.providers.registry import ModelRegistry
     from kabot.providers.scanner import ModelScanner
-    from kabot.memory.sqlite_store import SQLiteMetadataStore
-    from kabot.config.loader import load_config, get_data_dir
 
     config = load_config()
     db_path = get_data_dir() / "metadata.db"
@@ -1024,9 +1017,9 @@ def models_info(
     model_id: str = typer.Argument(..., help="Model ID or short name"),
 ):
     """Show detailed metadata for a specific model."""
-    from kabot.providers.registry import ModelRegistry
-    from kabot.memory.sqlite_store import SQLiteMetadataStore
     from kabot.config.loader import get_data_dir
+    from kabot.memory.sqlite_store import SQLiteMetadataStore
+    from kabot.providers.registry import ModelRegistry
 
     db_path = get_data_dir() / "metadata.db"
     db = SQLiteMetadataStore(db_path)
@@ -1055,9 +1048,9 @@ def models_set(
     model_name: str = typer.Argument(..., help="Model ID or Alias"),
 ):
     """Set the primary model for the agent."""
-    from kabot.providers.registry import ModelRegistry
-    from kabot.config.loader import load_config, save_config, get_data_dir
+    from kabot.config.loader import get_data_dir, load_config, save_config
     from kabot.memory.sqlite_store import SQLiteMetadataStore
+    from kabot.providers.registry import ModelRegistry
 
     db_path = get_data_dir() / "metadata.db"
     db = SQLiteMetadataStore(db_path)
@@ -1076,7 +1069,7 @@ def models_set(
     config.agents.defaults.model = resolved_id
     save_config(config)
 
-    console.print(f"\n[green]✓ Primary model set to: [bold]{resolved_id}[/bold][/green]")      
+    console.print(f"\n[green]✓ Primary model set to: [bold]{resolved_id}[/bold][/green]")
     if resolved_id != model_name:
         console.print(f"[dim](Resolved from '{model_name}')[/dim]")
 
@@ -1118,7 +1111,7 @@ def channels_status():
 
     # Telegram
     tg = config.channels.telegram
-    tg_config = f"token: {tg.token[:10]}..." if tg.token else "[dim]not configured[/dim]"      
+    tg_config = f"token: {tg.token[:10]}..." if tg.token else "[dim]not configured[/dim]"
     table.add_row(
         "Telegram",
         "✓" if tg.enabled else "✗",
@@ -1170,9 +1163,9 @@ app.add_typer(auth_app, name="auth")
 @auth_app.command("list")
 def auth_list():
     """List supported authentication providers."""
-    from kabot.auth.manager import AuthManager
-    from kabot.auth.menu import AUTH_PROVIDERS
     from rich.table import Table
+
+    from kabot.auth.menu import AUTH_PROVIDERS
 
     table = Table(title="Supported Providers")
     table.add_column("ID", style="cyan")
@@ -1188,14 +1181,15 @@ def auth_list():
 
 @auth_app.command("login")
 def auth_login(
-    provider: str = typer.Argument(None, help="Provider ID (e.g., openai, anthropic)"),        
+    provider: str = typer.Argument(None, help="Provider ID (e.g., openai, anthropic)"),
     method: str = typer.Option(None, "--method", "-m", help="Auth method (e.g., oauth, api_key)"),
     profile: str = typer.Option("default", "--profile", "-p", help="Profile name (e.g., work, personal)"),
 ):
     """Login to a provider with optional method and profile selection."""
-    from kabot.auth.manager import AuthManager
-    from kabot.auth.menu import get_auth_choices, AUTH_PROVIDERS
     from rich.prompt import Prompt
+
+    from kabot.auth.manager import AuthManager
+    from kabot.auth.menu import get_auth_choices
 
     manager = AuthManager()
     # If no provider, show provider selection
@@ -1224,9 +1218,9 @@ def auth_login(
         console.print(f"\n[green]✓ Successfully configured {provider}![/green]")
 
         # --- Task 5: Semi-Auto Model Configuration ---
-        from kabot.providers.registry import ModelRegistry
-        from kabot.config.loader import load_config, save_config, get_data_dir
+        from kabot.config.loader import get_data_dir, load_config, save_config
         from kabot.memory.sqlite_store import SQLiteMetadataStore
+        from kabot.providers.registry import ModelRegistry
 
         db_path = get_data_dir() / "metadata.db"
         db = SQLiteMetadataStore(db_path)
@@ -1236,11 +1230,11 @@ def auth_login(
         available_models = [m for m in registry.list_models() if m.provider == provider and m.is_premium]
 
         if available_models:
-            console.print(f"\n[bold]Suggested premium models for {provider}:[/bold]\n")        
+            console.print(f"\n[bold]Suggested premium models for {provider}:[/bold]\n")
             for idx, m in enumerate(available_models, 1):
                 console.print(f"  [{idx}] {m.name} ({m.short_id}) - Context: {m.context_window:,}")
 
-            console.print(f"  [0] Skip (Keep current default)")
+            console.print("  [0] Skip (Keep current default)")
 
             try:
                 choice = Prompt.ask(
@@ -1258,7 +1252,7 @@ def auth_login(
             except (KeyboardInterrupt, EOFError):
                 pass
     else:
-        console.print(f"\n[red]✗ Authentication failed[/red]")
+        console.print("\n[red]✗ Authentication failed[/red]")
         raise typer.Exit(1)
 
 
@@ -1267,9 +1261,10 @@ def auth_methods(
     provider: str = typer.Argument(..., help="Provider ID"),
 ):
     """List available authentication methods for a provider."""
-    from kabot.auth.menu import AUTH_PROVIDERS
-    from kabot.auth.manager import _PROVIDER_ALIASES
     from rich.table import Table
+
+    from kabot.auth.manager import _PROVIDER_ALIASES
+    from kabot.auth.menu import AUTH_PROVIDERS
 
     original_provider = provider
     provider = _PROVIDER_ALIASES.get(provider, provider)
@@ -1299,7 +1294,7 @@ def auth_methods(
     console.print("\n")
     console.print(table)
     console.print("\n")
-    console.print(f"[dim]Usage: kabot auth login {original_provider} --method <method_id>[/dim]")       
+    console.print(f"[dim]Usage: kabot auth login {original_provider} --method <method_id>[/dim]")
 
 
 @auth_app.command("status")
@@ -1600,6 +1595,7 @@ def _resolve_remote_service(platform_name: str, requested: str) -> str:
 def _remote_health_snapshot() -> list[tuple[str, bool, str]]:
     """Collect lightweight remote-readiness checks."""
     import shutil
+
     from kabot.config.loader import get_config_path, load_config
 
     checks: list[tuple[str, bool, str]] = []
@@ -1737,7 +1733,7 @@ def cron_remove(
 @cron_app.command("enable")
 def cron_enable(
     job_id: str = typer.Argument(..., help="Job ID"),
-    disable: bool = typer.Option(False, "--disable", help="Disable instead of enable"),        
+    disable: bool = typer.Option(False, "--disable", help="Disable instead of enable"),
 ):
     """Enable or disable a job."""
     from kabot.config.loader import get_data_dir
@@ -1770,7 +1766,7 @@ def cron_run(
         return await service.run_job(job_id, force=force)
 
     if asyncio.run(run()):
-        console.print(f"[green]✓[/green] Job executed")
+        console.print("[green]✓[/green] Job executed")
     else:
         console.print(f"[red]Failed to run job {job_id}[/red]")
 
@@ -1880,7 +1876,7 @@ def cron_runs(
 @app.command()
 def status():
     """Show kabot status."""
-    from kabot.config.loader import load_config, get_config_path
+    from kabot.config.loader import get_config_path, load_config
 
     config_path = get_config_path()
     config = load_config()
@@ -1897,7 +1893,6 @@ def status():
         console.print(f"Model: {config.agents.defaults.model}")
 
         # Check API keys from registry
-        from kabot.providers.registry import PROVIDERS
         for spec in PROVIDERS:
             # Map registry name to config field if different
             config_field = spec.name
@@ -2058,9 +2053,10 @@ def remote_bootstrap(
 @app.command("security-audit")
 def security_audit():
     """Run a security audit on the workspace."""
+    from rich.table import Table
+
     from kabot.config.loader import load_config
     from kabot.utils.security_audit import SecurityAuditor
-    from rich.table import Table
 
     config = load_config()
     auditor = SecurityAuditor(config.workspace_path)
@@ -2128,7 +2124,7 @@ def plugins_cmd(
         plugins_list = manager.list_plugins()
         if not plugins_list:
             console.print("[yellow]No plugins found.[/yellow]")
-            console.print(f"[dim]Install from local path: kabot plugins install --source <dir>[/dim]")
+            console.print("[dim]Install from local path: kabot plugins install --source <dir>[/dim]")
             return
 
         table = Table(title="Installed Plugins")

@@ -1,5 +1,5 @@
 import sys
-from pathlib import Path
+
 sys.path.append("C:\\Users\\Arvy Kairi\\Desktop\\bot\\kabot")
 
 from kabot.agent.skills import SkillsLoader

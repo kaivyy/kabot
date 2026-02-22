@@ -1,17 +1,19 @@
 """Tests for agent configuration schema."""
 
-import pytest
 import time
 
+import pytest
+
 from kabot.config.schema import (
-    Config,
-    AgentsConfig,
     AgentDefaults,
     AgentModelConfig,
-    ProvidersConfig,
-    ProviderConfig,
+    AgentsConfig,
     AuthProfile,
+    Config,
+    ProviderConfig,
+    ProvidersConfig,
 )
+
 
 def test_agent_config_schema():
     """Test AgentConfig schema with all fields."""
@@ -53,7 +55,7 @@ def test_agent_config_default_flag():
 
 def test_agents_config_with_list():
     """Test AgentsConfig with list of agents."""
-    from kabot.config.schema import AgentsConfig, AgentConfig
+    from kabot.config.schema import AgentConfig, AgentsConfig
 
     agents = AgentsConfig(
         agents=[

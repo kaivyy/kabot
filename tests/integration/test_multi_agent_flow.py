@@ -1,13 +1,20 @@
+
 import pytest
-from pathlib import Path
+
 
 @pytest.mark.asyncio
 async def test_full_multi_agent_flow(tmp_path):
     """Test complete multi-agent flow from config to routing."""
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig, AgentBinding, AgentBindingMatch
+    from kabot.agent.agent_scope import resolve_agent_model, resolve_agent_workspace
+    from kabot.config.schema import (
+        AgentBinding,
+        AgentBindingMatch,
+        AgentConfig,
+        AgentsConfig,
+        Config,
+    )
     from kabot.routing.bindings import resolve_agent_route
     from kabot.session.session_key import build_agent_session_key
-    from kabot.agent.agent_scope import resolve_agent_workspace, resolve_agent_model
 
     # Setup config
     config = Config(

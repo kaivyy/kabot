@@ -8,6 +8,7 @@ Generates service files for auto-start on different platforms:
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -271,11 +272,11 @@ def install_termux_service(
     python_path = python_path or sys.executable
     prefix = os.getenv("PREFIX", "/data/data/com.termux/files/usr")
     service_dir = Path(prefix) / "var" / "service" / service_name
-    
+
     try:
         service_dir.mkdir(parents=True, exist_ok=True)
         run_file = service_dir / "run"
-        
+
         # Create the run script
         run_content = f"""#!/bin/sh
 exec 2>&1
@@ -287,7 +288,7 @@ exec {python_path} -m kabot.cli start
 
         # Enable the service
         subprocess.run(["sv-enable", service_name], capture_output=True)
-        
+
         return True, f"Termux service installed and enabled: {service_name}\nStart with: sv up {service_name}"
     except Exception as e:
         return False, f"Failed to create Termux service: {e}"

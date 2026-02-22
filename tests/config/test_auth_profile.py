@@ -1,6 +1,7 @@
 # tests/config/test_auth_profile.py
 from kabot.config.schema import AuthProfile
 
+
 def test_auth_profile_has_refresh_fields():
     profile = AuthProfile(
         name="work",

@@ -6,8 +6,8 @@ Usage:
     python init_skill.py <skill_name>                          # Auto-detect kabot/skills/
     python init_skill.py <skill_name> --target /custom/path    # Custom target dir
 """
-import sys
 import argparse
+import sys
 from pathlib import Path
 
 
@@ -108,15 +108,15 @@ if __name__ == "__main__":
     main()
 ''', encoding="utf-8")
 
-    print(f"✅ Skill initialized successfully!")
+    print("✅ Skill initialized successfully!")
     print(f"   📄 {skill_md}")
     print(f"   📁 {skill_dir / 'references/'}")
     print(f"   📁 {skill_dir / 'scripts/'}")
-    print(f"")
-    print(f"Next steps:")
-    print(f"   1. Edit SKILL.md with your skill instructions")
-    print(f"   2. Implement logic in scripts/main.py (if needed)")
-    print(f"   3. Add API docs to references/ (if needed)")
+    print("")
+    print("Next steps:")
+    print("   1. Edit SKILL.md with your skill instructions")
+    print("   2. Implement logic in scripts/main.py (if needed)")
+    print("   3. Add API docs to references/ (if needed)")
 
 
 if __name__ == "__main__":

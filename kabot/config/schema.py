@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
 from pathlib import Path
+from typing import Any
+
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
@@ -270,9 +271,9 @@ class ProviderConfig(BaseModel):
     api_key: str = ""  # Legacy/Primary key
     setup_token: str | None = None
     api_base: str | None = None
-    extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix) 
+    extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
     fallbacks: list[str] = Field(default_factory=list)
-    
+
     # Multi-profile support
     profiles: dict[str, AuthProfile] = Field(default_factory=dict)
     active_profile: str = "default"
@@ -426,7 +427,7 @@ class Config(BaseSettings):
     bootstrap: BootstrapParityConfig = Field(default_factory=BootstrapParityConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     skills: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    
+
     @property
     def workspace_path(self) -> Path:
         """Get expanded workspace path."""
@@ -560,16 +561,16 @@ class Config(BaseSettings):
         p, name = self._match_provider(model)
         if not p:
             return None
-            
+
         # Try active profile first
         if p.active_profile in p.profiles:
             profile = p.profiles[p.active_profile]
             if profile.api_base:
                 return profile.api_base
-                
+
         if p.api_base:
             return p.api_base
-            
+
         if name:
             spec = find_by_name(name)
             if spec and spec.is_gateway and spec.default_api_base:

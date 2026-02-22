@@ -6,12 +6,12 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
 from kabot.agent.tools.base import Tool
-from kabot.security.command_firewall import CommandFirewall, ApprovalDecision
+from kabot.security.command_firewall import ApprovalDecision, CommandFirewall
 
 ApprovalDecisionValue = str | bool
 ApprovalCallback = Callable[[str, Path], ApprovalDecisionValue | Awaitable[ApprovalDecisionValue]]
@@ -336,7 +336,7 @@ class ExecTool(Tool):
         import platform
         is_windows = platform.system() == "Windows"
         cmd = command.lower().split()[0] if command.strip() else ""
-        
+
         # OS Mismatch Hints
         if is_windows:
             if cmd in ["ls", "grep", "cat", "touch", "rm", "cp", "mv"]:
@@ -361,11 +361,11 @@ class ExecTool(Tool):
                     "move": "mv"
                 }
                 return f"You are on Linux/macOS. Try using '{mapping.get(cmd)}' instead of '{cmd}'."
-        
+
         # Common Path Errors
         if "not recognized" in stderr or "not found" in stderr:
             return f"The command '{cmd}' was not found. Check if it's installed and in your PATH."
-            
+
         return None
 
     def _guard_command(self, command: str, cwd: str) -> str | None:

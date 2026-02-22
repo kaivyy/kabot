@@ -1,13 +1,11 @@
 """Tests for PID-based file locking."""
 
+import json
 import os
 import time
-import json
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-import psutil
 
 from kabot.utils.pid_lock import PIDLock, PIDLockError
 

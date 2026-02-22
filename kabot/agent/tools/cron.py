@@ -8,7 +8,6 @@ from kabot.agent.tools.cron_ops import schedule as cron_schedule
 from kabot.cron.service import CronService
 from kabot.cron.types import CronSchedule
 
-
 REMINDER_CONTEXT_MARKER = "\n\nRecent context:\n"
 MAX_CONTEXT_PER_MESSAGE = 220
 MAX_CONTEXT_TOTAL = 700
@@ -43,7 +42,7 @@ def build_reminder_context(
 
 class CronTool(Tool):
     """Tool to schedule reminders and recurring tasks."""
-    
+
     def __init__(self, cron_service: CronService):
         self._cron = cron_service
         self._channel = ""
@@ -58,11 +57,11 @@ class CronTool(Tool):
         self._context_text = ""
         if history is not None:
             self._history = history
-    
+
     @property
     def name(self) -> str:
         return "cron"
-    
+
     @property
     def description(self) -> str:
         return """Manage scheduled cron jobs (reminders, recurring tasks, timed events).
@@ -95,7 +94,7 @@ EXAMPLES:
 - Reminder: action="add", message="Waktunya meeting!", at_time="2026-02-15T10:00:00+07:00"
 - Daily task: action="add", message="Backup database", cron_expr="0 2 * * *"
 - Every hour: action="add", message="Check inbox", every_seconds=3600"""
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
@@ -166,7 +165,7 @@ EXAMPLES:
             },
             "required": ["action"]
         }
-    
+
     async def execute(
             self,
             action: str,
@@ -227,7 +226,7 @@ EXAMPLES:
                 return self._get_status()
             case _:
                 return f"Unknown action: {action}"
-    
+
     def _add_job(
         self,
         message: str,
@@ -252,13 +251,13 @@ EXAMPLES:
             one_shot=one_shot,
             context_messages=context_messages,
         )
-    
+
     def _list_jobs(self) -> str:
         return cron_actions.handle_list_jobs(self)
 
     def _list_groups(self) -> str:
         return cron_actions.handle_list_groups(self)
-    
+
     def _remove_job(self, job_id: str | None) -> str:
         return cron_actions.handle_remove_job(self, job_id)
 

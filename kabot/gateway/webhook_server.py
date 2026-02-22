@@ -1,8 +1,10 @@
 """Webhook Ingress Server."""
 from aiohttp import web
-from kabot.bus.queue import MessageBus
+
 from kabot.bus.events import InboundMessage
+from kabot.bus.queue import MessageBus
 from kabot.integrations.meta_webhook import parse_meta_inbound, verify_meta_signature
+
 
 class WebhookServer:
     def __init__(
@@ -39,13 +41,13 @@ class WebhookServer:
             return web.Response(text="Missing event type", status=400)
 
         data = payload.get("data", {})
-        
+
         # Convert webhook payload to InboundMessage
         # This allows the agent to process it like any other message
         if event_type == "message.received":
             content = data.get("content", "")
             sender = data.get("sender", "webhook")
-            
+
             message = InboundMessage(
                 channel="webhook",
                 sender_id=sender,
@@ -53,7 +55,7 @@ class WebhookServer:
                 content=content,
                 # Add extra context if needed
             )
-            
+
             await self.bus.publish_inbound(message)
             return web.Response(text="Accepted", status=202)
 

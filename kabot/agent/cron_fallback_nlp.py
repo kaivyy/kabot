@@ -12,8 +12,14 @@ from typing import Any, Iterable
 
 from kabot.agent.language.lexicon import (
     CRON_MANAGEMENT_OPS as LEXICON_CRON_MANAGEMENT_OPS,
+)
+from kabot.agent.language.lexicon import (
     CRON_MANAGEMENT_TERMS as LEXICON_CRON_MANAGEMENT_TERMS,
+)
+from kabot.agent.language.lexicon import (
     REMINDER_TERMS as LEXICON_REMINDER_TERMS,
+)
+from kabot.agent.language.lexicon import (
     WEATHER_TERMS as LEXICON_WEATHER_TERMS,
 )
 
@@ -156,15 +162,9 @@ def required_tool_for_query(
 ) -> str | None:
     """Return required tool name for immediate-action prompts."""
     q_lower = (question or "").lower()
-    if has_weather_tool and any(k in q_lower for k in WEATHER_KEYWORDS):
-        return "weather"
 
-    if has_system_info_tool and any(k in q_lower for k in SYSTEM_INFO_KEYWORDS):
-        return "get_system_info"
-
-    if has_cleanup_tool and any(k in q_lower for k in CLEANUP_KEYWORDS):
-        return "cleanup_system"
-
+    # CRITICAL FIX: Cron/Reminder takes highest precedence.
+    # If the user says "remind me to clean my PC", the PRIMARY action right now is to schedule a reminder.
     is_cron_mgmt = (
         has_cron_tool
         and any(op in q_lower for op in CRON_MANAGEMENT_OPS)
@@ -175,6 +175,16 @@ def required_tool_for_query(
 
     if has_cron_tool and any(k in q_lower for k in REMINDER_KEYWORDS):
         return "cron"
+
+    if has_weather_tool and any(k in q_lower for k in WEATHER_KEYWORDS):
+        return "weather"
+
+    if has_system_info_tool and any(k in q_lower for k in SYSTEM_INFO_KEYWORDS):
+        return "get_system_info"
+
+    if has_cleanup_tool and any(k in q_lower for k in CLEANUP_KEYWORDS):
+        return "cleanup_system"
+
     return None
 
 

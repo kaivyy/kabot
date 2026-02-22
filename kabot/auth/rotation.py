@@ -1,7 +1,7 @@
 """Auth key rotation for production reliability."""
 
 import time
-from typing import Optional
+
 from loguru import logger
 
 
@@ -84,7 +84,7 @@ class AuthRotation:
 
         for key in expired:
             del self.failed_keys[key]
-            logger.info(f"Reset failed key after cooldown")
+            logger.info("Reset failed key after cooldown")
 
     def get_status(self) -> dict:
         """Get rotation status for monitoring."""

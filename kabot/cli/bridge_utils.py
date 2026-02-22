@@ -2,10 +2,11 @@
 
 import shutil
 import subprocess
-import sys
 from pathlib import Path
-from rich.console import Console
+
 import typer
+from rich.console import Console
+
 from kabot import __logo__
 
 console = Console()
@@ -28,7 +29,7 @@ def get_bridge_dir() -> Path:
     # Find source bridge: first check package data, then source dir
     # This assumes bridge_utils.py is in kabot/cli/
     pkg_bridge = Path(__file__).parent.parent / "bridge"  # kabot/bridge (installed)
-    src_bridge = Path(__file__).parent.parent.parent / "bridge"  # repo root/bridge (dev)      
+    src_bridge = Path(__file__).parent.parent.parent / "bridge"  # repo root/bridge (dev)
 
     source = None
     if (pkg_bridge / "package.json").exists():
@@ -52,8 +53,8 @@ def get_bridge_dir() -> Path:
     # Install and build
     try:
         console.print("  Installing dependencies...")
-        subprocess.run([npm_path, "install"], cwd=user_bridge, check=True, capture_output=True)   
-        
+        subprocess.run([npm_path, "install"], cwd=user_bridge, check=True, capture_output=True)
+
         console.print("  Building...")
         subprocess.run([npm_path, "run", "build"], cwd=user_bridge, check=True, capture_output=True)
 
@@ -78,7 +79,7 @@ def run_bridge_login():
     if not npm_path:
         console.print("[red]npm not found. Please install Node.js.[/red]")
         return
-        
+
     try:
         subprocess.run([npm_path, "start"], cwd=bridge_dir, check=True)
     except subprocess.CalledProcessError as e:

@@ -1,12 +1,15 @@
-from pathlib import Path
 import sys
+from pathlib import Path
+
 from loguru import logger
+
 from kabot.config.schema import Config
+
 
 class DatabaseSink:
     def __init__(self, store):
         self.store = store
-    
+
     def write(self, message):
         record = message.record
         # Avoid recursion if logging from within store
@@ -26,10 +29,10 @@ class DatabaseSink:
 def configure_logger(config: Config, store=None):
     """Configure loguru logger based on settings."""
     logger.remove() # Remove default handler
-    
+
     # Console (stderr)
     logger.add(sys.stderr, level=config.logging.level)
-    
+
     # File
     if config.logging.file_enabled:
         path = Path(config.logging.file_path).expanduser()
@@ -55,7 +58,7 @@ def configure_logger(config: Config, store=None):
         except Exception as exc:
             # Keep process running even if file sink cannot be initialized.
             sys.stderr.write(f"Failed to initialize file logger at {path}: {exc}\n")
-    
+
     # DB
     if config.logging.db_enabled and store:
         try:

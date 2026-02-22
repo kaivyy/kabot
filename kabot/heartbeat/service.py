@@ -1,7 +1,8 @@
 """Heartbeat service for periodic agent wake-ups."""
 
 import asyncio
-from typing import Callable, Coroutine, Any
+from typing import Any, Callable, Coroutine
+
 from loguru import logger
 
 

@@ -1,5 +1,4 @@
 """Tests for Anthropic API Key handler."""
-import pytest
 from unittest.mock import patch
 
 

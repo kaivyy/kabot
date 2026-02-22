@@ -1,10 +1,12 @@
 """Test multi-instance channel manager."""
-import pytest
 from unittest.mock import patch
-from kabot.config.schema import Config, ChannelsConfig, ChannelInstance
-from kabot.channels.manager import ChannelManager
-from kabot.channels.base import BaseChannel
+
+import pytest
+
 from kabot.bus.queue import MessageBus
+from kabot.channels.base import BaseChannel
+from kabot.channels.manager import ChannelManager
+from kabot.config.schema import ChannelInstance, ChannelsConfig, Config
 
 
 @pytest.mark.asyncio
@@ -30,7 +32,7 @@ async def test_channel_manager_multiple_telegram_instances():
 
     bus = MessageBus()
 
-    with patch('kabot.channels.telegram.TelegramChannel') as MockTelegram:
+    with patch('kabot.channels.telegram.TelegramChannel') as mock_telegram:
         manager = ChannelManager(config, bus)
 
         # Should have 2 telegram instances
@@ -39,7 +41,7 @@ async def test_channel_manager_multiple_telegram_instances():
         assert len(manager.channels) == 2
 
         # Verify TelegramChannel was instantiated twice
-        assert MockTelegram.call_count == 2
+        assert mock_telegram.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -98,14 +100,14 @@ async def test_channel_manager_disabled_instance():
 
     bus = MessageBus()
 
-    with patch('kabot.channels.telegram.TelegramChannel') as MockTelegram:
+    with patch('kabot.channels.telegram.TelegramChannel') as mock_telegram:
         manager = ChannelManager(config, bus)
 
         # Should only have enabled instance
         assert "telegram:enabled_bot" in manager.channels
         assert "telegram:disabled_bot" not in manager.channels
         assert len(manager.channels) == 1
-        assert MockTelegram.call_count == 1
+        assert mock_telegram.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -118,12 +120,12 @@ async def test_channel_manager_backward_compatibility():
 
     bus = MessageBus()
 
-    with patch('kabot.channels.telegram.TelegramChannel') as MockTelegram:
+    with patch('kabot.channels.telegram.TelegramChannel') as mock_telegram:
         manager = ChannelManager(config, bus)
 
         # Should have legacy telegram channel
         assert "telegram" in manager.channels
-        assert MockTelegram.call_count == 1
+        assert mock_telegram.call_count == 1
 
 
 @pytest.mark.asyncio

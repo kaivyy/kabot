@@ -1,6 +1,5 @@
 """Tests for auth key rotation."""
 
-import pytest
 from kabot.auth.rotation import AuthRotation
 
 

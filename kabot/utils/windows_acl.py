@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -49,7 +49,7 @@ class WindowsACL:
                     'severity': 'HIGH',
                     'item': 'World Writable Directory',
                     'file': str(path),
-                    'detail': f'Directory is writable by Everyone or Users group',
+                    'detail': 'Directory is writable by Everyone or Users group',
                     'remediation': f'Run: icacls "{path}" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"'
                 })
 
@@ -224,7 +224,7 @@ class WindowsACL:
                         'severity': 'HIGH',
                         'item': 'Sensitive File World Readable',
                         'file': str(path),
-                        'detail': f'Sensitive file is readable by Everyone or Users group',
+                        'detail': 'Sensitive file is readable by Everyone or Users group',
                         'remediation': f'Run: icacls "{path}" /inheritance:r /grant:r "%USERNAME%:F"'
                     })
 
@@ -235,7 +235,7 @@ class WindowsACL:
                     'severity': 'CRITICAL',
                     'item': 'File World Writable',
                     'file': str(path),
-                    'detail': f'File is writable by Everyone or Users group',
+                    'detail': 'File is writable by Everyone or Users group',
                     'remediation': f'Run: icacls "{path}" /inheritance:r /grant:r "%USERNAME%:F"'
                 })
 

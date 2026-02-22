@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 FLEET_TEMPLATES: dict[str, dict[str, Any]] = {
     "content_pipeline": {
         "label": "Content Pipeline (Ideation -> Research -> Publish)",

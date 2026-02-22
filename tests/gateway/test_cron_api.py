@@ -1,8 +1,10 @@
 import pytest
 from aiohttp import web
-from kabot.gateway.api.cron import create_cron_routes
+
 from kabot.cron.service import CronService
 from kabot.cron.types import CronSchedule
+from kabot.gateway.api.cron import create_cron_routes
+
 
 @pytest.fixture
 def cron_service(tmp_path):

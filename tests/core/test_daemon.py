@@ -1,15 +1,14 @@
 """Tests for multi-platform daemon support (Phase 12 - Task 37)."""
 
-import pytest
-import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from kabot.core.daemon import (
-    generate_systemd_unit,
     generate_launchagent_plist,
-    install_systemd_service,
+    generate_systemd_unit,
+    get_service_status,
     install_launchd_service,
-    get_service_status
+    install_systemd_service,
 )
 
 

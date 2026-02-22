@@ -1,7 +1,9 @@
 ﻿"""Anthropic Setup Token authentication handler."""
 
-from typing import Dict, Any
+from typing import Any, Dict
+
 from rich.console import Console
+
 from kabot.auth.handlers.base import AuthHandler
 from kabot.auth.utils import secure_input
 

@@ -1,7 +1,8 @@
 """Vector store for semantic search using ChromaDB."""
 
-import chromadb
 from dataclasses import dataclass
+
+import chromadb
 
 
 @dataclass

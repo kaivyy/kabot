@@ -1,7 +1,6 @@
 """Tests for system event bus functionality."""
 
 import asyncio
-from datetime import datetime
 
 import pytest
 

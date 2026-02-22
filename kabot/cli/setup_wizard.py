@@ -1,30 +1,28 @@
 """Modular, interactive setup wizard for kabot (v2.1)."""
 
-import sys
-import os
 import json
+import os
 import shutil
-from pathlib import Path
-from typing import Dict, Any, List, Optional
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Any, List, Optional
 
 import questionary
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.text import Text
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
-from rich import box
+from rich.text import Text
 
-from kabot import __version__, __logo__
-from kabot.config.schema import Config, AuthProfile, AgentConfig, ChannelInstance
-from kabot.config.loader import load_config, save_config
+from kabot import __version__
 from kabot.cli.fleet_templates import FLEET_TEMPLATES, get_template_roles
-from kabot.utils.network import probe_gateway
-from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
+from kabot.config.loader import load_config
+from kabot.config.schema import AgentConfig, ChannelInstance, Config
 from kabot.providers.registry import ModelRegistry
+from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
 
-import sys
 if hasattr(sys.stdout, 'encoding') and sys.stdout.encoding:
     if sys.stdout.encoding.lower() != 'utf-8':
         try:
@@ -36,16 +34,16 @@ console = Console()
 
 class ClackUI:
     """Helper to draw Kabot/Clack style UI components."""
-    
+
     @staticmethod
     def header():
         logo = r"""
  ██╗  ██╗ █████╗ ██████╗  ██████╗ ████████╗
  ██║ ██╔╝██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝
- █████╔╝ ███████║██████╔╝██║   ██║   ██║   
- ██╔═██╗ ██╔══██║██╔══██╗██║   ██║   ██║   
- ██║  ██╗██║  ██║██████╔╝╚██████╔╝   ██║   
- ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝   
+ █████╔╝ ███████║██████╔╝██║   ██║   ██║
+ ██╔═██╗ ██╔══██║██╔══██╗██║   ██║   ██║
+ ██║  ██╗██║  ██║██████╔╝╚██████╔╝   ██║
+ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝
 """
         console.print(f"[bold cyan]{logo}[/bold cyan]")
         console.print(f"  🐈 [bold]kabot {__version__}[/bold] — Light footprint, heavy punch.")
@@ -63,7 +61,7 @@ class ClackUI:
     def summary_box(config: Config):
         c = config
         lines = []
-        
+
         # Model
         model = c.agents.defaults.model
         if hasattr(model, "primary"):
@@ -71,16 +69,18 @@ class ClackUI:
             lines.append(f"model: {model.primary} (fallbacks: {fallbacks})")
         else:
             lines.append(f"model: {model}")
-        
+
         # Gateway
         mode = "local" # Default/Placeholder until we have remote support
         lines.append(f"gateway.mode: {mode}")
         lines.append(f"gateway.port: {c.gateway.port}")
-        
+
         # Gateway Bind
         bind = c.gateway.host or "loopback"
-        if bind == "127.0.0.1" or bind == "localhost": bind = "loopback"
-        elif bind == "0.0.0.0": bind = "all interfaces"
+        if bind == "127.0.0.1" or bind == "localhost":
+            bind = "loopback"
+        elif bind == "0.0.0.0":
+            bind = "all interfaces"
         lines.append(f"gateway.bind: {bind}")
 
         # Auth
@@ -89,30 +89,43 @@ class ClackUI:
 
         # Channels
         active_channels = []
-        if c.channels.telegram.enabled: active_channels.append("telegram")
-        if c.channels.whatsapp.enabled: active_channels.append("whatsapp")
-        if c.channels.discord.enabled: active_channels.append("discord")
-        if c.channels.slack.enabled: active_channels.append("slack")
-        if c.channels.email.enabled: active_channels.append("email")
-        if c.channels.dingtalk.enabled: active_channels.append("dingtalk")
-        if c.channels.qq.enabled: active_channels.append("qq")
-        if c.channels.feishu.enabled: active_channels.append("feishu")
-        
+        if c.channels.telegram.enabled:
+            active_channels.append("telegram")
+        if c.channels.whatsapp.enabled:
+            active_channels.append("whatsapp")
+        if c.channels.discord.enabled:
+            active_channels.append("discord")
+        if c.channels.slack.enabled:
+            active_channels.append("slack")
+        if c.channels.email.enabled:
+            active_channels.append("email")
+        if c.channels.dingtalk.enabled:
+            active_channels.append("dingtalk")
+        if c.channels.qq.enabled:
+            active_channels.append("qq")
+        if c.channels.feishu.enabled:
+            active_channels.append("feishu")
+
         if active_channels:
             lines.append(f"channels: {', '.join(active_channels)}")
 
         # Tools
         tools = []
-        if c.tools.web.search.api_key: tools.append("web_search")
-        if c.tools.exec.docker.enabled: tools.append("docker_sandbox")
+        if c.tools.web.search.api_key:
+            tools.append("web_search")
+        if c.tools.exec.docker.enabled:
+            tools.append("docker_sandbox")
         if tools:
             lines.append(f"tools: {', '.join(tools)}")
 
         # Advanced tools
         adv = []
-        if c.tools.web.fetch.firecrawl_api_key: adv.append("firecrawl")
-        if c.tools.web.search.perplexity_api_key: adv.append("perplexity")
-        if c.tools.web.search.xai_api_key: adv.append("grok")
+        if c.tools.web.fetch.firecrawl_api_key:
+            adv.append("firecrawl")
+        if c.tools.web.search.perplexity_api_key:
+            adv.append("perplexity")
+        if c.tools.web.search.xai_api_key:
+            adv.append("grok")
         if adv:
             lines.append(f"advanced: {', '.join(adv)}")
 
@@ -124,7 +137,7 @@ class ClackUI:
         lines.append(f"workspace: {ws_path}")
 
         content = "\n".join(lines)
-        
+
         panel = Panel(
             content,
             title="Existing config detected",
@@ -133,7 +146,7 @@ class ClackUI:
             box=box.ROUNDED,
             padding=(1, 2)
         )
-        
+
         console.print("│")
         # Use a grid to put the diamond and panel side-by-side
         grid = Table.grid(padding=(0, 1))
@@ -413,7 +426,8 @@ class SetupWizard:
         )
         ClackUI.section_end()
 
-        if mode is None: return self.config
+        if mode is None:
+            return self.config
 
         # Save environment selection
         self._save_setup_state(
@@ -463,10 +477,10 @@ class SetupWizard:
 
     def _main_menu(self) -> str:
         ClackUI.summary_box(self.config)
-        
+
         ClackUI.section_start("Configuration Menu")
         options = self._main_menu_choices()
-        
+
         choice = ClackUI.clack_select("Select section to configure", choices=options)
         ClackUI.section_end()
         return choice
@@ -483,7 +497,6 @@ class SetupWizard:
                 "gateway",
                 "skills",
                 "channels",
-            "autostart",
                 "autostart",
                 "logging",
                 "doctor",
@@ -496,7 +509,6 @@ class SetupWizard:
             "skills",
             "channels",
             "autostart",
-                "autostart",
             "finish",
         ]
 
@@ -533,7 +545,7 @@ class SetupWizard:
         state["user_selections"]["workspace_path"] = path
         self._write_setup_state(state)
 
-        console.print(f"│  [green]✓ Workspace path set.[/green]")
+        console.print("│  [green]✓ Workspace path set.[/green]")
         ClackUI.section_end()
 
     def _sync_provider_credentials_from_disk(self) -> None:
@@ -600,8 +612,8 @@ class SetupWizard:
         # Mark section as in progress
         self._save_setup_state("auth", completed=False, in_progress=True)
 
-        from kabot.auth.menu import get_auth_choices
         from kabot.auth.manager import AuthManager
+        from kabot.auth.menu import get_auth_choices
 
         manager = AuthManager()
         auth_choices = get_auth_choices()
@@ -742,8 +754,7 @@ class SetupWizard:
 
     def _manual_model_entry(self):
         """Manual model entry with format hints and validation."""
-        from kabot.cli.model_validator import validate_format, resolve_alias, suggest_alternatives
-        from kabot.providers.model_status import get_model_status, get_status_indicator
+        from kabot.cli.model_validator import resolve_alias, suggest_alternatives, validate_format
 
         console.print("│")
         console.print("│  [bold]Enter Model ID or Alias[/bold]")
@@ -858,13 +869,13 @@ class SetupWizard:
         # Execution
         console.print("│  [bold]Execution Policy[/bold]")
         freedom_mode = Confirm.ask(
-            "│  Enable OpenClaw-style freedom mode? [Trusted environment only]",
+            "│  Enable Kabot freedom mode? [Trusted environment only]",
             default=bool(self.config.tools.exec.auto_approve),
         )
         self._set_openclaw_freedom_mode(freedom_mode)
 
         self.config.tools.restrict_to_workspace = Confirm.ask(
-            "│  Restrict FS usage to workspace?",
+            "│  Restrict File System usage to workspace?",
             default=self.config.tools.restrict_to_workspace,
         )
         self.config.tools.exec.timeout = int(Prompt.ask("│  Command Timeout (s)", default=str(self.config.tools.exec.timeout)))
@@ -988,9 +999,12 @@ class SetupWizard:
         bind_val = ClackUI.clack_select("Bind Mode", choices=modes, default=self.config.gateway.bind_mode)
         if bind_val:
             self.config.gateway.bind_mode = bind_val
-            if bind_val == "loopback": self.config.gateway.host = "127.0.0.1"
-            elif bind_val == "local": self.config.gateway.host = "0.0.0.0" # Simplification, or prompt for specific IP? usually 0.0.0.0 is fine for LAN
-            elif bind_val == "public": self.config.gateway.host = "0.0.0.0"
+            if bind_val == "loopback":
+                self.config.gateway.host = "127.0.0.1"
+            elif bind_val == "local":
+                self.config.gateway.host = "0.0.0.0" # Simplification, or prompt for specific IP? usually 0.0.0.0 is fine for LAN
+            elif bind_val == "public":
+                self.config.gateway.host = "0.0.0.0"
             elif bind_val == "tailscale":
                 self.config.gateway.host = "127.0.0.1"
                 self.config.gateway.tailscale = True
@@ -1108,7 +1122,8 @@ class SetupWizard:
             if selected_install_names:
                 for name in selected_install_names:
                     skill = next((s for s in installable if s['name'] == name), None)
-                    if not skill: continue
+                    if not skill:
+                        continue
 
                     console.print(f"│  [cyan]Installing dependencies for {name}...[/cyan]")
 
@@ -1129,7 +1144,7 @@ class SetupWizard:
                                 cwd=self.config.workspace_path
                             )
                             if result.returncode == 0:
-                                console.print(f"│  [green]✓ Installed successfully[/green]")
+                                console.print("│  [green]✓ Installed successfully[/green]")
                                 installed_skills.append(name)
                             else:
                                 console.print(f"│  [red]✗ Install failed (exit {result.returncode})[/red]")
@@ -1139,7 +1154,7 @@ class SetupWizard:
 
                     # Show manual instructions if we can't auto-install (or if checks still fail after install)
                     if skill['missing']['bins'] and (not install_meta or not install_meta.get("cmd")):
-                        console.print(f"│  [yellow]Please install the following binaries manually:[/yellow]")
+                        console.print("│  [yellow]Please install the following binaries manually:[/yellow]")
                         for b in skill['missing']['bins']:
                             console.print(f"│    - {b}")
 
@@ -1163,7 +1178,8 @@ class SetupWizard:
 
             for s in needs_env:
                 primary_env = s.get('primaryEnv')
-                if not primary_env: continue # Should not happen if missing['env'] is set due to our logic
+                if not primary_env:
+                    continue
 
                 # Ask if user wants to configure this skill
                 if not Confirm.ask(f"◇  Set {primary_env} for [cyan]{s['name']}[/cyan]?", default=True):
@@ -1181,7 +1197,7 @@ class SetupWizard:
 
                     self.config.skills[s['name']]["env"][primary_env] = val
                     os.environ[primary_env] = val
-                    console.print(f"│  [green]✓ Saved[/green]")
+                    console.print("│  [green]✓ Saved[/green]")
                     configured_skills.append(s['name'])
                 console.print("│")
 
@@ -1431,10 +1447,12 @@ class SetupWizard:
 
     def _validate_provider_credentials(self, provider_id: str):
         """Validate provider credentials with user feedback and retry options."""
-        from kabot.config.loader import load_config
-        from rich.prompt import Confirm
         import signal
         import time
+
+        from rich.prompt import Confirm
+
+        from kabot.config.loader import load_config
 
         # Load current config to get the API key
         config = load_config()
@@ -1954,18 +1972,17 @@ class SetupWizard:
             return
 
         self.config.channels.whatsapp.enabled = True
-        
+
         # Bridge setup logic
         try:
             from kabot.cli.bridge_utils import get_bridge_dir, run_bridge_login
-            import shutil
-            
+
             # Check/Install Bridge
             with console.status("│  Checking WhatsApp Bridge..."):
-                bridge_dir = get_bridge_dir()
-            
+                get_bridge_dir()
+
             console.print("│  [green]✓ Bridge installed[/green]")
-            
+
             if Confirm.ask("│  Connect now? (Show QR Code)"):
                 console.print("│")
                 console.print("│  [yellow]starting bridge... Press Ctrl+C to stop/return after scanning.[/yellow]")
@@ -2017,12 +2034,18 @@ class SetupWizard:
 
         ClackUI.section_end()
 
-    
+
     def _configure_autostart(self):
         ClackUI.section_start("Auto-start Configuration")
-        
-        from kabot.core.daemon import get_service_status, install_systemd_service, install_launchd_service, install_windows_task_service, install_termux_service
-        
+
+        from kabot.core.daemon import (
+            get_service_status,
+            install_launchd_service,
+            install_systemd_service,
+            install_termux_service,
+            install_windows_task_service,
+        )
+
         status = get_service_status()
         installed = status.get("installed", False)
         service_type = status.get("service_type", "unknown")
@@ -2033,8 +2056,8 @@ class SetupWizard:
                 ClackUI.section_end()
                 return
         else:
-            console.print(f"|  [yellow]! Auto-start is NOT installed[/yellow]")
-        
+            console.print("|  [yellow]! Auto-start is NOT installed[/yellow]")
+
         if not Confirm.ask(f"|  Enable Kabot to start automatically on boot ({service_type})?", default=True):
             ClackUI.section_end()
             return
@@ -2055,7 +2078,7 @@ class SetupWizard:
             console.print(f"|  [green]✓ {msg}[/green]")
         else:
             console.print(f"|  [red]✗ {msg}[/red]")
-        
+
         self._save_setup_state("autostart", completed=ok, service_type=service_type)
         ClackUI.section_end()
 

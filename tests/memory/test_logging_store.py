@@ -1,6 +1,9 @@
-import pytest
 import sqlite3
+
+import pytest
+
 from kabot.memory.sqlite_store import SQLiteMetadataStore
+
 
 @pytest.fixture
 def store(tmp_path):
@@ -31,7 +34,7 @@ def test_add_log(store):
 
 def test_cleanup_logs(store):
     # This should fail if cleanup_logs not implemented
-    
+
     # Prerequisite: Table must exist (if test_add_log passed or we skip to implementation)
     # If add_log failed, we might not get here properly in TDD, but let's write the test.
     with store._get_connection() as conn:
@@ -47,13 +50,13 @@ def test_cleanup_logs(store):
             conn.commit()
         except sqlite3.OperationalError:
              pytest.fail("Cannot insert test data (table missing)")
-    
+
     try:
         deleted = store.cleanup_logs(retention_days=30)
         assert deleted == 1
     except AttributeError:
         pytest.fail("cleanup_logs method not implemented")
-    
+
     with store._get_connection() as conn:
         count = conn.execute("SELECT COUNT(*) FROM system_logs").fetchone()[0]
         assert count == 1

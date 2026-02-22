@@ -11,14 +11,15 @@ This module implements OpenClaw-compatible routing with priority-based matching:
 """
 
 from typing import TypedDict
-from kabot.config.schema import Config, AgentBinding, PeerMatch
+
 from kabot.agent.agent_scope import resolve_default_agent_id
+from kabot.config.schema import AgentBinding, Config
 from kabot.session.session_key import (
-    build_agent_session_key,
-    build_agent_main_session_key,
-    normalize_agent_id,
-    normalize_account_id,
     DEFAULT_ACCOUNT_ID,
+    build_agent_main_session_key,
+    build_agent_session_key,
+    normalize_account_id,
+    normalize_agent_id,
 )
 
 

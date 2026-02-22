@@ -1,8 +1,11 @@
-﻿import litellm
+﻿from typing import Any, Dict, List, Optional
+
+import litellm
 from loguru import logger
-from typing import List, Dict, Any, Optional
-from kabot.providers.models import ModelMetadata, ModelPricing
-from kabot.providers.registry import ModelRegistry, PROVIDERS
+
+from kabot.providers.models import ModelMetadata
+from kabot.providers.registry import ModelRegistry
+
 
 class ModelScanner:
     """Scans provider APIs for available models and normalizes metadata."""
@@ -15,7 +18,7 @@ class ModelScanner:
         """Fetch models from a specific provider API."""
         logger.info(f"Scanning models for provider: {provider_name}")
         scanned_models = []
-        
+
         try:
             # Use LiteLLM to list models
             response = litellm.utils.get_model_list(
@@ -23,22 +26,22 @@ class ModelScanner:
                 api_key=api_key,
                 api_base=api_base
             )
-            
+
             for model_id in response:
                 full_id = model_id
                 if "/" not in model_id:
                     full_id = f"{provider_name}/{model_id}"
-                
+
                 metadata = ModelMetadata(
                     id=full_id,
                     name=model_id.split("/")[-1].replace("-", " ").title(),
                     provider=provider_name,
                     is_premium=False
                 )
-                
+
                 scanned_models.append(metadata)
                 self.registry.register(metadata)
-                
+
                 if self.db:
                     self.db.save_model({
                         "id": metadata.id,
@@ -51,10 +54,10 @@ class ModelScanner:
                         "capabilities": metadata.capabilities,
                         "is_premium": metadata.is_premium
                     })
-                    
+
         except Exception as e:
             logger.error(f"Failed to scan models for {provider_name}: {e}")
-            
+
         return scanned_models
 
     def scan_all(self, config_providers: Dict[str, Any]) -> int:
@@ -64,9 +67,9 @@ class ModelScanner:
             api_key = getattr(provider_conf, "api_key", None)
             if not api_key:
                 continue
-                
+
             api_base = getattr(provider_conf, "api_base", None)
             models = self.scan_provider(provider_name, api_key, api_base)
             count += len(models)
-            
+
         return count

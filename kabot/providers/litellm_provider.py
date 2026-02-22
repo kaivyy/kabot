@@ -1,27 +1,38 @@
 """LiteLLM provider implementation for multi-provider support."""
 
-import json
-import os
 import asyncio
+import json
+import logging
+import os
 from typing import Any
 
-import requests
 import litellm
+import requests
 from litellm import acompletion
-from litellm.exceptions import RateLimitError, APIConnectionError, ServiceUnavailableError, InvalidRequestError
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
-import logging
+from litellm.exceptions import (
+    APIConnectionError,
+    InvalidRequestError,
+    RateLimitError,
+    ServiceUnavailableError,
+)
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from kabot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from kabot.providers.registry import find_by_model, find_gateway
 from kabot.providers.chatgpt_backend_client import (
-    extract_account_id,
-    build_chatgpt_request,
     build_chatgpt_headers,
-    parse_sse_stream,
-    parse_chatgpt_stream_events,
+    build_chatgpt_request,
+    extract_account_id,
     parse_chatgpt_response_payload,
+    parse_chatgpt_stream_events,
+    parse_sse_stream,
 )
+from kabot.providers.registry import find_by_model, find_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -412,7 +423,7 @@ class LiteLLMProvider(LLMProvider):
                     try:
                         error_body = e.response.text
                         logger.error(f"ChatGPT Backend API Error Response: {error_body}")
-                    except:
+                    except Exception:
                         pass
 
                     status = e.response.status_code

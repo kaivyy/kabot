@@ -3,6 +3,7 @@
 import time
 from collections import defaultdict
 
+
 class RateLimiter:
     def __init__(self, max_tokens: int = 5, refill_rate: float = 1.0):
         self.max_tokens = max_tokens

@@ -11,10 +11,10 @@ from typing import Any, Callable, Coroutine
 import httpx
 from loguru import logger
 
+from kabot.cron import policies as core_policies
 from kabot.cron.core import execution as core_execution
 from kabot.cron.core import persistence as core_persistence
 from kabot.cron.core import scheduling as core_scheduling
-from kabot.cron import policies as core_policies
 from kabot.cron.types import (
     CronDeliveryConfig,
     CronJob,
@@ -56,7 +56,7 @@ async def _deliver_webhook(
 
 class CronService:
     """Service for managing and executing scheduled jobs."""
-    
+
     def __init__(
         self,
         store_path: Path,
@@ -72,13 +72,13 @@ class CronService:
         self._store: CronStore | None = None
         self._timer_task: asyncio.Task | None = None
         self._running = False
-    
+
     def _load_store(self) -> CronStore:
         return core_persistence.load_store(self, max_run_history=MAX_RUN_HISTORY)
-    
+
     def _save_store(self) -> None:
         core_persistence.save_store(self, max_run_history=MAX_RUN_HISTORY)
-    
+
     async def start(self) -> None:
         """Start the cron service."""
         self._running = True
@@ -87,53 +87,53 @@ class CronService:
         self._save_store()
         self._arm_timer()
         logger.info(f"Cron service started with {len(self._store.jobs if self._store else [])} jobs")
-    
+
     def stop(self) -> None:
         """Stop the cron service."""
         self._running = False
         if self._timer_task:
             self._timer_task.cancel()
             self._timer_task = None
-    
+
     def _recompute_next_runs(self) -> None:
         core_scheduling.recompute_next_runs(self)
-    
+
     def _get_next_wake_ms(self) -> int | None:
         return core_scheduling.get_next_wake_ms(self)
-    
+
     def _arm_timer(self) -> None:
         core_scheduling.arm_timer(self)
-    
+
     async def _on_timer(self) -> None:
         """Handle timer tick - run due jobs."""
         if not self._store:
             return
-        
+
         now = _now_ms()
         logger.debug(f"Cron tick: now={now}")
 
         due_jobs = core_scheduling.get_due_jobs(self, now_ms_value=now)
-        
+
         if due_jobs:
             logger.info(f"Cron: found {len(due_jobs)} due jobs")
 
         for job in due_jobs:
             await self._execute_job(job)
-        
+
         self._save_store()
         self._arm_timer()
-    
+
     async def _execute_job(self, job: CronJob) -> None:
         await core_execution.execute_job(self, job, max_run_history=MAX_RUN_HISTORY)
-    
+
     # ========== Public API ==========
-    
+
     def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:
         """List all jobs."""
         store = self._load_store()
         jobs = store.jobs if include_disabled else [j for j in store.jobs if j.enabled]
         return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float('inf'))
-    
+
     def add_job(
         self,
         name: str,
@@ -191,28 +191,28 @@ class CronService:
             updated_at_ms=now,
             delete_after_run=delete_after_run,
         )
-        
+
         store.jobs.append(job)
         self._save_store()
         self._arm_timer()
-        
+
         logger.info(f"Cron: added job '{name}' ({job.id})")
         return job
-    
+
     def remove_job(self, job_id: str) -> bool:
         """Remove a job by ID."""
         store = self._load_store()
         before = len(store.jobs)
         store.jobs = [j for j in store.jobs if j.id != job_id]
         removed = len(store.jobs) < before
-        
+
         if removed:
             self._save_store()
             self._arm_timer()
             logger.info(f"Cron: removed job {job_id}")
-        
+
         return removed
-    
+
     def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
         """Enable or disable a job."""
         store = self._load_store()
@@ -228,7 +228,7 @@ class CronService:
                 self._arm_timer()
                 return job
         return None
-    
+
     async def run_job(self, job_id: str, force: bool = False) -> bool:
         """Manually run a job."""
         store = self._load_store()
@@ -241,7 +241,7 @@ class CronService:
                 self._arm_timer()
                 return True
         return False
-    
+
     def update_job(self, job_id: str, **kwargs) -> CronJob | None:
         """Update a job's properties."""
         store = self._load_store()

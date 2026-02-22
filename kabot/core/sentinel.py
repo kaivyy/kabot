@@ -6,10 +6,11 @@ Black box recorder that detects unclean shutdowns and provides recovery context.
 """
 
 import json
+import os
 import time
-from pathlib import Path
-from typing import Optional, Dict
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, Optional
 
 from loguru import logger
 
@@ -128,10 +129,6 @@ class CrashSentinel:
             self.clear_sentinel()
         # If exception occurred, leave sentinel in place
         return False
-
-
-# Import os for getpid
-import os
 
 
 # Recovery message template

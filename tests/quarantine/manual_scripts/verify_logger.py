@@ -1,7 +1,9 @@
-from kabot.core.logger import configure_logger
-from kabot.config.schema import Config
+
 from loguru import logger
-import sys
+
+from kabot.config.schema import Config
+from kabot.core.logger import configure_logger
+
 
 # Mock store
 class MockStore:

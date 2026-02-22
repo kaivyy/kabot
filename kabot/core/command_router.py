@@ -6,11 +6,9 @@ Dispatches to registered command handlers and returns immediate responses.
 """
 
 import logging
-import re
 import time
-import platform
-from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable, Optional
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
 

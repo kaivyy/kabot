@@ -1,9 +1,12 @@
 # tests/auth/test_refresh.py
-import pytest
 import time
 from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from kabot.auth.refresh import TokenRefreshService
 from kabot.config.schema import AuthProfile
+
 
 @pytest.mark.asyncio
 async def test_refresh_expired_openai_token():

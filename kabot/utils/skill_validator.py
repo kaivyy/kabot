@@ -1,6 +1,5 @@
-import yaml
-import re
 from pathlib import Path
+
 
 def validate_skill(skill_path: Path) -> list[str]:
     """

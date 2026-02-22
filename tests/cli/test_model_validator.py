@@ -1,15 +1,14 @@
 """Tests for model validator."""
-import pytest
 
 
 def test_validate_format_valid():
     from kabot.cli.model_validator import validate_format
-    assert validate_format("openai/gpt-4o") == True
+    assert validate_format("openai/gpt-4o")
 
 
 def test_validate_format_invalid():
     from kabot.cli.model_validator import validate_format
-    assert validate_format("gpt-4o") == False
+    assert not validate_format("gpt-4o")
 
 
 def test_resolve_alias():

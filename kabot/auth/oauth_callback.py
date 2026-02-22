@@ -1,7 +1,8 @@
 ﻿import asyncio
-from aiohttp import web
 import secrets
-import socket
+
+from aiohttp import web
+
 
 class OAuthCallbackServer:
     """Local HTTP server to handle OAuth callbacks."""
@@ -70,12 +71,12 @@ class OAuthCallbackServer:
         """Start server and wait for callback."""
         runner = web.AppRunner(self.app)
         await runner.setup()
-        
+
         # Try to bind to the port, with a fallback if busy
         max_retries = 5
         current_port = self.port
         site = None
-        
+
         for i in range(max_retries):
             try:
                 site = web.TCPSite(runner, 'localhost', current_port)
@@ -87,7 +88,7 @@ class OAuthCallbackServer:
                     await runner.cleanup()
                     raise
                 current_port += 1
-        
+
         from rich.console import Console
         console = Console()
         console.print(f"[dim]Waiting for OAuth callback on port {self.port}...[/dim]")
@@ -106,7 +107,7 @@ class OAuthCallbackServer:
         """Build OAuth authorization URL with state and redirect_uri."""
         params['state'] = self.state
         params['redirect_uri'] = f"http://localhost:{self.port}/callback"
-        
+
         from urllib.parse import urlencode
         query = urlencode(params)
         return f"{base_url}?{query}"

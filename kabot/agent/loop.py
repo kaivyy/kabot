@@ -1,58 +1,13 @@
 """Agent loop: the core processing engine."""
 
 import asyncio
-import json
 import re
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
-from kabot.bus.events import InboundMessage, OutboundMessage
-from kabot.bus.queue import MessageBus
-from kabot.providers.base import LLMProvider
 from kabot.agent.context import ContextBuilder
-from kabot.agent.directives import DirectiveParser
-from kabot.agent.tools.registry import ToolRegistry
-from kabot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from kabot.agent.tools.shell import ExecTool
-from kabot.agent.tools.web_search import WebSearchTool
-from kabot.agent.tools.web_fetch import WebFetchTool
-from kabot.agent.tools.browser import BrowserTool
-from kabot.agent.tools.message import MessageTool
-from kabot.agent.tools.spawn import SpawnTool
-from kabot.agent.tools.cron import CronTool
-from kabot.agent.tools.memory import SaveMemoryTool, GetMemoryTool, ListRemindersTool
-from kabot.agent.tools.memory_search import MemorySearchTool
-from kabot.agent.tools.weather import WeatherTool
-from kabot.agent.tools.stock import StockTool, CryptoTool
-from kabot.agent.tools.stock_analysis import StockAnalysisTool
-from kabot.agent.tools.meta_graph import MetaGraphTool
-from kabot.agent.tools.autoplanner import AutoPlanner
-from kabot.agent.subagent import SubagentManager
-from kabot.agent.router import IntentRouter, RouteDecision
-from kabot.session.manager import SessionManager
-from kabot.memory.chroma_memory import ChromaMemoryManager
-from kabot.memory.vector_store import VectorStore
-from kabot.plugins.loader import load_plugins, load_dynamic_plugins
-from kabot.plugins.registry import PluginRegistry
-from kabot.plugins.hooks import HookManager
-from kabot.providers.registry import ModelRegistry
-
-# Phase 8: System Internals
-from kabot.core.command_router import CommandRouter, CommandContext
-from kabot.core.status import StatusService, BenchmarkService
-from kabot.core.doctor import DoctorService
-from kabot.core.update import UpdateService, SystemControl
-from kabot.core.commands_setup import register_builtin_commands
-
-# Phase 9: Architecture Overhaul
-from kabot.core.directives import DirectiveParser
-from kabot.core.heartbeat import HeartbeatInjector
-from kabot.core.resilience import ResilienceLayer
-
-# Phase 12: Critical Features
-from kabot.agent.truncator import ToolResultTruncator
 from kabot.agent.cron_fallback_nlp import (
     REMINDER_KEYWORDS,
     WEATHER_KEYWORDS,
@@ -64,9 +19,52 @@ from kabot.agent.loop_core import quality_runtime as loop_quality_runtime
 from kabot.agent.loop_core import routing_runtime as loop_routing_runtime
 from kabot.agent.loop_core import session_flow as loop_session_flow
 from kabot.agent.loop_core import tool_enforcement as loop_tool_enforcement
+from kabot.agent.router import IntentRouter
+from kabot.agent.subagent import SubagentManager
+from kabot.agent.tools.autoplanner import AutoPlanner
+from kabot.agent.tools.browser import BrowserTool
+from kabot.agent.tools.cron import CronTool
+from kabot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from kabot.agent.tools.memory import GetMemoryTool, ListRemindersTool, SaveMemoryTool
+from kabot.agent.tools.memory_search import MemorySearchTool
+from kabot.agent.tools.message import MessageTool
+from kabot.agent.tools.meta_graph import MetaGraphTool
+from kabot.agent.tools.registry import ToolRegistry
+from kabot.agent.tools.shell import ExecTool
+from kabot.agent.tools.spawn import SpawnTool
+from kabot.agent.tools.stock import CryptoTool, StockTool
+from kabot.agent.tools.stock_analysis import StockAnalysisTool
+from kabot.agent.tools.weather import WeatherTool
+from kabot.agent.tools.web_fetch import WebFetchTool
+from kabot.agent.tools.web_search import WebSearchTool
+
+# Phase 12: Critical Features
+from kabot.agent.truncator import ToolResultTruncator
+from kabot.bus.events import InboundMessage, OutboundMessage
+from kabot.bus.queue import MessageBus
+
+# Phase 8: System Internals
+from kabot.core.command_router import CommandRouter
+from kabot.core.commands_setup import register_builtin_commands
+
+# Phase 9: Architecture Overhaul
+from kabot.core.directives import DirectiveParser
+from kabot.core.doctor import DoctorService
+from kabot.core.heartbeat import HeartbeatInjector
+from kabot.core.resilience import ResilienceLayer
 
 # Phase 13: Resilience & Security
 from kabot.core.sentinel import CrashSentinel, format_recovery_message
+from kabot.core.status import BenchmarkService, StatusService
+from kabot.core.update import SystemControl, UpdateService
+from kabot.memory.chroma_memory import ChromaMemoryManager
+from kabot.memory.vector_store import VectorStore
+from kabot.plugins.hooks import HookManager
+from kabot.plugins.loader import load_dynamic_plugins, load_plugins
+from kabot.plugins.registry import PluginRegistry
+from kabot.providers.base import LLMProvider
+from kabot.providers.registry import ModelRegistry
+from kabot.session.manager import SessionManager
 
 _APPROVAL_CMD_RE = re.compile(r"^\s*/(approve|deny)(?:\s+([A-Za-z0-9_-]+))?\s*$", re.IGNORECASE)
 
@@ -100,10 +98,9 @@ class AgentLoop:
         enable_hybrid_memory: bool = True,
         mode_manager: Any = None,
     ):
-        from kabot.config.schema import ExecToolConfig, Config
-        from kabot.cron.service import CronService
-        from kabot.agent.mode_manager import ModeManager
         from kabot.agent.coordinator import Coordinator
+        from kabot.agent.mode_manager import ModeManager
+        from kabot.config.schema import Config, ExecToolConfig
 
         self.config = config or Config()
 
@@ -120,10 +117,10 @@ class AgentLoop:
         self.registry = ModelRegistry()
         raw_model = model or provider.get_default_model()
         self.model = self.registry.resolve(raw_model)
-        
+
         # Resolve fallbacks
         self.fallbacks = [self.registry.resolve(f) for f in (fallbacks or [])]
-        
+
         self.max_iterations = max_iterations
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
@@ -142,8 +139,8 @@ class AgentLoop:
         self._vector_store_path = str(workspace / "vector_db")
 
         # Context management (Phase 11)
-        from kabot.agent.context_guard import ContextGuard
         from kabot.agent.compactor import Compactor
+        from kabot.agent.context_guard import ContextGuard
         self.context_guard = ContextGuard(max_tokens=128000, buffer_tokens=4000)
         self.compactor = Compactor()
 
@@ -426,7 +423,7 @@ class AgentLoop:
         crash_data = self.sentinel.check_for_crash()
         if crash_data:
             recovery_msg = format_recovery_message(crash_data)
-            logger.warning(f"Crash detected, sending recovery message")
+            logger.warning("Crash detected, sending recovery message")
             # Send recovery message to the crashed session if we have context
             if crash_data.get('session_id'):
                 try:

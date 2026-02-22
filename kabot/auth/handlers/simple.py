@@ -1,9 +1,11 @@
 """Generic API Key authentication handlers."""
 
-from typing import Dict, Any, Optional
 import os
-from rich.prompt import Prompt
+from typing import Any, Dict
+
 from rich.console import Console
+from rich.prompt import Prompt
+
 from kabot.auth.handlers.base import AuthHandler
 from kabot.auth.utils import secure_input
 
@@ -123,7 +125,7 @@ class LettaKeyHandler(SimpleKeyHandler):
         data = super().authenticate()
         if not data:
             return None
-            
+
         # Also ask for API Base since mostly self-hosted
         api_base = Prompt.ask("Enter Letta API Base URL", default="http://localhost:8283")
         data["providers"]["letta"]["api_base"] = api_base
@@ -142,10 +144,10 @@ class VLLMHandler(SimpleKeyHandler):
     def authenticate(self) -> Dict[str, Any]:
         """Override to ask for API Base."""
         console.print(f"\n[bold]{self._name} Setup[/bold]")
-        
+
         api_base = Prompt.ask("Enter vLLM API Base URL", default="http://localhost:8000/v1")
         api_key = secure_input("Enter API Key (optional)") or "EMPTY"
-        
+
         return {
             "providers": {
                 "vllm": {

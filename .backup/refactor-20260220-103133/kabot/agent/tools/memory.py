@@ -1,8 +1,6 @@
 """Memory tools for personal diary, reminders, and fact storage."""
 
-import json
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 from loguru import logger
@@ -127,20 +125,20 @@ class GetMemoryTool(Tool):
             if not memories:
                 # FALLBACK: Provide helpful hints if nothing found
                 hint = f"No memories found for: '{query}'.\n"
-                
+
                 # Try to list available categories to help the AI refine
                 try:
                     facts = self.memory.metadata.get_facts(limit=10)
                     if facts:
                         categories = sorted(list(set(f.get('category', 'fact') for f in facts)))
                         hint += f"HINT: Try searching with categories: {', '.join(categories)}\n"
-                    
+
                     recent = self.memory.metadata.get_message_chain(limit=5)
                     if recent:
                         hint += "HINT: Check your keywords or use 'list_reminders' for schedules."
                 except Exception:
                     pass
-                    
+
                 return hint
 
             # Format results

@@ -1,11 +1,11 @@
 """Tests for ExecTool integration with CommandFirewall."""
 
+import asyncio
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from pathlib import Path
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from kabot.agent.tools.shell import ExecTool
-from kabot.security.command_firewall import ApprovalDecision
 
 
 @pytest.fixture
@@ -124,7 +124,7 @@ class TestExecToolFirewallIntegration:
             mock_process.returncode = 0
             mock_subprocess.return_value = mock_process
 
-            result = await tool.execute("echo test")
+            await tool.execute("echo test")
             mock_subprocess.assert_called_once()
 
     @pytest.mark.asyncio
@@ -137,7 +137,7 @@ class TestExecToolFirewallIntegration:
             mock_subprocess.return_value = mock_process
 
             with patch('kabot.agent.tools.shell.logger') as mock_logger:
-                result = await exec_tool_auto_approve.execute("echo test")
+                await exec_tool_auto_approve.execute("echo test")
 
                 # Should log successful execution
                 mock_logger.info.assert_called()
@@ -230,4 +230,3 @@ class TestExecToolPlatformHints:
 
 
 # Import asyncio for timeout test
-import asyncio

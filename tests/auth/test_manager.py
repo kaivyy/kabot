@@ -1,6 +1,5 @@
 """Tests for AuthManager with multi-method support."""
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 
 def test_auth_manager_exists():

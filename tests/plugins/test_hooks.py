@@ -1,6 +1,7 @@
 """Tests for HookManager (Phase 10)."""
 
 import pytest
+
 from kabot.plugins.hooks import HookManager
 
 

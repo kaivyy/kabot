@@ -1,5 +1,4 @@
 """Tests for Anthropic Setup Token handler."""
-import pytest
 from unittest.mock import patch
 
 

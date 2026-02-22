@@ -15,13 +15,13 @@ from rich.panel import Panel
 
 from kabot.agent.agent_scope import resolve_agent_workspace
 from kabot.config.loader import get_agent_dir, get_global_data_dir, load_config
-from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
 from kabot.utils.bootstrap_parity import (
     BootstrapParityPolicy,
     apply_bootstrap_fixes,
     check_bootstrap_parity,
     policy_from_config,
 )
+from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
 
 console = Console()
 

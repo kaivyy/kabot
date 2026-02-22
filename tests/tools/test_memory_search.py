@@ -1,7 +1,8 @@
 """Tests for memory search tool."""
 
+
 import pytest
-from pathlib import Path
+
 from kabot.agent.tools.memory_search import MemorySearchTool
 from kabot.memory.vector_store import VectorStore
 

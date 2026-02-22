@@ -1,14 +1,14 @@
 """Authentication manager with multi-method support."""
 
-from typing import List, Optional, Dict, Any
 import importlib
+from typing import Any, Dict, List, Optional
+
 import questionary
 from rich.console import Console
 from rich.table import Table
-from rich.prompt import Prompt
 
-from kabot.config.loader import load_config, save_config
 from kabot.auth.menu import AUTH_PROVIDERS
+from kabot.config.loader import load_config, save_config
 
 console = Console()
 
@@ -134,7 +134,7 @@ class AuthManager:
     def _prompt_method_selection(self, provider_id: str, methods: Dict) -> Optional[str]:
         """Show interactive method selection menu using arrow keys."""
         provider_name = AUTH_PROVIDERS[provider_id]["name"]
-        
+
         console.print("│")
         choices = []
         for mid, info in methods.items():
@@ -154,7 +154,7 @@ class AuthManager:
                 ('selected', 'fg:green'),
             ])
         ).ask()
-        
+
         return result
 
     def _validate_auth_data(self, auth_data: Dict[str, Any]) -> bool:

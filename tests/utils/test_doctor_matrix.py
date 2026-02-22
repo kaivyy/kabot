@@ -1,6 +1,5 @@
 """Tests for doctor environment matrix and deeper fix coverage."""
 
-from pathlib import Path
 
 
 def test_doctor_environment_matrix_includes_recommended_mode(monkeypatch, tmp_path):

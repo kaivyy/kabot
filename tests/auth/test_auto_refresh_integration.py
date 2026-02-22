@@ -1,8 +1,11 @@
 # tests/auth/test_auto_refresh_integration.py
-import pytest
 import time
 from unittest.mock import AsyncMock, patch
-from kabot.config.schema import Config, ProviderConfig, AuthProfile
+
+import pytest
+
+from kabot.config.schema import AuthProfile, Config, ProviderConfig
+
 
 @pytest.mark.asyncio
 async def test_get_api_key_auto_refreshes():

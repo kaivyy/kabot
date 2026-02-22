@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_REQUIRED_BOOTSTRAP_FILES = [
     "AGENTS.md",
     "SOUL.md",

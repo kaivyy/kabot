@@ -180,7 +180,6 @@ def build_chatgpt_request(
     input_messages: list[dict[str, Any]] = []
 
     # Track tool call IDs and tool result IDs to ensure they match
-    tool_call_ids: set[str] = set()
     tool_result_ids: set[str] = set()
 
     # First pass: collect all tool result IDs

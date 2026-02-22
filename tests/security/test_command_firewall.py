@@ -1,18 +1,10 @@
 """Tests for command execution firewall."""
 
-import hashlib
-import os
-from pathlib import Path
-from unittest.mock import patch, mock_open
 
 import pytest
 import yaml
 
-from kabot.security.command_firewall import (
-    CommandFirewall,
-    ApprovalDecision,
-    CommandPattern
-)
+from kabot.security.command_firewall import ApprovalDecision, CommandFirewall, CommandPattern
 
 
 @pytest.fixture

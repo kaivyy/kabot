@@ -5,13 +5,12 @@ Uses device code grant with region selection: Global (api.minimax.io)
 or China (api.minimaxi.com). Same client_id for both regions.
 """
 
+import base64
 import hashlib
 import secrets
 import time
-import base64
 import webbrowser
-from typing import Dict, Any, Optional
-from urllib.parse import urlencode
+from typing import Any, Dict, Optional
 
 import httpx
 from rich.console import Console
@@ -180,7 +179,7 @@ class MiniMaxOAuthHandler(AuthHandler):
 
         # Show user code and URL
         console.print(f"\n[bold cyan]Your code: {user_code}[/bold cyan]")
-        console.print(f"[bold]Open this URL to approve:[/bold]")
+        console.print("[bold]Open this URL to approve:[/bold]")
         console.print(f"[link={verification_uri}]{verification_uri}[/link]\n")
 
         # Try to open browser

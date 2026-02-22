@@ -1,6 +1,7 @@
 """Memory search tool for semantic search over conversation history."""
 
 from typing import Any
+
 from kabot.agent.tools.base import Tool
 from kabot.memory.vector_store import VectorStore
 

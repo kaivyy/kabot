@@ -1,6 +1,5 @@
 """Tests for ToolResultTruncator."""
 
-import pytest
 from kabot.agent.truncator import ToolResultTruncator
 
 

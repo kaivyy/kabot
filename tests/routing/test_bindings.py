@@ -1,8 +1,14 @@
 """Tests for agent binding resolution."""
 
-import pytest
+from kabot.config.schema import (
+    AgentBinding,
+    AgentBindingMatch,
+    AgentConfig,
+    AgentsConfig,
+    Config,
+    PeerMatch,
+)
 from kabot.routing.bindings import resolve_agent_route
-from kabot.config.schema import Config, AgentsConfig, AgentConfig, AgentBinding, AgentBindingMatch, PeerMatch
 
 
 def test_resolve_agent_by_channel():

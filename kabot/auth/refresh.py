@@ -1,10 +1,10 @@
 """OAuth token auto-refresh service."""
 
 import time
-import asyncio
 from typing import Optional
-from loguru import logger
+
 import httpx
+from loguru import logger
 
 from kabot.config.schema import AuthProfile
 
@@ -52,8 +52,9 @@ class TokenRefreshService:
             return None
 
         # Cross-process file locking to prevent race conditions in multi-instance deployments
-        from filelock import FileLock
         from pathlib import Path
+
+        from filelock import FileLock
 
         lock_path = Path.home() / ".kabot" / "auth.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)

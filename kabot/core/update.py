@@ -8,11 +8,9 @@ import asyncio
 import logging
 import os
 import platform
-import signal
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +18,7 @@ logger = logging.getLogger(__name__)
 class UpdateService:
     """
     Self-updating mechanism for Kabot.
-    
+
     Workflow:
         1. Git Pull (fetch latest changes)
         2. Dependency Check (compare requirements.txt hash)
@@ -34,7 +32,7 @@ class UpdateService:
     async def check_for_updates(self) -> str:
         """Check if updates are available without applying them."""
         try:
-            result = await asyncio.to_thread(
+            await asyncio.to_thread(
                 subprocess.run,
                 ["git", "fetch", "--dry-run"],
                 cwd=str(self._workspace),
@@ -170,7 +168,7 @@ class UpdateService:
 class SystemControl:
     """
     Low-level system control for Kabot.
-    
+
     Handles process restart and system-level operations.
     """
 
@@ -182,7 +180,7 @@ class SystemControl:
     async def restart(self) -> str:
         """
         Schedule a process restart.
-        
+
         Creates a restart flag file and initiates shutdown.
         The process supervisor (systemd/Docker/etc.) will restart the process.
         """
@@ -205,7 +203,7 @@ class SystemControl:
     def _do_restart(self) -> None:
         """Perform the actual restart."""
         system = platform.system()
-        
+
         if system == "Linux":
             # Try systemctl first, fallback to os.execv
             try:
@@ -232,8 +230,8 @@ class SystemControl:
     async def get_system_info(self) -> str:
         """Get detailed system information."""
         info = [
-            f"💻 *System Information*",
-            f"─────────────────────────",
+            "💻 *System Information*",
+            "─────────────────────────",
             f"  OS: {platform.system()} {platform.release()}",
             f"  Machine: {platform.machine()}",
             f"  Python: {sys.version.split()[0]}",

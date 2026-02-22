@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+
 class AgentRegistry:
     def __init__(self, registry_path: Path):
         self.registry_path = Path(registry_path)

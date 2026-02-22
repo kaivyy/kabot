@@ -1,6 +1,7 @@
 """Message compactor for context window management."""
 
 from typing import Any
+
 from loguru import logger
 
 

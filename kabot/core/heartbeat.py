@@ -11,9 +11,9 @@ that the agent can read and decide how to present to the user.
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
-from kabot.core.msg_context import MsgContext, ChannelType
+from kabot.core.msg_context import MsgContext
 
 logger = logging.getLogger(__name__)
 

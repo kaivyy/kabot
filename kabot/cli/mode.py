@@ -11,8 +11,9 @@ def set_mode(
     user_id: str = typer.Option("", help="User ID (default: current user)"),
 ):
     """Set agent execution mode."""
-    from kabot.agent.mode_manager import ModeManager
     from pathlib import Path
+
+    from kabot.agent.mode_manager import ModeManager
 
     if mode not in ["single", "multi"]:
         console.print(f"[red]Invalid mode: {mode}. Use 'single' or 'multi'[/red]")
@@ -29,8 +30,9 @@ def show_status(
     user_id: str = typer.Option("", help="User ID (default: current user)"),
 ):
     """Show current mode."""
-    from kabot.agent.mode_manager import ModeManager
     from pathlib import Path
+
+    from kabot.agent.mode_manager import ModeManager
 
     manager = ModeManager(Path.home() / ".kabot" / "mode_config.json")
     user_id = user_id or "default"

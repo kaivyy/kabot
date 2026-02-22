@@ -1,6 +1,7 @@
 """Tests for WebFetchTool."""
 
 import pytest
+
 from kabot.agent.tools.web_fetch import WebFetchTool
 
 

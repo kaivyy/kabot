@@ -1,5 +1,5 @@
 """Session management module."""
 
-from kabot.session.manager import SessionManager, Session
+from kabot.session.manager import Session, SessionManager
 
 __all__ = ["SessionManager", "Session"]

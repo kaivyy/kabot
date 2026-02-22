@@ -37,7 +37,7 @@ _STOP_WORDS = frozenset({
 
 def _naive_stem(word: str) -> str:
     """Very basic suffix stripping for keyword matching.
-    
+
     Not a real stemmer — just enough to match 'debugging'→'debug',
     'plans'→'plan', 'writing'→'write', etc.
     """
@@ -71,11 +71,11 @@ def _extract_keywords(text: str) -> set[str]:
 class SkillsLoader:
     """
     Loader for agent skills.
-    
+
     Skills are markdown files (SKILL.md) that teach the agent how to use
     specific tools or perform certain tasks.
     """
-    
+
     def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
@@ -145,7 +145,7 @@ class SkillsLoader:
             overlap = msg_keywords & skill_keywords
             # Secondary overlap: body keywords (low signal)
             body_overlap = msg_keywords & body_idx.get(skill_name, set())
-            
+
             if not overlap and not body_overlap:
                 continue
 
@@ -212,7 +212,7 @@ class SkillsLoader:
                 validated.append(f"{skill_name} [NEEDS: {missing}]")
 
         return validated[:max_results + 2]  # Allow up to 5 with chains
-    
+
     def list_skills(self, filter_unavailable: bool = True) -> list[dict]:
         """
         List all available skills with detailed status.
@@ -228,21 +228,22 @@ class SkillsLoader:
         seen_names = set()
 
         def _process_skill(name, path, source, valid):
-            if name in seen_names: return
+            if name in seen_names:
+                return
             seen_names.add(name)
 
             meta = self._get_skill_meta(name)
             desc = self._get_skill_description(name)
-            
+
             # Check requirements
             missing_bins = []
             missing_env = []
             requires = meta.get("requires", {})
-            
+
             for b in requires.get("bins", []):
                 if not shutil.which(b):
                     missing_bins.append(b)
-            
+
             for e in requires.get("env", []):
                 if not os.environ.get(e):
                     missing_env.append(e)
@@ -262,7 +263,7 @@ class SkillsLoader:
                      unsupported_os.append(required_os)
 
             eligible = len(missing_bins) == 0 and len(missing_env) == 0 and len(unsupported_os) == 0
-            
+
             # primaryEnv logic: explicit meta > first missing env > first required env
             primary_env = meta.get("primaryEnv")
             if not primary_env and missing_env:
@@ -309,14 +310,14 @@ class SkillsLoader:
         if filter_unavailable:
             return [s for s in skills if s["eligible"]]
         return skills
-    
+
     def load_skill(self, name: str) -> str | None:
         """
         Load a skill by name.
-        
+
         Args:
             name: Skill name (directory name).
-        
+
         Returns:
             Skill content or None if not found.
         """
@@ -324,22 +325,22 @@ class SkillsLoader:
         workspace_skill = self.workspace_skills / name / "SKILL.md"
         if workspace_skill.exists():
             return workspace_skill.read_text(encoding="utf-8")
-        
+
         # Check built-in
         if self.builtin_skills:
             builtin_skill = self.builtin_skills / name / "SKILL.md"
             if builtin_skill.exists():
                 return builtin_skill.read_text(encoding="utf-8")
-        
+
         return None
-    
+
     def load_skills_for_context(self, skill_names: list[str]) -> str:
         """
         Load specific skills for inclusion in agent context.
-        
+
         Args:
             skill_names: List of skill names to load.
-        
+
         Returns:
             Formatted skills content.
         """
@@ -349,26 +350,26 @@ class SkillsLoader:
             if content:
                 content = self._strip_frontmatter(content)
                 parts.append(f"### Skill: {name}\n\n{content}")
-        
+
         return "\n\n---\n\n".join(parts) if parts else ""
-    
+
     def build_skills_summary(self) -> str:
         """
         Build a summary of all skills (name, description, path, availability).
-        
+
         This is used for progressive loading - the agent can read the full
         skill content using read_file when needed.
-        
+
         Returns:
             XML-formatted skills summary.
         """
         all_skills = self.list_skills(filter_unavailable=False)
         if not all_skills:
             return ""
-        
+
         def escape_xml(s: str) -> str:
             return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        
+
         lines = ["<skills>"]
         for s in all_skills:
             name = escape_xml(s["name"])
@@ -376,23 +377,23 @@ class SkillsLoader:
             desc = escape_xml(self._get_skill_description(s["name"]))
             skill_meta = self._get_skill_meta(s["name"])
             available = self._check_requirements(skill_meta)
-            
+
             lines.append(f"  <skill available=\"{str(available).lower()}\">")
             lines.append(f"    <name>{name}</name>")
             lines.append(f"    <description>{desc}</description>")
             lines.append(f"    <location>{path}</location>")
-            
+
             # Show missing requirements for unavailable skills
             if not available:
                 missing = self._get_missing_requirements(skill_meta)
                 if missing:
                     lines.append(f"    <requires>{escape_xml(missing)}</requires>")
-            
-            lines.append(f"  </skill>")
+
+            lines.append("  </skill>")
         lines.append("</skills>")
-        
+
         return "\n".join(lines)
-    
+
     def _get_missing_requirements(self, skill_meta: dict) -> str:
         """Get a description of missing requirements."""
         missing = []
@@ -404,14 +405,14 @@ class SkillsLoader:
             if not os.environ.get(env):
                 missing.append(f"ENV: {env}")
         return ", ".join(missing)
-    
+
     def _get_skill_description(self, name: str) -> str:
         """Get the description of a skill from its frontmatter."""
         meta = self.get_skill_metadata(name)
         if meta and meta.get("description"):
             return meta["description"]
         return name  # Fallback to skill name
-    
+
     def _strip_frontmatter(self, content: str) -> str:
         """Remove YAML frontmatter from markdown content."""
         if content.startswith("---"):
@@ -419,7 +420,7 @@ class SkillsLoader:
             if match:
                 return content[match.end():].strip()
         return content
-    
+
     def _parse_kabot_metadata(self, raw: str | dict) -> dict:
         """Parse kabot metadata JSON from frontmatter."""
         if isinstance(raw, dict):
@@ -429,7 +430,7 @@ class SkillsLoader:
             return data.get("kabot", {}) if isinstance(data, dict) else {}
         except (json.JSONDecodeError, TypeError):
             return {}
-    
+
     def _check_requirements(self, skill_meta: dict) -> bool:
         """Check if skill requirements are met (bins, env vars)."""
         requires = skill_meta.get("requires", {})
@@ -440,12 +441,12 @@ class SkillsLoader:
             if not os.environ.get(env):
                 return False
         return True
-    
+
     def _get_skill_meta(self, name: str) -> dict:
         """Get kabot metadata for a skill (cached in frontmatter)."""
         meta = self.get_skill_metadata(name) or {}
         return self._parse_kabot_metadata(meta.get("metadata", ""))
-    
+
     def get_always_skills(self) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
         result = []
@@ -455,21 +456,21 @@ class SkillsLoader:
             if skill_meta.get("always") or meta.get("always"):
                 result.append(s["name"])
         return result
-    
+
     def get_skill_metadata(self, name: str) -> dict | None:
         """
         Get metadata from a skill's frontmatter.
-        
+
         Args:
             name: Skill name.
-        
+
         Returns:
             Metadata dict or None.
         """
         content = self.load_skill(name)
         if not content:
             return None
-        
+
         if content.startswith("---"):
             match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
             if match:
@@ -488,5 +489,5 @@ class SkillsLoader:
                     return metadata
                 except Exception:
                     return {}
-        
+
         return None

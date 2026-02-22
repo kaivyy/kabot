@@ -1,5 +1,6 @@
 from kabot.cron.delivery import infer_delivery
 
+
 def test_whatsapp_session():
     result = infer_delivery("whatsapp:628123456")
     assert result == {"channel": "whatsapp", "to": "628123456"}

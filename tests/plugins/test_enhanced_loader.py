@@ -1,11 +1,10 @@
 """Tests for enhanced plugin loader (Phase 10)."""
 
 import json
-import pytest
-from pathlib import Path
-from kabot.plugins.loader import load_plugins, load_dynamic_plugins, PluginManifest
-from kabot.plugins.registry import PluginRegistry
+
 from kabot.plugins.hooks import HookManager
+from kabot.plugins.loader import PluginManifest, load_dynamic_plugins, load_plugins
+from kabot.plugins.registry import PluginRegistry
 
 
 def test_load_skill_md_format(tmp_path):

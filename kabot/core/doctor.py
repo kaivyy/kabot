@@ -5,7 +5,6 @@ Automatically diagnoses and repairs system state, database schemas,
 authentication, and configuration issues.
 """
 
-import asyncio
 import logging
 import os
 import subprocess
@@ -48,10 +47,10 @@ class DoctorService:
     async def run_all(self, auto_fix: bool = False) -> str:
         """
         Run all diagnostic checks.
-        
+
         Args:
             auto_fix: If True, attempt to fix any issues found.
-        
+
         Returns:
             Formatted diagnostic report.
         """
@@ -349,7 +348,7 @@ class DoctorService:
 
         lines.extend([
             "",
-            f"─────────────────────────",
+            "─────────────────────────",
             f"  ✅ {ok_count} OK  ⚠️ {warn_count} Warnings  ❌ {err_count} Errors",
         ])
 

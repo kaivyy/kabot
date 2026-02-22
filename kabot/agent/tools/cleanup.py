@@ -4,7 +4,6 @@ import asyncio
 import platform
 from typing import Any
 
-from loguru import logger
 from kabot.agent.tools.base import Tool
 
 

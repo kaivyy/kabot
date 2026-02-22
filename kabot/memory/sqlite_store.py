@@ -1,11 +1,9 @@
 """SQLite metadata store for conversation relationships and metadata."""
 
-import sqlite3
 import json
-from pathlib import Path
-from datetime import datetime
-from typing import Any, Optional
+import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 
 from loguru import logger
 

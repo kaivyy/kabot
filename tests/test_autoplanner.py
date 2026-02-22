@@ -1,7 +1,8 @@
 """Tests for the AutoPlanner module."""
 
 import pytest
-from kabot.agent.tools.autoplanner import AutoPlanner, Plan, Step, ExecutionResult
+
+from kabot.agent.tools.autoplanner import AutoPlanner, ExecutionResult, Plan, Step
 
 
 @pytest.mark.asyncio

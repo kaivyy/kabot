@@ -1,6 +1,7 @@
 import sys
 import time
 
+
 def main():
     print("Initiating shutdown sequence...")
     print("Bot will shut down now.")

@@ -2,7 +2,7 @@
 
 def test_resolve_default_agent():
     from kabot.agent.agent_scope import resolve_default_agent_id
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
 
     config = Config(agents=AgentsConfig(agents=[
         AgentConfig(id="work", default=True),
@@ -15,7 +15,7 @@ def test_resolve_default_agent():
 def test_resolve_default_agent_fallback():
     """Test that 'main' is returned when no agent has default=True."""
     from kabot.agent.agent_scope import resolve_default_agent_id
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
 
     config = Config(agents=AgentsConfig(agents=[
         AgentConfig(id="work"),
@@ -27,7 +27,7 @@ def test_resolve_default_agent_fallback():
 
 def test_resolve_agent_workspace():
     from kabot.agent.agent_scope import resolve_agent_workspace
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
 
     config = Config(agents=AgentsConfig(agents=[
         AgentConfig(id="work", workspace="~/.kabot/workspace-work")
@@ -40,7 +40,7 @@ def test_resolve_agent_workspace():
 def test_resolve_agent_workspace_default():
     """Test that default workspace is provided when agent has no workspace configured."""
     from kabot.agent.agent_scope import resolve_agent_workspace
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
 
     config = Config(agents=AgentsConfig(agents=[
         AgentConfig(id="work")
@@ -52,7 +52,7 @@ def test_resolve_agent_workspace_default():
 
 def test_resolve_agent_model():
     from kabot.agent.agent_scope import resolve_agent_model
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
 
     config = Config(agents=AgentsConfig(agents=[
         AgentConfig(id="work", model="anthropic/claude-opus-4-5")
@@ -65,7 +65,7 @@ def test_resolve_agent_model():
 def test_resolve_agent_model_none():
     """Test that None is returned when agent has no model configured."""
     from kabot.agent.agent_scope import resolve_agent_model
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
 
     config = Config(agents=AgentsConfig(agents=[
         AgentConfig(id="work")
@@ -78,7 +78,7 @@ def test_resolve_agent_model_none():
 def test_resolve_agent_config():
     """Test resolving agent config by ID."""
     from kabot.agent.agent_scope import resolve_agent_config
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
 
     config = Config(agents=AgentsConfig(agents=[
         AgentConfig(id="work", name="Work Agent"),
@@ -94,7 +94,7 @@ def test_resolve_agent_config():
 def test_resolve_agent_config_not_found():
     """Test that None is returned when agent is not found."""
     from kabot.agent.agent_scope import resolve_agent_config
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
 
     config = Config(agents=AgentsConfig(agents=[
         AgentConfig(id="work")

@@ -1,9 +1,10 @@
 """Tests for directives behavior consumption."""
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
+
 from kabot.agent.loop import AgentLoop
-from kabot.session.manager import SessionManager
 
 
 @pytest.fixture
@@ -23,8 +24,6 @@ def test_think_mode_injects_reasoning_prompt(mock_session):
     ]
 
     # Create a minimal AgentLoop instance (we only need the method)
-    from pathlib import Path
-    from unittest.mock import MagicMock
 
     loop = AgentLoop.__new__(AgentLoop)
 

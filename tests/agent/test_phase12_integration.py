@@ -1,8 +1,10 @@
 """Integration tests for Phase 12: Critical Features."""
 
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
 from kabot.agent.loop import AgentLoop
 from kabot.agent.truncator import ToolResultTruncator
 
@@ -108,7 +110,7 @@ async def test_verbose_mode_integration(mock_agent_loop):
 
     # Execute tool calls
     messages = []
-    result_messages = await mock_agent_loop._process_tool_calls(msg, messages, mock_response, mock_session)
+    await mock_agent_loop._process_tool_calls(msg, messages, mock_response, mock_session)
 
     # Verify that add_tool_result was called
     assert mock_agent_loop.context.add_tool_result.called
@@ -174,7 +176,7 @@ async def test_elevated_mode_integration(mock_agent_loop):
 
     # Execute tool calls
     messages = []
-    result_messages = await mock_agent_loop._process_tool_calls(msg, messages, mock_response, mock_session)
+    await mock_agent_loop._process_tool_calls(msg, messages, mock_response, mock_session)
 
     # Verify that permissions were retrieved
     permissions = mock_agent_loop._get_tool_permissions(mock_session)

@@ -4,17 +4,19 @@ This module tests the user confirmation flow for destructive actions in AutoPlan
 """
 
 import asyncio
-import pytest
-from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from kabot.agent.tools.autoplanner import (
-    AutoPlanner, Plan, Step, ExecutionResult,
-    DESTRUCTIVE_TOOLS
+    DESTRUCTIVE_TOOLS,
+    AutoPlanner,
+    Plan,
+    Step,
 )
 from kabot.agent.tools.registry import ToolRegistry
-from kabot.bus.queue import MessageBus
-from kabot.bus.events import InboundMessage, OutboundMessage
+from kabot.bus.events import InboundMessage
 
 
 class MockTool:

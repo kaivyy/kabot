@@ -2,7 +2,11 @@
 
 from pathlib import Path
 
-from kabot.utils.bootstrap_parity import BootstrapParityPolicy, apply_bootstrap_fixes, check_bootstrap_parity
+from kabot.utils.bootstrap_parity import (
+    BootstrapParityPolicy,
+    apply_bootstrap_fixes,
+    check_bootstrap_parity,
+)
 
 
 def test_check_bootstrap_parity_marks_missing_files_as_critical(tmp_path: Path):

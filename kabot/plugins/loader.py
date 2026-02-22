@@ -10,15 +10,15 @@ import importlib
 import importlib.util
 import json
 import sys
-import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
 from loguru import logger
 
-from kabot.plugins.registry import PluginRegistry, Plugin
 from kabot.plugins.hooks import HookManager
+from kabot.plugins.registry import Plugin, PluginRegistry
 
 
 @dataclass
@@ -103,17 +103,17 @@ def load_dynamic_plugins(
 ) -> list[Plugin]:
     """
     Scan directory for plugin.json manifests and load dynamic plugins.
-    
+
     Dynamic plugins can:
     - Register hooks via HookManager
     - Provide tools via a `register()` function
     - Run initialization code
-    
+
     Args:
         plugin_dir: Directory containing plugin folders
         registry: Plugin registry to register into
         hook_manager: HookManager for hook registration
-    
+
     Returns:
         List of successfully loaded plugins
     """
@@ -133,9 +133,9 @@ def load_dynamic_plugins(
             # Parse manifest
             with open(manifest_file, encoding="utf-8") as f:
                 manifest_data = json.load(f)
-            
+
             manifest = PluginManifest.from_dict(manifest_data)
-            
+
             # Validate manifest
             issues = manifest.validate()
             if issues:

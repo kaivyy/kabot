@@ -9,11 +9,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from loguru import logger
+
 from kabot.agent.tools.base import Tool
 from kabot.agent.tools.registry import ToolRegistry
-from kabot.bus.events import InboundMessage, OutboundMessage
+from kabot.bus.events import OutboundMessage
 from kabot.bus.queue import MessageBus
-from loguru import logger
 
 # Tool name constants
 TOOL_READ_FILE = "read_file"
@@ -252,11 +253,11 @@ class AutoPlanner(Tool):
             Formatted confirmation message in Indonesian
         """
         action_descriptions = {
-            "write_file": f"menulis file",
-            "edit_file": f"mengedit file",
-            "delete_file": f"menghapus file",
-            "exec": f"menjalankan perintah shell",
-            "cron": f"mengatur jadwal cron"
+            "write_file": "menulis file",
+            "edit_file": "mengedit file",
+            "delete_file": "menghapus file",
+            "exec": "menjalankan perintah shell",
+            "cron": "mengatur jadwal cron"
         }
 
         action = action_descriptions.get(step.tool, f"melakukan {step.tool}")

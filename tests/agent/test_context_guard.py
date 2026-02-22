@@ -1,6 +1,5 @@
 """Tests for context window guard."""
 
-import pytest
 from kabot.agent.context_guard import ContextGuard
 
 

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from kabot.cli.commands import (
     _next_cli_reminder_delay_seconds,
     _render_cron_delivery_with_ai,

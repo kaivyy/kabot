@@ -1,8 +1,7 @@
 """Tests for Security Auditor."""
 import os
-import pytest
-from pathlib import Path
 from unittest.mock import patch
+
 from kabot.utils.security_audit import SecurityAuditor
 
 

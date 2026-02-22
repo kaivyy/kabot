@@ -2,12 +2,11 @@
 
 import asyncio
 import re
-from typing import Any
 
 from loguru import logger
-from slack_sdk.socket_mode.websockets import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
+from slack_sdk.socket_mode.websockets import SocketModeClient
 from slack_sdk.web.async_client import AsyncWebClient
 
 from kabot.bus.events import OutboundMessage
@@ -76,6 +75,8 @@ class SlackChannel(BaseChannel):
         if not self._web_client:
             logger.warning("Slack client not running")
             return
+        thread_ts = msg.reply_to or msg.metadata.get("thread_ts")
+        use_thread = bool(thread_ts)
         try:
             # 1. Send files if present
             if msg.media:

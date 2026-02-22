@@ -1,7 +1,8 @@
 
 import asyncio
-import sys
-from kabot.agent.router import IntentRouter, RouteDecision
+
+from kabot.agent.router import IntentRouter
+
 
 # Simplified MockProvider
 class MockProvider:
@@ -14,7 +15,7 @@ class MockProvider:
 async def main():
     print("Testing routing logic...")
     router = IntentRouter(MockProvider())
-    
+
     test_cases = [
         "ingatkan 1 menit lagi waktunya pulang",
         "remind me in 1 minute",
@@ -23,12 +24,12 @@ async def main():
         "check the logs",
         "jadwalkan meeting besok"
     ]
-    
+
     for text in test_cases:
         decision = await router.route(text)
         status = "COMPLEX (Tools enabled)" if decision.is_complex else "SIMPLE (No tools)"
         print(f"Input: '{text}' -> {status}")
-        
+
         # Validation
         is_action = any(k in text for k in ["ingatkan", "remind", "check", "jadwalkan"])
         if is_action and not decision.is_complex:

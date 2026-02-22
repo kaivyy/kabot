@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from kabot.agent.language.lexicon import REMINDER_TERMS, WEATHER_TERMS
 from loguru import logger
 
+from kabot.agent.language.lexicon import REMINDER_TERMS, WEATHER_TERMS
 
 IMMEDIATE_ACTION_PATTERNS = [
     # Reminders / scheduling (multilingual)

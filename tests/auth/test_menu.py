@@ -1,5 +1,4 @@
 """Tests for multi-method auth menu structure."""
-import pytest
 
 
 def test_auth_providers_has_methods_dict():

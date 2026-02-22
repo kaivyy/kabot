@@ -1,11 +1,12 @@
 import argparse
-import sys
 import os
+import sys
 
 # Add the project root to sys.path to allow imports from kabot
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 
 from kabot.utils.restart import RestartManager
+
 
 def main():
     parser = argparse.ArgumentParser(description="Restart the bot and save state.")

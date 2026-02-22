@@ -1,5 +1,6 @@
 ﻿import socket
 
+
 def probe_gateway(host="127.0.0.1", port=18790, timeout=0.5) -> bool:
     """Fast socket-based check for gateway reachability."""
     try:

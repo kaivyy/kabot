@@ -1,12 +1,14 @@
 # tests/agent/test_loop_collaborative.py
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+
 
 @pytest.mark.asyncio
 async def test_agent_loop_multi_mode(tmp_path):
     from kabot.agent.loop import AgentLoop
-    from kabot.bus.queue import MessageBus
     from kabot.agent.mode_manager import ModeManager
+    from kabot.bus.queue import MessageBus
 
     bus = MessageBus()
     provider = MagicMock()

@@ -1,10 +1,12 @@
-import webbrowser
 import asyncio
 import re
-from typing import Optional, Dict
-from urllib.parse import urlparse, parse_qs
-from rich.prompt import Prompt
+import webbrowser
+from typing import Optional
+from urllib.parse import parse_qs, urlparse
+
 from rich.console import Console
+from rich.prompt import Prompt
+
 from kabot.auth.oauth_callback import OAuthCallbackServer
 from kabot.utils.environment import detect_runtime_environment
 
@@ -12,7 +14,7 @@ console = Console()
 
 def parse_redirect_url(input_text: str) -> Optional[str]:
     """
-    Extract authorization code from a full URL if provided, 
+    Extract authorization code from a full URL if provided,
     otherwise return the input as-is (assuming it's the raw code).
     """
     input_text = input_text.strip()

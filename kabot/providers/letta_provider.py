@@ -1,7 +1,6 @@
 """Letta provider implementation for stateful agents."""
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -10,8 +9,10 @@ try:
 except ImportError:
     AsyncLetta = None
 
-from kabot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from loguru import logger
+
+from kabot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+
 
 class LettaProvider(LLMProvider):
     """

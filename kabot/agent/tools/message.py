@@ -1,6 +1,6 @@
 """Message tool for sending messages to users."""
 
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 from kabot.agent.tools.base import Tool
 from kabot.bus.events import OutboundMessage
@@ -8,9 +8,9 @@ from kabot.bus.events import OutboundMessage
 
 class MessageTool(Tool):
     """Tool to send messages to users on chat channels."""
-    
+
     def __init__(
-        self, 
+        self,
         send_callback: Callable[[OutboundMessage], Awaitable[None]] | None = None,
         default_channel: str = "",
         default_chat_id: str = ""
@@ -18,24 +18,24 @@ class MessageTool(Tool):
         self._send_callback = send_callback
         self._default_channel = default_channel
         self._default_chat_id = default_chat_id
-    
+
     def set_context(self, channel: str, chat_id: str) -> None:
         """Set the current message context."""
         self._default_channel = channel
         self._default_chat_id = chat_id
-    
+
     def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[None]]) -> None:
         """Set the callback for sending messages."""
         self._send_callback = callback
-    
+
     @property
     def name(self) -> str:
         return "message"
-    
+
     @property
     def description(self) -> str:
         return "Send an EXTRA message or file to a specific channel. DO NOT use this for normal conversation replies - just respond with text for that. Use this ONLY when you need to send files or reach a user on a DIFFERENT channel than the current one."
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
@@ -85,7 +85,7 @@ class MessageTool(Tool):
             content=content,
             media=files or []
         )
-        
+
         try:
             await self._send_callback(msg)
             return f"Message sent to {channel}:{chat_id}"

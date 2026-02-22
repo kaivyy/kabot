@@ -1,8 +1,9 @@
 import pytest
 
+
 @pytest.mark.asyncio
 async def test_send_agent_message():
-    from kabot.agent.agent_comm import AgentComm, AgentMessage
+    from kabot.agent.agent_comm import AgentComm
     from kabot.bus.queue import MessageBus
 
     bus = MessageBus()

@@ -10,7 +10,6 @@ Examples:
 
 from typing import TypedDict
 
-
 DEFAULT_AGENT_ID = "main"
 DEFAULT_MAIN_KEY = "main"
 DEFAULT_ACCOUNT_ID = "default"
@@ -222,10 +221,8 @@ def parse_agent_session_key(session_key: str) -> ParsedSessionKey | None:
         return result
 
     # Check for thread suffix
-    thread_idx = -1
     for i, part in enumerate(parts):
         if part == "thread" and i + 1 < len(parts):
-            thread_idx = i
             result["thread_id"] = parts[i + 1]
             parts = parts[:i]  # Remove thread suffix
             break

@@ -1,8 +1,6 @@
 """Tests for vector store."""
 
-import pytest
-from pathlib import Path
-from kabot.memory.vector_store import VectorStore, SearchResult
+from kabot.memory.vector_store import VectorStore
 
 
 def test_add_and_search(tmp_path):

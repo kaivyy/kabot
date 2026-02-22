@@ -1,9 +1,11 @@
 """Tests for Windows native integration (Phase 12 - Task 36)."""
 
-import pytest
 import sys
-from unittest.mock import patch, MagicMock
-from kabot.core.windows import wsl_detect, clip_copy, get_windows_info
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from kabot.core.windows import clip_copy, get_windows_info, wsl_detect
 
 
 def test_wsl_detect_not_linux():

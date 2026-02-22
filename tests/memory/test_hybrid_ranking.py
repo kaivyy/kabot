@@ -1,6 +1,6 @@
 """Unit tests for hybrid memory ranking helpers (temporal decay + MMR)."""
 
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 from kabot.memory.chroma_memory import ChromaMemoryManager
 

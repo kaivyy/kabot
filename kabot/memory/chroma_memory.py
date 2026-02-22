@@ -1,19 +1,18 @@
 """ChromaDB-based memory manager with Ollama embeddings and SQLite metadata."""
 
-import uuid
 import hashlib
-import sqlite3
-import re
 import math
-from pathlib import Path
+import re
+import sqlite3
+import uuid
 from datetime import datetime, timezone
-from typing import Any, Optional
+from pathlib import Path
 
 from loguru import logger
 from rank_bm25 import BM25Okapi
 
-from .sentence_embeddings import SentenceEmbeddingProvider
 from .ollama_embeddings import OllamaEmbeddingProvider
+from .sentence_embeddings import SentenceEmbeddingProvider
 from .sqlite_store import SQLiteMetadataStore
 
 
@@ -500,7 +499,8 @@ class ChromaMemoryManager:
             for rank, item in enumerate(vector_results):
                 # Use message_id or fact_id as unique key
                 item_id = item.get('message_id') or item.get('fact_id')
-                if not item_id: continue
+                if not item_id:
+                    continue
 
                 if item_id not in fused_scores:
                     fused_scores[item_id] = {'item': item, 'score': 0.0}
@@ -512,7 +512,8 @@ class ChromaMemoryManager:
             if self.enable_hybrid_memory:
                 for rank, item in enumerate(bm25_results):
                     item_id = item.get('message_id') or item.get('fact_id')
-                    if not item_id: continue
+                    if not item_id:
+                        continue
 
                     if item_id not in fused_scores:
                         fused_scores[item_id] = {'item': item, 'score': 0.0}

@@ -1,17 +1,25 @@
 """Test per-agent model switching functionality."""
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from pathlib import Path
 
 
 @pytest.mark.asyncio
 async def test_agent_uses_override_model(tmp_path):
     """Test that agent with model override uses the correct model."""
-    from kabot.agent.loop import AgentLoop
-    from kabot.bus.queue import MessageBus
-    from kabot.bus.events import InboundMessage
-    from kabot.config.schema import Config, AgentConfig, AgentsConfig, AgentBinding, AgentBindingMatch, PeerMatch
     from datetime import datetime
+
+    from kabot.agent.loop import AgentLoop
+    from kabot.bus.events import InboundMessage
+    from kabot.bus.queue import MessageBus
+    from kabot.config.schema import (
+        AgentBinding,
+        AgentBindingMatch,
+        AgentConfig,
+        AgentsConfig,
+        Config,
+        PeerMatch,
+    )
 
     # Setup config with two agents: one with model override, one without
     config = Config()
@@ -63,11 +71,12 @@ async def test_agent_uses_override_model(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_uses_default_model_when_no_override(tmp_path):
     """Test that agent without model override uses default model."""
-    from kabot.agent.loop import AgentLoop
-    from kabot.bus.queue import MessageBus
-    from kabot.bus.events import InboundMessage
-    from kabot.config.schema import Config, AgentConfig, AgentsConfig
     from datetime import datetime
+
+    from kabot.agent.loop import AgentLoop
+    from kabot.bus.events import InboundMessage
+    from kabot.bus.queue import MessageBus
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
 
     # Setup config with agent without model override
     config = Config()
@@ -109,11 +118,12 @@ async def test_agent_uses_default_model_when_no_override(tmp_path):
 @pytest.mark.asyncio
 async def test_instance_agent_binding_forces_agent_model_and_fallbacks(tmp_path):
     """Instance agent_binding should route to bound agent and use agent fallbacks."""
-    from kabot.agent.loop import AgentLoop
-    from kabot.bus.queue import MessageBus
-    from kabot.bus.events import InboundMessage
-    from kabot.config.schema import Config, AgentConfig, AgentsConfig, AgentModelConfig
     from datetime import datetime
+
+    from kabot.agent.loop import AgentLoop
+    from kabot.bus.events import InboundMessage
+    from kabot.bus.queue import MessageBus
+    from kabot.config.schema import AgentConfig, AgentModelConfig, AgentsConfig, Config
 
     config = Config()
     config.agents = AgentsConfig(

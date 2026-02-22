@@ -1,8 +1,9 @@
 """Test plugin system integration into agent loop."""
 
+from unittest.mock import MagicMock
+
 import pytest
-from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+
 from kabot.agent.loop import AgentLoop
 from kabot.bus.queue import MessageBus
 

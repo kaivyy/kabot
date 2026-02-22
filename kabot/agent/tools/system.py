@@ -1,9 +1,11 @@
 """System hardware information tool."""
 
-import platform
 import asyncio
+import platform
 from typing import Any
+
 from kabot.agent.tools.base import Tool
+
 
 class SystemInfoTool(Tool):
     """Tool to retrieve detailed hardware and OS specifications."""
@@ -31,7 +33,7 @@ class SystemInfoTool(Tool):
         elif platform.system() == "Darwin":
              return await self._get_mac_specs()
         return f"System info not fully supported for OS: {platform.system()}"
-    
+
     async def _get_windows_specs(self) -> str:
         script = """
         $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
@@ -40,14 +42,14 @@ class SystemInfoTool(Tool):
         $gpu = Get-CimInstance Win32_VideoController
         $disks = Get-CimInstance Win32_DiskDrive
         $os = Get-CimInstance Win32_OperatingSystem | Select-Object -First 1
-        
+
         $cpuStr = "$($cpu.Name) ($($cpu.NumberOfCores) Cores, $($cpu.NumberOfLogicalProcessors) Threads)"
         $ramTotal = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
         $ramStr = "$ramTotal GB Total`n" + ($ram | ForEach-Object { "  - $($_.Capacity / 1GB)GB $($_.Manufacturer) @ $($_.Speed)MHz" } | Out-String)
         $gpuStr = ($gpu | ForEach-Object { "- $($_.Name) ($([math]::Round($_.AdapterRAM / 1GB, 2))GB VRAM)" } | Out-String)
         $diskStr = ($disks | ForEach-Object { "- $($_.Model) ($([math]::Round($_.Size / 1GB, 2))GB)" } | Out-String)
         $osStr = "$($os.Caption) $($os.OSArchitecture) (Build $($os.BuildNumber))"
-        
+
         @"
 ### 💻 Hardware Specifications
 **CPU:** $cpuStr
@@ -81,7 +83,7 @@ $diskStr
         # Check if running in Termux (Android)
         import os
         is_termux = "com.termux" in os.environ.get("PREFIX", "")
-        
+
         if is_termux:
             script = """
             cpu=$(lscpu | grep "Model name:" | sed 's/Model name://' | xargs || getprop ro.soc.model || echo "ARM Processor")
@@ -103,7 +105,7 @@ $diskStr
             gpu=$(lspci | grep -i vga | awk -F': ' '{print $2}' || lshw -C display 2>/dev/null | grep product | awk -F': ' '{print $2}' | xargs || echo "Unknown GPU")
             disk=$(lsblk -d -o NAME,SIZE,MODEL | grep -v "loop" | awk 'NR>1 {print "- " $1 " (" $2 ") " $3}')
             os=$(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')
-            
+
             echo "### 🐧 Linux Hardware Specifications"
             echo "**CPU:** $cpu ($cores Cores)"
             echo "**RAM:** ~${ram}GB Total"
@@ -113,7 +115,7 @@ $diskStr
             echo "**OS:** $os"
             """
         return await self._run_shell(script)
-        
+
     async def _get_mac_specs(self) -> str:
         script = """
         cpu=$(sysctl -n machdep.cpu.brand_string || sysctl -n machdep.cpu.model)
@@ -123,7 +125,7 @@ $diskStr
         disk=$(system_profiler SPStorageDataType | awk '/Capacity:/ {print "- " $2 " " $3}' | head -n 1)
         os=$(sw_vers -productName)
         os_ver=$(sw_vers -productVersion)
-        
+
         echo "### 🍎 macOS Hardware Specifications"
         echo "**CPU:** $cpu ($cores Cores)"
         echo "**RAM:** ${ram}GB Total"

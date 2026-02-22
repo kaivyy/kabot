@@ -1,7 +1,8 @@
 """Tests for explicit exec approval flow in AgentLoop."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from kabot.agent.loop import AgentLoop
 from kabot.bus.events import InboundMessage, OutboundMessage

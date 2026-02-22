@@ -1,12 +1,20 @@
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+
 
 @pytest.mark.asyncio
 async def test_agent_loop_routes_to_correct_agent(tmp_path):
     from kabot.agent.loop import AgentLoop
-    from kabot.bus.queue import MessageBus
     from kabot.bus.events import InboundMessage
-    from kabot.config.schema import Config, AgentsConfig, AgentConfig, AgentBinding, AgentBindingMatch
+    from kabot.bus.queue import MessageBus
+    from kabot.config.schema import (
+        AgentBinding,
+        AgentBindingMatch,
+        AgentConfig,
+        AgentsConfig,
+        Config,
+    )
 
     config = Config(
         agents=AgentsConfig(

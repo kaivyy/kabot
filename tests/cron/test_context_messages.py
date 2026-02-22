@@ -1,5 +1,5 @@
-import pytest
 from kabot.agent.tools.cron import build_reminder_context
+
 
 def test_build_reminder_context():
     history = [

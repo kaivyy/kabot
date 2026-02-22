@@ -9,16 +9,22 @@ from typing import Any
 from kabot.agent.cron_fallback_nlp import (
     CRON_MANAGEMENT_OPS,
     CRON_MANAGEMENT_TERMS,
-    build_cycle_title as nlp_build_cycle_title,
-    build_group_id as nlp_build_group_id,
     extract_cycle_schedule,
     extract_explicit_schedule_title,
     extract_new_schedule_title,
     extract_recurring_schedule,
     extract_reminder_message,
     extract_weather_location,
-    make_unique_schedule_title as nlp_make_unique_schedule_title,
     required_tool_for_query,
+)
+from kabot.agent.cron_fallback_nlp import (
+    build_cycle_title as nlp_build_cycle_title,
+)
+from kabot.agent.cron_fallback_nlp import (
+    build_group_id as nlp_build_group_id,
+)
+from kabot.agent.cron_fallback_nlp import (
+    make_unique_schedule_title as nlp_make_unique_schedule_title,
 )
 from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.bus.events import InboundMessage

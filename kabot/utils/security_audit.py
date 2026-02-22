@@ -3,7 +3,7 @@
 import os
 import re
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from kabot.utils.windows_acl import WindowsACL
 
@@ -43,21 +43,21 @@ class SecurityAuditor:
     def scan_secrets(self) -> List[Dict[str, Any]]:
         """Scan workspace for exposed secrets."""
         findings = []
-        
+
         # Files to ignore
         ignore_dirs = {".git", "__pycache__", ".pytest_cache", ".worktrees", "venv", ".venv"}
-        
+
         for root, dirs, files in os.walk(self.workspace_path):
             # Prune ignore dirs
             dirs[:] = [d for d in dirs if d not in ignore_dirs]
-            
+
             for file in files:
                 file_path = Path(root) / file
-                
+
                 # Skip binary files
                 if file_path.suffix.lower() in {".png", ".jpg", ".pyc", ".db", ".exe"}:
                     continue
-                    
+
                 try:
                     content = file_path.read_text(errors="ignore")
                     for name, pattern in SECRET_PATTERNS.items():

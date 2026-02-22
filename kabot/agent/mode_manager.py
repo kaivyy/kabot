@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+
 class ModeManager:
     def __init__(self, config_path: Path):
         self.config_path = Path(config_path)

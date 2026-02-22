@@ -1,11 +1,12 @@
 """Browser automation tool using Playwright."""
 
-import asyncio
-from typing import Any, Dict, Optional
-from playwright.async_api import async_playwright
+from typing import Any, Optional
+
 from loguru import logger
+from playwright.async_api import async_playwright
 
 from kabot.agent.tools.base import Tool
+
 
 class BrowserTool(Tool):
     """Tool for web browsing and screenshots using Playwright."""
@@ -58,7 +59,7 @@ class BrowserTool(Tool):
         try:
             if action == "launch":
                 return await self._launch(**kwargs)
-            
+
             if not self.page:
                 await self._launch()
 

@@ -4,7 +4,6 @@ Status and Benchmark services for Kabot.
 Provides system health information and LLM performance benchmarking.
 """
 
-import asyncio
 import logging
 import platform
 import sys
@@ -49,7 +48,7 @@ class StatusService:
 
         lines = [
             "📊 *Kabot System Status*",
-            f"─────────────────────────",
+            "─────────────────────────",
             f"⏱ *Uptime*: {uptime}",
             f"🕐 *Time*: {now}",
             f"🐍 *Python*: {sys.version.split()[0]}",
@@ -62,8 +61,8 @@ class StatusService:
             mem = proc.memory_info()
             cpu = psutil.cpu_percent(interval=0.1)
             lines.extend([
-                f"",
-                f"🖥 *System Resources*",
+                "",
+                "🖥 *System Resources*",
                 f"  CPU: {cpu}%",
                 f"  RAM (bot): {mem.rss / 1024 / 1024:.1f} MB",
                 f"  RAM (total): {psutil.virtual_memory().percent}%",
@@ -79,8 +78,8 @@ class StatusService:
             if self._request_count > 0 else 0
         )
         lines.extend([
-            f"",
-            f"📈 *Request Stats*",
+            "",
+            "📈 *Request Stats*",
             f"  Total: {self._request_count}",
             f"  Errors: {self._error_count} ({error_rate:.1f}%)",
             f"  Avg Latency: {avg_latency:.0f}ms",
@@ -92,8 +91,8 @@ class StatusService:
             provider = getattr(self._agent_loop, 'provider', None)
             provider_name = type(provider).__name__ if provider else 'unknown'
             lines.extend([
-                f"",
-                f"🧠 *Active Model*",
+                "",
+                "🧠 *Active Model*",
                 f"  Provider: {provider_name}",
                 f"  Model: {model}",
             ])
@@ -111,10 +110,10 @@ class BenchmarkService:
     async def run_benchmark(self, models: list[str] | None = None) -> str:
         """
         Run a standardized benchmark against one or more models.
-        
+
         Args:
             models: List of model names to benchmark. Uses defaults if None.
-        
+
         Returns:
             Formatted benchmark results table.
         """

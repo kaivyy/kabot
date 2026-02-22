@@ -1,6 +1,7 @@
 # tests/cron/test_parse.py
 from kabot.cron.parse import parse_absolute_time_ms, parse_relative_time_ms
 
+
 def test_iso_timestamp():
     result = parse_absolute_time_ms("2026-02-15T10:00:00+07:00")
     assert isinstance(result, int)

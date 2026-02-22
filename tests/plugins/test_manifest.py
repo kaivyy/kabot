@@ -1,8 +1,5 @@
 """Tests for plugin manifest system (Phase 10)."""
 
-import json
-import pytest
-from pathlib import Path
 from kabot.plugins.loader import PluginManifest
 
 

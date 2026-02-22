@@ -2,9 +2,10 @@
 import argparse
 import hashlib
 import json
-import os
-import requests
 from pathlib import Path
+
+import requests
+
 
 def compute_sha256(path: Path) -> str:
     h = hashlib.sha256()

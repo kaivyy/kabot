@@ -1,17 +1,19 @@
 import asyncio
+
 from kabot.config.loader import load_config
 from kabot.providers.litellm_provider import LiteLLMProvider
 
+
 async def test_openai():
     config = load_config()
-    
+
     # Force OpenAI provider for this test
     # We look for a model that starts with "openai/" or just use gpt-4o as default test
     print("Testing OpenAI connection...")
-    
+
     # Manually construct provider from config
     p = config.providers.openai
-    
+
     if not p:
         print("❌ OpenAI provider not found in config")
         return
@@ -21,7 +23,7 @@ async def test_openai():
     if not api_key and p.profiles and p.active_profile in p.profiles:
         profile = p.profiles[p.active_profile]
         api_key = profile.api_key or profile.oauth_token
-        
+
     if not api_key:
         print(f"❌ No API key found for OpenAI (Active Profile: {p.active_profile})")
         return

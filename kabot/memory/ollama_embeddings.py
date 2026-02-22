@@ -1,9 +1,8 @@
 """Ollama embedding provider for local embeddings."""
 
-import httpx
 import hashlib
-from typing import Any
 
+import httpx
 from loguru import logger
 
 

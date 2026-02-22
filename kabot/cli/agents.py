@@ -1,7 +1,8 @@
 """CLI commands for managing multi-agent configuration."""
 
-import typer
 from pathlib import Path
+
+import typer
 from rich.console import Console
 from rich.table import Table
 

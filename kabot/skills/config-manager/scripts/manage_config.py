@@ -1,6 +1,5 @@
-import json
-import sys
 import argparse
+import json
 from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".kabot" / "config.json"
@@ -38,12 +37,12 @@ def set_value(key, value):
             current = current[k]
         else:
             current = current[k]
-    
+
     try:
         val = json.loads(value)
-    except:
+    except Exception:
         val = value
-    
+
     current[keys[-1]] = val
     save_config(config)
     print(f"Updated {key}")
@@ -51,18 +50,18 @@ def set_value(key, value):
 def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command")
-    
+
     p_get = subparsers.add_parser("get")
     p_get.add_argument("key")
-    
+
     p_set = subparsers.add_parser("set")
     p_set.add_argument("key")
     p_set.add_argument("value")
-    
+
     subparsers.add_parser("list")
-    
+
     args = parser.parse_args()
-    
+
     if args.command == "get":
         val = get_value(args.key)
         print(json.dumps(val, indent=2) if val is not None else "null")

@@ -1,6 +1,7 @@
 """Utility tools for AutoPlanner."""
 
 from pathlib import Path
+
 from kabot.agent.tools.base import Tool
 
 

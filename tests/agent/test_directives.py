@@ -1,6 +1,6 @@
 """Tests for inline directives parser."""
 
-from kabot.agent.directives import DirectiveParser, ParsedDirectives
+from kabot.agent.directives import DirectiveParser
 
 
 def test_parse_think_directive():

@@ -4,13 +4,13 @@ Uses the same public client_id as OpenAI Codex CLI to authenticate
 users with their ChatGPT subscription via browser login.
 """
 
-import secrets
-import hashlib
-import base64
 import asyncio
+import base64
+import hashlib
+import secrets
 import webbrowser
-from typing import Dict, Any, Optional
-from urllib.parse import urlencode, urlparse, parse_qs
+from typing import Any, Dict, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 from aiohttp import web

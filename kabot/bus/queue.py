@@ -2,7 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Callable, Awaitable
+from typing import Awaitable, Callable
 
 from loguru import logger
 

@@ -1,5 +1,7 @@
-from kabot.config.schema import LoggingConfig, Config
 import pytest
+
+from kabot.config.schema import Config, LoggingConfig
+
 
 def test_logging_config_defaults():
     # This should fail initially because LoggingConfig is not defined

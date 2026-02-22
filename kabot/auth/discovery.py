@@ -1,13 +1,14 @@
 ﻿import os
+import re
 import shutil
 import sys
-import re
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Dict, Optional
+
 
 class ExtractionEngine:
     """Safely extracts secrets from source files using Regex."""
-    
+
     @staticmethod
     def extract_from_file(file_path: Path, patterns: Dict[str, str]) -> Dict[str, str]:
         """
@@ -17,7 +18,7 @@ class ExtractionEngine:
         results = {}
         if not file_path.exists():
             return results
-            
+
         try:
             content = file_path.read_text(encoding="utf-8")
             for name, pattern in patterns.items():
@@ -71,5 +72,5 @@ def find_node_module(module_name: str) -> Optional[Path]:
         module_path = base / module_name
         if module_path.exists():
             return module_path
-            
+
     return None

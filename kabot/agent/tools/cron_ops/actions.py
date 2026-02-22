@@ -8,7 +8,6 @@ from typing import Any
 from kabot.agent.tools.cron_ops.schedule import build_schedule, format_timestamp, generate_group_id
 from kabot.i18n.catalog import tr as i18n_t
 
-
 REMINDER_CONTEXT_MARKER = "\n\nRecent context:\n"
 MAX_CONTEXT_PER_MESSAGE = 220
 MAX_CONTEXT_TOTAL = 700

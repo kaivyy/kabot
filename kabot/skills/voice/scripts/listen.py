@@ -2,9 +2,9 @@
 """
 Speech-to-Text (STT) script using OpenAI Whisper.
 """
-import sys
 import argparse
 import os
+import sys
 from pathlib import Path
 
 try:

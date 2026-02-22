@@ -1,5 +1,4 @@
 """Tests for Ollama URL handler."""
-import pytest
 from unittest.mock import patch
 
 

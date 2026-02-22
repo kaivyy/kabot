@@ -28,8 +28,8 @@ def _make_job(
 
 @pytest.mark.asyncio
 async def test_build_bus_cron_callback_uses_fallback_and_publishes():
-    from kabot.cron.callbacks import build_bus_cron_callback
     from kabot.bus.events import OutboundMessage
+    from kabot.cron.callbacks import build_bus_cron_callback
 
     provider = MagicMock()
     provider.chat = AsyncMock(

@@ -1,8 +1,9 @@
 """Stock analysis tool for AI-powered investment analysis."""
 
-import httpx
-from typing import Any
 from datetime import datetime
+from typing import Any
+
+import httpx
 
 from kabot.agent.tools.base import Tool
 
@@ -61,7 +62,7 @@ Example analysis you should provide:
         """
         try:
             clean_symbol = symbol.upper().strip()
-            
+
             # Convert days to int safely
             try:
                 days_int = int(days)

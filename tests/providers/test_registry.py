@@ -1,7 +1,7 @@
 """Tests for Model Registry and Metadata."""
-import pytest
 from kabot.providers.models import ModelMetadata, ModelPricing
 from kabot.providers.registry import ModelRegistry
+
 
 def test_model_metadata_creation():
     """Verify ModelMetadata can be instantiated."""
@@ -33,7 +33,7 @@ def test_register_and_get_model():
         pricing=ModelPricing()
     )
     registry.register(metadata)
-    
+
     retrieved = registry.get_model("test/model")
     assert retrieved == metadata
     assert retrieved.name == "Test Model"
@@ -47,13 +47,13 @@ def test_list_models():
     """Test listing models in the registry."""
     registry = ModelRegistry()
     registry.clear() # Start clean
-    
+
     m1 = ModelMetadata(id="p1/m1", name="M1", provider="p1", context_window=1, pricing=ModelPricing())
     m2 = ModelMetadata(id="p2/m2", name="M2", provider="p2", context_window=1, pricing=ModelPricing())
-    
+
     registry.register(m1)
     registry.register(m2)
-    
+
     models = registry.list_models()
     assert len(models) == 2
     ids = [m.id for m in models]
@@ -80,7 +80,7 @@ def test_short_id_resolution():
     metadata = registry.get_model("gpt-4o")
     assert metadata is not None
     assert metadata.id == "openai/gpt-4o"
-    
+
     # "kimi-k2.5" should resolve to "moonshot/kimi-k2.5"
     metadata = registry.get_model("kimi-k2.5")
     assert metadata is not None
@@ -99,10 +99,10 @@ def test_plugin_loading():
 def test_db_persistence(tmp_path):
     """Verify models are persisted to and loaded from SQLite."""
     from kabot.memory.sqlite_store import SQLiteMetadataStore
-    
+
     db_path = tmp_path / "test_metadata.db"
     db = SQLiteMetadataStore(db_path)
-    
+
     model_data = {
         "id": "scanned/model",
         "name": "Scanned Model",
@@ -113,13 +113,13 @@ def test_db_persistence(tmp_path):
         "capabilities": ["vision"]
     }
     db.save_model(model_data)
-    
+
     # Create a new registry with this DB
     registry = ModelRegistry()
     registry._db = db # Force set DB for testing
     registry.clear()
     registry.load_scanned_models()
-    
+
     metadata = registry.get_model("scanned/model")
     assert metadata is not None
     assert metadata.name == "Scanned Model"
@@ -132,17 +132,17 @@ def test_model_resolution():
     registry.clear()
     registry._aliases = {}
     registry.load_catalog()
-    
+
     # 1. User alias
     user_aliases = {"pro": "openai/gpt-4o"}
     assert registry.resolve("pro", user_aliases) == "openai/gpt-4o"
-    
+
     # 2. Registry alias (from catalog)
     assert registry.resolve("sonnet") == "anthropic/claude-3-5-sonnet-20241022"
     assert registry.resolve("gpt4") == "openai/gpt-4o"
-    
+
     # 3. Short ID resolution
     assert registry.resolve("gpt-4o") == "openai/gpt-4o"
-    
+
     # 4. Unknown stays same
     assert registry.resolve("unknown-model") == "unknown-model"

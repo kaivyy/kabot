@@ -1,6 +1,5 @@
-import pytest
-import asyncio
 from kabot.gateway.middleware.rate_limit import RateLimiter
+
 
 def test_rate_limiter_allows_requests():
     """Test that rate limiter allows requests within limit."""

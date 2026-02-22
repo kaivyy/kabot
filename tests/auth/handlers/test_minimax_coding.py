@@ -1,5 +1,4 @@
 """Tests for MiniMax Coding Plan handler."""
-import pytest
 from unittest.mock import patch
 
 

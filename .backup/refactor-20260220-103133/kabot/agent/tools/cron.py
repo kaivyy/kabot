@@ -8,7 +8,6 @@ from kabot.agent.tools.base import Tool
 from kabot.cron.service import CronService
 from kabot.cron.types import CronSchedule
 
-
 REMINDER_CONTEXT_MARKER = "\n\nRecent context:\n"
 MAX_CONTEXT_PER_MESSAGE = 220
 MAX_CONTEXT_TOTAL = 700
@@ -43,7 +42,7 @@ def build_reminder_context(
 
 class CronTool(Tool):
     """Tool to schedule reminders and recurring tasks."""
-    
+
     def __init__(self, cron_service: CronService):
         self._cron = cron_service
         self._channel = ""
@@ -56,11 +55,11 @@ class CronTool(Tool):
         self._chat_id = chat_id
         if history is not None:
             self._history = history
-    
+
     @property
     def name(self) -> str:
         return "cron"
-    
+
     @property
     def description(self) -> str:
         return """Manage scheduled cron jobs (reminders, recurring tasks, timed events).
@@ -93,7 +92,7 @@ EXAMPLES:
 - Reminder: action="add", message="Waktunya meeting!", at_time="2026-02-15T10:00:00+07:00"
 - Daily task: action="add", message="Backup database", cron_expr="0 2 * * *"
 - Every hour: action="add", message="Check inbox", every_seconds=3600"""
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
@@ -164,7 +163,7 @@ EXAMPLES:
             },
             "required": ["action"]
         }
-    
+
     async def execute(
             self,
             action: str,
@@ -223,7 +222,7 @@ EXAMPLES:
                 return self._get_status()
             case _:
                 return f"Unknown action: {action}"
-    
+
     def _add_job(
         self,
         message: str,
@@ -238,7 +237,7 @@ EXAMPLES:
     ) -> str:
         if not message:
             return "Error: message is required for add"
-        
+
         # logger.debug(f"Adding job: msg='{message}', channel='{self._channel}', chat_id='{self._chat_id}'")
         if not self._channel or not self._chat_id:
             return "Error: no session context (channel/chat_id)"
@@ -269,7 +268,7 @@ EXAMPLES:
             return error
         if not schedule:
             return "Error: either at_time, every_seconds, or cron_expr is required"
-        
+
         job = self._cron.add_job(
             name=(group_title or message)[:30],
             schedule=schedule,
@@ -284,7 +283,7 @@ EXAMPLES:
         if resolved_group_id:
             return f"Created job '{job.name}' (id: {job.id}, group: {resolved_group_id}, title: {group_title})"
         return f"Created job '{job.name}' (id: {job.id})"
-    
+
     def _list_jobs(self) -> str:
         jobs = self._cron.list_jobs()
         if not jobs:
@@ -323,7 +322,7 @@ EXAMPLES:
                 f"- {info['title']} (group_id: {gid}, jobs: {len(group_jobs)}, next: {next_run_str})"
             )
         return "Schedule groups:\n" + "\n".join(lines)
-    
+
     def _remove_job(self, job_id: str | None) -> str:
         if not job_id:
             return "Error: job_id is required for remove"

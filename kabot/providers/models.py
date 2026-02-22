@@ -1,5 +1,7 @@
-﻿from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+﻿from typing import List, Optional
+
+from pydantic import BaseModel, Field
+
 
 class ModelPricing(BaseModel):
     """Pricing metadata for a model (USD per 1M tokens)."""
@@ -19,7 +21,7 @@ class ModelMetadata(BaseModel):
     capabilities: List[str] = [] # vision, tools, reasoning, json
     is_premium: bool = False # Whether it's part of the static catalog
     description: Optional[str] = None
-    
+
     @property
     def short_id(self) -> str:
         """Returns the ID without the provider prefix if present."""

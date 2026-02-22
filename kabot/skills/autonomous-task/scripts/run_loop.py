@@ -3,11 +3,11 @@
 Autonomous Task Loop for Kabot.
 Implements a simple ReAct loop: Thought -> Action -> Observation -> Correction.
 """
-import sys
 import argparse
-import subprocess
-import os
 import json
+import os
+import subprocess
+import sys
 
 # Try to import litellm
 try:
@@ -58,7 +58,7 @@ def get_next_action(history, goal, model):
 
     try:
         return json.loads(response.choices[0].message.content)
-    except:
+    except Exception:
         # Fallback if valid JSON not returned
         return {"thought": "Error parsing LLM response", "status": "GIVE_UP"}
 
@@ -92,7 +92,7 @@ def run_loop(goal, max_retries=3, model="gpt-4o"):
         output = f"STDOUT: {out}\nSTDERR: {err}\nEXIT_CODE: {code}"
         print(f"👀 Result: Exit Code {code}")
         if code != 0:
-            print(f"⚠️ Error detected in output.")
+            print("⚠️ Error detected in output.")
 
         history.append({
             "step": i+1,

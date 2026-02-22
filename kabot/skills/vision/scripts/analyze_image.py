@@ -3,12 +3,12 @@
 Vision Analysis Script for Kabot.
 Uses LiteLLM to send images to multimodal models.
 """
-import sys
 import argparse
 import base64
-import os
-from pathlib import Path
 import mimetypes
+import os
+import sys
+from pathlib import Path
 
 # Try to import litellm, fail gracefully if not installed
 try:

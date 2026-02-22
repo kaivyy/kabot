@@ -1,5 +1,3 @@
-import pytest
-from pathlib import Path
 
 def test_registry_initialization(tmp_path):
     from kabot.agent.agent_registry import AgentRegistry

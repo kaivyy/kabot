@@ -1,11 +1,11 @@
 """Test Telegram command registration."""
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
 from telegram import BotCommand
 
+from kabot.bus.queue import MessageBus
 from kabot.channels.telegram import TelegramChannel
 from kabot.config.schema import TelegramConfig
-from kabot.bus.queue import MessageBus
 from kabot.core.command_router import CommandRouter
 
 

@@ -1,6 +1,8 @@
 import pytest
+
 from kabot.agent.tools.cron import CronTool
 from kabot.cron.service import CronService
+
 
 def test_flat_params_recovery():
     """Test that flat params are recovered into proper structure.
@@ -10,8 +12,8 @@ def test_flat_params_recovery():
 
     Instead of nested structure. Our tool should handle both formats.
     """
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmpdir:
         svc = CronService(Path(tmpdir) / "jobs.json")
@@ -33,8 +35,8 @@ def test_flat_params_recovery():
 @pytest.mark.asyncio
 async def test_flat_params_execution():
     """Test that execute method accepts flat params."""
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmpdir:
         svc = CronService(Path(tmpdir) / "jobs.json")

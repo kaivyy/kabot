@@ -1,5 +1,4 @@
 """Test channel instances configuration."""
-import pytest
 from kabot.config.schema import ChannelInstance, ChannelsConfig
 
 

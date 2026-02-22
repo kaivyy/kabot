@@ -19,8 +19,8 @@ def test_openai_oauth_handler_has_name():
 def test_openai_oauth_constants():
     """OpenAI OAuth should use real Codex PKCE credentials."""
     from kabot.auth.handlers.openai_oauth import (
-        OPENAI_CLIENT_ID,
         OPENAI_AUTHORIZE_URL,
+        OPENAI_CLIENT_ID,
         OPENAI_TOKEN_URL,
     )
     assert OPENAI_CLIENT_ID == "app_EMoamEEZ73f0CkXaXp7hrann"

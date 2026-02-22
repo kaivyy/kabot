@@ -2,7 +2,7 @@
 
 import pytest
 
-from kabot.cron.service import CronService, MAX_RUN_HISTORY
+from kabot.cron.service import MAX_RUN_HISTORY, CronService
 from kabot.cron.types import CronSchedule
 
 

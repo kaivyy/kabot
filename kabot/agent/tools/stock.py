@@ -1,7 +1,8 @@
 """Stock tool for fetching stock market information."""
 
-import httpx
 from typing import Any
+
+import httpx
 
 from kabot.agent.tools.base import Tool
 
@@ -121,7 +122,7 @@ class StockTool(Tool):
 
                 return None
 
-        except Exception as e:
+        except Exception:
             return None
 
 

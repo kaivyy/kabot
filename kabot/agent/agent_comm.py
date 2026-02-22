@@ -1,7 +1,9 @@
 import asyncio
 import uuid
 from time import time
-from kabot.bus.queue import MessageBus, AgentMessage
+
+from kabot.bus.queue import AgentMessage, MessageBus
+
 
 class AgentComm:
     def __init__(self, bus: MessageBus, agent_id: str):

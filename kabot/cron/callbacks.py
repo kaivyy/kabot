@@ -51,10 +51,13 @@ async def render_cron_delivery_with_ai(provider: Any, model: str, job_message: s
         return None
 
     system_prompt = (
-        "You are Kabot. Rewrite reminder messages to sound natural and friendly in the same "
-        "language as the input. Keep it concise (max 2 short lines), no markdown, no technical notes."
+        "You are Kabot, a friendly AI assistant delivering a scheduled reminder to the user. "
+        "DETECT the language of the original reminder and rewrite it so it sounds totally natural, warm, and conversational EXCLUSIVELY in that same language. "
+        "Do NOT mention 'this is a reminder to deliver' or use formal templates like 'It is time to send'. "
+        "Just directly remind the user like a friend (e.g. 'Hey! Time for your meeting!', 'Halo! Waktunya buka WA ya 😊', 'Hola! Es hora de...'). "
+        "Keep it strictly under 2 short lines, no markdown."
     )
-    user_prompt = f"Reminder to deliver now: {reminder_text}"
+    user_prompt = f"Reminder note: {reminder_text}"
 
     try:
         response = await provider.chat(

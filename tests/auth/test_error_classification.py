@@ -1,5 +1,6 @@
 # tests/auth/test_error_classification.py
-from kabot.auth.errors import classify_auth_error, AuthErrorKind
+from kabot.auth.errors import AuthErrorKind, classify_auth_error
+
 
 def test_expired_token():
     result = classify_auth_error(401, "invalid_api_key")

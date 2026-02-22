@@ -1,14 +1,12 @@
 """Image generation tool using multi-provider support."""
 
-import os
-import asyncio
 from pathlib import Path
 from typing import Any
+
 import httpx
 from loguru import logger
 
 from kabot.agent.tools.base import Tool
-from kabot.providers.base import LLMProvider
 
 
 class ImageGenTool(Tool):
@@ -66,14 +64,14 @@ class ImageGenTool(Tool):
                 elif has_gemini:
                     logger.info("OpenAI not configured, falling back to Gemini")
                     return await self._generate_gemini(prompt, size, file_path)
-            
+
             if target_provider == "gemini":
                 if has_gemini:
                     return await self._generate_gemini(prompt, size, file_path)
                 elif has_openai:
                     logger.info("Gemini not configured, falling back to OpenAI")
                     return await self._generate_openai(prompt, size, file_path)
-            
+
             return "Error: No image generation provider (OpenAI/Gemini) is configured. Use 'kabot auth login' to set one up."
 
         except Exception as e:
@@ -92,7 +90,7 @@ class ImageGenTool(Tool):
             )
             if response.status_code != 200:
                 raise Exception(f"OpenAI Error: {response.text}")
-            
+
             image_url = response.json()["data"][0]["url"]
             img_res = await client.get(image_url)
             output_path.write_bytes(img_res.content)
@@ -100,12 +98,10 @@ class ImageGenTool(Tool):
 
     async def _generate_gemini(self, prompt: str, size: str, output_path: Path) -> str:
         """Generate image via Google Gemini (Imagen)."""
-        api_key = self.config.providers.gemini.api_key
         # Use the Google Generative AI endpoint for Imagen
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient():
             # Note: Imagen API typically uses a different endpoint or requires Vertex AI.
             # This implementation uses the standard Google AI Studio logic if available.
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3:predict?key={api_key}"
             # Placeholder for exact payload structure of Imagen 3
             # If the user has access to Imagen via AI Studio, the call would go here.
             # For now, if Imagen call fails, we provide a clear technical error.

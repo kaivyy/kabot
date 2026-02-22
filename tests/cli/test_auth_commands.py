@@ -1,7 +1,7 @@
 """Tests for auth CLI commands."""
+
 import pytest
 from typer.testing import CliRunner
-from unittest.mock import patch
 
 
 @pytest.fixture

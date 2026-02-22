@@ -51,7 +51,6 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     critic_threshold = 5 if is_weak_model else 7
 
     first_score = None
-    already_published = False
 
     plan = await loop._plan_task(msg.content)
     if plan:
@@ -180,7 +179,6 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 await loop.bus.publish_outbound(OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id, content=response.content
                 ))
-                already_published = True
 
             messages = loop.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
             if not response.has_tool_calls:

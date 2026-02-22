@@ -1,10 +1,12 @@
 """Tests for Just-In-Time OAuth token refresh with file locking."""
 
-import pytest
 import time
-from unittest.mock import AsyncMock, patch, MagicMock
-from kabot.config.schema import ProvidersConfig, ProviderConfig, AuthProfile
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from kabot.auth.refresh import TokenRefreshService
+from kabot.config.schema import AuthProfile, ProviderConfig
 
 
 @pytest.mark.asyncio

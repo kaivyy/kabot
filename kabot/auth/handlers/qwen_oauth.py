@@ -5,17 +5,15 @@ Uses device code grant: user gets a code, opens URL in browser to approve,
 Kabot polls the token endpoint until approved.
 """
 
+import base64
 import hashlib
 import secrets
 import time
-import base64
 import webbrowser
-from typing import Dict, Any, Optional
-from urllib.parse import urlencode
+from typing import Any, Dict, Optional
 
 import httpx
 from rich.console import Console
-from rich.prompt import Prompt
 
 from kabot.auth.handlers.base import AuthHandler
 
@@ -139,7 +137,7 @@ class QwenOAuthHandler(AuthHandler):
 
         # Show user code and verification URL
         console.print(f"\n[bold cyan]Your code: {user_code}[/bold cyan]")
-        console.print(f"[bold]Open this URL to approve:[/bold]")
+        console.print("[bold]Open this URL to approve:[/bold]")
         console.print(f"[link={verification_uri}]{verification_uri}[/link]\n")
 
         # Try to open browser

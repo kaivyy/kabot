@@ -4,15 +4,14 @@ Mirrors OpenClaw's extensions/google-antigravity-auth/index.ts.
 Uses the same client_id, client_secret, scopes, and token endpoint.
 """
 
-import asyncio
 import base64
 import hashlib
 import secrets
 import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
-from typing import Dict, Any, Optional
-from urllib.parse import urlencode, urlparse, parse_qs
+from typing import Any, Dict, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 from rich.console import Console

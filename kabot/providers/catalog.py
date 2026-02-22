@@ -144,7 +144,7 @@ STATIC_MODEL_CATALOG = [
         capabilities=["vision", "tools"],
         is_premium=True
     ),
-    
+
     # --- Google ---
     ModelMetadata(
         id="google/gemini-1.5-pro",
@@ -173,7 +173,7 @@ STATIC_MODEL_CATALOG = [
         capabilities=["vision", "tools", "json"],
         is_premium=True
     ),
-    
+
     # --- Moonshot (Kimi) ---
     ModelMetadata(
         id="moonshot/kimi-k2.5",
@@ -211,7 +211,7 @@ STATIC_MODEL_CATALOG = [
         capabilities=["coding", "tools"],
         is_premium=True
     ),
-    
+
     # --- MiniMax ---
     ModelMetadata(
         id="minimax/MiniMax-M2.1",
@@ -315,7 +315,7 @@ def populate_registry(registry):
     """Populate the registry with the static catalog."""
     for metadata in STATIC_MODEL_CATALOG:
         registry.register(metadata)
-        
+
     # Register common aliases matching OpenClaw's model-reference
     # OpenAI
     registry.register_alias("gpt4", "openai/gpt-4o")
@@ -331,22 +331,22 @@ def populate_registry(registry):
     registry.register_alias("sonnet-old", "anthropic/claude-3-5-sonnet-20240620")
     registry.register_alias("haiku", "anthropic/claude-3-5-haiku-20241022")
     registry.register_alias("opus", "anthropic/claude-3-opus-20240229")
-    
+
     # Google
     registry.register_alias("gemini", "google/gemini-1.5-pro")
     registry.register_alias("flash", "google/gemini-1.5-flash")
     registry.register_alias("gemini-pro", "google-gemini-cli/gemini-3-pro-preview")
-    
+
     # Moonshot
     registry.register_alias("kimi", "moonshot/kimi-k2.5")
     registry.register_alias("kimi-think", "moonshot/kimi-k2-thinking")
     registry.register_alias("kimi-fast", "moonshot/kimi-k2-turbo-preview")
     registry.register_alias("kimi-code", "kimi-coding/k2p5")
-    
+
     # MiniMax
     registry.register_alias("minimax", "minimax/MiniMax-M2.1")
     registry.register_alias("minimax-fast", "minimax/MiniMax-M2.1-lightning")
-    
+
     # Qwen & Others
     registry.register_alias("qwen-code", "qwen-portal/coder-model")
     registry.register_alias("glm", "zai/glm-4.7")

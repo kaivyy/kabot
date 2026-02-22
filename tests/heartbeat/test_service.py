@@ -1,6 +1,9 @@
-import pytest
 import asyncio
+
+import pytest
+
 from kabot.heartbeat.service import HeartbeatService
+
 
 @pytest.mark.asyncio
 async def test_heartbeat_starts_and_stops():

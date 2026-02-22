@@ -5,12 +5,11 @@ Registers all default commands with the CommandRouter.
 """
 
 import logging
-from typing import Any
 
 from kabot.core.command_router import CommandContext, CommandRouter
-from kabot.core.status import StatusService, BenchmarkService
 from kabot.core.doctor import DoctorService
-from kabot.core.update import UpdateService, SystemControl
+from kabot.core.status import BenchmarkService, StatusService
+from kabot.core.update import SystemControl, UpdateService
 
 logger = logging.getLogger(__name__)
 

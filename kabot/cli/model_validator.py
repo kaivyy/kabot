@@ -1,5 +1,6 @@
 """Model ID validation and alias resolution."""
 from typing import Optional
+
 from kabot.providers.registry import ModelRegistry
 
 

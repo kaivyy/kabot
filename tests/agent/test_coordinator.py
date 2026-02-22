@@ -1,6 +1,7 @@
 # tests/agent/test_coordinator.py
 import pytest
 
+
 @pytest.mark.asyncio
 async def test_delegate_task():
     from kabot.agent.coordinator import Coordinator

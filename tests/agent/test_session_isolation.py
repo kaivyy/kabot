@@ -1,6 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from kabot.agent.loop import AgentLoop
+
 
 @pytest.mark.asyncio
 async def test_process_isolated_no_history():

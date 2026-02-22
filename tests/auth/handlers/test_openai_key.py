@@ -1,6 +1,5 @@
 """Tests for OpenAI API Key handler."""
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 def test_openai_key_handler_exists():
@@ -18,8 +17,8 @@ def test_openai_key_handler_has_name():
 
 def test_openai_key_handler_inherits_base():
     """OpenAIKeyHandler should inherit from AuthHandler."""
-    from kabot.auth.handlers.openai_key import OpenAIKeyHandler
     from kabot.auth.handlers.base import AuthHandler
+    from kabot.auth.handlers.openai_key import OpenAIKeyHandler
     assert issubclass(OpenAIKeyHandler, AuthHandler)
 
 

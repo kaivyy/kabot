@@ -1,21 +1,23 @@
 """REST API endpoints for cron job management."""
 
 from aiohttp import web
+
 from kabot.cron.service import CronService
 from kabot.cron.types import CronSchedule
 
+
 def create_cron_routes(cron: CronService) -> web.RouteTableDef:
     routes = web.RouteTableDef()
-    
+
     @routes.get("/api/cron/status")
     async def status(request):
         return web.json_response(cron.status())
-    
+
     @routes.get("/api/cron/jobs")
     async def list_jobs(request):
         jobs = cron.list_jobs(include_disabled=True)
         return web.json_response([_serialize_job(j) for j in jobs])
-    
+
     @routes.post("/api/cron/jobs")
     async def add_job(request):
         data = await request.json()
@@ -38,7 +40,7 @@ def create_cron_routes(cron: CronService) -> web.RouteTableDef:
             delete_after_run=data.get("delete_after_run", schedule.kind == "at"),
         )
         return web.json_response(_serialize_job(job), status=201)
-    
+
     @routes.patch("/api/cron/jobs/{job_id}")
     async def update_job(request):
         job_id = request.match_info["job_id"]
@@ -47,27 +49,27 @@ def create_cron_routes(cron: CronService) -> web.RouteTableDef:
         if job:
             return web.json_response(_serialize_job(job))
         return web.json_response({"error": "Job not found"}, status=404)
-    
+
     @routes.delete("/api/cron/jobs/{job_id}")
     async def remove_job(request):
         job_id = request.match_info["job_id"]
         if cron.remove_job(job_id):
             return web.json_response({"status": "deleted"})
         return web.json_response({"error": "Job not found"}, status=404)
-    
+
     @routes.post("/api/cron/jobs/{job_id}/run")
     async def run_job(request):
         job_id = request.match_info["job_id"]
         if await cron.run_job(job_id, force=True):
             return web.json_response({"status": "executed"})
         return web.json_response({"error": "Job not found or disabled"}, status=404)
-    
+
     @routes.get("/api/cron/jobs/{job_id}/runs")
     async def get_runs(request):
         job_id = request.match_info["job_id"]
         history = cron.get_run_history(job_id)
         return web.json_response(history)
-    
+
     return routes
 
 

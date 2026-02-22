@@ -1,12 +1,10 @@
 """Tests for AutoPlanner execution with tool registry."""
 
-import pytest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
 
-from kabot.agent.tools.autoplanner import AutoPlanner, Plan, Step, ExecutionResult
-from kabot.agent.tools.registry import ToolRegistry
-from kabot.bus.queue import MessageBus
-from kabot.bus.events import OutboundMessage
+import pytest
+
+from kabot.agent.tools.autoplanner import AutoPlanner, Plan, Step
 
 
 class MockTool:

@@ -1,9 +1,10 @@
+
 import pytest
-import asyncio
-from pathlib import Path
+
+from kabot.agent.tools.cron import CronTool
 from kabot.cron.service import CronService
 from kabot.cron.types import CronSchedule
-from kabot.agent.tools.cron import CronTool
+
 
 @pytest.fixture
 def cron_tool(tmp_path):
@@ -60,7 +61,7 @@ async def test_run_action(cron_tool):
     svc.add_job("test", CronSchedule(kind="every", every_ms=60000), "hello",
                 deliver=True, channel="cli", to="direct")
     jobs = svc.list_jobs()
-    result = await tool.execute(action="run", job_id=jobs[0].id)
+    await tool.execute(action="run", job_id=jobs[0].id)
     assert len(executed) == 1
 
 @pytest.mark.asyncio

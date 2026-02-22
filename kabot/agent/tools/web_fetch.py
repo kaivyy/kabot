@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
+
 from kabot.agent.tools.base import Tool
 from kabot.agent.tools.web_cache import TTLCache
 
@@ -98,7 +99,7 @@ class WebFetchTool(Tool):
         except Exception as e:
             logger.warning(f"FireCrawl fallback failed: {e}")
             return None
-    
+
     @property
     def name(self) -> str:
         return "web_fetch"

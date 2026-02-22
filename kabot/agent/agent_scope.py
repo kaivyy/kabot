@@ -6,12 +6,13 @@ model assignments, and OpenClaw-compatible per-agent configs.
 """
 
 from pathlib import Path
+
 from kabot.config.schema import (
-    Config,
     AgentConfig,
     AgentModelConfig,
     AgentSandboxConfig,
     AgentToolsConfig,
+    Config,
 )
 
 
