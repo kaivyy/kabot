@@ -70,6 +70,8 @@ class HybridMemoryManager:
         # ChromaDB will be initialized lazily
         self._chroma_client = None
         self._collection = None
+        import threading
+        self._lock = threading.Lock()
 
     async def warmup(self):
         """Pre-load embedding model and ChromaDB in background (non-blocking)."""
@@ -83,7 +85,14 @@ class HybridMemoryManager:
 
     def _init_chroma(self):
         """Initialize ChromaDB connection lazily."""
-        if self._chroma_client is None:
+        if self._chroma_client is not None:
+            return
+
+        with self._lock:
+            # Double-check inside lock
+            if self._chroma_client is not None:
+                return
+
             try:
                 import chromadb
                 from chromadb.config import Settings

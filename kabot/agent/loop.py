@@ -355,7 +355,7 @@ class AgentLoop:
         self.tools.register(GetMemoryTool(memory_manager=self.memory))
 
         # Vector memory search tool (Phase 7)
-        self.tools.register(MemorySearchTool(store=self.vector_store))
+        self.tools.register(MemorySearchTool(store=lambda: self.vector_store))
 
         self.tools.register(WeatherTool())
         self.tools.register(StockTool())
@@ -452,11 +452,11 @@ class AgentLoop:
 
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
+        # Pre-warm embedding model in background IMMEDIATELY (non-blocking)
+        asyncio.create_task(self._warmup_memory())
+
         self._running = True
         logger.info("Agent loop started")
-
-        # Pre-warm embedding model in background (non-blocking)
-        asyncio.create_task(self._warmup_memory())
 
         # Phase 14: Emit lifecycle start event
         from kabot.bus.events import SystemEvent

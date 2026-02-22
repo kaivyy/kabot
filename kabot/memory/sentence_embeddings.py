@@ -20,10 +20,19 @@ class SentenceEmbeddingProvider:
         self._model = None
         self._cache = {}  # Simple LRU cache
         self._cache_size = 1000
+        import threading
+        self._lock = threading.Lock()
 
     def _load_model(self):
         """Lazy load the sentence-transformers model."""
-        if self._model is None:
+        if self._model is not None:
+            return
+
+        with self._lock:
+            # Double-check inside lock
+            if self._model is not None:
+                return
+
             try:
                 from sentence_transformers import SentenceTransformer
 

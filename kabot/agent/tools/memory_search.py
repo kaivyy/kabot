@@ -9,14 +9,20 @@ from kabot.memory.vector_store import VectorStore
 class MemorySearchTool(Tool):
     """Tool for searching memory semantically."""
 
-    def __init__(self, store: VectorStore):
+    def __init__(self, store: Any):
         """
         Initialize memory search tool.
 
         Args:
-            store: Vector store instance
+            store: Vector store instance or callable that returns it
         """
-        self.store = store
+        self._store_provider = store
+
+    @property
+    def store(self) -> VectorStore:
+        if callable(self._store_provider):
+            return self._store_provider()
+        return self._store_provider
 
     @property
     def name(self) -> str:
