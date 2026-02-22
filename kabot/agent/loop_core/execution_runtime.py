@@ -253,11 +253,32 @@ async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tup
             loop.resilience.on_success()
             return response, None
         except Exception as e:
-            error_str = str(e).lower()
+            error_str = str(e)
+            # Auto-retry without tools if model doesn't support tool calls (400 Bad Request)
+            if "400" in error_str:
+                try:
+                    logger.warning(
+                        f"Model {current_model} rejected tools (400), retrying as text-only..."
+                    )
+                    response = await loop.provider.chat(
+                        messages=messages,
+                        model=current_model,
+                    )
+                    if loop.auth_rotation and original_key is not None:
+                        loop.provider.api_key = original_key
+                    loop.last_model_used = current_model
+                    loop.resilience.on_success()
+                    return response, None
+                except Exception as e2:
+                    logger.warning(f"Text-only retry also failed for {current_model}: {e2}")
+                    last_error = e2
+                    continue
+
+            error_lower = error_str.lower()
 
             if loop.auth_rotation and hasattr(loop.provider, "api_key"):
-                if "401" in error_str or "429" in error_str or "rate" in error_str:
-                    reason = "rate_limit" if "429" in error_str or "rate" in error_str else "auth_error"
+                if "401" in error_lower or "429" in error_lower or "rate" in error_lower:
+                    reason = "rate_limit" if "429" in error_lower or "rate" in error_lower else "auth_error"
                     current_key = loop.auth_rotation.current_key()
                     loop.auth_rotation.mark_failed(current_key, reason)
 
