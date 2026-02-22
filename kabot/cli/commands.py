@@ -249,6 +249,42 @@ def onboard():
     console.print("  2. Chat: [cyan]kabot agent -m \"Hello!\"[/cyan]")
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/kaivyy/kabot#-chat-apps[/dim]")
 
+@app.command("google-auth")
+def google_auth(
+    credentials_path: str = typer.Argument(
+        ..., help="Path to the downloaded google_credentials.json file."
+    )
+):
+    """Setup Google Suite OAuth credentials interactively."""
+    from pathlib import Path
+    import shutil
+    from kabot.auth.google_auth import GoogleAuthManager
+    
+    cred_file = Path(credentials_path)
+    if not cred_file.exists():
+        console.print(f"[red]Error: Credentials file not found at {cred_file}[/red]")
+        raise typer.Exit(1)
+        
+    auth_manager = GoogleAuthManager()
+    
+    # Copy credentials to the workspace
+    target_path = auth_manager.credentials_path
+    try:
+        shutil.copy(cred_file, target_path)
+        console.print(f"[green]✓[/green] Copied credentials to {target_path}")
+    except Exception as e:
+        console.print(f"[red]Failed to copy credentials: {e}[/red]")
+        raise typer.Exit(1)
+    
+    # Trigger auth flow
+    console.print("[cyan]Initiating Google OAuth login flow in your browser...[/cyan]")
+    try:
+        auth_manager.get_credentials()
+        console.print("[green]✓[/green] Successfully authenticated with Google Suite!")
+    except Exception as e:
+        console.print(f"[red]Authentication failed: {e}[/red]")
+        raise typer.Exit(1)
+
 
 @app.command()
 def setup(
