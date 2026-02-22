@@ -1,6 +1,6 @@
 # The Ultimate Beginner's Guide to Kabot
 
-Welcome to **Kabot**, your personal, locally-hosted AI assistant framework designed to become your ultimate "Second Brain." Kabot allows you to build highly intelligent AI agents that work for you 24/7 on your local machine (like a Mac Mini, PC, or VPS). You can even create distributed teams of specialized agents (like your own personal "MHA Squad").
+Welcome to **Kabot**, your personal, locally-hosted AI assistant framework designed to become your ultimate "Second Brain." Kabot allows you to build highly intelligent AI agents that work for you 24/7 on your local machine (like a Mac Mini, PC, or VPS). You can even create distributed teams of specialized agents tailored to different roles.
 
 This tutorial is written specifically for beginners. It will guide you step-by-step on how to run, configure, and maximize all of Kabot's features—no coding experience required!
 
@@ -43,7 +43,7 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 
 ### a) Workspace (Set path + sessions)
 *   **What it does:** Defines the specific "identity" and memory bank of the AI agent you are currently talking to. You can easily create multiple distinct agents.
-*   **How to use it:** If you want a specialized team (e.g., a financial advisor, a parenting coach, a coding assistant), you create different workspaces. For example, create a workspace named "Momo" for finance and another named "Aizawa" for parenting. *Crucially, each workspace has its own isolated memory.* Aizawa will not remember Momo's conversations, keeping contexts clean and hyper-specialized.
+*   **How to use it:** If you want a specialized team (e.g., a finance agent, a parenting agent, a coding agent), you create different workspaces. For example, create a workspace named "finance" and another named "parenting." *Crucially, each workspace has its own isolated memory.* Each agent stays focused on its own context.
 
 ### b) Model / Auth (Providers, Keys, OAuth)
 *   **What it does:** Connects Kabot to its "Main Brain" (the LLM API, such as Claude, Gemini, or OpenAI) and securely stores your API keys.
@@ -131,9 +131,9 @@ While the Setup Wizard (`kabot setup` / `kabot config`) covers 99% of your needs
 *   **When to use it:** When you want to instantly inject massive amounts of knowledge (like a 300-page book) into your agent's permanent memory without spending hours typing manual prompts.
 *   **The Command:**
     ```bash
-    kabot train C:\Path\To\Your\Parenting_Guide.pdf --workspace Aizawa
+    kabot train C:\Path\To\Your\Parenting_Guide.pdf --workspace parenting
     ```
-*   **What happens?** Kabot uses its internal Document Parser to read the entire PDF, Markdown, or TXT file. It chunks the text into AI-friendly paragraphs and forcefully injects this knowledge directly into the Vector Database (ChromaDB) of the specified workspace (`Aizawa`). From the very next second, Aizawa will answer questions as an absolute expert on that book!
+*   **What happens?** Kabot uses its internal Document Parser to read the entire PDF, Markdown, or TXT file. It chunks the text into AI-friendly paragraphs and injects this knowledge directly into the Vector Database (ChromaDB) of the specified workspace (`parenting`). From the very next second, that agent will answer questions as an expert on that material.
 
 ### KABOT GOOGLE-AUTH (Rapid OAuth Setup)
 *   **When to use it:** If you skipped the Setup Wizard and want a fast track to authorizing your Google Suite integrations (Drive, Docs, Mail, Calendar).
@@ -173,6 +173,6 @@ Inside the chat (CLI, Telegram, WhatsApp, etc.) you can control Kabot using slas
 ---
 
 ## Congratulations!
-You are now fully equipped to unleash Kabot. You have mastered The Smart Router, The Setup Wizard, Auto-Onboarding, and Google Suite Integration. 
+You are now fully equipped to unleash Kabot. You have mastered the Setup Wizard, Auto-Onboarding, and Google Suite Integration. 
 
-Start experimenting! Use `kabot config` to partition your diverse agents (All Might, Hawk, Deku), teach them with `kabot train`, and watch as your personal AI squad transforms your daily workflow!
+Start experimenting! Use `kabot config` to partition your agents by role, teach them with `kabot train`, and watch your workflow level up.

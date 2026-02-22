@@ -22,7 +22,7 @@ It bridges the gap between simple chatbots and autonomous software engineers. Wh
 
 If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
 
-[Website](https://kabot.ai) · [Docs](docs/) · [Getting Started](#quick-start) · [Telegram](https://t.me/kabot_support) · [FAQ](#faq)
+[Website](https://kabot.ai) · [Docs](docs/) · [How-To-Use](HOW-TO-USE.md) · [Getting Started](#quick-start) · [Telegram](https://t.me/kabot_support) · [FAQ](#faq)
 
 ---
 
