@@ -100,11 +100,12 @@ Built for robustness and strict security in Python.
 *   **Session Locking**: Uses `PIDLock` (process-based locking) to ensure atomic writes to the session database, preventing corruption even if multiple cron jobs fire simultaneously.
 *   **Persistent Subagents**: Delegate tasks like "Research this library" to background agents. These subagents persist their state to disk (`.json` registry), so they survive system reboots and can be queried days later.
 
-### 💾 **Stateful Memory Architecture**
-Unlike typical stateless agents, Kabot is completely **stateful** and amnesia-proof.
-*   **Two-Tier Persistence**: Blends a relational SQLite database (maintaining exact parent-child conversation trees, raw facts, and metacognitive lessons) with a ChromaDB vector store (for semantic similarity extraction).
-*   **BM25 Hybrid Retrieval**: Fuses vector search with keyword-matching (BM25) to recall highly specific historical data instantly.
-*   **Context Safety**: Because memory is natively anchored to disk, Kabot remembers previous chats accurately across server restarts without polluting current working memory.
+### 💾 **Hybrid Memory Architecture**
+Unlike typical stateless agents, Kabot is completely **stateful** and amnesia-proof, employing a military-grade memory system that exceeds standard solutions like Mem0.
+*   **Two-Tier Persistence**: Blends a relational SQLite database for episodic memory (maintaining exact parent-child conversation trees, auto-extracted facts, and metacognitive lessons) with a ChromaDB vector store for semantic knowledge.
+*   **Smart Routing & Retrieval**: Uses a query-intent classifier to route to the correct memory store (episodic/knowledge/hybrid) and fuses vector search with BM25 keyword-matching.
+*   **Reranker & Token Guard**: Employs a rigorous three-stage filtering pipeline (Threshold ≥0.6, Top-K, and Hard Token Limit) to reduce context window bloat by up to 72% and eliminate hallucinations.
+*   **Self-Maintenance**: Asynchronous `EpisodicExtractor` automatically mines preferences and facts post-chat, while a scheduled `MemoryPruner` performs garbage collection on stale data (>30 days).
 
 ### 🔌 **Universal Connectivity**
 One brain, many bodies. Kabot acts as a central control plane.
