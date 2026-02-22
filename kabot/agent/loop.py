@@ -25,6 +25,7 @@ from kabot.agent.tools.autoplanner import AutoPlanner
 from kabot.agent.tools.browser import BrowserTool
 from kabot.agent.tools.cron import CronTool
 from kabot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from kabot.agent.tools.google_suite import GmailTool, GoogleCalendarTool
 from kabot.agent.tools.memory import GetMemoryTool, ListRemindersTool, SaveMemoryTool
 from kabot.agent.tools.memory_search import MemorySearchTool
 from kabot.agent.tools.message import MessageTool
@@ -299,6 +300,10 @@ class AgentLoop:
             restrict_to_workspace=self.restrict_to_workspace,
             auto_approve=self.exec_auto_approve,
         ))
+
+        # Google Suite Native Tools
+        self.tools.register(GmailTool())
+        self.tools.register(GoogleCalendarTool())
 
         self.tools.register(WebSearchTool(
             api_key=self.config.tools.web.search.api_key,
