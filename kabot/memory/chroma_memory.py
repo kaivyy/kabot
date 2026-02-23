@@ -619,31 +619,48 @@ class HybridMemoryManager(MemoryBackend):
 
     def unload_resources(self):
         """Manually unload embedding model and ChromaDB to free RAM."""
-        # Unload embedding model
-        if hasattr(self.embeddings, 'unload_model'):
-            self.embeddings.unload_model()
-
-        # Unload ChromaDB
         with self._lock:
-            if self._chroma_client:
-                self._collection = None
-                self._chroma_client = None
-                import gc
-                gc.collect()
-                logger.info("ChromaDB unloaded")
+            # Unload embedding model
+            try:
+                if hasattr(self.embeddings, 'unload_model'):
+                    self.embeddings.unload_model()
+            except Exception as e:
+                logger.error(f"Error unloading embedding model: {e}")
+
+            # Unload ChromaDB
+            try:
+                if self._chroma_client:
+                    self._collection = None
+                    self._chroma_client = None
+                    import gc
+                    gc.collect()
+                    logger.info("ChromaDB unloaded")
+            except Exception as e:
+                logger.error(f"Error unloading ChromaDB: {e}")
+
+            # Unload BM25 index (if exists)
+            try:
+                if hasattr(self, 'bm25') and self.bm25 is not None:
+                    self.bm25 = None
+                    self.bm25_documents = []
+                    self.bm25_ids = []
+                    logger.info("BM25 index unloaded")
+            except Exception as e:
+                logger.error(f"Error unloading BM25: {e}")
 
     def get_memory_stats(self) -> dict:
         """Get memory system statistics."""
-        stats = {
-            "backend": "hybrid",
-            "chromadb_loaded": self._chroma_client is not None,
-        }
+        with self._lock:
+            stats = {
+                "backend": "hybrid",
+                "chromadb_loaded": self._chroma_client is not None,
+            }
 
-        # Get embedding stats if available
-        if hasattr(self.embeddings, 'get_memory_stats'):
-            stats["embedding"] = self.embeddings.get_memory_stats()
+            # Get embedding stats if available
+            if hasattr(self.embeddings, 'get_memory_stats'):
+                stats["embedding"] = self.embeddings.get_memory_stats()
 
-        return stats
+            return stats
 
     def _get_message_by_id(self, message_id: str) -> dict | None:
         """Get message data from SQLite by ID."""
