@@ -52,9 +52,10 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 ### c) Memory (Backend, Embeddings, Database)
 *   **What it does:** Controls how Kabot remembers conversations, facts, and user preferences. It is the core of Kabot's "Second Brain".
 *   **How to use it:** You can switch between different memory engines depending on your machine's capabilities:
-    *   **Hybrid (Recommended):** The most powerful engine using vector embeddings for semantic intelligence.
+    *   **Hybrid (Recommended):** The most powerful engine using ChromaDB + SQLite + BM25 for semantic search with vector embeddings.
     *   **SQLite Only:** A lightweight mode utilizing keyword searches without embeddings (perfect for Termux or Raspberry Pi).
     *   **Disabled:** Turns off the memory system entirely for a stateless chat experience.
+*   **See Section 8a** below for comprehensive memory system documentation.
 
 ### d) Tools & Sandbox (Search, Docker, Shell)
 *   **What it does:** Gives physical superpowers to your agent. Without tools, Kabot is just a chatbot. With tools, Kabot becomes a proactive assistant.
@@ -251,6 +252,200 @@ The update system is designed to prevent AI hallucination:
 - Git commands verify actual repository state
 - All operations are logged
 - No fake data is generated on API failures
+
+---
+
+## 8a. Memory System Architecture (Advanced)
+
+Kabot's memory system is the foundation of its "Second Brain" capabilities. It allows the AI to remember conversations, learn facts, and maintain context across sessions. The memory system is modular and swappable, allowing you to choose the backend that best fits your hardware and use case.
+
+### Memory Backends
+
+Kabot supports three memory backends that you can switch between via `kabot config` or by editing `config.json`:
+
+#### 1. Hybrid (Default - Recommended)
+
+**What it is:** The most powerful memory engine combining ChromaDB (vector database), SQLite (metadata), and BM25 (keyword search) with semantic embeddings.
+
+**Best for:**
+- Desktop/laptop with 4GB+ RAM
+- Users who want the most intelligent semantic search
+- Production deployments where memory quality matters
+
+**Features:**
+- Semantic search using vector embeddings
+- Hybrid ranking (combines semantic + keyword scores)
+- Smart routing (automatically chooses episodic vs knowledge search)
+- Reranking for optimal result quality
+- Temporal decay (prefers recent memories)
+- MMR diversity (avoids redundant results)
+
+**Configuration:**
+```json
+{
+  "memory": {
+    "backend": "hybrid",
+    "embedding_provider": "sentence",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "enable_hybrid_search": true
+  }
+}
+```
+
+**Embedding Providers:**
+- `sentence` (default): Uses sentence-transformers locally (no API cost)
+- `ollama`: Uses Ollama server for embeddings (requires Ollama running)
+
+#### 2. SQLite Only (Lightweight)
+
+**What it is:** A lightweight memory backend using only SQLite with keyword-based search (no embeddings, no ChromaDB).
+
+**Best for:**
+- Termux on Android
+- Raspberry Pi or low-resource devices
+- Users who want minimal dependencies
+- Quick prototyping without heavy setup
+
+**Features:**
+- SQL LIKE keyword search
+- Low memory footprint
+- No external dependencies
+- Fast startup time
+
+**Configuration:**
+```json
+{
+  "memory": {
+    "backend": "sqlite_only"
+  }
+}
+```
+
+**Trade-offs:**
+- No semantic understanding (searches for exact keywords only)
+- Cannot find related concepts (e.g., searching "car" won't find "vehicle")
+- Less intelligent than hybrid mode
+
+#### 3. Disabled (Stateless)
+
+**What it is:** A no-op memory backend that discards all data. Kabot becomes completely stateless.
+
+**Best for:**
+- Privacy-focused users who don't want any data stored
+- Temporary sessions or demos
+- Testing scenarios
+
+**Configuration:**
+```json
+{
+  "memory": {
+    "backend": "disabled"
+  }
+}
+```
+
+**Behavior:**
+- All memory operations return empty results
+- No data is written to disk
+- Each conversation starts fresh with no context
+
+### Memory Operations
+
+Regardless of which backend you choose, Kabot supports these core memory operations:
+
+#### Conversation Memory
+- **Automatic:** Every message you send is automatically stored
+- **Context retrieval:** Recent messages are loaded for each response
+- **Session isolation:** Each workspace has its own conversation history
+
+#### Fact Memory
+- **Manual storage:** Use "Remember that I prefer dark mode" in chat
+- **Automatic extraction:** Kabot can extract facts from conversations
+- **Categories:** Facts are organized by category (preferences, knowledge, etc.)
+
+#### Memory Search
+- **Natural language:** Ask "What did I say about my project?"
+- **Tool-based:** Kabot automatically searches memory when relevant
+- **Filtered:** Can search within a specific session or globally
+
+### Switching Memory Backends
+
+**Via Setup Wizard:**
+```bash
+kabot config
+```
+Select "Memory" from the menu, then choose your preferred backend.
+
+**Via config.json:**
+Edit `~/.kabot/config.json` (or `C:\Users\Username\.kabot\config.json` on Windows):
+```json
+{
+  "memory": {
+    "backend": "hybrid"  // or "sqlite_only" or "disabled"
+  }
+}
+```
+
+**Restart required:** After changing backends, restart Kabot for changes to take effect.
+
+### Memory Statistics
+
+Check your memory system health:
+```bash
+kabot doctor
+```
+
+This shows:
+- Backend type in use
+- Number of messages stored
+- Number of facts stored
+- Number of sessions
+- Database health status
+
+### Advanced: Custom Embedding Models
+
+For hybrid mode, you can specify a custom embedding model:
+
+```json
+{
+  "memory": {
+    "backend": "hybrid",
+    "embedding_provider": "sentence",
+    "embedding_model": "all-mpnet-base-v2"
+  }
+}
+```
+
+**Popular models:**
+- `all-MiniLM-L6-v2` (default): Fast, 384 dimensions, good quality
+- `all-mpnet-base-v2`: Slower, 768 dimensions, best quality
+- `paraphrase-multilingual-MiniLM-L12-v2`: Multilingual support
+
+### Memory Backend Comparison
+
+| Feature | Hybrid | SQLite Only | Disabled |
+|---------|--------|-------------|----------|
+| Semantic search | ✅ Yes | ❌ No | ❌ No |
+| Keyword search | ✅ Yes | ✅ Yes | ❌ No |
+| Memory footprint | ~500MB | ~50MB | 0MB |
+| Startup time | ~5s | <1s | <1s |
+| Dependencies | ChromaDB, sentence-transformers | None | None |
+| Best for | Production | Low-resource | Privacy |
+
+### Troubleshooting
+
+**"ChromaDB import error"**
+- Switch to `sqlite_only` backend if you can't install ChromaDB
+- Or install dependencies: `pip install chromadb sentence-transformers`
+
+**"Memory search returns no results"**
+- Check backend is not `disabled`
+- For `sqlite_only`, use exact keywords (not semantic queries)
+- Run `kabot doctor` to check database health
+
+**"High memory usage"**
+- Switch from `hybrid` to `sqlite_only` to reduce RAM usage
+- Or use `disabled` for zero memory footprint
 
 ---
 
