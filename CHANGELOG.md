@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-02-23
+
 ### Fixed
 - **Codex 400 Error Handling**: Implemented auto-retry without tools in `execution_runtime.py` for models that don't support function calling (like chatgpt.com/codex). This allows conversational queries to still be answered naturally by these models.
 - **Market Data Resilience (Stock/Crypto)**: Upgraded `StockTool` to handle multi-ticker symbols in parallel and implemented a Fast Path for market queries. Kabot now automatically detects "top 10" or Indonesian market requests and fetches live Yahoo Finance/CoinGecko data without hitting LLM tool-calling errors.
