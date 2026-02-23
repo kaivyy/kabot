@@ -18,7 +18,14 @@ class CheckUpdateTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Check if Kabot updates are available. Returns current version, latest version, and commits behind. Use this when user asks about updates."
+        return """Check if Kabot updates are available from GitHub. Use when user asks about updates in ANY language.
+
+WHEN TO USE:
+- "periksa apakah ada update baru?" / "check for updates"
+- "ada versi terbaru?" / "is there a new version?"
+- "cek update kabot" / "check kabot update"
+
+RETURNS: JSON with current_version, latest_version, update_available, commits_behind, install_method, release_url"""
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -114,7 +121,17 @@ class SystemUpdateTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Update Kabot to latest version. Set confirm_restart=true to restart after update. Use this when user confirms update."
+        return """Update Kabot to latest version. Use when user confirms update in ANY language.
+
+WHEN TO USE:
+- "update program" / "update kabot"
+- "install update" / "pasang update"
+- "upgrade kabot" / "perbarui kabot"
+
+PARAMETERS:
+- confirm_restart: Set to true ONLY when user explicitly confirms restart
+
+RETURNS: JSON with success, updated_from, updated_to, restart_required"""
 
     @property
     def parameters(self) -> dict[str, Any]:
