@@ -162,9 +162,41 @@ class SentenceEmbeddingProvider:
     def _unload_model_internal(self):
         """Internal method to unload model."""
         try:
-            del self._model
-            self._model = None
-            gc.collect()
+            if self._model is not None:
+                # Try to clear model components explicitly
+                try:
+                    # Clear tokenizer and model internals if possible
+                    if hasattr(self._model, 'tokenizer'):
+                        del self._model.tokenizer
+                    if hasattr(self._model, '_modules'):
+                        self._model._modules.clear()
+                except Exception:
+                    pass
+
+                # Move model to CPU first (if on GPU)
+                try:
+                    import torch
+                    if hasattr(self._model, 'to'):
+                        self._model.to('cpu')
+                    # Clear PyTorch cache
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    # Clear CPU cache too
+                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                except ImportError:
+                    pass
+
+                # Delete model reference
+                del self._model
+                self._model = None
+
+            # Clear cache to free additional memory
+            self._cache.clear()
+
+            # Multiple GC passes for thorough cleanup
+            for _ in range(3):
+                gc.collect()
+
             logger.info(f"Embedding model auto-unloaded (freed ~200-300MB RAM)")
         except Exception as e:
             logger.error(f"Failed to unload model: {e}")
