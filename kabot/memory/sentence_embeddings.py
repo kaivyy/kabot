@@ -160,46 +160,81 @@ class SentenceEmbeddingProvider:
                     self._unload_model_internal()
 
     def _unload_model_internal(self):
-        """Internal method to unload model."""
-        try:
-            if self._model is not None:
-                # Try to clear model components explicitly
-                try:
-                    # Clear tokenizer and model internals if possible
-                    if hasattr(self._model, 'tokenizer'):
-                        del self._model.tokenizer
-                    if hasattr(self._model, '_modules'):
-                        self._model._modules.clear()
-                except Exception:
-                    pass
+        """Internal unload without lock acquisition."""
+        if self._model is not None:
+            logger.info("Unloading sentence-transformers model from RAM")
 
-                # Move model to CPU first (if on GPU)
-                try:
-                    import torch
-                    if hasattr(self._model, 'to'):
-                        self._model.to('cpu')
-                    # Clear PyTorch cache
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    # Clear CPU cache too
-                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
-                except ImportError:
-                    pass
-
-                # Delete model reference
-                del self._model
-                self._model = None
-
-            # Clear cache to free additional memory
+            # Clear embedding cache first
             self._cache.clear()
 
-            # Multiple GC passes for thorough cleanup
+            # Move model to CPU to release GPU memory
+            try:
+                self._model.to('cpu')
+            except Exception:
+                pass
+
+            # Clear tokenizer to avoid StopIteration errors
+            try:
+                if hasattr(self._model, 'tokenizer'):
+                    self._model.tokenizer = None
+            except Exception:
+                pass
+
+            # Recursively clear all PyTorch modules to break reference cycles
+            def clear_module_recursive(module):
+                """Recursively clear a PyTorch module and its children."""
+                if module is None:
+                    return
+
+                # Clear child modules first (depth-first)
+                if hasattr(module, '_modules') and module._modules:
+                    for child in list(module._modules.values()):
+                        clear_module_recursive(child)
+                    module._modules.clear()
+
+                # Clear parameters and buffers
+                if hasattr(module, '_parameters') and module._parameters:
+                    module._parameters.clear()
+                if hasattr(module, '_buffers') and module._buffers:
+                    module._buffers.clear()
+
+            # Clear the model recursively
+            clear_module_recursive(self._model)
+
+            # Delete model reference
+            del self._model
+            self._model = None
+            self._auto_unload_enabled = False
+
+            # Force garbage collection (multiple passes for cyclic references)
+            import gc
             for _ in range(3):
                 gc.collect()
 
-            logger.info(f"Embedding model auto-unloaded (freed ~200-300MB RAM)")
-        except Exception as e:
-            logger.error(f"Failed to unload model: {e}")
+            # Clear PyTorch cache
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache() if hasattr(torch.cuda, 'empty_cache') else None
+            except Exception:
+                pass
+
+            # Platform-specific memory trimming
+            try:
+                import sys
+                if sys.platform == 'win32':
+                    import ctypes
+                    kernel32 = ctypes.windll.kernel32
+                    process = kernel32.GetCurrentProcess()
+                    kernel32.SetProcessWorkingSetSize(process, -1, -1)
+                    kernel32.EmptyWorkingSet(process)
+                elif sys.platform in ('linux', 'linux2'):
+                    import ctypes
+                    libc = ctypes.CDLL('libc.so.6')
+                    libc.malloc_trim(0)
+            except Exception:
+                pass
 
     def unload_model(self):
         """Manually unload the model to free RAM."""
