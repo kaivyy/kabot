@@ -16,6 +16,10 @@ if TYPE_CHECKING:
 _MODULE_LOCKS = {
     "HybridMemoryManager": ".chroma_memory",
     "ChromaMemoryManager": ".chroma_memory",
+    "MemoryBackend": ".memory_backend",
+    "MemoryFactory": ".memory_factory",
+    "NullMemory": ".null_memory",
+    "SQLiteMemory": ".sqlite_memory",
     "SmartRouter": ".smart_router",
     "Reranker": ".reranker",
     "EpisodicExtractor": ".episodic_extractor",

@@ -449,6 +449,8 @@ class SetupWizard:
                 self._configure_model()
             elif choice == "tools":
                 self._configure_tools()
+            elif choice == "memory":
+                self._configure_memory()
             elif choice == "gateway":
                 self._configure_gateway()
             elif choice == "channels":
@@ -495,6 +497,7 @@ class SetupWizard:
             return [
                 "workspace",
                 "model",
+                "memory",
                 "tools",
                 "gateway",
                 "skills",
@@ -508,6 +511,7 @@ class SetupWizard:
         return [
             "workspace",
             "model",
+            "memory",
             "tools",     # <-- Added advanced tools to simple mode
             "skills",
             "google",
@@ -520,6 +524,7 @@ class SetupWizard:
         labels = {
             "workspace": "Workspace (Set path + sessions)",
             "model": "Model / Auth (Providers, Keys, OAuth)",
+            "memory": "Memory (Backend, Embeddings, Database)",
             "tools": "Tools & Sandbox (Search, Docker, Shell)",
             "gateway": "Gateway (Port, Host, Bindings)",
             "skills": "Skills (Install & Configure)",
@@ -701,8 +706,52 @@ class SetupWizard:
         state = self._load_setup_state()
         state["user_selections"]["selected_providers"] = configured_providers
         state["user_selections"]["default_model"] = self.config.agents.defaults.model
-        self._write_setup_state(state)
+        self._save_setup_state("google", completed=True)
+        ClackUI.section_end()
 
+    def _configure_memory(self) -> None:
+        """Configure memory backend settings."""
+        from kabot.memory.memory_factory import SUPPORTED_BACKENDS
+        from kabot.core.config_manager import save_config
+
+        ClackUI.section_start("Memory Configuration")
+
+        current = self.config.get("memory", {}).get("backend", "hybrid")
+        console.print(f"│  [dim]Current backend: {current}[/dim]")
+
+        backend = ClackUI.clack_select(
+            "Memory backend",
+            choices=[
+                questionary.Choice("Hybrid (ChromaDB + SQLite + BM25) — Full power", value="hybrid"),
+                questionary.Choice("SQLite Only — Lightweight, no embeddings", value="sqlite_only"),
+                questionary.Choice("Disabled — No memory at all", value="disabled"),
+            ],
+            default=current,
+        )
+        if backend is None:
+            ClackUI.section_end()
+            return
+
+        if "memory" not in self.config:
+            self.config["memory"] = {}
+        self.config["memory"]["backend"] = backend
+
+        if backend == "hybrid":
+            current_emb = self.config.get("memory", {}).get("embedding_provider", "sentence")
+            emb_provider = ClackUI.clack_select(
+                "Embedding provider",
+                choices=[
+                    questionary.Choice("Sentence-Transformers (Local, recommended)", value="sentence"),
+                    questionary.Choice("Ollama (Requires running Ollama server)", value="ollama"),
+                ],
+                default=current_emb,
+            )
+            if emb_provider:
+                self.config["memory"]["embedding_provider"] = emb_provider
+
+        save_config(self.config)
+        self._save_setup_state("memory", completed=True, backend=backend)
+        console.print(f"│  [green]✓ Memory backend set to: {backend}[/green]")
         ClackUI.section_end()
 
     def _model_picker(self, provider_id: Optional[str] = None):

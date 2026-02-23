@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-02-23
+
+### Added
+- **Memory Backend Architecture**: Introduced modular memory system with `MemoryFactory` supporting multiple backends:
+  - `hybrid` (default): ChromaDB + SQLite + BM25 for full semantic search
+  - `sqlite_only`: Lightweight keyword-based search without embeddings (ideal for Termux/Raspberry Pi)
+  - `disabled`: Stateless mode with no memory persistence
+- **Memory Configuration UI**: Added interactive memory setup in `kabot config` wizard with backend selection and embedding provider options
+- **New Memory Backends**: `SQLiteMemory`, `NullMemory`, and abstract `MemoryBackend` base class
+- **Memory Tests**: 7 new test files covering all memory backends and integration scenarios
+- **Documentation Plans**: Added architecture design docs for global market tools and memory slot system
+
+### Changed
+- **Setup Wizard Enhancement**: Added "Memory" configuration section to setup wizard with backend and embedding provider selection
+- **HOW-TO-USE.md**: Updated with comprehensive memory configuration section explaining all backend options
+- **Memory Module Structure**: Refactored `kabot.memory` to use factory pattern for cleaner backend instantiation
+
+### Fixed
+- **Git Tracking Cleanup**: Removed `memory_db/`, `.claude/`, `.backup/`, `MagicMock/`, and test artifacts from version control
+- **Gitignore Improvements**: Added patterns for local settings, test artifacts, and user-specific data directories
+
 ## [0.5.1] - 2026-02-23
 
 ### Fixed

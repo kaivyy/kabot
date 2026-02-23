@@ -49,27 +49,34 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 *   **What it does:** Connects Kabot to its "Main Brain" (the LLM API, such as Claude, Gemini, or OpenAI) and securely stores your API keys.
 *   **How to use it:** Select your provider/model and add your API key (OpenAI, Anthropic, OpenRouter, Groq, etc.). Kabot supports fallbacks, so you can set a primary model and a backup model if the first one fails. For quick switches in chat, use `/switch <model>`.
 
-### c) Tools & Sandbox (Search, Docker, Shell)
+### c) Memory (Backend, Embeddings, Database)
+*   **What it does:** Controls how Kabot remembers conversations, facts, and user preferences. It is the core of Kabot's "Second Brain".
+*   **How to use it:** You can switch between different memory engines depending on your machine's capabilities:
+    *   **Hybrid (Recommended):** The most powerful engine using vector embeddings for semantic intelligence.
+    *   **SQLite Only:** A lightweight mode utilizing keyword searches without embeddings (perfect for Termux or Raspberry Pi).
+    *   **Disabled:** Turns off the memory system entirely for a stateless chat experience.
+
+### d) Tools & Sandbox (Search, Docker, Shell)
 *   **What it does:** Gives physical superpowers to your agent. Without tools, Kabot is just a chatbot. With tools, Kabot becomes a proactive assistant.
 *   **How to use it:** Here, you toggle access to Kabot's abilities. You can grant it permission to type Terminal commands, read files on your hard drive, or use web search and fetch tools. Docker sandboxing can be enabled for safer command execution.
 
-### d) Skills (Install & Configure)
+### e) Skills (Install & Configure)
 *   **What it does:** Injects "SOPs" (Standard Operating Procedures) or foundational expertise directly into the agent's initial prompt.
 *   **How to use it:** Useful if you download custom third-party "Skill Files" (Markdown scripts) that teach Kabot exactly how to behave or format its responses for specific career roles.
 
-### e) Google Suite (Auth & Credentials)
+### f) Google Suite (Auth & Credentials)
 *   **What it does:** Grants Kabot secure, native access to act on behalf of your Google Account.
 *   **How to use it:** Once authorized, Kabot can send emails, schedule Calendar meetings, and read/create files in Google Drive and Google Docs via the Google integrations. 
     *   **The Process:** Provide the path to a `google_credentials.json` file (downloaded from your Google Cloud Console). Kabot opens a browser tab for consent, then stores the token locally. You can also run `kabot google-auth <path>` for the fastest setup.
 
-### f) Channels (Telegram, WhatsApp, Slack)
+### g) Channels (Telegram, WhatsApp, Slack)
 *   **What it does:** Connects Kabot's brain to your mobile phone so you don't have to stay glued to your computer terminal.
 *   **How to use it:** You can insert your Telegram Bot Token or WhatsApp configuration here. Once connected, your family or business partners can simply text the bot on Telegram, and Kabot will process the requests on your local server and reply directly to their phones! 
 
-### g) Auto-start (Enable boot-up service)
+### h) Auto-start (Enable boot-up service)
 *   **What it does:** Ensures Kabot automatically starts running in the background whenever you turn on or restart your computer/server (systemd on Linux, launchd on macOS, Task Scheduler on Windows, Termux on Android).
 
-### h) Doctor (Health Check)
+### i) Doctor (Health Check)
 *   **What it does:** Runs an automatic system diagnostic. If Kabot isn't responding or throws an error, click this menu to instantly check if an API connection is broken or if a local database file is corrupted.
 
 ---

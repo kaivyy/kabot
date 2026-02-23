@@ -18,7 +18,9 @@ from .smart_router import SmartRouter
 from .sqlite_store import SQLiteMetadataStore
 
 
-class HybridMemoryManager:
+from kabot.memory.memory_backend import MemoryBackend
+
+class HybridMemoryManager(MemoryBackend):
     """
     Hybrid memory system combining:
     - ChromaDB: Vector storage for semantic search

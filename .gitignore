@@ -31,3 +31,9 @@ nul
 
 # Memory database (user-specific, should not be tracked)
 memory_db/
+
+# Local settings and test artifacts (should not be tracked)
+.claude/
+.backup/
+MagicMock/
+test_out.txt*
