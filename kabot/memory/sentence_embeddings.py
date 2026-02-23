@@ -19,6 +19,8 @@ class SentenceEmbeddingProvider:
     """
 
     def __init__(self, model: str = "all-MiniLM-L6-v2", auto_unload_seconds: int = 300):
+        if auto_unload_seconds < 0:
+            raise ValueError("auto_unload_seconds must be >= 0")
         self.model_name = model
         self._model = None
         self._cache = {}  # Simple LRU cache
@@ -108,24 +110,29 @@ class SentenceEmbeddingProvider:
             List of embeddings
         """
         try:
-            # Load model if needed
-            self._load_model()
+            with self._lock:
+                # Load model if needed
+                self._load_model()
+                self._last_used = time.time()
 
-            # Generate embeddings in batch (more efficient)
-            embeddings = self._model.encode(texts)
-            if hasattr(embeddings, 'tolist'):
-                embeddings = embeddings.tolist()
+                # Generate embeddings in batch (more efficient)
+                embeddings = self._model.encode(texts)
+                if hasattr(embeddings, 'tolist'):
+                    embeddings = embeddings.tolist()
 
-            # Cache results
-            results = []
-            for text, embedding in zip(texts, embeddings):
-                cache_key = hashlib.md5(text.encode()).hexdigest()
-                if len(self._cache) >= self._cache_size:
-                    self._cache.pop(next(iter(self._cache)))
-                self._cache[cache_key] = embedding
-                results.append(embedding)
+                # Cache results
+                results = []
+                for text, embedding in zip(texts, embeddings):
+                    cache_key = hashlib.md5(text.encode()).hexdigest()
+                    if len(self._cache) >= self._cache_size:
+                        self._cache.pop(next(iter(self._cache)))
+                    self._cache[cache_key] = embedding
+                    results.append(embedding)
 
-            return results
+                if self._auto_unload_enabled:
+                    self._reset_unload_timer()
+
+                return results
 
         except Exception as e:
             logger.error(f"Error generating batch embeddings: {e}")
@@ -184,7 +191,7 @@ class SentenceEmbeddingProvider:
         if self._unload_timer:
             self._unload_timer.cancel()
         if self._model is not None:
-            self.unload_model()
+            self._unload_model_internal()
 
     @property
     def dimensions(self) -> int:
