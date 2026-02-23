@@ -18,3 +18,49 @@ async def test_model_auto_unloads_after_timeout():
     # Wait for auto-unload
     time.sleep(3)
     assert provider._model is None
+
+@pytest.mark.asyncio
+async def test_timer_resets_on_new_request():
+    """Timer should reset when new request comes in."""
+    provider = SentenceEmbeddingProvider(auto_unload_seconds=2)
+
+    await provider.embed("query 1")
+    time.sleep(1)
+    await provider.embed("query 2")  # Reset timer
+    time.sleep(1.5)
+
+    # Model should still be loaded (only 1.5s since last request)
+    assert provider._model is not None
+
+@pytest.mark.asyncio
+async def test_manual_unload():
+    """Manual unload should work immediately."""
+    provider = SentenceEmbeddingProvider()
+    await provider.embed("test")
+    assert provider._model is not None
+
+    provider.unload_model()
+    assert provider._model is None
+
+@pytest.mark.asyncio
+async def test_auto_unload_disabled_when_timeout_zero():
+    """Auto-unload should be disabled when timeout is 0."""
+    provider = SentenceEmbeddingProvider(auto_unload_seconds=0)
+    await provider.embed("test")
+    assert provider._model is not None
+
+    time.sleep(2)
+    assert provider._model is not None  # Still loaded
+
+@pytest.mark.asyncio
+async def test_model_reloads_after_unload():
+    """Model should reload after unload."""
+    provider = SentenceEmbeddingProvider(auto_unload_seconds=0)
+    result1 = await provider.embed("test query 1")
+
+    provider.unload_model()
+    assert provider._model is None
+
+    result2 = await provider.embed("test query 2")
+    assert result2 is not None
+    assert provider._model is not None
