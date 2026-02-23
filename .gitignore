@@ -28,3 +28,6 @@ poetry.lock
 tmp_test/
 botpy.log
 nul
+
+# Memory database (user-specific, should not be tracked)
+memory_db/
