@@ -320,6 +320,24 @@ export HF_TOKEN="your_token_here"  # Linux/Mac
 $env:HF_TOKEN="your_token_here"    # Windows PowerShell
 ```
 
+#### Auto-Unload Timeout
+
+Control when the embedding model automatically unloads from RAM:
+
+```json
+{
+  "memory": {
+    "backend": "hybrid",
+    "auto_unload_timeout": 300
+  }
+}
+```
+
+- `auto_unload_timeout`: Seconds of idle time before model unloads (default: 300 = 5 minutes)
+- Set to `0` to disable auto-unload (model stays in RAM)
+- Model reloads automatically on next search (transparent to user)
+- Reduces idle RAM from ~800MB to ~250MB
+
 #### 2. SQLite Only (Lightweight)
 
 **What it is:** A lightweight memory backend using only SQLite with keyword-based search (no embeddings, no ChromaDB).
@@ -391,6 +409,24 @@ Regardless of which backend you choose, Kabot supports these core memory operati
 - **Natural language:** Ask "What did I say about my project?"
 - **Tool-based:** Kabot automatically searches memory when relevant
 - **Filtered:** Can search within a specific session or globally
+
+#### Manual Resource Management
+
+Explicitly unload memory resources to free RAM:
+
+```python
+# Unload embedding model and ChromaDB
+memory.unload_resources()
+
+# Check memory stats
+stats = memory.get_memory_stats()
+print(f"Model loaded: {stats['embedding']['model_loaded']}")
+```
+
+Use cases:
+- Before long idle periods
+- After batch processing
+- When switching to different tasks
 
 ### Switching Memory Backends
 
