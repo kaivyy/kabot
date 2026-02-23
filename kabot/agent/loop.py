@@ -385,6 +385,10 @@ class AgentLoop:
         self.tools.register(SystemInfoTool())
         self.tools.register(ProcessMemoryTool())
 
+        from kabot.agent.tools.update import CheckUpdateTool, SystemUpdateTool
+        self.tools.register(CheckUpdateTool())
+        self.tools.register(SystemUpdateTool())
+
         from kabot.agent.tools.cleanup import CleanupTool
         self.tools.register(CleanupTool())
 
