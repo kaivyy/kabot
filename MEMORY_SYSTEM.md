@@ -205,6 +205,67 @@ Kabot's memory system is a modular, swappable architecture designed to prevent *
 - Free & local
 - Caching for performance
 
+#### Hugging Face Hub Integration
+
+**Model Source**: All embedding models are downloaded from **Hugging Face Hub** (https://huggingface.co).
+
+**No Account Required**:
+- Models are **public and open-source**
+- No registration or login needed
+- No API key required
+- Anonymous downloads work perfectly
+
+**First Run Experience**:
+
+When you first start Kabot with hybrid memory backend, you'll see:
+
+```
+Loading sentence-transformers model: all-MiniLM-L6-v2
+Warning: You are sending unauthenticated requests to the HF Hub.
+Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights: 100%|████████████████████| 103/103 [00:00<00:00, 1843.23it/s]
+```
+
+**This warning is normal and can be ignored!** The model downloads successfully without authentication.
+
+**Download Details**:
+- **Size**: ~90MB for `all-MiniLM-L6-v2`
+- **Cache location**:
+  - Linux/Mac: `~/.cache/huggingface/hub/`
+  - Windows: `C:\Users\Username\.cache\huggingface\hub\`
+- **Subsequent runs**: Model loads from cache (no re-download)
+
+**RAM Usage**:
+- **Model on disk**: ~90MB
+- **Loaded in RAM**: ~200-300MB (model + PyTorch overhead)
+- **Total hybrid backend**: ~500MB (model + ChromaDB + cache)
+
+**Optional: HF_TOKEN (Not Required)**
+
+You can optionally set `HF_TOKEN` to:
+- Get higher rate limits (useful if downloading many models)
+- Get faster download speeds (authenticated requests get priority)
+- Access gated models (not used by Kabot)
+
+To set token (optional):
+```bash
+# Linux/Mac
+export HF_TOKEN="your_token_here"
+
+# Windows PowerShell
+$env:HF_TOKEN="your_token_here"
+
+# Windows CMD
+set HF_TOKEN=your_token_here
+```
+
+**Get token**: https://huggingface.co/settings/tokens (free account)
+
+**Available Models**:
+- `all-MiniLM-L6-v2` (default): https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+- `all-mpnet-base-v2`: https://huggingface.co/sentence-transformers/all-mpnet-base-v2
+- `paraphrase-multilingual-MiniLM-L12-v2`: https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
 ### 8. Smart Router
 
 **File**: `kabot/memory/smart_router.py`

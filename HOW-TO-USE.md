@@ -296,6 +296,30 @@ Kabot supports three memory backends that you can switch between via `kabot conf
 - `sentence` (default): Uses sentence-transformers locally (no API cost)
 - `ollama`: Uses Ollama server for embeddings (requires Ollama running)
 
+**Important: Hugging Face Integration**
+
+Embedding models are automatically downloaded from **Hugging Face Hub** (https://huggingface.co). **No account or login required!**
+
+When you first start Kabot with hybrid memory, you'll see this warning:
+```
+Loading sentence-transformers model: all-MiniLM-L6-v2
+Warning: You are sending unauthenticated requests to the HF Hub.
+Loading weights: 100%|████████████████████| 103/103 [00:00<00:00, 1843.23it/s]
+```
+
+**This warning is normal and can be ignored!** The model downloads successfully without authentication.
+
+- **Download size**: ~90MB (first run only)
+- **Cache location**: `~/.cache/huggingface/hub/` (Linux/Mac) or `C:\Users\Username\.cache\huggingface\hub\` (Windows)
+- **RAM usage**: ~200-300MB when loaded
+- **No re-download**: Subsequent runs load from cache instantly
+
+**Optional**: Set `HF_TOKEN` environment variable for faster downloads (not required):
+```bash
+export HF_TOKEN="your_token_here"  # Linux/Mac
+$env:HF_TOKEN="your_token_here"    # Windows PowerShell
+```
+
 #### 2. SQLite Only (Lightweight)
 
 **What it is:** A lightweight memory backend using only SQLite with keyword-based search (no embeddings, no ChromaDB).
