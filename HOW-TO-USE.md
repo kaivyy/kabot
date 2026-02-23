@@ -303,7 +303,336 @@ Inside the chat (CLI, Telegram, WhatsApp, etc.) you can control Kabot using slas
 
 ---
 
-## Congratulations!
-You are now fully equipped to unleash Kabot. You have mastered the Setup Wizard, Auto-Onboarding, and Google Suite Integration. 
+## 11. Complete Tools Reference
 
-Start experimenting! Use `kabot config` to partition your agents by role, teach them with `kabot train`, and watch your workflow level up.
+Kabot includes 36 built-in tools that give AI powerful capabilities. Here's the complete reference:
+
+### **Filesystem Tools**
+- **read_file** - Read file contents
+  - Example: "Read the config.yaml file"
+- **write_file** - Create or overwrite files
+  - Example: "Write a Python script to fetch Bitcoin prices"
+- **edit_file** - Edit existing files with find/replace
+  - Example: "Change the API endpoint in config.py"
+- **list_dir** - List directory contents
+  - Example: "Show me all files in the src folder"
+
+### **Shell & Execution**
+- **exec** - Execute shell commands (with CommandFirewall protection)
+  - Example: "Run pytest tests/test_memory.py"
+  - Security: Requires approval for destructive commands
+- **spawn** - Create background subagents for long-running tasks
+  - Example: "Spawn a subagent to monitor logs continuously"
+
+### **Automation & Scheduling**
+- **cron** - Schedule reminders and recurring tasks
+  - Actions: add, list, list_groups, remove, remove_group, update, update_group, run, runs, status
+  - Example: "Remind me to drink water every hour"
+  - Example: "Create a daily backup job at 2 AM"
+  - Supports: one-shot reminders, recurring intervals, cron expressions, grouped schedules
+
+### **Memory & Knowledge**
+- **save_memory** - Save facts to long-term memory
+  - Example: "Remember that I prefer dark mode"
+- **get_memory** - Retrieve saved memories
+  - Example: "What do you remember about my preferences?"
+- **memory_search** - Semantic search across all memories
+  - Example: "Search for conversations about Python"
+- **knowledge_learn** - Learn from documents (PDF, MD, TXT, CSV)
+  - Example: "Learn this 300-page manual" (attach file)
+
+### **Web & Internet**
+- **web_search** - Search the web (DuckDuckGo)
+  - Example: "Search for latest React 19 features"
+- **web_fetch** - Fetch and parse web pages
+  - Example: "Fetch the content from https://example.com/docs"
+- **browser** - Advanced web automation (Playwright)
+  - Example: "Navigate to GitHub and screenshot the trending page"
+
+### **Google Suite Integration**
+- **gmail** - Send and read emails
+  - Example: "Send an email to team@company.com with meeting notes"
+- **google_calendar** - Manage calendar events
+  - Example: "Schedule a standup meeting tomorrow at 9 AM"
+- **google_docs** - Create and edit Google Docs
+  - Example: "Create a new doc with project requirements"
+- **google_drive** - Upload and manage Drive files
+  - Example: "Upload report.pdf to my Drive"
+
+### **Financial & Market Data**
+- **stock** - Real-time stock prices (Yahoo Finance)
+  - Example: "What's the current price of AAPL?"
+  - Supports: Multiple tickers, real-time data
+- **crypto** - Cryptocurrency prices (CoinGecko)
+  - Example: "Check Bitcoin and Ethereum prices"
+- **stock_analysis** - Advanced stock analysis with charts
+  - Example: "Analyze TSLA stock performance over the last month"
+
+### **System Monitoring**
+- **server_monitor** - Monitor CPU, RAM, disk, network
+  - Example: "Check server status"
+  - Cross-platform: Windows, Linux, macOS, Termux
+- **get_system_info** - Get hardware specifications
+  - Example: "Show system info"
+- **get_process_memory** - Check Kabot's memory usage
+  - Example: "How much RAM is Kabot using?"
+- **speedtest** - Test internet speed
+  - Example: "Run a speed test"
+
+### **Weather & Environment**
+- **weather** - Get weather forecasts
+  - Example: "What's the weather in Jakarta?"
+  - Auto-detects location from context
+
+### **Utilities**
+- **message** - Send messages to other sessions/agents
+  - Example: "Send a message to the finance agent"
+- **autoplanner** - Autonomous multi-step task execution
+  - Example: "Read file.txt and count lines" (auto-creates plan)
+- **image_gen** - Generate AI images (if configured)
+  - Example: "Generate an image of a sunset over mountains"
+- **cleanup_system** - Clean up temporary files and caches
+  - Example: "Clean up old log files"
+
+### **Update System**
+- **check_update** - Check for Kabot updates
+  - Example: "Periksa apakah ada update baru?"
+- **system_update** - Update and restart Kabot
+  - Example: "Update Kabot to the latest version"
+
+### **Advanced Tools**
+- **meta_graph** - Query knowledge graph
+  - Example: "Show me all related concepts to 'authentication'"
+
+---
+
+## 12. Skills System (70+ Skills)
+
+Kabot includes a powerful Skills System with 70+ pre-built skills for complex workflows. Skills are auto-matched based on your message keywords.
+
+### **What are Skills?**
+Skills are markdown-based SOPs (Standard Operating Procedures) that teach Kabot how to handle complex, multi-step workflows. Unlike tools (which perform single actions), skills orchestrate entire workflows.
+
+### **Workflow Chains**
+Skills can chain together for complex tasks:
+- **brainstorming** → writing-plans → executing-plans
+- **systematic-debugging** → test-driven-development
+- **executing-plans** → finishing-a-development-branch
+- **requesting-code-review** → finishing-a-development-branch
+
+### **Core Development Skills**
+- **brainstorming** - Design & requirements exploration before coding
+  - Auto-triggers: "create feature", "build component", "add functionality"
+- **writing-plans** - Create detailed implementation plans with TDD
+  - Auto-triggers: After brainstorming, or "create plan"
+- **executing-plans** - Execute plans in batches with checkpoints
+  - Auto-triggers: "execute plan", "implement plan"
+- **finishing-a-development-branch** - Complete work (merge/PR/cleanup)
+  - Auto-triggers: After executing-plans completes
+- **systematic-debugging** - Deep debugging with execution flow analysis
+  - Auto-triggers: "debug", "fix bug", "error", "not working"
+- **test-driven-development** - TDD workflow (test → implement → verify)
+  - Auto-triggers: "write tests", "TDD", "test first"
+- **requesting-code-review** - Request code review with context
+  - Auto-triggers: "review my code", "code review"
+- **using-git-worktrees** - Isolated git worktrees for features
+  - Auto-triggers: "create worktree", "isolate branch"
+
+### **Integration Skills (40+ available)**
+- **discord** - Discord bot integration
+- **spotify** - Spotify playback control
+- **1password** - 1Password CLI integration
+- **github** - GitHub operations (issues, PRs, releases)
+- **tmux** - Tmux session management
+- **apple-notes** - Apple Notes integration
+- **apple-reminders** - Apple Reminders integration
+- **bear-notes** - Bear Notes integration
+- **bluebubbles** - iMessage via BlueBubbles
+- **blogwatcher** - Blog monitoring
+- **camsnap** - Webcam snapshots
+- **canvas** - Canvas LMS integration
+- **download-manager** - Download management
+- **ev-car** - EV car integration
+- **file-sender** - File transfer automation
+- **gifgrep** - GIF search
+- **healthcheck** - Health monitoring
+- **mcporter** - Minecraft server management
+- **oracle** - Oracle database operations
+- **sherpa-onnx-tts** - Text-to-speech
+- And 20+ more...
+
+### **How Skills Auto-Match**
+Kabot automatically detects relevant skills based on keywords in your message:
+
+```
+User: "I need to build a new authentication system"
+Kabot: [Auto-matches "brainstorming" skill]
+Kabot: "I'm using the brainstorming skill to design this system."
+```
+
+### **Manual Skill Invocation**
+You can also manually invoke skills:
+```
+User: "Use the systematic-debugging skill to fix this error"
+```
+
+### **Skills Location**
+- Built-in skills: `kabot/skills/`
+- Custom skills: `~/.kabot/workspaces/<workspace>/skills/`
+
+---
+
+## 13. Advanced Features
+
+### **Command Firewall (Security)**
+Kabot includes a sophisticated security layer for shell command execution:
+
+**Policy Modes:**
+- **deny** - Block all commands (safest)
+- **ask** - Require approval for each command
+- **allowlist** - Only allow whitelisted commands
+
+**Configuration:**
+```yaml
+# ~/.kabot/command_approvals.yaml
+policy: ask
+allowlist:
+  - "git status"
+  - "git diff"
+  - "pytest tests/*"
+denylist:
+  - "rm -rf"
+  - "sudo *"
+```
+
+**Interactive Approval:**
+When policy is "ask", Kabot will prompt:
+```
+Command requires approval: git commit -m "fix bug"
+Reply with /approve <id> to run once, or /deny <id> to reject.
+```
+
+### **Hook System (Lifecycle Events)**
+Kabot supports 12 lifecycle hooks for custom automation:
+
+**Available Hooks:**
+- `ON_STARTUP` - When Kabot starts
+- `ON_SHUTDOWN` - When Kabot stops
+- `ON_MESSAGE_RECEIVED` - Before processing message
+- `PRE_LLM_CALL` - Before calling LLM
+- `POST_LLM_CALL` - After LLM responds
+- `ON_TOOL_CALL` - Before tool execution
+- `ON_TOOL_RESULT` - After tool execution
+- `ON_ERROR` - When error occurs
+- `ON_MEMORY_SAVE` - When saving to memory
+- `ON_MEMORY_SEARCH` - When searching memory
+- `ON_SESSION_START` - New session created
+- `ON_SESSION_END` - Session closed
+
+**Example Hook:**
+```python
+# ~/.kabot/hooks/log_tool_calls.py
+def on_tool_call(tool_name, params):
+    with open("tool_log.txt", "a") as f:
+        f.write(f"{tool_name}: {params}\n")
+```
+
+### **Plugin System**
+Kabot supports dynamic plugins for extending functionality:
+
+**Plugin Structure:**
+```
+~/.kabot/plugins/
+  my_plugin/
+    __init__.py
+    plugin.yaml
+    tools/
+      custom_tool.py
+```
+
+**Plugin Registration:**
+Plugins are auto-loaded from `~/.kabot/plugins/` on startup.
+
+### **Subagent Architecture**
+Kabot supports spawning background subagents for parallel task execution:
+
+**Features:**
+- Persistent registry (survives restarts)
+- Depth limits (prevent infinite recursion)
+- Concurrent limits (max 5 parallel subagents)
+- Background task execution
+
+**Usage:**
+```
+User: "Spawn a subagent to monitor logs while I work on the code"
+Kabot: [Uses spawn tool]
+Kabot: "✅ Subagent spawned (ID: sub_abc123). It will monitor logs and report back."
+```
+
+### **Auth Rotation (Zero-Downtime)**
+Kabot supports multiple API keys per provider with automatic rotation:
+
+**Configuration:**
+```yaml
+# config.yaml
+provider: openai
+api_keys:
+  - sk-key1...
+  - sk-key2...
+  - sk-key3...
+```
+
+**Behavior:**
+- On 429 rate limit → rotate to next key
+- On 401 auth error → rotate to next key
+- 60-second cooldown per failed key
+
+### **Model Fallback Cascade**
+Automatic fallback to secondary models on failure:
+
+**Configuration:**
+```yaml
+model: claude-3-5-sonnet-20241022
+fallback_models:
+  - gpt-4o
+  - gemini-pro
+```
+
+**Behavior:**
+- Primary model fails → try gpt-4o
+- gpt-4o fails → try gemini-pro
+- All fail → return error to user
+
+### **Context Window Guard**
+Prevents crashes from context overflow:
+
+**Thresholds:**
+- **< 16K tokens** - Block (too small for Kabot)
+- **< 32K tokens** - Warning (may overflow)
+- **> 80% full** - Auto-compact history
+
+**Auto-Compaction:**
+- Summarizes old messages
+- Keeps recent 10 exchanges
+- Preserves tool calls and results
+
+### **Tool Result Truncation**
+Prevents tool results from bloating context:
+
+**Rules:**
+- Max 30% of context window per tool result
+- Truncates with "... (truncated: N more chars)"
+- Preserves structure (JSON, XML, etc.)
+
+---
+
+## Congratulations!
+You are now fully equipped to unleash Kabot. You have mastered:
+- Setup Wizard & Configuration
+- 36 Built-in Tools
+- 70+ Skills System
+- Advanced Features (Firewall, Hooks, Plugins, Subagents)
+- Auto-Update System
+- AI-as-Developer Capabilities
+
+Start experimenting! Use `kabot config` to partition your agents by role, teach them with `kabot train`, leverage skills for complex workflows, and watch your productivity level up.
