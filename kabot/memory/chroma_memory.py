@@ -644,6 +644,7 @@ class HybridMemoryManager(MemoryBackend):
                     self.bm25 = None
                     self.bm25_documents = []
                     self.bm25_ids = []
+                    self._bm25_built = False
                     logger.info("BM25 index unloaded")
             except Exception as e:
                 logger.error(f"Error unloading BM25: {e}")
