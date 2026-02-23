@@ -11,6 +11,7 @@ from kabot.memory.memory_backend import MemoryBackend
 
 # Supported backends — add new entries here to register new engines.
 SUPPORTED_BACKENDS = {"hybrid", "sqlite_only", "disabled"}
+DEFAULT_AUTO_UNLOAD_SECONDS = 300
 
 
 class MemoryFactory:
@@ -59,17 +60,30 @@ class MemoryFactory:
 
         # Default: hybrid
         from kabot.memory.chroma_memory import HybridMemoryManager
+
+        # Validate embedding_provider
         embedding_provider = memory_config.get("embedding_provider", "sentence")
+        if embedding_provider not in ("sentence", "ollama"):
+            logger.warning(
+                f"Invalid embedding_provider='{embedding_provider}', using default 'sentence'"
+            )
+            embedding_provider = "sentence"
+
         embedding_model = memory_config.get("embedding_model", None)
         enable_hybrid = memory_config.get("enable_hybrid_search", True)
 
         # Get auto-unload timeout with validation
-        auto_unload_seconds = memory_config.get("auto_unload_timeout", 300)
-        if auto_unload_seconds < 0:
+        auto_unload_seconds = memory_config.get("auto_unload_timeout", DEFAULT_AUTO_UNLOAD_SECONDS)
+        if not isinstance(auto_unload_seconds, int):
             logger.warning(
-                f"Invalid auto_unload_timeout={auto_unload_seconds}, using default 300s"
+                f"Invalid auto_unload_timeout type={type(auto_unload_seconds).__name__}, using default {DEFAULT_AUTO_UNLOAD_SECONDS}s"
             )
-            auto_unload_seconds = 300
+            auto_unload_seconds = DEFAULT_AUTO_UNLOAD_SECONDS
+        elif auto_unload_seconds < 0:
+            logger.warning(
+                f"Invalid auto_unload_timeout={auto_unload_seconds}, using default {DEFAULT_AUTO_UNLOAD_SECONDS}s"
+            )
+            auto_unload_seconds = DEFAULT_AUTO_UNLOAD_SECONDS
 
         logger.info(
             f"Memory backend: hybrid "
