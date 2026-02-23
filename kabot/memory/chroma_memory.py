@@ -35,7 +35,8 @@ class HybridMemoryManager(MemoryBackend):
     """
 
     def __init__(self, workspace: Path, embedding_provider: str = "sentence",
-                 embedding_model: str | None = None, enable_hybrid_memory: bool = True):
+                 embedding_model: str | None = None, enable_hybrid_memory: bool = True,
+                 auto_unload_seconds: int = 300):
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.enable_hybrid_memory = enable_hybrid_memory
@@ -46,7 +47,10 @@ class HybridMemoryManager(MemoryBackend):
         # Initialize embedding provider (sentence-transformers or ollama)
         if embedding_provider == "sentence":
             model = embedding_model or "all-MiniLM-L6-v2"
-            self.embeddings = SentenceEmbeddingProvider(model)
+            self.embeddings = SentenceEmbeddingProvider(
+                model,
+                auto_unload_seconds=auto_unload_seconds
+            )
             logger.info(f"Using Sentence-Transformers with model: {model}")
         elif embedding_provider == "ollama":
             model = embedding_model or "nomic-embed-text"
@@ -612,6 +616,34 @@ class HybridMemoryManager(MemoryBackend):
         except Exception as e:
             logger.error(f"Error searching memory: {e}")
             return []
+
+    def unload_resources(self):
+        """Manually unload embedding model and ChromaDB to free RAM."""
+        # Unload embedding model
+        if hasattr(self.embeddings, 'unload_model'):
+            self.embeddings.unload_model()
+
+        # Unload ChromaDB
+        with self._lock:
+            if self._chroma_client:
+                self._collection = None
+                self._chroma_client = None
+                import gc
+                gc.collect()
+                logger.info("ChromaDB unloaded")
+
+    def get_memory_stats(self) -> dict:
+        """Get memory system statistics."""
+        stats = {
+            "backend": "hybrid",
+            "chromadb_loaded": self._chroma_client is not None,
+        }
+
+        # Get embedding stats if available
+        if hasattr(self.embeddings, 'get_memory_stats'):
+            stats["embedding"] = self.embeddings.get_memory_stats()
+
+        return stats
 
     def _get_message_by_id(self, message_id: str) -> dict | None:
         """Get message data from SQLite by ID."""
