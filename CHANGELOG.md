@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-02-23
+
+### Added
+- **RAM-Optimized Hybrid Memory**: Reduces idle RAM from ~800MB to ~250MB through lazy loading and auto-unload mechanisms
+  - Auto-unload embedding model after 5 minutes idle (configurable via `auto_unload_timeout` in config)
+  - Manual unload API: `memory.unload_resources()` for explicit resource cleanup
+  - Recursive module clearing for proper PyTorch memory release
+  - Platform-specific memory trimming (Windows `EmptyWorkingSet`, Linux `malloc_trim`)
+  - Zero intelligence loss - model reloads automatically on next search
+  - Backward compatible with existing Hybrid backend
+
+### Technical Details
+- Lazy loading: Embedding model loads only on first search request
+- Auto-unload timer: Configurable timeout (default 5 minutes) with automatic resource cleanup
+- Memory optimization: Comprehensive cleanup including PyTorch cache, CUDA memory, and system-level trimming
+- Thread-safe: Race condition prevention with proper locking mechanisms
+- Test coverage: Unit tests, integration tests, and memory leak verification
+
 ## [0.5.4] - 2026-02-23
 
 ### Added
