@@ -165,7 +165,7 @@ _CATALOG: dict[str, dict[str, str]] = {
         "cron.update.need_selector": "要编辑日程，请提供 `group_id` 或日程标题。请先运行：`list reminder` 查看分组列表。",
         "cron.update.incomplete": "编辑格式不完整。示例：`update schedule grp_shift_a every 12 hours` 或 `rename grp_shift_a to Shift Team A`。",
         "cron.time_unclear": "我还无法确定提醒时间。示例：2分钟后提醒我、每天09:00提醒站会、或每4小时喝水。",
-        "cron.cycle_created": "已创建循环"{title}"（group_id: {group_id}），共 {job_count} 个任务；每 {period_days} 天重复。",
+        "cron.cycle_created": "已创建循环'{title}'（group_id: {group_id}），共 {job_count} 个任务；每 {period_days} 天重复。",
         "update.check.available": "有可用更新：{latest_version}（当前：{current_version}）",
         "update.check.up_to_date": "您正在使用最新版本：{current_version}",
         "update.check.commits_behind": "您的安装落后最新版本 {commits_behind} 个提交",
