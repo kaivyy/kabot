@@ -1,6 +1,9 @@
 """Sentence-Transformers embedding provider for local embeddings."""
 
 import hashlib
+import time
+import gc
+import threading
 
 from loguru import logger
 
@@ -15,13 +18,16 @@ class SentenceEmbeddingProvider:
     - paraphrase-multilingual-MiniLM-L12-v2 (multilingual support)
     """
 
-    def __init__(self, model: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model: str = "all-MiniLM-L6-v2", auto_unload_seconds: int = 300):
         self.model_name = model
         self._model = None
         self._cache = {}  # Simple LRU cache
         self._cache_size = 1000
-        import threading
-        self._lock = threading.Lock()
+        self._auto_unload_seconds = auto_unload_seconds
+        self._last_used = None
+        self._unload_timer = None
+        self._auto_unload_enabled = auto_unload_seconds > 0
+        self._lock = threading.RLock()  # Change Lock to RLock
 
     def _load_model(self):
         """Lazy load the sentence-transformers model."""
@@ -69,22 +75,23 @@ class SentenceEmbeddingProvider:
             if cache_key in self._cache:
                 return self._cache[cache_key]
 
-            # Load model if needed
-            self._load_model()
+            with self._lock:
+                self._load_model()
+                self._last_used = time.time()
 
-            # Generate embedding
-            embedding = self._model.encode(text)
-            if hasattr(embedding, 'tolist'):
-                embedding = embedding.tolist()
+                embedding = self._model.encode(text)
+                if hasattr(embedding, 'tolist'):
+                    embedding = embedding.tolist()
 
-            if embedding:
-                # Cache result
-                if len(self._cache) >= self._cache_size:
-                    # Remove oldest entry (simple FIFO)
-                    self._cache.pop(next(iter(self._cache)))
-                self._cache[cache_key] = embedding
+                if embedding:
+                    if len(self._cache) >= self._cache_size:
+                        self._cache.pop(next(iter(self._cache)))
+                    self._cache[cache_key] = embedding
 
-            return embedding
+                if self._auto_unload_enabled:
+                    self._reset_unload_timer()
+
+                return embedding
 
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
@@ -123,6 +130,61 @@ class SentenceEmbeddingProvider:
         except Exception as e:
             logger.error(f"Error generating batch embeddings: {e}")
             return [None] * len(texts)
+
+    def _reset_unload_timer(self):
+        """Reset the auto-unload timer."""
+        with self._lock:
+            if self._unload_timer:
+                self._unload_timer.cancel()
+
+            self._unload_timer = threading.Timer(
+                self._auto_unload_seconds,
+                self._auto_unload_callback
+            )
+            self._unload_timer.daemon = True
+            self._unload_timer.start()
+
+    def _auto_unload_callback(self):
+        """Timer callback to unload model after idle timeout."""
+        with self._lock:
+            if self._model is not None:
+                idle_time = time.time() - self._last_used
+                if idle_time >= self._auto_unload_seconds:
+                    self._unload_model_internal()
+
+    def _unload_model_internal(self):
+        """Internal method to unload model."""
+        try:
+            del self._model
+            self._model = None
+            gc.collect()
+            logger.info(f"Embedding model auto-unloaded (freed ~200-300MB RAM)")
+        except Exception as e:
+            logger.error(f"Failed to unload model: {e}")
+
+    def unload_model(self):
+        """Manually unload the model to free RAM."""
+        with self._lock:
+            if self._unload_timer:
+                self._unload_timer.cancel()
+                self._unload_timer = None
+            self._unload_model_internal()
+
+    def get_memory_stats(self) -> dict:
+        """Get memory statistics."""
+        return {
+            "model_loaded": self._model is not None,
+            "last_used": self._last_used,
+            "auto_unload_seconds": self._auto_unload_seconds,
+            "auto_unload_enabled": self._auto_unload_enabled
+        }
+
+    def __del__(self):
+        """Cleanup on destruction."""
+        if self._unload_timer:
+            self._unload_timer.cancel()
+        if self._model is not None:
+            self.unload_model()
 
     @property
     def dimensions(self) -> int:
