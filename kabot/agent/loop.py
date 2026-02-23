@@ -144,11 +144,15 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
-        from kabot.memory import HybridMemoryManager
-        self.memory = HybridMemoryManager(
-            workspace / "memory_db",
-            enable_hybrid_memory=enable_hybrid_memory
-        )
+        from kabot.memory.memory_factory import MemoryFactory
+        from kabot.config.loader import load_config
+        _cfg_obj = load_config()
+        # Convert Pydantic model to dict for MemoryFactory
+        _cfg = _cfg_obj.model_dump() if hasattr(_cfg_obj, 'model_dump') else _cfg_obj.dict()
+        # Allow constructor param to override config
+        if not enable_hybrid_memory:
+            _cfg.setdefault("memory", {})["enable_hybrid_search"] = False
+        self.memory = MemoryFactory.create(_cfg, workspace)
         # Vector store for semantic memory search (Phase 7) - lazy initialization
         self._vector_store = None
         self._vector_store_path = str(workspace / "vector_db")
@@ -374,7 +378,7 @@ class AgentLoop:
                 cache_ttl_minutes=self.config.tools.web.fetch.cache_ttl_minutes,
             )
         )
-        self.tools.register(SpeedtestTool(workspace_path=str(self.workspace)))
+        self.tools.register(SpeedtestTool())
         self.tools.register(BrowserTool())
 
         from kabot.agent.tools.system import SystemInfoTool, ProcessMemoryTool
