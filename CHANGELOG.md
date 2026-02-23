@@ -7,46 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.5] - 2026-02-23
+## [0.5.5] - 2026-02-24
 
 ### Added
-- **RAM-Optimized Hybrid Memory**: Reduces idle RAM from ~800MB to ~250MB through lazy loading and auto-unload mechanisms
-  - Auto-unload embedding model after 5 minutes idle (configurable via `auto_unload_timeout` in config)
-  - Manual unload API: `memory.unload_resources()` for explicit resource cleanup
-  - Recursive module clearing for proper PyTorch memory release
-  - Platform-specific memory trimming (Windows `EmptyWorkingSet`, Linux `malloc_trim`)
-  - Zero intelligence loss - model reloads automatically on next search
-  - Backward compatible with existing Hybrid backend
+- **Embedding Auto-Unload**: Embedding model (`all-MiniLM-L6-v2`) automatically unloads after 5 minutes idle
+  - Configurable via `auto_unload_timeout` in config (default: 300s)
+  - Manual unload: `memory.unload_resources()`
+  - Recursive PyTorch module clearing + platform-specific memory trimming
+  - Model reloads transparently on next search — zero quality loss
+- **ChromaDB Segment Cache Cap**: Added `chroma_memory_limit_bytes=50MB` to limit in-memory segment cache
+
+### Measured RAM (empirical, psutil RSS)
+| State | RAM | Notes |
+|-------|-----|-------|
+| Python + imports (no model) | ~41 MB | Baseline |
+| + ChromaDB initialized | ~91 MB | +49 MB for HNSW index |
+| + Embedding model loaded | ~450 MB | +359 MB for sentence-transformers |
+| After model unload + gc | ~443 MB | CPython allocator retains memory |
+
+> **Note:** CPython's arena-based memory allocator does not return freed memory to the OS unless entire arenas are empty. The ~443 MB after unload is expected Python behavior, not a leak.
 
 ### Technical Details
-- Lazy loading: Embedding model loads only on first search request
-- Auto-unload timer: Configurable timeout (default 5 minutes) with automatic resource cleanup
-- Memory optimization: Comprehensive cleanup including PyTorch cache, CUDA memory, and system-level trimming
-- Thread-safe: Race condition prevention with proper locking mechanisms
-- Test coverage: Unit tests, integration tests, and memory leak verification
+- Thread-safe lazy loading with double-check locking
+- Timer-based auto-unload with `threading.Timer`
+- 874 tests passing, 6 skipped
 
 ## [0.5.4] - 2026-02-23
 
 ### Added
-- **AI-as-Developer Backend Enhancements**: Advanced backend systems that prevent common AI agent failures and enhance reliability
-  - **Tool Loop Detection**: Automatically detects and blocks repetitive tool calls (generic repeat and ping-pong patterns) to prevent stuck agents
-  - **Tool Policy Profiles**: Configurable access control with 5 profiles (minimal, coding, messaging, analysis, full) and tool groups (fs, runtime, web, memory, automation, etc.)
-  - **Enhanced Failover Error Classification**: Intelligent error categorization (billing, rate_limit, auth, timeout, format, model_not_found, unknown) with automatic retry/fallback strategies
-  - **Context Window Guard**: Already implemented - prevents crashes from undersized model context windows (hard block < 16K, warn < 32K)
-  - **Context Compaction**: Already implemented - automatic summarization of conversation history when context window overflows
-  - **Tool Result Guard**: Already implemented - truncates oversized tool results to prevent context bloat
+- **Tool Loop Detection** (`kabot/agent/loop_core/tool_loop_detection.py`): Detects stuck agents calling same tool repeatedly
+  - Generic repeat detection (warning at 10, critical block at 20 identical calls)
+  - Ping-pong detection (A↔B alternating tool calls)
+  - Sliding window of 30 calls with MD5 parameter hashing
+- **Tool Policy Profiles** (`kabot/agent/tools/tool_policy.py`): Per-agent tool access control
+  - 5 profiles: minimal, coding, messaging, analysis, full
+  - 6 tool groups: fs, runtime, web, memory, sessions, automation
+  - Owner-only tools: cron, exec, spawn
+- **Failover Error Classification** (`kabot/core/failover_error.py`): Error categorization for smarter retry
+  - 7 categories: billing (402), rate_limit (429), auth (401), timeout (408/503), format (400), model_not_found (404), unknown
+  - Status code + error message + error code classification
+- **Context Window Guard** (`kabot/agent/loop_core/context_guard.py`): Prevents crashes from tiny context windows
+  - Hard block below 16K tokens, warning below 32K tokens
 
 ### Changed
-- **Agent Loop**: Integrated LoopDetector for tool loop detection with configurable thresholds (warning: 10 calls, critical: 20 calls)
-- **Tool Registry**: Added policy profile filtering to `get_definitions()` method for dynamic tool access control
-- **Resilience Layer**: Enhanced error handling with failover reason classification for smarter retry/fallback decisions
-- **Execution Runtime**: Tool calls now checked for loops before execution, with critical loops blocked and warnings logged
-
-### Technical Details
-- 42 tests passing (10 existing + 32 new) covering all AI-as-Developer backend modules
-- Tool loop detection uses sliding window (30 calls) with MD5 hashing for parameter comparison
-- Tool policies support group expansion (@fs, @web, etc.) and owner-only tools (cron, exec, spawn)
-- Failover classification supports status codes, error messages, and provider-specific error codes
+- **Agent Loop**: Integrated LoopDetector — critical loops blocked, warnings logged
+- **Tool Registry**: Policy profile filtering in `get_definitions()`
+- **Resilience Layer**: Uses failover reason for smarter retry/fallback decisions
 
 ## [0.5.3] - 2026-02-23
 

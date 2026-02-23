@@ -106,11 +106,14 @@ class HybridMemoryManager(MemoryBackend):
                 chroma_dir = self.workspace / "chroma"
                 chroma_dir.mkdir(parents=True, exist_ok=True)
 
+                # PersistentClient stores vectors on disk (HNSW index).
+                # chroma_memory_limit_bytes caps the segment cache to reduce idle RAM.
                 self._chroma_client = chromadb.PersistentClient(
                     path=str(chroma_dir),
                     settings=Settings(
                         anonymized_telemetry=False,
-                        allow_reset=True
+                        allow_reset=True,
+                        chroma_memory_limit_bytes=50 * 1024 * 1024,  # 50MB cache cap
                     )
                 )
 
