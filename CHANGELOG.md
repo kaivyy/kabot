@@ -10,26 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.5] - 2026-02-24
 
 ### Added
-- **Embedding Auto-Unload**: Embedding model (`all-MiniLM-L6-v2`) automatically unloads after 5 minutes idle
-  - Configurable via `auto_unload_timeout` in config (default: 300s)
-  - Manual unload: `memory.unload_resources()`
-  - Recursive PyTorch module clearing + platform-specific memory trimming
-  - Model reloads transparently on next search — zero quality loss
-- **ChromaDB Segment Cache Cap**: Added `chroma_memory_limit_bytes=50MB` to limit in-memory segment cache
+- **Embedding Auto-Unload System**: Intelligent memory management for the sentence-transformers embedding model (`all-MiniLM-L6-v2`)
+  - Auto-unload after 5 minutes idle via configurable `auto_unload_timeout` in config (default: 300s, set 0 to disable)
+  - Manual unload API: `memory.unload_resources()` for explicit resource cleanup
+  - Recursive PyTorch module clearing with `module.cpu()` + parameter/buffer dereferencing
+  - Platform-specific memory trimming: Windows `EmptyWorkingSet`, Linux `malloc_trim`, macOS `gc.collect()`
+  - Model reloads transparently on next `search_memory()` — zero quality/intelligence loss
+  - Thread-safe with `threading.RLock` and double-check locking pattern
+- **ChromaDB Segment Cache Cap**: Added `chroma_memory_limit_bytes=50MB` to `Settings()` to limit in-memory HNSW segment cache
+- **Memory Statistics API**: `embeddings.get_memory_stats()` returns model state, load count, and unload count
+
+### Changed
+- **Memory Factory** (`kabot/memory/memory_factory.py`): Added `auto_unload_seconds` passthrough from config with input validation
+- **Sentence Embeddings** (`kabot/memory/sentence_embeddings.py`): Complete rewrite — added lazy loading, timer-based auto-unload, `_unload_model_internal()` with recursive cleanup, `warmup()` for background pre-loading
+- **Hybrid Memory Manager** (`kabot/memory/chroma_memory.py`): ChromaDB `PersistentClient` now uses `chroma_memory_limit_bytes` cache cap; cleaned up invalid legacy config parameters
+
+### Fixed
+- **Version Sync**: `__init__.py` and `pyproject.toml` version now matches git tag (was stuck at 0.5.3)
+- **CHANGELOG Accuracy**: Replaced fabricated RAM metrics with empirically measured psutil RSS data
+
+### How Auto-Unload Works
+```
+Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
+                                            ↓
+                   User goes quiet → 5 min timer expires → model unloaded (443 MB*)
+                                            ↓
+                   Next message → model reloads (3-5s) → fully functional
+```
+> *CPython's arena-based allocator does not return freed memory to OS. Only a process restart returns to 91 MB. This is expected Python behavior, not a leak.
 
 ### Measured RAM (empirical, psutil RSS)
-| State | RAM | Notes |
-|-------|-----|-------|
-| Python + imports (no model) | ~41 MB | Baseline |
-| + ChromaDB initialized | ~91 MB | +49 MB for HNSW index |
-| + Embedding model loaded | ~450 MB | +359 MB for sentence-transformers |
-| After model unload + gc | ~443 MB | CPython allocator retains memory |
-
-> **Note:** CPython's arena-based memory allocator does not return freed memory to the OS unless entire arenas are empty. The ~443 MB after unload is expected Python behavior, not a leak.
+| State | RAM | Component Cost |
+|-------|-----|----------------|
+| Python + Kabot imports (no model) | ~41 MB | Baseline |
+| + ChromaDB initialized (HNSW on disk) | ~91 MB | +49 MB |
+| + Embedding model loaded | ~450 MB | +359 MB (sentence-transformers) |
+| After model unload + gc.collect() | ~443 MB | CPython retains memory |
 
 ### Technical Details
-- Thread-safe lazy loading with double-check locking
-- Timer-based auto-unload with `threading.Timer`
+- Thread-safe lazy loading with `threading.RLock` + double-check locking
+- Timer-based auto-unload with `threading.Timer` (resets on every embed call)
+- Recursive module cleanup: `module.cpu()` → clear parameters → clear buffers → `del` children
+- Platform trimming: `ctypes.windll.kernel32.SetProcessWorkingSetSize` (Windows), `ctypes.CDLL(None).malloc_trim(0)` (Linux)
 - 874 tests passing, 6 skipped
 
 ## [0.5.4] - 2026-02-23
