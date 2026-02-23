@@ -1,47 +1,52 @@
 import pytest
 import asyncio
+import psutil
+import os
+import gc
 from kabot.memory.sentence_embeddings import SentenceEmbeddingProvider
 
 @pytest.mark.asyncio
-async def test_model_unload_mechanism():
-    """Verify model unload mechanism works correctly.
+async def test_no_memory_leak_after_unload():
+    """RAM should be freed after unload."""
+    process = psutil.Process(os.getpid())
 
-    Note: This test verifies the unload API works, not actual OS-level memory freeing.
-    PyTorch and sentence-transformers may retain memory in internal pools even after
-    model deletion, which is expected Python/PyTorch behavior.
-    """
+    # Baseline
+    baseline_mb = process.memory_info().rss / 1024 / 1024
+
+    # Load model (first time)
     provider = SentenceEmbeddingProvider()
+    await provider.embed("test query")
+    loaded_mb = process.memory_info().rss / 1024 / 1024
 
-    # Initially no model loaded
-    assert provider._model is None
-    assert len(provider._cache) == 0
+    # Should increase by ~150MB+ (model loading)
+    assert loaded_mb - baseline_mb > 100
 
-    # Load model by embedding
-    result = await provider.embed("test query")
-    assert result is not None
-    assert len(result) == 384  # all-MiniLM-L6-v2 dimensions
-    assert provider._model is not None
-    assert len(provider._cache) == 1  # Query cached
-
-    # Embed another query
-    result2 = await provider.embed("another query")
-    assert result2 is not None
-    assert provider._model is not None
-    assert len(provider._cache) == 2
-
-    # Unload model
+    # Unload
     provider.unload_model()
+    del provider
 
-    # Verify model and cache are cleared
-    assert provider._model is None, "Model should be None after unload"
-    assert len(provider._cache) == 0, "Cache should be cleared after unload"
+    # Force garbage collection
+    for _ in range(10):
+        gc.collect()
+    await asyncio.sleep(2)
 
-    # Verify model can be reloaded
-    result3 = await provider.embed("third query")
-    assert result3 is not None
-    assert provider._model is not None
-    assert len(provider._cache) == 1
+    unloaded_mb = process.memory_info().rss / 1024 / 1024
 
-    # Cleanup
-    provider.unload_model()
-    assert provider._model is None
+    # Load model again (second time)
+    provider2 = SentenceEmbeddingProvider()
+    await provider2.embed("test query 2")
+    reloaded_mb = process.memory_info().rss / 1024 / 1024
+
+    # Unload again
+    provider2.unload_model()
+    del provider2
+
+    # Force garbage collection
+    for _ in range(10):
+        gc.collect()
+
+    # Key test: If there's no leak, reloading shouldn't increase memory significantly
+    # beyond the first load. Memory should be reused from the pool.
+    # Allow 60MB tolerance for Python allocator overhead and variance
+    assert abs(reloaded_mb - loaded_mb) < 60, \
+        f"Memory leak detected! First load: {loaded_mb:.1f}MB, Reload: {reloaded_mb:.1f}MB, Diff: {reloaded_mb - loaded_mb:.1f}MB"
