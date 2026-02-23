@@ -103,3 +103,155 @@ class CheckUpdateTool(Tool):
         if current == "unknown" or latest == "unknown":
             return False
         return current != latest
+
+
+class SystemUpdateTool(Tool):
+    """Update Kabot to latest version."""
+
+    @property
+    def name(self) -> str:
+        return "system_update"
+
+    @property
+    def description(self) -> str:
+        return "Update Kabot to latest version. Set confirm_restart=true to restart after update. Use this when user confirms update."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "confirm_restart": {
+                    "type": "boolean",
+                    "description": "Whether to restart Kabot after update"
+                }
+            },
+            "required": []
+        }
+
+    async def execute(self, confirm_restart: bool = False, **kwargs: Any) -> str:
+        try:
+            install_method = self._detect_install_method()
+            kabot_dir = Path(__file__).parent.parent.parent.parent
+
+            # Check if can update
+            if install_method == "git" and not self._can_update_git(kabot_dir):
+                return json.dumps({
+                    "success": False,
+                    "reason": "dirty_working_tree",
+                    "message": "Git working tree has uncommitted changes. Commit or stash first."
+                })
+
+            current_version = self._get_current_version()
+
+            # Execute update
+            if install_method == "git":
+                success, message = self._git_update(kabot_dir)
+            else:
+                success, message = self._pip_update()
+
+            if not success:
+                return json.dumps({"success": False, "reason": "update_failed", "message": message})
+
+            # Install dependencies
+            self._install_dependencies(kabot_dir)
+
+            updated_version = self._get_current_version()
+
+            # Handle restart
+            if confirm_restart:
+                from kabot.services.update_service import UpdateService
+                service = UpdateService()
+                script_path = service.create_restart_script()
+                service.execute_restart(script_path)
+
+            return json.dumps({
+                "success": True,
+                "updated_from": current_version,
+                "updated_to": updated_version,
+                "restart_required": True
+            })
+        except Exception as e:
+            logger.error(f"Update error: {e}")
+            return json.dumps({"success": False, "reason": "exception", "message": str(e)})
+
+    def _detect_install_method(self) -> str:
+        kabot_dir = Path(__file__).parent.parent.parent.parent
+        return "git" if (kabot_dir / ".git").exists() else "pip"
+
+    def _get_current_version(self) -> str:
+        try:
+            from kabot import __version__
+            return __version__
+        except:
+            return "unknown"
+
+    def _can_update_git(self, kabot_dir: Path) -> bool:
+        """Check if git working tree is clean."""
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=kabot_dir,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.returncode == 0 and not result.stdout.strip()
+        except:
+            return False
+
+    def _git_update(self, kabot_dir: Path) -> tuple[bool, str]:
+        """Update via git pull."""
+        try:
+            # Fetch
+            result = subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=kabot_dir,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if result.returncode != 0:
+                return False, f"Git fetch failed: {result.stderr}"
+
+            # Pull
+            result = subprocess.run(
+                ["git", "pull", "origin", "main"],
+                cwd=kabot_dir,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if result.returncode != 0:
+                return False, f"Git pull failed: {result.stderr}"
+
+            return True, "Git update successful"
+        except Exception as e:
+            return False, str(e)
+
+    def _pip_update(self) -> tuple[bool, str]:
+        """Update via pip."""
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "kabot-ai"],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            if result.returncode != 0:
+                return False, f"Pip upgrade failed: {result.stderr}"
+            return True, "Pip update successful"
+        except Exception as e:
+            return False, str(e)
+
+    def _install_dependencies(self, kabot_dir: Path):
+        """Install/update dependencies."""
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-e", "."],
+                cwd=kabot_dir,
+                capture_output=True,
+                timeout=120
+            )
+        except Exception as e:
+            logger.warning(f"Dependency install warning: {e}")
