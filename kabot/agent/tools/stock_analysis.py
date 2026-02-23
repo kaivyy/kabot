@@ -38,7 +38,7 @@ Example analysis you should provide:
         "properties": {
             "symbol": {
                 "type": "string",
-                "description": "Stock ticker symbol (e.g., 'BBCA.JK', 'TLKM.JK', 'ASII', 'BBRI')"
+                "description": "Exact stock ticker symbol (e.g., 'AAPL', 'TLKM.JK', '7203.T')"
             },
             "days": {
                 "type": "string",
@@ -124,7 +124,7 @@ Example analysis you should provide:
                         "change": change,
                         "change_percent": change_percent,
                         "volume": volume,
-                        "currency": meta.get("currency", "IDR"),
+                        "currency": meta.get("currency", "USD"),
                         "exchange": meta.get("exchangeName", "Unknown"),
                         "previous_close": meta.get("previousClose", open_price)
                     }

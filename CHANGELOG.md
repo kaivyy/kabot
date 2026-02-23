@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Changed
+- **Market Tools Globalization**: Completely refactored `StockTool`, `CryptoTool`, and `StockAnalysisTool` to remove hardcoded regional biases (such as `.JK` suffix defaults, `TOP10_ID` lists, and limited `coin_map` dictionaries). Market tools now operate on a "Pure Plugin" philosophy: AI agents must use `web_search` natively to discover exact financial tickers or CoinGecko IDs before querying price data, supporting thousands of global assets out-of-the-box.
 - **Startup Time Optimization (~40s → ~3s to Chat-Ready)**: (1) HeartbeatService now waits 30s before first beat, preventing startup blocking. (2) SentenceTransformer embedding model pre-loads in a background thread via `warmup()`. (3) `AgentLoop.run()` kicks off `_warmup_memory()` as a non-blocking background task. Telegram is now chat-ready in ~3s instead of ~40s.
 - **Zero-Latency Cold Start**: Migrated heavy LLM libraries (`litellm`, etc.) to lazy-loading scopes, dropping CLI startup time to `< 0.7s`.
 - **Asynchronous BM25 Indexing**: Deferred the synchronous `BM25Okapi` indexing to trigger only upon the first explicit user `search()`, removing background startup blocking.
@@ -631,10 +632,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Updated AgentBinding schema** across all test files
   - Migrated from legacy format to new `match` field structure
   - Updated imports to include `AgentBindingMatch` and `PeerMatch`
+### Added
+- **Memory Slot Architecture**: Users can now switch memory backends (`hybrid`, `sqlite_only`, `disabled`) via `config.json` or the interactive Setup Wizard. No code changes required.
+- **MemoryBackend ABC**: Abstract base class defining the contract for all memory backends, enabling future extensibility (Redis, Mem0, etc.).
+- **SQLiteMemory**: Lightweight memory backend using only SQLite (no ChromaDB or embeddings). Ideal for Termux or Raspberry Pi.
+- **NullMemory**: No-op memory backend for users who want to disable memory entirely.
+- **MemoryFactory**: Config-driven factory that reads `config.json["memory"]["backend"]` and instantiates the correct backend.
+- **Setup Wizard Memory Menu**: New "Memory" menu option in the setup wizard for selecting backend and embedding provider.
+- `GoogleAuthManager` auto-initialization check: Now handles missing OAuth `.gemini/` credentials properly on app start, prompting a smooth re-auth instead of crashing instantly.
+- **Smart Gateway Binding Defaults**: Setup wizard now defaults to `lan` interface if running on a VPS/Cloud directly, and `loopback` (localhost) if running locally or behind a known proxy.
 - **Fixed agent routing logic** (`kabot/agent/loop.py:_resolve_model_for_message`)
   - Corrected peer resolution for proper model selection
   - Fixed session key handling in background sessions
-- **Resolved mock setup issues** in autoplanner integration tests
+- **Resolved mock setup issues**
   - Added missing `_agent_subscribers` attribute to mock MessageBus
 
 ### Impact

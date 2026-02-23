@@ -3,9 +3,9 @@
 from typing import Any, Dict
 import asyncio
 from loguru import logger
-from kabot.agent.tools.base import BaseTool
+from kabot.agent.tools.base import Tool
 
-class SpeedtestTool(BaseTool):
+class SpeedtestTool(Tool):
     """Tool to perform internet speed test (Ping, Download, Upload)."""
 
     def __init__(self, workspace_path: str):

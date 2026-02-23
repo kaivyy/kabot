@@ -11,47 +11,32 @@ class StockTool(Tool):
     """Get current stock price and market information."""
 
     name = "stock"
-    description = "Get CURRENT STOCK PRICE only - quick price check using Yahoo Finance API. For ANALYSIS and RECOMMENDATIONS, use stock_analysis tool instead. This tool only returns price, change, high, low - no investment advice."
+    description = "Get CURRENT STOCK PRICE only using Yahoo Finance API. Requires exact ticker symbol with exchange suffix (e.g., AAPL, BBCA.JK, 7203.T, SAP.DE). If you don't know the ticker, use web_search first to find it. For ANALYSIS and RECOMMENDATIONS, use stock_analysis tool instead."
     parameters = {
         "type": "object",
         "properties": {
             "symbol": {
                 "type": "string",
-                "description": "Stock ticker symbol (e.g., 'AAPL' for Apple, 'MSFT' for Microsoft, 'TLKM.JK' for Telkom Indonesia, 'BBCA.JK' for BCA)"
-            },
-            "market": {
-                "type": "string",
-                "description": "Optional: specify market/exchange (e.g., 'US', 'JK' for Indonesia, 'JKSE' for IDX)",
-                "default": ""
+                "description": "Exact stock ticker symbol with exchange suffix (e.g., 'AAPL', 'MSFT', '7203.T' for Toyota, 'SAP.DE' for SAP, 'BBCA.JK' for BCA)"
             }
         },
         "required": ["symbol"]
     }
 
-    async def execute(self, symbol: str, market: str = "", **kwargs: Any) -> str:
+    async def execute(self, symbol: str, **kwargs: Any) -> str:
         """
         Fetch stock data for the given symbol(s).
-        
+
         Args:
             symbol: Stock ticker symbol or comma-separated list of symbols.
-                    Special keyword: 'TOP10_ID' for top Indonesian stocks.
-            market: Optional market/exchange code
         """
         try:
-            # Handle special keywords
-            if symbol.upper() == "TOP10_ID":
-                # Top 10 IDX by Market Cap (approximate list for quick access)
-                symbols = ["BBCA.JK", "BBRI.JK", "BMRI.JK", "TLKM.JK", "AMMN.JK", 
-                           "BBNI.JK", "ASII.JK", "TPIA.JK", "BRIS.JK", "ICBP.JK"]
-            else:
-                # Split by comma if multiple symbols provided
-                symbols = [s.strip() for s in symbol.split(",") if s.strip()]
+            symbols = [s.strip() for s in symbol.split(",") if s.strip()]
 
             if not symbols:
                 return "Error: No stock symbols provided."
 
             results = []
-            # Fetch in parallel for speed
             tasks = [self._fetch_yahoo_finance(s.upper()) for s in symbols]
             fetched = await asyncio.gather(*tasks)
 
@@ -59,7 +44,7 @@ class StockTool(Tool):
                 if res:
                     results.append(res)
                 else:
-                    results.append(f"Could not fetch data for {symbols[i]}")
+                    results.append(f"Could not fetch data for {symbols[i]}. Please verify the ticker symbol using web search.")
 
             return "\n\n".join(results)
 
@@ -143,13 +128,13 @@ class CryptoTool(Tool):
     """Get cryptocurrency price information."""
 
     name = "crypto"
-    description = "Get current cryptocurrency prices using CoinGecko API (no API key required). Supports Bitcoin, Ethereum, and thousands of other cryptocurrencies."
+    description = "Get current cryptocurrency prices using CoinGecko API. Requires the exact CoinGecko coin ID (e.g., 'bitcoin', 'ethereum', 'solana'). If unsure of the ID, use the web_search tool to find it on coingecko.com first."
     parameters = {
         "type": "object",
         "properties": {
             "coin": {
                 "type": "string",
-                "description": "Cryptocurrency name or symbol (e.g., 'bitcoin', 'ethereum', 'BTC', 'ETH', 'solana', 'cardano')"
+                "description": "Exact CoinGecko ID (e.g., 'bitcoin', 'ethereum', 'solana'). Do NOT use short symbols like 'BTC'."
             },
             "currency": {
                 "type": "string",
@@ -165,41 +150,26 @@ class CryptoTool(Tool):
         Fetch cryptocurrency data.
 
         Args:
-            coin: Cryptocurrency name or symbol
+            coin: Cryptocurrency CoinGecko ID
             currency: Currency for price display
 
         Returns:
             Crypto information as formatted string
         """
         try:
-            # Map common symbols to CoinGecko IDs
-            coin_map = {
-                "BTC": "bitcoin",
-                "ETH": "ethereum",
-                "SOL": "solana",
-                "ADA": "cardano",
-                "DOT": "polkadot",
-                "DOGE": "dogecoin",
-                "XRP": "ripple",
-                "BNB": "binancecoin",
-                "USDT": "tether",
-                "USDC": "usd-coin",
-            }
-
-            coin_id = coin_map.get(coin.upper(), coin.lower())
-
+            coin_id = coin.lower().strip()
             url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies={currency}&include_24hr_change=true&include_market_cap=true"
 
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, timeout=10.0)
 
                 if response.status_code != 200:
-                    return f"Error: Could not fetch crypto data for {coin}."
+                    return f"Error: Could not fetch crypto data for {coin_id}."
 
                 data = response.json()
 
                 if coin_id not in data:
-                    return f"Error: Cryptocurrency '{coin}' not found. Try using full name (e.g., 'bitcoin') or symbol (e.g., 'BTC')."
+                    return f"Error: Cryptocurrency '{coin_id}' not found. Please use the exact CoinGecko full name ID (e.g., 'bitcoin' instead of 'BTC'). Use web_search if unsure."
 
                 coin_data = data[coin_id]
                 price = coin_data.get(currency, 0)
@@ -208,7 +178,6 @@ class CryptoTool(Tool):
 
                 change_symbol = "+" if change_24h >= 0 else ""
 
-                # Format market cap
                 if market_cap >= 1_000_000_000:
                     mcap_str = f"${market_cap/1_000_000_000:.2f}B"
                 elif market_cap >= 1_000_000:
@@ -217,7 +186,7 @@ class CryptoTool(Tool):
                     mcap_str = f"${market_cap:,.0f}"
 
                 return (
-                    f"[CRYPTO] {coin_id.title()} ({coin.upper()})\n"
+                    f"[CRYPTO] {coin_id.title()}\n"
                     f"Price: ${price:,.2f} {currency.upper()}\n"
                     f"24h Change: {change_symbol}{change_24h:.2f}%\n"
                     f"Market Cap: {mcap_str}"
