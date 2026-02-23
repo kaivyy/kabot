@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-02-23
+
+### Added
+- **Chatbot-Accessible Auto-Update System**: Users can now check for updates and trigger updates via natural language
+  - `check_update` tool: Detects available updates from GitHub releases and git commits
+  - `system_update` tool: Executes update (git pull or pip upgrade) with restart confirmation
+  - `UpdateService`: Handles platform-specific restart logic (Windows/Linux/Mac)
+  - Supports both git clone and pip install methods
+  - Anti-hallucination design: Tools return structured JSON data, not prose
+  - Security: Validates working tree, requires restart confirmation, no arbitrary code execution
+
+### Changed
+- **Agent Loop**: Registered CheckUpdateTool and SystemUpdateTool in agent tool registry
+
 ## [0.5.2] - 2026-02-23
 
 ### Added
