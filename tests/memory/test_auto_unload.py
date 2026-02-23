@@ -1,5 +1,5 @@
 import pytest
-import time
+import asyncio
 from kabot.memory.sentence_embeddings import SentenceEmbeddingProvider
 
 @pytest.mark.asyncio
@@ -16,20 +16,20 @@ async def test_model_auto_unloads_after_timeout():
     assert provider._model is not None
 
     # Wait for auto-unload
-    time.sleep(3)
+    await asyncio.sleep(3)
     assert provider._model is None
 
 @pytest.mark.asyncio
 async def test_timer_resets_on_new_request():
     """Timer should reset when new request comes in."""
-    provider = SentenceEmbeddingProvider(auto_unload_seconds=2)
+    provider = SentenceEmbeddingProvider(auto_unload_seconds=3)
 
     await provider.embed("query 1")
-    time.sleep(1)
+    await asyncio.sleep(1.5)
     await provider.embed("query 2")  # Reset timer
-    time.sleep(1.5)
+    await asyncio.sleep(2)
 
-    # Model should still be loaded (only 1.5s since last request)
+    # Model should still be loaded (only 2s since last request)
     assert provider._model is not None
 
 @pytest.mark.asyncio
@@ -49,7 +49,7 @@ async def test_auto_unload_disabled_when_timeout_zero():
     await provider.embed("test")
     assert provider._model is not None
 
-    time.sleep(2)
+    await asyncio.sleep(2)
     assert provider._model is not None  # Still loaded
 
 @pytest.mark.asyncio
