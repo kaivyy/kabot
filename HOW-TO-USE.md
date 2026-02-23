@@ -108,7 +108,32 @@ This is one of Kabot's most intuitive features. Instead of using the command lin
 
 ---
 
-## 5. System Health & Maintenance (Advanced CLI)
+## 5. AI-as-Developer: Dynamic Automation (OpenClaw Style)
+
+Kabot isn't just a chatbot; it's a **Dynamic AI Developer**. Following the "OpenClaw" philosophy, Kabot doesn't rely solely on hardcoded tools. Instead, it can build its own tools and automations on the fly based on your desires.
+
+*   **How to use it:**
+    *   **Ask for anything:** *"Bikin script untuk cek harga bursa tiap 10 menit"* or *"Automate server monitoring and alert me if CPU > 90%"*.
+    *   **Kabot Executes:** Kabot will write the script (`write_file`), run it immediately to verify (`exec`), and then schedule it as a recurring background task (`cron`).
+    *   **Verification:** Kabot follows a strict **Execute-and-Verify** discipline. It won't just tell you it wrote a file; it will run it and confirm the actual results or logs back to you.
+    *   **Dynamic Learning:** If a script fails, Kabot will diagnose and fix the code autonomously without you needing to manually edit files.
+
+---
+
+## 6. Server & Resource Monitoring
+
+Kabot now comes with powerful, cross-platform server monitoring built right in. It works on Windows, Linux/VPS, macOS, and even Android (Termux).
+
+*   **Real-Time Status:** Simply ask *"monitor server"*, *"cek cpu"*, or *"status pc"* to get an instant snapshot of:
+    *   **CPU Load %**
+    *   **RAM Usage** (Total, Used, Free in GB)
+    *   **Disk Usage** (per drive/partition)
+    *   **Uptime** & **Network I/O** (on supported systems)
+*   **Slash Commands:** Use `/sysinfo` for hardware specs or `/status` for a quick health check.
+*   **Custom Alerts:** Using the **AI-as-Developer** behavior mentioned above, you can ask Kabot to set up custom alerts: *"Monitor RAM and alert me if free space < 1GB"*. Kabot will build the watchdog script and schedule it for you.
+---
+
+## 7. System Health & Maintenance (Advanced CLI)
 
 Kabot ships with self-diagnostics so you can quickly verify if your setup is healthy.
 
@@ -130,7 +155,7 @@ Kabot ships with self-diagnostics so you can quickly verify if your setup is hea
 
 ---
 
-## 6. Auto-Update System
+## 8. Auto-Update System
 
 Kabot includes a chatbot-accessible auto-update system that allows you to check for updates and update Kabot through natural language conversation.
 
@@ -195,7 +220,7 @@ The update system is designed to prevent AI hallucination:
 
 ---
 
-## 7. Two Powerful Shortcut Commands (Advanced CLI)
+## 9. Two Powerful Shortcut Commands (Advanced CLI)
 
 While the Setup Wizard (`kabot setup` / `kabot config`) covers 99% of your needs, Kabot offers two specialized command-line shortcuts for advanced "Power Users".
 
@@ -217,7 +242,7 @@ While the Setup Wizard (`kabot setup` / `kabot config`) covers 99% of your needs
 
 ---
 
-## 8. Chat Slash Commands (Quick Controls)
+## 10. Chat Slash Commands (Quick Controls)
 
 Inside the chat (CLI, Telegram, WhatsApp, etc.) you can control Kabot using slash commands.
 

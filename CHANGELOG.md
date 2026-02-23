@@ -70,7 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Changed
-- **Market Tools Globalization**: Completely refactored `StockTool`, `CryptoTool`, and `StockAnalysisTool` to remove hardcoded regional biases (such as `.JK` suffix defaults, `TOP10_ID` lists, and limited `coin_map` dictionaries). Market tools now operate on a "Pure Plugin" philosophy: AI agents must use `web_search` natively to discover exact financial tickers or CoinGecko IDs before querying price data, supporting thousands of global assets out-of-the-box.
+- **User-Friendly Error Messages**: Model failure errors (HTTP 400, rate limits, network drops) now show clean, actionable messages with `/switch` hints instead of raw Python exceptions with internal API URLs.
+- **Error Sanitization**: Added `_sanitize_error()` to strip internal URLs, API keys, and verbose tracebacks from all user-facing error messages in both simple and complex response paths.
+- **Multilingual Processing Status**: Replaced hardcoded Indonesian "Sedang memproses..." status with language-neutral English "Processing your request..." for global users.
+- **AI-as-Developer Execution Discipline**: Added critical system prompt rules that force the AI to write scripts on-the-fly, execute them immediately using `exec`, verify results, and schedule recurring jobs using `cron` — instead of just describing what to do. Includes cross-platform detection for Windows, Linux, macOS, and Termux.
+
+### Added
+- **Cross-Platform Server Monitor Tool**: New `server_monitor` tool provides real-time resource usage (CPU load %, RAM used/free GB, disk usage %, uptime, network I/O) with full support for Windows (PowerShell), Linux (bash), macOS (bash), and Termux (Android). Triggered by 40+ multilingual keywords across 7 languages (EN, ID, MS, TH, ZH, KO, JA).
+
+### Changed
 - **Startup Time Optimization (~40s → ~3s to Chat-Ready)**: (1) HeartbeatService now waits 30s before first beat, preventing startup blocking. (2) SentenceTransformer embedding model pre-loads in a background thread via `warmup()`. (3) `AgentLoop.run()` kicks off `_warmup_memory()` as a non-blocking background task. Telegram is now chat-ready in ~3s instead of ~40s.
 - **Zero-Latency Cold Start**: Migrated heavy LLM libraries (`litellm`, etc.) to lazy-loading scopes, dropping CLI startup time to `< 0.7s`.
 - **Asynchronous BM25 Indexing**: Deferred the synchronous `BM25Okapi` indexing to trigger only upon the first explicit user `search()`, removing background startup blocking.

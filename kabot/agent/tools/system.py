@@ -239,3 +239,184 @@ class ProcessMemoryTool(Tool):
         ps -axo pid,comm,rss -r | head -n $((limit+1)) | awk 'NR==1 {{printf "%-8s %-25s %s\\n","PID","COMMAND","RAM_MB"; next}} {{printf "%-8s %-25s %.1f\\n",$1,$2,$3/1024}}'
         """
         return await self._run_shell(script)
+
+    async def _run_shell(self, script: str) -> str:
+        try:
+            process = await asyncio.create_subprocess_shell(
+                script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+            if process.returncode != 0 and not stdout:
+                return f"Error executing check: {stderr.decode('utf-8', errors='replace').strip()}"
+            return stdout.decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            return f"Failed to retrieve data: {e}"
+
+
+class ServerMonitorTool(Tool):
+    """Cross-platform real-time server/PC resource monitor."""
+
+    @property
+    def name(self) -> str:
+        return "server_monitor"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Get REAL-TIME resource usage of the host machine: CPU load %, "
+            "RAM used/free in GB, disk usage % per drive, uptime, and network stats. "
+            "Works on Windows, Linux, macOS, and Termux (Android)."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+        }
+
+    async def execute(self, **kwargs: Any) -> str:
+        system = platform.system()
+        if system == "Windows":
+            return await self._monitor_windows()
+        elif system == "Linux":
+            return await self._monitor_linux()
+        elif system == "Darwin":
+            return await self._monitor_macos()
+        return f"Server monitoring not supported for OS: {system}"
+
+    async def _monitor_windows(self) -> str:
+        script = """
+        $cpu = (Get-Counter '\\Processor(_Total)\\% Processor Time').CounterSamples.CookedValue
+        $cpu = [math]::Round($cpu, 1)
+
+        $os = Get-CimInstance Win32_OperatingSystem
+        $totalRamGB = [math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
+        $freeRamGB = [math]::Round($os.FreePhysicalMemory / 1MB, 2)
+        $usedRamGB = [math]::Round($totalRamGB - $freeRamGB, 2)
+        $ramPct = if ($totalRamGB -gt 0) { [math]::Round(($usedRamGB / $totalRamGB) * 100, 1) } else { 0 }
+
+        $uptime = (Get-Date) - $os.LastBootUpTime
+        $uptimeStr = "{0}d {1}h {2}m" -f $uptime.Days, $uptime.Hours, $uptime.Minutes
+
+        $diskStr = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+            $sizeGB = [math]::Round($_.Size / 1GB, 2)
+            $freeGB = [math]::Round($_.FreeSpace / 1GB, 2)
+            $usedPct = if ($sizeGB -gt 0) { [math]::Round((($sizeGB - $freeGB) / $sizeGB) * 100, 1) } else { 0 }
+            "  {0} {1}GB free / {2}GB total ({3}% used)" -f $_.DeviceID, $freeGB, $sizeGB, $usedPct
+        }
+
+        @"
+### Server Resource Monitor
+**CPU Load:** $cpu%
+**RAM:** $usedRamGB / $totalRamGB GB ($ramPct% used, $freeRamGB GB free)
+**Uptime:** $uptimeStr
+**Disk Usage:**
+$($diskStr -join "`n")
+"@
+        """
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
+            if process.returncode != 0:
+                return f"Error: {stderr.decode('utf-8', errors='replace').strip()}"
+            return stdout.decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            return f"Failed to monitor Windows: {e}"
+
+    async def _monitor_linux(self) -> str:
+        import os
+        is_termux = "com.termux" in os.environ.get("PREFIX", "")
+
+        if is_termux:
+            script = """
+            cpu=$(top -bn1 2>/dev/null | grep "CPU:" | awk '{print $2}' || echo "N/A")
+            ram_info=$(free -m 2>/dev/null)
+            ram_total=$(echo "$ram_info" | awk '/Mem:/ {printf "%.2f", $2/1024}')
+            ram_used=$(echo "$ram_info" | awk '/Mem:/ {printf "%.2f", $3/1024}')
+            ram_free=$(echo "$ram_info" | awk '/Mem:/ {printf "%.2f", $4/1024}')
+            ram_pct=$(echo "$ram_info" | awk '/Mem:/ {if($2>0) printf "%.1f", $3/$2*100; else print "0"}')
+            disk=$(df -h /data 2>/dev/null | awk 'NR==2 {print "  /data " $4 " free / " $2 " total (" $5 " used)"}')
+            uptime_str=$(uptime -p 2>/dev/null || uptime | sed 's/.*up //' | sed 's/,.*$//')
+
+            echo "### Server Resource Monitor (Termux)"
+            echo "**CPU Load:** $cpu"
+            echo "**RAM:** ${ram_used} / ${ram_total} GB (${ram_pct}% used, ${ram_free} GB free)"
+            echo "**Uptime:** $uptime_str"
+            echo "**Disk Usage:**"
+            echo "$disk"
+            """
+        else:
+            script = """
+            cpu=$(top -bn1 | grep "Cpu(s):" | awk '{printf "%.1f", $2+$4}')
+            ram_info=$(free -b)
+            ram_total=$(echo "$ram_info" | awk '/Mem:/ {printf "%.2f", $2/1073741824}')
+            ram_used=$(echo "$ram_info" | awk '/Mem:/ {printf "%.2f", $3/1073741824}')
+            ram_free=$(echo "$ram_info" | awk '/Mem:/ {printf "%.2f", $7/1073741824}')
+            ram_pct=$(echo "$ram_info" | awk '/Mem:/ {if($2>0) printf "%.1f", $3/$2*100; else print "0"}')
+
+            uptime_str=$(uptime -p 2>/dev/null || uptime | sed 's/.*up //' | sed 's/,.*$//')
+
+            disk=$(df -h --output=target,avail,size,pcent -x tmpfs -x devtmpfs 2>/dev/null | awk 'NR>1 {printf "  %s %s free / %s total (%s used)\\n", $1, $2, $3, $4}')
+
+            net=""
+            if command -v ip &>/dev/null; then
+                net=$(ip -s link show 2>/dev/null | awk '/^[0-9]+:/ {iface=$2; gsub(/:$/,"",iface)} /RX:/{getline; rx=$1} /TX:/{getline; tx=$1; if(iface!="lo") printf "  %s RX: %.1f MB / TX: %.1f MB\\n", iface, rx/1048576, tx/1048576}')
+            fi
+
+            echo "### Server Resource Monitor"
+            echo "**CPU Load:** ${cpu}%"
+            echo "**RAM:** ${ram_used} / ${ram_total} GB (${ram_pct}% used, ${ram_free} GB free)"
+            echo "**Uptime:** $uptime_str"
+            echo "**Disk Usage:**"
+            echo "$disk"
+            if [ -n "$net" ]; then
+                echo "**Network I/O:**"
+                echo "$net"
+            fi
+            """
+        return await self._run_shell(script)
+
+    async def _monitor_macos(self) -> str:
+        script = """
+        cpu=$(top -l 1 | grep "CPU usage" | awk '{gsub(/%/,""); print $3+$5}')
+        ram_bytes=$(sysctl -n hw.memsize)
+        ram_total=$(echo "scale=2; $ram_bytes / 1073741824" | bc)
+        page_size=$(sysctl -n vm.pagesize)
+        vm_stat_output=$(vm_stat)
+        pages_free=$(echo "$vm_stat_output" | awk '/Pages free:/ {gsub(/\\./, ""); print $3}')
+        pages_inactive=$(echo "$vm_stat_output" | awk '/Pages inactive:/ {gsub(/\\./, ""); print $3}')
+        ram_free=$(echo "scale=2; ($pages_free + $pages_inactive) * $page_size / 1073741824" | bc)
+        ram_used=$(echo "scale=2; $ram_total - $ram_free" | bc)
+        ram_pct=$(echo "scale=1; $ram_used / $ram_total * 100" | bc)
+
+        uptime_str=$(uptime | sed 's/.*up //' | sed 's/,.*load.*//')
+        disk=$(df -h / | awk 'NR==2 {print "  / " $4 " free / " $2 " total (" $5 " used)"}')
+
+        echo "### Server Resource Monitor"
+        echo "**CPU Load:** ${cpu}%"
+        echo "**RAM:** ${ram_used} / ${ram_total} GB (${ram_pct}% used, ${ram_free} GB free)"
+        echo "**Uptime:** $uptime_str"
+        echo "**Disk Usage:**"
+        echo "$disk"
+        """
+        return await self._run_shell(script)
+
+    async def _run_shell(self, script: str) -> str:
+        try:
+            process = await asyncio.create_subprocess_shell(
+                script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
+            if process.returncode != 0 and not stdout:
+                return f"Error: {stderr.decode('utf-8', errors='replace').strip()}"
+            return stdout.decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            return f"Failed to monitor: {e}"

@@ -57,6 +57,7 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_process_memory_tool=loop.tools.has("get_process_memory"),
         has_stock_tool=loop.tools.has("stock"),
         has_crypto_tool=loop.tools.has("crypto"),
+        has_server_monitor_tool=loop.tools.has("server_monitor"),
     )
 
 
@@ -83,6 +84,10 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
 
     if required_tool == "get_system_info":
         result = await loop.tools.execute("get_system_info", {})
+        return str(result)
+
+    if required_tool == "server_monitor":
+        result = await loop.tools.execute("server_monitor", {})
         return str(result)
 
     if required_tool == "get_process_memory":

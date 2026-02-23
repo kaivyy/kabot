@@ -86,18 +86,6 @@ Once the gateway is running, you can talk to Kabot via:
 
 ---
 
-## 🔥 Core Capabilities
-
-### 🧠 **Autonomous Reasoning**
-Kabot doesn't just answer; it thinks.
-*   **`/think` Mode**: Forces the agent to output its reasoning process (`Chain-of-Thought`) before taking action. Great for complex refactoring or architectural decisions.
-*   **Self-Correction**: If a tool fails (e.g., syntax error in a generated script), Kabot reads the error, analyzes it, and attempts a fix automatically up to 5 times.
-*   **Planning**: Specifically designed for "multi-step" tasks. Ask it to "Plan a new module", and it will generate a `task.md` file and execute it step-by-step.
-
-### 🛡️ **Enterprise Resilience**
-Built for robustness and strict security in Python.
-*   **Crash Sentinel**: Kabot writes a "sentinel file" before processing each message. If the host machine loses power or crashes, Kabot detects the unclean shutdown on the next boot and offers to resume the exact session state.
-*   **Session Locking**: Uses `PIDLock` (process-based locking) to ensure atomic writes to the session database, preventing corruption even if multiple cron jobs fire simultaneously.
 *   **Persistent Subagents**: Delegate tasks like "Research this library" to background agents. These subagents persist their state to disk (`.json` registry), so they survive system reboots and can be queried days later.
 
 ### 💾 **Hybrid Memory Architecture**

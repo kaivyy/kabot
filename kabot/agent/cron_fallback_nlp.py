@@ -131,6 +131,30 @@ SYSTEM_INFO_KEYWORDS = (
     "硬盘", "存储", "磁盘空间", "剩余空间", "可用空间",
 )
 
+SERVER_MONITOR_KEYWORDS = (
+    # English
+    "monitor", "monitoring", "resource usage", "server status", "server health",
+    "cpu usage", "ram usage", "memory usage", "cpu load", "resource check",
+    "how much ram", "how much cpu", "how much memory",
+    "system monitor", "server monitor", "pc monitor",
+    "uptime", "server uptime",
+    # Indonesian / Malay
+    "monitor server", "monitoring server", "monitor pc", "pantau server",
+    "penggunaan cpu", "penggunaan ram", "penggunaan memori",
+    "cek resource", "cek server", "status server", "kondisi server",
+    "berapa ram", "berapa cpu", "pemakaian ram", "pemakaian cpu",
+    "beban server", "beban cpu", "beban ram",
+    "periksa server", "monitor sistem", "pantau sistem",
+    # Thai
+    "ตรวจสอบเซิร์ฟเวอร์", "การใช้งาน CPU", "การใช้งาน RAM", "สถานะเซิร์ฟเวอร์",
+    # Chinese
+    "监控", "服务器监控", "服务器状态", "CPU使用率", "内存使用率", "系统监控",
+    # Korean
+    "서버 모니터링", "CPU 사용량", "RAM 사용량", "서버 상태",
+    # Japanese
+    "サーバー監視", "CPU使用率", "メモリ使用率", "サーバー状態",
+)
+
 CLEANUP_KEYWORDS = (
     "cleanup", "clean up", "bersihin", "bersihkan", "pembersihan",
     "free space", "freespace", "free disk",
@@ -219,6 +243,7 @@ def required_tool_for_query(
     has_process_memory_tool: bool = False,
     has_stock_tool: bool = False,
     has_crypto_tool: bool = False,
+    has_server_monitor_tool: bool = False,
 ) -> str | None:
     """Return required tool name for immediate-action prompts."""
     q_lower = (question or "").lower()
@@ -238,6 +263,9 @@ def required_tool_for_query(
 
     if has_weather_tool and any(k in q_lower for k in WEATHER_KEYWORDS):
         return "weather"
+
+    if has_server_monitor_tool and any(k in q_lower for k in SERVER_MONITOR_KEYWORDS):
+        return "server_monitor"
 
     if has_process_memory_tool and any(k in q_lower for k in PROCESS_RAM_KEYWORDS):
         return "get_process_memory"

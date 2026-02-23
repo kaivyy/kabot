@@ -10,6 +10,19 @@ from loguru import logger
 from kabot.bus.events import InboundMessage, OutboundMessage
 
 
+def _sanitize_error(error_str: str) -> str:
+    """Strip internal URLs, API keys, and verbose tracebacks from user-facing errors."""
+    import re
+    # Remove full URLs (internal API endpoints)
+    sanitized = re.sub(r'https?://\S+', '[API endpoint]', error_str)
+    # Remove anything that looks like an API key
+    sanitized = re.sub(r'(sk-|key-|Bearer )[a-zA-Z0-9_-]{10,}', '[redacted]', sanitized)
+    # Truncate excessively long messages
+    if len(sanitized) > 200:
+        sanitized = sanitized[:200] + "..."
+    return sanitized
+
+
 async def run_simple_response(loop: Any, msg: InboundMessage, messages: list) -> str | None:
     """Direct single-shot response for simple queries (no loop, no tools)."""
     try:
@@ -30,7 +43,12 @@ async def run_simple_response(loop: Any, msg: InboundMessage, messages: list) ->
         return response.content or ""
     except Exception as e:
         logger.error(f"Simple response failed: {e}")
-        return f"Sorry, an error occurred: {str(e)}"
+        error_hint = _sanitize_error(str(e))
+        return (
+            f"\u26a0\ufe0f An error occurred while processing your message.\n"
+            f"Error: {error_hint}\n\n"
+            f"\ud83d\udca1 Try: /switch <model> to change model, or try again in a moment."
+        )
 
 
 async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session: Any) -> str | None:
@@ -61,7 +79,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     # === FAST PATH: Execute deterministic tools directly, skip LLM tool-call step ===
     # This bypasses the broken tool-calling API (e.g. codex models returning 400),
     # but still uses the LLM to produce a nice natural-language summary of the result.
-    _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "weather", "speedtest", "stock", "crypto"}
+    _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "weather", "speedtest", "stock", "crypto", "server_monitor"}
     if required_tool and required_tool in _DIRECT_TOOLS:
         direct_result = await loop._execute_required_tool_fallback(required_tool, msg)
         if direct_result is not None:
@@ -103,7 +121,13 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
 
         response, error = await loop._call_llm_with_fallback(messages, models_to_try)
         if not response:
-            return f"Sorry, all available models failed. Last error: {str(error)}"
+            # User-friendly error: never expose raw exception / internal URLs
+            error_hint = _sanitize_error(str(error)) if error else "unknown error"
+            return (
+                f"⚠️ All available AI models failed to respond.\n"
+                f"Error: {error_hint}\n\n"
+                f"💡 Try: /switch <model> to change model, or try again in a moment."
+            )
 
         if required_tool and response.has_tool_calls:
             if any(tc.name == required_tool for tc in response.tool_calls):
@@ -210,7 +234,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             if response.has_tool_calls:
                 # If the AI generated tool calls but forgot to say anything,
                 # send a progressive status update to the user automatically.
-                display_content = response.content or "Sedang memproses permintaan Anda, mohon tunggu sebentar... ⏳"
+                display_content = response.content or "Processing your request, please wait... ⏳"
                 await loop.bus.publish_outbound(OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id, content=display_content
                 ))
@@ -260,6 +284,7 @@ async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tup
                     logger.warning(
                         f"Model {current_model} rejected tools (400), retrying as text-only..."
                     )
+                    logger.info("Note: response may lack tool capabilities in text-only mode")
                     response = await loop.provider.chat(
                         messages=messages,
                         model=current_model,
