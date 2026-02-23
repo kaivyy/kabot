@@ -62,6 +62,15 @@ class MemoryFactory:
         embedding_provider = memory_config.get("embedding_provider", "sentence")
         embedding_model = memory_config.get("embedding_model", None)
         enable_hybrid = memory_config.get("enable_hybrid_search", True)
+
+        # Get auto-unload timeout with validation
+        auto_unload_seconds = memory_config.get("auto_unload_timeout", 300)
+        if auto_unload_seconds < 0:
+            logger.warning(
+                f"Invalid auto_unload_timeout={auto_unload_seconds}, using default 300s"
+            )
+            auto_unload_seconds = 300
+
         logger.info(
             f"Memory backend: hybrid "
             f"(embeddings={embedding_provider}, model={embedding_model})"
@@ -71,4 +80,5 @@ class MemoryFactory:
             embedding_provider=embedding_provider,
             embedding_model=embedding_model,
             enable_hybrid_memory=enable_hybrid,
+            auto_unload_seconds=auto_unload_seconds,
         )
