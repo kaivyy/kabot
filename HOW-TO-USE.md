@@ -130,7 +130,72 @@ Kabot ships with self-diagnostics so you can quickly verify if your setup is hea
 
 ---
 
-## 6. Two Powerful Shortcut Commands (Advanced CLI)
+## 6. Auto-Update System
+
+Kabot includes a chatbot-accessible auto-update system that allows you to check for updates and update Kabot through natural language conversation.
+
+### Checking for Updates
+
+Simply ask Kabot in natural language:
+- "Periksa apakah ada update baru?"
+- "Check for updates"
+- "Is there a new version available?"
+
+Kabot will use the `check_update` tool to:
+- Detect your installation method (git clone or pip install)
+- Check GitHub releases for the latest version
+- Compare with your current version
+- Report commits behind (for git installations)
+
+**Example response:**
+```
+Current version: 0.5.2
+Latest version: 0.5.3
+Installation method: git
+Commits behind: 5
+Update available: Yes
+Release URL: https://github.com/kaivyy/kabot/releases/tag/v0.5.3
+```
+
+### Updating Kabot
+
+Once you confirm an update is available, tell Kabot:
+- "Update program"
+- "Update Kabot"
+- "Install the update"
+
+Kabot will:
+1. Verify your working tree is clean (git only)
+2. Execute the update (git pull or pip upgrade)
+3. Install dependencies
+4. Ask for restart confirmation
+5. Restart if confirmed
+
+**For git installations:**
+- Runs `git fetch origin` and `git pull origin main`
+- Requires clean working tree (no uncommitted changes)
+
+**For pip installations:**
+- Runs `pip install --upgrade kabot-ai`
+
+**Restart process:**
+- Kabot creates a platform-specific restart script
+- Waits 2 seconds for graceful shutdown
+- Restarts Kabot automatically
+- Notifies you when complete
+
+### Anti-Hallucination Design
+
+The update system is designed to prevent AI hallucination:
+- Tools return structured JSON data (not prose)
+- GitHub API is the source of truth for releases
+- Git commands verify actual repository state
+- All operations are logged
+- No fake data is generated on API failures
+
+---
+
+## 7. Two Powerful Shortcut Commands (Advanced CLI)
 
 While the Setup Wizard (`kabot setup` / `kabot config`) covers 99% of your needs, Kabot offers two specialized command-line shortcuts for advanced "Power Users".
 
@@ -152,7 +217,7 @@ While the Setup Wizard (`kabot setup` / `kabot config`) covers 99% of your needs
 
 ---
 
-## 7. Chat Slash Commands (Quick Controls)
+## 8. Chat Slash Commands (Quick Controls)
 
 Inside the chat (CLI, Telegram, WhatsApp, etc.) you can control Kabot using slash commands.
 
