@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-02-23
+
+### Added
+- **AI-as-Developer Backend Enhancements**: Advanced backend systems that prevent common AI agent failures and enhance reliability
+  - **Tool Loop Detection**: Automatically detects and blocks repetitive tool calls (generic repeat and ping-pong patterns) to prevent stuck agents
+  - **Tool Policy Profiles**: Configurable access control with 5 profiles (minimal, coding, messaging, analysis, full) and tool groups (fs, runtime, web, memory, automation, etc.)
+  - **Enhanced Failover Error Classification**: Intelligent error categorization (billing, rate_limit, auth, timeout, format, model_not_found, unknown) with automatic retry/fallback strategies
+  - **Context Window Guard**: Already implemented - prevents crashes from undersized model context windows (hard block < 16K, warn < 32K)
+  - **Context Compaction**: Already implemented - automatic summarization of conversation history when context window overflows
+  - **Tool Result Guard**: Already implemented - truncates oversized tool results to prevent context bloat
+
+### Changed
+- **Agent Loop**: Integrated LoopDetector for tool loop detection with configurable thresholds (warning: 10 calls, critical: 20 calls)
+- **Tool Registry**: Added policy profile filtering to `get_definitions()` method for dynamic tool access control
+- **Resilience Layer**: Enhanced error handling with failover reason classification for smarter retry/fallback decisions
+- **Execution Runtime**: Tool calls now checked for loops before execution, with critical loops blocked and warnings logged
+
+### Technical Details
+- 42 tests passing (10 existing + 32 new) covering all AI-as-Developer backend modules
+- Tool loop detection uses sliding window (30 calls) with MD5 hashing for parameter comparison
+- Tool policies support group expansion (@fs, @web, etc.) and owner-only tools (cron, exec, spawn)
+- Failover classification supports status codes, error messages, and provider-specific error codes
+
 ## [0.5.3] - 2026-02-23
 
 ### Added

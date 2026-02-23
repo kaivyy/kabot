@@ -160,8 +160,10 @@ class AgentLoop:
         # Context management (Phase 11)
         from kabot.agent.compactor import Compactor
         from kabot.agent.context_guard import ContextGuard
+        from kabot.agent.loop_core.tool_loop_detection import LoopDetector
         self.context_guard = ContextGuard(max_tokens=128000, buffer_tokens=4000)
         self.compactor = Compactor()
+        self.loop_detector = LoopDetector(history_size=30, warning_threshold=10, critical_threshold=20)
 
         # Auth rotation (Phase 11)
         from kabot.auth.rotation import AuthRotation

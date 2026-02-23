@@ -222,25 +222,31 @@ class ResilienceLayer:
                 "action": "rotated_key" | "model_fallback" | "exhausted",
                 "new_key": Optional[str],
                 "new_model": Optional[str],
+                "reason": FailoverReason,
             }
         """
+        from kabot.core.failover_error import resolve_failover_reason, should_retry, should_fallback
+
         error_str = str(error)
+        reason = resolve_failover_reason(status=status_code, message=error_str)
+
+        logger.info(f"Error classified as: {reason} (status={status_code})")
 
         # Rate limit or auth error → try key rotation first
-        if status_code in (429, 401, 403):
+        if reason in ("rate_limit", "auth", "billing"):
             new_key = self.key_rotator.rotate(error_code=status_code)
             if new_key:
                 self._total_retries += 1
-                return {"action": "rotated_key", "new_key": new_key, "new_model": None}
+                return {"action": "rotated_key", "new_key": new_key, "new_model": None, "reason": reason}
 
-        # Server error or timeout → try model fallback
-        if status_code in (500, 502, 503, 504) or status_code is None:
+        # Timeout, model not found, or unknown → try model fallback
+        if should_fallback(reason) or reason in ("timeout", "unknown"):
             new_model = self.model_fallback.fallback(error_str)
             if new_model:
                 self._total_fallbacks += 1
-                return {"action": "model_fallback", "new_key": None, "new_model": new_model}
+                return {"action": "model_fallback", "new_key": None, "new_model": new_model, "reason": reason}
 
-        return {"action": "exhausted", "new_key": None, "new_model": None}
+        return {"action": "exhausted", "new_key": None, "new_model": None, "reason": reason}
 
     def on_success(self) -> None:
         """Call after a successful API response to reset fallback state."""

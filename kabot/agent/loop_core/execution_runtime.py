@@ -352,6 +352,23 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
         args_raw = tc.arguments
         tool_params = args_raw if isinstance(args_raw, dict) else {}
 
+        # Check for tool loops before execution
+        loop_result = loop.loop_detector.check(tc.name, tool_params)
+        if loop_result.stuck:
+            if loop_result.level == "critical":
+                # Block execution and return error
+                error_msg = f"⚠️ Tool loop detected: {loop_result.message}"
+                logger.warning(f"Tool loop blocked: {tc.name} - {loop_result.message}")
+                messages = loop.context.add_tool_result(messages, tc.id, tc.name, error_msg)
+                await loop.memory.add_message(
+                    msg.session_key, "tool", error_msg,
+                    tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": error_msg}],
+                )
+                continue
+            else:
+                # Warning level - log but allow execution
+                logger.warning(f"Tool loop warning: {tc.name} - {loop_result.message}")
+
         status = loop._get_tool_status_message(tc.name, tool_params)
         if status:
             await loop.bus.publish_outbound(OutboundMessage(
@@ -373,6 +390,9 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
             tool_params["_peer_id"] = msg.peer_id or ""
 
         result = await loop.tools.execute(tc.name, tool_params)
+
+        # Record tool call for loop detection
+        loop.loop_detector.record(tc.name, tool_params, tc.id)
         result_str = str(result)
         truncated_result = loop.truncator.truncate(result_str, tc.name)
 

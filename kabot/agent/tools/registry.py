@@ -34,8 +34,26 @@ class ToolRegistry:
         """Check if a tool is registered."""
         return name in self._tools
 
-    def get_definitions(self) -> list[dict[str, Any]]:
-        """Get all tool definitions in OpenAI format."""
+    def get_definitions(self, policy_profile: Optional[str] = None) -> list[dict[str, Any]]:
+        """
+        Get all tool definitions in OpenAI format.
+
+        Args:
+            policy_profile: Optional tool policy profile to filter tools.
+                          Options: "minimal", "coding", "messaging", "analysis", "full"
+                          If None, returns all tools (default behavior).
+
+        Returns:
+            List of tool definitions filtered by policy if specified.
+        """
+        if policy_profile:
+            from kabot.agent.tools.tool_policy import resolve_profile_policy, apply_tool_policy
+
+            policy = resolve_profile_policy(policy_profile)
+            tool_names = list(self._tools.keys())
+            filtered_names = apply_tool_policy(tool_names, policy)
+            return [self._tools[name].to_schema() for name in filtered_names if name in self._tools]
+
         return [tool.to_schema() for tool in self._tools.values()]
 
     async def execute(self, name: str, params: dict[str, Any]) -> str:

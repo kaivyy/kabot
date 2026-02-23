@@ -108,15 +108,49 @@ This is one of Kabot's most intuitive features. Instead of using the command lin
 
 ---
 
-## 5. AI-as-Developer: Dynamic Automation (OpenClaw Style)
+## 5. AI-as-Developer: Dynamic Automation
 
-Kabot isn't just a chatbot; it's a **Dynamic AI Developer**. Following the "OpenClaw" philosophy, Kabot doesn't rely solely on hardcoded tools. Instead, it can build its own tools and automations on the fly based on your desires.
+Kabot isn't just a chatbot; it's a **Dynamic AI Developer**. Kabot doesn't rely solely on hardcoded tools. Instead, it can build its own tools and automations on the fly based on your desires.
 
 *   **How to use it:**
     *   **Ask for anything:** *"Bikin script untuk cek harga bursa tiap 10 menit"* or *"Automate server monitoring and alert me if CPU > 90%"*.
     *   **Kabot Executes:** Kabot will write the script (`write_file`), run it immediately to verify (`exec`), and then schedule it as a recurring background task (`cron`).
     *   **Verification:** Kabot follows a strict **Execute-and-Verify** discipline. It won't just tell you it wrote a file; it will run it and confirm the actual results or logs back to you.
     *   **Dynamic Learning:** If a script fails, Kabot will diagnose and fix the code autonomously without you needing to manually edit files.
+
+### Advanced AI-as-Developer Features (v0.5.4)
+
+Kabot now includes sophisticated backend systems that prevent common AI agent failures and enhance reliability:
+
+**Tool Loop Detection**
+- Automatically detects when AI gets stuck calling the same tool repeatedly
+- **Warning threshold**: 10 identical calls - logs warning but allows execution
+- **Critical threshold**: 20 identical calls - blocks execution and returns error
+- **Ping-pong detection**: Identifies alternating tool patterns (e.g., read_file ↔ write_file)
+- **Example**: If AI calls `exec ls` 20 times with same params, Kabot blocks it and explains the loop
+
+**Tool Policy Profiles**
+- Control which tools are available based on use case
+- **Profiles available**:
+  - `minimal`: Only session status (safest)
+  - `coding`: Filesystem, web, memory (no automation/runtime)
+  - `messaging`: Sessions, memory, Google suite, weather
+  - `analysis`: Stocks, crypto, weather, web (no filesystem/runtime)
+  - `full`: All tools available (default)
+- **Tool groups**: `@fs` (filesystem), `@runtime` (exec/spawn), `@web`, `@memory`, `@automation` (cron), `@google`, `@analysis`, `@system`
+- **Owner-only tools**: `cron`, `exec`, `spawn`, `cleanup_system` require owner permission
+
+**Enhanced Error Classification**
+- Intelligent categorization of API errors for smarter recovery
+- **Categories**: billing, rate_limit, auth, timeout, format, model_not_found, unknown
+- **Auto-retry**: Rate limits and timeouts trigger automatic retry
+- **Auto-fallback**: Billing, auth, and model errors trigger model fallback
+- **Example**: 429 rate limit → rotate API key → retry; 401 auth → fallback to secondary model
+
+**Context Management** (Already Active)
+- **Context Window Guard**: Prevents crashes from small context windows (blocks < 16K tokens, warns < 32K)
+- **Auto-Compaction**: Summarizes old messages when context overflows (keeps recent 10 exchanges)
+- **Result Truncation**: Caps tool results at 30% of context window to prevent bloat
 
 ---
 
