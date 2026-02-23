@@ -201,8 +201,15 @@ class SkillsLoader:
                 validated.append(skill_name)
             else:
                 missing = self._get_missing_requirements(meta)
-                install_info = meta.get("install", {})
-                install_cmd = install_info.get("cmd", "")
+                install_info = meta.get("install", [])
+                # Handle both dict and list formats
+                install_cmd = ""
+                if isinstance(install_info, dict):
+                    install_cmd = install_info.get("cmd", "")
+                elif isinstance(install_info, list) and install_info:
+                    # Take first install option if list
+                    first_option = install_info[0]
+                    install_cmd = first_option.get("label", "") or first_option.get("cmd", "")
                 hint = f"[SKILL_UNAVAILABLE] {skill_name} needs: {missing}"
                 if install_cmd:
                     hint += f" (install: {install_cmd})"
