@@ -9,6 +9,7 @@ docs/*
 !docs/plans/
 !docs/multi-agent.md
 !docs/collaborative-orchestration.md
+!docs/AI-AS-DEVELOPER-GAP-ANALYSIS.md
 *.egg-info/
 *.egg
 *.pyc
