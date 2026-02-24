@@ -59,6 +59,31 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
 - Platform trimming: `ctypes.windll.kernel32.SetProcessWorkingSetSize` (Windows), `ctypes.CDLL(None).malloc_trim(0)` (Linux)
 - 874 tests passing, 6 skipped
 
+## [0.5.5] - 2026-02-24
+
+### Added
+- **Embedding Auto-Unload**: Embedding model (`all-MiniLM-L6-v2`) automatically unloads after 5 minutes idle
+  - Configurable via `auto_unload_timeout` in config (default: 300s)
+  - Manual unload: `memory.unload_resources()`
+  - Recursive PyTorch module clearing + platform-specific memory trimming
+  - Model reloads transparently on next search — zero quality loss
+- **ChromaDB Segment Cache Cap**: Added `chroma_memory_limit_bytes=50MB` to limit in-memory segment cache
+
+### Measured RAM (empirical, psutil RSS)
+| State | RAM | Notes |
+|-------|-----|-------|
+| Python + imports (no model) | ~41 MB | Baseline |
+| + ChromaDB initialized | ~91 MB | +49 MB for HNSW index |
+| + Embedding model loaded | ~450 MB | +359 MB for sentence-transformers |
+| After model unload + gc | ~443 MB | CPython allocator retains memory |
+
+> **Note:** CPython's arena-based memory allocator does not return freed memory to the OS unless entire arenas are empty. The ~443 MB after unload is expected Python behavior, not a leak.
+
+### Technical Details
+- Thread-safe lazy loading with double-check locking
+- Timer-based auto-unload with `threading.Timer`
+- 874 tests passing, 6 skipped
+
 ## [0.5.4] - 2026-02-23
 
 ### Added
