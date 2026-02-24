@@ -211,12 +211,17 @@ Kabot's memory system is a modular, swappable architecture designed to prevent *
 
 **Model**: `all-MiniLM-L6-v2` (384 dimensions)
 
+**Architecture**: Subprocess-based isolation for true memory reclamation
+- **Worker Process**: `kabot/memory/_embedding_worker.py`
+- **Communication**: JSON line protocol over stdin/stdout
+- **Windows Compatible**: Fixed subprocess pipe buffering (v0.5.6)
+
 **RAM Optimization Features**:
 - **Lazy Loading**: Model loads only when first embedding is requested
 - **Auto-Unload Timer**: Automatically unloads model after 5 minutes of inactivity
 - **Configurable Timeout**: Set `auto_unload_timeout` in config (default: 300 seconds)
 - **Thread-Safe**: Uses threading.Timer for background unloading
-- **Recursive Module Clearing**: Clears model, tokenizer, and all submodules from memory
+- **Subprocess Isolation**: Model runs in separate process, OS reclaims ALL memory when killed
 - **Manual Control**: `unload_model()` method for explicit resource management
 
 **RAM Impact**:
@@ -229,6 +234,7 @@ Kabot's memory system is a modular, swappable architecture designed to prevent *
 - Free & local
 - Caching for performance
 - Minimal idle memory footprint
+- True memory reclamation via subprocess architecture
 
 #### Hugging Face Hub Integration
 
@@ -670,8 +676,9 @@ pip install chromadb sentence-transformers
 ---
 
 **Status**: ✅ PRODUCTION READY
-**Version**: 0.5.4
-**Last Updated**: 2026-02-23
+**Version**: 0.5.6
+**Last Updated**: 2026-02-24
 **Tests**: 60/60 passing
 **Backends**: 3 (Hybrid, SQLite Only, Disabled)
 **Default Model**: all-MiniLM-L6-v2 (384 dimensions)
+**Windows Compatible**: Subprocess communication fixed (v0.5.6)
