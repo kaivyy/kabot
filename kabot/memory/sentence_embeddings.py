@@ -1,16 +1,32 @@
-"""Sentence-Transformers embedding provider for local embeddings."""
+"""Sentence-Transformers embedding provider with subprocess isolation.
+
+The embedding model runs in a **child process** (`subprocess.Popen`) so that
+when it's terminated, the OS reclaims ALL memory immediately — solving CPython's
+arena-allocator retention issue where ~350 MB stays resident after `del`.
+
+Architecture:
+  Main process (91 MB) ──JSON line──▶ Worker process (loads model, +359 MB)
+                        ◀──JSON line──  │
+                                        └─ process.kill() → OS reclaims all 359 MB → main stays at 91 MB
+"""
 
 import hashlib
-import time
-import gc
+import json
+import os
+import subprocess
+import sys
 import threading
+import time
 
 from loguru import logger
 
 
 class SentenceEmbeddingProvider:
-    """
-    Local embedding provider using Sentence-Transformers.
+    """Local embedding provider using Sentence-Transformers in a subprocess.
+
+    The model runs in a child process started via `subprocess.Popen`. When
+    auto-unload fires, the child is killed and ALL its memory is returned to
+    the OS — unlike in-process unloading where CPython retains ~350 MB.
 
     Supports models like:
     - all-MiniLM-L6-v2 (recommended, 384 dimensions, fast)
@@ -22,48 +38,140 @@ class SentenceEmbeddingProvider:
         if auto_unload_seconds < 0:
             raise ValueError("auto_unload_seconds must be >= 0")
         self.model_name = model
-        self._model = None
-        self._cache = {}  # Simple LRU cache
-        self._cache_size = 1000
         self._auto_unload_seconds = auto_unload_seconds
-        self._last_used = None
-        self._unload_timer = None
         self._auto_unload_enabled = auto_unload_seconds > 0
-        self._lock = threading.RLock()  # Change Lock to RLock
 
-    def _load_model(self):
-        """Lazy load the sentence-transformers model."""
-        if self._model is not None:
+        # Subprocess handle
+        self._process: subprocess.Popen | None = None
+
+        # Embedding cache (lives in main process, lightweight)
+        self._cache: dict[str, list[float]] = {}
+        self._cache_size = 1000
+
+        # Timing and thread safety
+        self._last_used: float | None = None
+        self._unload_timer: threading.Timer | None = None
+        self._lock = threading.RLock()
+        self._req_counter = 0
+
+    def _is_subprocess_alive(self) -> bool:
+        """Check if the embedding subprocess is running."""
+        return self._process is not None and self._process.poll() is None
+
+    def _start_subprocess(self):
+        """Start the embedding worker process if not already running."""
+        if self._is_subprocess_alive():
             return
 
         with self._lock:
-            # Double-check inside lock
-            if self._model is not None:
+            if self._is_subprocess_alive():
                 return
 
+            worker_module = "kabot.memory._embedding_worker"
+            logger.info(f"Starting embedding subprocess: python -u -m {worker_module} {self.model_name}")
+
+            # CRITICAL: -u flag forces unbuffered stdout on Windows.
+            # Without it, stdout is fully buffered for piped processes,
+            # causing readline() in the parent to hang indefinitely.
+            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+            self._process = subprocess.Popen(
+                [sys.executable, "-u", "-m", worker_module, self.model_name],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                # CRITICAL: stderr must NOT be PIPE — sentence-transformers writes
+                # progress bars + warnings during model load. If the pipe buffer fills
+                # (64KB on Windows), the subprocess blocks and never sends init to stdout.
+                # Using None (inherit) instead of DEVNULL to allow stderr output for debugging
+                stderr=None,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+
+            # Wait for "init" ready signal (model loading takes time)
             try:
-                from sentence_transformers import SentenceTransformer
+                ready_line = self._process.stdout.readline()
+                if not ready_line:
+                    raise RuntimeError("Subprocess exited without ready signal (model load may have failed)")
 
-                logger.info(f"Loading sentence-transformers model: {self.model_name}")
-                self._model = SentenceTransformer(self.model_name)
-                logger.info(f"Model loaded successfully. Dimensions: {self.dimensions}")
+                ready = json.loads(ready_line)
+                if ready.get("status") != "ok":
+                    raise RuntimeError(f"Subprocess init failed: {ready}")
 
-            except ImportError:
-                logger.error("sentence-transformers not installed. Run: pip install sentence-transformers")
-                raise
+                logger.info(f"Embedding subprocess ready (PID={self._process.pid})")
+
             except Exception as e:
-                logger.error(f"Error loading model: {e}")
+                logger.error(f"Embedding subprocess startup failed: {e}")
+                self._kill_subprocess()
                 raise
+
+    def _kill_subprocess(self):
+        """Terminate the subprocess — OS reclaims ALL its memory."""
+        if self._process is not None:
+            pid = self._process.pid
+            try:
+                # Try graceful shutdown first
+                if self._process.poll() is None:
+                    try:
+                        self._process.stdin.write(json.dumps({"id": "shutdown", "type": "shutdown"}) + "\n")
+                        self._process.stdin.flush()
+                        self._process.wait(timeout=3)
+                    except Exception:
+                        pass
+
+                # Force kill if still alive
+                if self._process.poll() is None:
+                    self._process.kill()
+                    self._process.wait(timeout=3)
+
+            except Exception as e:
+                logger.warning(f"Error killing embedding subprocess: {e}")
+            finally:
+                # Close pipes (stderr is DEVNULL, no pipe to close)
+                for pipe in (self._process.stdin, self._process.stdout):
+                    try:
+                        if pipe:
+                            pipe.close()
+                    except Exception:
+                        pass
+                self._process = None
+                logger.info(f"Embedding subprocess terminated (PID={pid}) — memory returned to OS")
+
+    def _send_request(self, req_type: str, data) -> any:
+        """Send a request to the subprocess and wait for JSON response."""
+        self._start_subprocess()
+        self._req_counter += 1
+        req_id = f"req_{self._req_counter}"
+
+        request = json.dumps({"id": req_id, "type": req_type, "data": data})
+
+        try:
+            self._process.stdin.write(request + "\n")
+            self._process.stdin.flush()
+
+            response_line = self._process.stdout.readline()
+            if not response_line:
+                raise RuntimeError("Subprocess closed stdout unexpectedly")
+
+            response = json.loads(response_line)
+            if response.get("status") == "error":
+                raise RuntimeError(f"Embedding error: {response.get('result')}")
+
+            return response.get("result")
+
+        except (BrokenPipeError, OSError) as e:
+            logger.error(f"Subprocess pipe broken: {e}")
+            self._kill_subprocess()
+            raise RuntimeError("Embedding subprocess crashed") from e
 
     async def warmup(self):
-        """Pre-load the embedding model in a background thread (non-blocking)."""
+        """Pre-load the embedding model subprocess in background (non-blocking)."""
         import asyncio
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._load_model)
+        await loop.run_in_executor(None, self._start_subprocess)
 
     async def embed(self, text: str) -> list[float] | None:
-        """
-        Generate embedding for text using Sentence-Transformers.
+        """Generate embedding for text.
 
         Args:
             text: Text to embed
@@ -72,36 +180,39 @@ class SentenceEmbeddingProvider:
             Embedding vector or None if failed
         """
         try:
-            # Check cache
+            # Check cache (cache is in main process — zero overhead)
             cache_key = hashlib.md5(text.encode()).hexdigest()
             if cache_key in self._cache:
-                return self._cache[cache_key]
-
-            with self._lock:
-                self._load_model()
-                self._last_used = time.time()
-
-                embedding = self._model.encode(text)
-                if hasattr(embedding, 'tolist'):
-                    embedding = embedding.tolist()
-
-                if embedding:
-                    if len(self._cache) >= self._cache_size:
-                        self._cache.pop(next(iter(self._cache)))
-                    self._cache[cache_key] = embedding
-
                 if self._auto_unload_enabled:
                     self._reset_unload_timer()
+                return self._cache[cache_key]
 
-                return embedding
+            self._last_used = time.time()
+
+            # Run blocking subprocess I/O in thread executor
+            # Note: no lock here — subprocess pipe is inherently serialized
+            import asyncio
+            loop = asyncio.get_event_loop()
+            embedding = await loop.run_in_executor(
+                None, self._send_request, "embed", text
+            )
+
+            if embedding:
+                if len(self._cache) >= self._cache_size:
+                    self._cache.pop(next(iter(self._cache)))
+                self._cache[cache_key] = embedding
+
+            if self._auto_unload_enabled:
+                self._reset_unload_timer()
+
+            return embedding
 
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
             return None
 
     async def embed_batch(self, texts: list[str]) -> list[list[float] | None]:
-        """
-        Generate embeddings for multiple texts.
+        """Generate embeddings for multiple texts.
 
         Args:
             texts: List of texts to embed
@@ -110,29 +221,27 @@ class SentenceEmbeddingProvider:
             List of embeddings
         """
         try:
-            with self._lock:
-                # Load model if needed
-                self._load_model()
-                self._last_used = time.time()
+            self._last_used = time.time()
 
-                # Generate embeddings in batch (more efficient)
-                embeddings = self._model.encode(texts)
-                if hasattr(embeddings, 'tolist'):
-                    embeddings = embeddings.tolist()
+            import asyncio
+            loop = asyncio.get_event_loop()
+            embeddings = await loop.run_in_executor(
+                None, self._send_request, "embed_batch", texts
+            )
 
-                # Cache results
-                results = []
-                for text, embedding in zip(texts, embeddings):
-                    cache_key = hashlib.md5(text.encode()).hexdigest()
-                    if len(self._cache) >= self._cache_size:
-                        self._cache.pop(next(iter(self._cache)))
-                    self._cache[cache_key] = embedding
-                    results.append(embedding)
+            # Cache results
+            results = []
+            for text, embedding in zip(texts, embeddings):
+                cache_key = hashlib.md5(text.encode()).hexdigest()
+                if len(self._cache) >= self._cache_size:
+                    self._cache.pop(next(iter(self._cache)))
+                self._cache[cache_key] = embedding
+                results.append(embedding)
 
-                if self._auto_unload_enabled:
-                    self._reset_unload_timer()
+            if self._auto_unload_enabled:
+                self._reset_unload_timer()
 
-                return results
+            return results
 
         except Exception as e:
             logger.error(f"Error generating batch embeddings: {e}")
@@ -140,125 +249,62 @@ class SentenceEmbeddingProvider:
 
     def _reset_unload_timer(self):
         """Reset the auto-unload timer."""
-        with self._lock:
-            if self._unload_timer:
-                self._unload_timer.cancel()
+        if self._unload_timer:
+            self._unload_timer.cancel()
 
-            self._unload_timer = threading.Timer(
-                self._auto_unload_seconds,
-                self._auto_unload_callback
-            )
-            self._unload_timer.daemon = True
-            self._unload_timer.start()
+        self._unload_timer = threading.Timer(
+            self._auto_unload_seconds,
+            self._auto_unload_callback,
+        )
+        self._unload_timer.daemon = True
+        self._unload_timer.start()
 
     def _auto_unload_callback(self):
-        """Timer callback to unload model after idle timeout."""
+        """Timer callback — kill subprocess after idle timeout."""
         with self._lock:
-            if self._model is not None:
+            if self._is_subprocess_alive() and self._last_used is not None:
                 idle_time = time.time() - self._last_used
                 if idle_time >= self._auto_unload_seconds:
-                    self._unload_model_internal()
-
-    def _unload_model_internal(self):
-        """Internal unload without lock acquisition."""
-        if self._model is not None:
-            logger.info("Unloading sentence-transformers model from RAM")
-
-            # Clear embedding cache first
-            self._cache.clear()
-
-            # Move model to CPU to release GPU memory
-            try:
-                self._model.to('cpu')
-            except Exception:
-                pass
-
-            # Clear tokenizer to avoid StopIteration errors
-            try:
-                if hasattr(self._model, 'tokenizer'):
-                    self._model.tokenizer = None
-            except Exception:
-                pass
-
-            # Recursively clear all PyTorch modules to break reference cycles
-            def clear_module_recursive(module):
-                """Recursively clear a PyTorch module and its children."""
-                if module is None:
-                    return
-
-                # Clear child modules first (depth-first)
-                if hasattr(module, '_modules') and module._modules:
-                    for child in list(module._modules.values()):
-                        clear_module_recursive(child)
-                    module._modules.clear()
-
-                # Clear parameters and buffers
-                if hasattr(module, '_parameters') and module._parameters:
-                    module._parameters.clear()
-                if hasattr(module, '_buffers') and module._buffers:
-                    module._buffers.clear()
-
-            # Clear the model recursively
-            clear_module_recursive(self._model)
-
-            # Delete model reference
-            del self._model
-            self._model = None
-            self._auto_unload_enabled = False
-
-            # Force garbage collection (multiple passes for cyclic references)
-            import gc
-            for _ in range(3):
-                gc.collect()
-
-            # Clear PyTorch cache
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                torch.cuda.empty_cache() if hasattr(torch.cuda, 'empty_cache') else None
-            except Exception:
-                pass
-
-            # Platform-specific memory trimming
-            try:
-                import sys
-                if sys.platform == 'win32':
-                    import ctypes
-                    kernel32 = ctypes.windll.kernel32
-                    process = kernel32.GetCurrentProcess()
-                    kernel32.SetProcessWorkingSetSize(process, -1, -1)
-                    kernel32.EmptyWorkingSet(process)
-                elif sys.platform in ('linux', 'linux2'):
-                    import ctypes
-                    libc = ctypes.CDLL('libc.so.6')
-                    libc.malloc_trim(0)
-            except Exception:
-                pass
+                    logger.info(f"Auto-unloading embedding subprocess after {idle_time:.0f}s idle")
+                    self._kill_subprocess()
 
     def unload_model(self):
-        """Manually unload the model to free RAM."""
+        """Manually terminate the subprocess to free ALL RAM."""
         with self._lock:
             if self._unload_timer:
                 self._unload_timer.cancel()
                 self._unload_timer = None
-            self._unload_model_internal()
+            self._kill_subprocess()
+            self._cache.clear()
+
+    # Backward-compatible aliases
+    def _unload_model_internal(self):
+        """Internal unload — kills subprocess."""
+        self._kill_subprocess()
+
+    def _load_model(self):
+        """Start subprocess (backward-compatible name)."""
+        self._start_subprocess()
 
     def get_memory_stats(self) -> dict:
         """Get memory statistics."""
         return {
-            "model_loaded": self._model is not None,
+            "model_loaded": self._is_subprocess_alive(),
+            "subprocess_pid": self._process.pid if self._process and self._process.poll() is None else None,
             "last_used": self._last_used,
             "auto_unload_seconds": self._auto_unload_seconds,
-            "auto_unload_enabled": self._auto_unload_enabled
+            "auto_unload_enabled": self._auto_unload_enabled,
+            "cache_size": len(self._cache),
         }
 
     def __del__(self):
         """Cleanup on destruction."""
-        if self._unload_timer:
-            self._unload_timer.cancel()
-        if self._model is not None:
-            self._unload_model_internal()
+        try:
+            if self._unload_timer:
+                self._unload_timer.cancel()
+            self._kill_subprocess()
+        except Exception:
+            pass
 
     @property
     def dimensions(self) -> int:
@@ -275,8 +321,8 @@ class SentenceEmbeddingProvider:
     def check_connection(self) -> bool:
         """Check if model can be loaded."""
         try:
-            self._load_model()
-            return self._model is not None
+            self._start_subprocess()
+            return self._is_subprocess_alive()
         except Exception:
             return False
 
@@ -286,5 +332,6 @@ class SentenceEmbeddingProvider:
             "model_name": self.model_name,
             "dimensions": self.dimensions,
             "cached_items": len(self._cache),
-            "loaded": self._model is not None
+            "loaded": self._is_subprocess_alive(),
+            "subprocess_pid": self._process.pid if self._process and self._process.poll() is None else None,
         }

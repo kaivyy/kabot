@@ -6,42 +6,39 @@ from kabot.memory.sentence_embeddings import SentenceEmbeddingProvider
 
 @pytest.mark.asyncio
 async def test_no_memory_leak_after_unload():
-    """Verify model unload actually frees memory."""
-    process = psutil.Process(os.getpid())
+    """Verify subprocess is properly terminated and memory is freed.
 
-    # Baseline memory
-    baseline_mb = process.memory_info().rss / 1024 / 1024
-
-    # Load model
+    With subprocess architecture, the model runs in a separate process.
+    When unloaded, the subprocess is killed and OS reclaims ALL its memory.
+    This test verifies the subprocess lifecycle, not main process memory.
+    """
+    # Load model (starts subprocess)
     provider = SentenceEmbeddingProvider(auto_unload_seconds=0)
     await provider.embed("test query")
-    loaded_mb = process.memory_info().rss / 1024 / 1024
 
-    # Memory increase check: Should use >30MB for model
-    # Note: This is lenient because the model may be cached from previous tests
-    # The primary verification is the internal state check below
-    memory_increase = loaded_mb - baseline_mb
-    assert memory_increase > 30, f"Model should use >30MB, got {memory_increase:.1f}MB"
+    # Verify subprocess is running
+    assert provider._is_subprocess_alive(), "Subprocess should be alive after embed"
+    subprocess_pid = provider._process.pid
 
-    # Unload
+    # Verify subprocess exists in OS
+    try:
+        subprocess_process = psutil.Process(subprocess_pid)
+        subprocess_mb = subprocess_process.memory_info().rss / 1024 / 1024
+        assert subprocess_mb > 100, f"Subprocess should use >100MB for model, got {subprocess_mb:.1f}MB"
+    except psutil.NoSuchProcess:
+        pytest.fail("Subprocess should exist in OS")
+
+    # Unload (kills subprocess)
     provider.unload_model()
-    await asyncio.sleep(1)  # Give GC time
+    await asyncio.sleep(1)  # Give OS time to clean up
 
-    # Verify model is actually unloaded (internal state check)
-    # This is the primary verification - model reference should be None
-    assert provider._model is None, "Model reference should be None after unload"
+    # Verify subprocess is terminated
+    assert not provider._is_subprocess_alive(), "Subprocess should be terminated after unload"
 
-    # Memory check: Python/PyTorch maintain internal caches and memory pools,
-    # so we can't expect memory to return exactly to baseline. However, we should
-    # see SOME memory freed if the model tensors are actually released.
-    unloaded_mb = process.memory_info().rss / 1024 / 1024
-    memory_freed = loaded_mb - unloaded_mb
-    memory_used = loaded_mb - baseline_mb
-
-    # Verify at least 10% of model memory was freed (very lenient check)
-    # This catches catastrophic leaks while accounting for Python's memory behavior
-    assert memory_freed > memory_used * 0.1, (
-        f"Insufficient memory freed: {memory_freed:.1f}MB freed "
-        f"({memory_freed/memory_used*100:.1f}% of {memory_used:.1f}MB used). "
-        f"Expected at least 10% freed."
-    )
+    # Verify subprocess no longer exists in OS (memory freed)
+    try:
+        psutil.Process(subprocess_pid)
+        pytest.fail("Subprocess should not exist in OS after unload")
+    except psutil.NoSuchProcess:
+        # Expected - subprocess was killed and OS reclaimed memory
+        pass

@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hybrid Memory Manager** (`kabot/memory/chroma_memory.py`): ChromaDB `PersistentClient` now uses `chroma_memory_limit_bytes` cache cap; cleaned up invalid legacy config parameters
 
 ### Fixed
+- **Subprocess Communication (Windows)**: Fixed embedding worker subprocess hang on Windows due to stdin buffering
+  - Changed `_embedding_worker.py` stdin reading from `for line in sys.stdin:` to `while True: readline()` for Windows subprocess pipe compatibility
+  - Changed `sentence_embeddings.py` stderr handling from `subprocess.DEVNULL` to `None` to prevent pipe buffer deadlock
+  - Updated all memory tests to use `_is_subprocess_alive()` instead of deprecated `_model` attribute
+  - Rewrote `test_memory_leak.py` to verify subprocess lifecycle (process termination) instead of main process memory
 - **Version Sync**: `__init__.py` and `pyproject.toml` version now matches git tag (was stuck at 0.5.3)
 - **CHANGELOG Accuracy**: Replaced fabricated RAM metrics with empirically measured psutil RSS data
 

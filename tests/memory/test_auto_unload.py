@@ -13,11 +13,11 @@ async def test_model_auto_unloads_after_timeout():
     # Trigger model load
     result = await provider.embed("test query")
     assert result is not None
-    assert provider._model is not None
+    assert provider._is_subprocess_alive()
 
     # Wait for auto-unload
     await asyncio.sleep(3)
-    assert provider._model is None
+    assert not provider._is_subprocess_alive()
 
 @pytest.mark.asyncio
 async def test_timer_resets_on_new_request():
@@ -30,27 +30,27 @@ async def test_timer_resets_on_new_request():
     await asyncio.sleep(2)
 
     # Model should still be loaded (only 2s since last request)
-    assert provider._model is not None
+    assert provider._is_subprocess_alive()
 
 @pytest.mark.asyncio
 async def test_manual_unload():
     """Manual unload should work immediately."""
     provider = SentenceEmbeddingProvider()
     await provider.embed("test")
-    assert provider._model is not None
+    assert provider._is_subprocess_alive()
 
     provider.unload_model()
-    assert provider._model is None
+    assert not provider._is_subprocess_alive()
 
 @pytest.mark.asyncio
 async def test_auto_unload_disabled_when_timeout_zero():
     """Auto-unload should be disabled when timeout is 0."""
     provider = SentenceEmbeddingProvider(auto_unload_seconds=0)
     await provider.embed("test")
-    assert provider._model is not None
+    assert provider._is_subprocess_alive()
 
     await asyncio.sleep(2)
-    assert provider._model is not None  # Still loaded
+    assert provider._is_subprocess_alive()  # Still loaded
 
 @pytest.mark.asyncio
 async def test_model_reloads_after_unload():
@@ -59,8 +59,8 @@ async def test_model_reloads_after_unload():
     result1 = await provider.embed("test query 1")
 
     provider.unload_model()
-    assert provider._model is None
+    assert not provider._is_subprocess_alive()
 
     result2 = await provider.embed("test query 2")
     assert result2 is not None
-    assert provider._model is not None
+    assert provider._is_subprocess_alive()
