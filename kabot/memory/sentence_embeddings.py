@@ -105,8 +105,8 @@ class SentenceEmbeddingProvider:
                 self._kill_subprocess()
                 raise
 
-    def _kill_subprocess(self):
-        """Terminate the subprocess — OS reclaims ALL its memory."""
+    def _kill_subprocess(self, graceful_timeout: float = 1.0):
+        """Terminate the subprocess; OS reclaims ALL its memory."""
         if self._process is not None:
             pid = self._process.pid
             try:
@@ -115,7 +115,8 @@ class SentenceEmbeddingProvider:
                     try:
                         self._process.stdin.write(json.dumps({"id": "shutdown", "type": "shutdown"}) + "\n")
                         self._process.stdin.flush()
-                        self._process.wait(timeout=3)
+                        # Keep graceful shutdown brief so auto-unload is timely.
+                        self._process.wait(timeout=max(0.0, graceful_timeout))
                     except Exception:
                         pass
 
@@ -183,11 +184,10 @@ class SentenceEmbeddingProvider:
             # Check cache (cache is in main process — zero overhead)
             cache_key = hashlib.md5(text.encode()).hexdigest()
             if cache_key in self._cache:
+                self._last_used = time.time()
                 if self._auto_unload_enabled:
                     self._reset_unload_timer()
                 return self._cache[cache_key]
-
-            self._last_used = time.time()
 
             # Run blocking subprocess I/O in thread executor
             # Note: no lock here — subprocess pipe is inherently serialized
@@ -196,6 +196,7 @@ class SentenceEmbeddingProvider:
             embedding = await loop.run_in_executor(
                 None, self._send_request, "embed", text
             )
+            self._last_used = time.time()
 
             if embedding:
                 if len(self._cache) >= self._cache_size:
@@ -221,13 +222,12 @@ class SentenceEmbeddingProvider:
             List of embeddings
         """
         try:
-            self._last_used = time.time()
-
             import asyncio
             loop = asyncio.get_event_loop()
             embeddings = await loop.run_in_executor(
                 None, self._send_request, "embed_batch", texts
             )
+            self._last_used = time.time()
 
             # Cache results
             results = []
@@ -266,7 +266,8 @@ class SentenceEmbeddingProvider:
                 idle_time = time.time() - self._last_used
                 if idle_time >= self._auto_unload_seconds:
                     logger.info(f"Auto-unloading embedding subprocess after {idle_time:.0f}s idle")
-                    self._kill_subprocess()
+                    # Auto-unload path should be decisive to avoid timer race windows.
+                    self._kill_subprocess(graceful_timeout=0.1)
 
     def unload_model(self):
         """Manually terminate the subprocess to free ALL RAM."""

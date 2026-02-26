@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.7] - 2026-02-26
 
 ### Added
+- **Skills Git Repo Auto-Installer (CLI)**:
+  - Added new command: `kabot skills install --git <repo>`.
+  - Supports `--ref`, `--subdir`, `--name`, `--target managed|workspace`, and `--force`.
+  - Auto-detects skill source folder (`SKILL.md`) with support for multi-layout repos (including conventional `skill/` subtree).
+  - Installs skill into managed shared skills dir (default) or workspace skills dir, then marks it enabled in `skills.entries`.
+  - Includes guidance after install to continue env/dependency setup from wizard.
 - **Skills Config Canonical Helpers**:
   - Added `kabot/config/skills_settings.py` to normalize skill settings across canonical and legacy formats.
   - Added canonical handling for:
@@ -75,6 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `entries.<skill>.enabled` (disable skill)
     - `entries.<skill>.env` and `apiKey` for env requirement satisfaction.
   - Added bundled allowlist enforcement for bundled skills via `skills.allowBundled`.
+  - Added mid-session hot-reload for skill matching cache:
+    - `match_skills()` now auto-refreshes keyword/body indexes when `SKILL.md` files are added, removed, or edited.
+    - Cache invalidation uses deterministic snapshotting (`path + mtime + size`) across all configured skill roots.
 - **Setup Wizard Skills Persistence**:
   - Skills env setup now writes to canonical `skills.entries.<skill_key>.env`.
   - Wizard skill env injection now reads both canonical (`entries`) and legacy flat skill env formats.
@@ -112,6 +121,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added throttling on bridge start attempts to avoid aggressive restart loops.
 
 ### Fixed
+- **Sentence Embedding Auto-Unload Determinism**:
+  - Fixed race window where embedding subprocess could remain alive briefly past idle timeout under load.
+  - Auto-unload shutdown path now uses a stricter graceful timeout before forced kill to ensure deterministic unload timing.
+  - Added/validated regression path with repeated timeout test runs to avoid flaky behavior.
 - **Skills Config Migration Key Integrity**:
   - Preserved constant-style env keys (e.g. `OPENAI_API_KEY`) during config camel/snake normalization and migration write-back.
   - Added migration persistence path that writes migrated config atomically with timestamped backup copy.

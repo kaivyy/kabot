@@ -114,16 +114,15 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         q_lower = (msg.content or "").lower()
         # Default for "top 10 indonesia" or similar general queries
         symbol = "TOP10_ID"
-        
+
         # Try to extract ticker symbols (e.g. "harga AAPL", "cek BBCA.JK")
-        import re
         tickers = re.findall(r"\b([A-Z]{3,5}(?:\.[A-Z]{1,2})?)\b", (msg.content or ""))
         if tickers:
             symbol = ",".join(tickers)
         elif "crypto" in q_lower or "btc" in q_lower or "eth" in q_lower:
              # Redirect to crypto if stock was required but content looks like crypto
              required_tool = "crypto"
-        
+
         if required_tool == "stock":
             result = await loop.tools.execute("stock", {"symbol": symbol})
             return str(result)
@@ -131,13 +130,13 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
     if required_tool == "crypto":
         q_lower = (msg.content or "").lower()
         coin = "bitcoin" # default
-        
+
         # Simple extraction
         for c in ["bitcoin", "ethereum", "solana", "doge", "btc", "eth", "sol"]:
             if c in q_lower:
                 coin = c
                 break
-        
+
         result = await loop.tools.execute("crypto", {"coin": coin})
         return str(result)
 

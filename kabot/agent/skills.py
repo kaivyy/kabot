@@ -117,10 +117,12 @@ class SkillsLoader:
         self._skill_entries = get_skills_entries(self._skills_config)
         self._skill_index: dict[str, set[str]] | None = None  # lazy cache
         self._body_index: dict[str, set[str]] | None = None   # lazy cache
+        self._index_snapshot: tuple[tuple[str, int, int], ...] | None = None
 
     def _build_skill_index(self) -> dict[str, set[str]]:
         """Build keyword index from all skill descriptions (cached)."""
-        if self._skill_index is not None:
+        current_snapshot = self._compute_skill_snapshot()
+        if self._skill_index is not None and self._index_snapshot == current_snapshot:
             return self._skill_index
 
         index: dict[str, set[str]] = {}
@@ -142,7 +144,47 @@ class SkillsLoader:
 
         self._skill_index = index
         self._body_index = body_index
+        self._index_snapshot = current_snapshot
         return index
+
+    def _iter_skill_roots(self) -> list[Path]:
+        roots: list[Path] = []
+        roots.extend([
+            self.workspace_skills,
+            self.project_agents_skills,
+            self.personal_agents_skills,
+        ])
+        if self.managed_skills:
+            roots.append(self.managed_skills)
+        if self.builtin_skills:
+            roots.append(self.builtin_skills)
+        roots.extend(self.extra_skill_dirs)
+        return roots
+
+    def _iter_skill_files(self) -> list[Path]:
+        files: list[Path] = []
+        for root in self._iter_skill_roots():
+            if not root.exists():
+                continue
+            for skill_dir in root.iterdir():
+                if not skill_dir.is_dir():
+                    continue
+                skill_file = skill_dir / "SKILL.md"
+                if skill_file.exists():
+                    files.append(skill_file)
+        return files
+
+    def _compute_skill_snapshot(self) -> tuple[tuple[str, int, int], ...]:
+        """Return deterministic snapshot of skill files for cache invalidation."""
+        snapshot: list[tuple[str, int, int]] = []
+        for skill_file in self._iter_skill_files():
+            try:
+                stat = skill_file.stat()
+            except OSError:
+                continue
+            snapshot.append((str(skill_file.resolve()), int(stat.st_mtime_ns), int(stat.st_size)))
+        snapshot.sort(key=lambda item: item[0])
+        return tuple(snapshot)
 
     def match_skills(self, message: str, profile: str = "GENERAL",
                      max_results: int = 3) -> list[str]:

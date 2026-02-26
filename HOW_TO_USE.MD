@@ -933,6 +933,30 @@ Notes:
 - `install.preferBrew` affects installer recommendation order.
 - Legacy flat config (e.g. `skills.notion.env`) is still supported for backward compatibility.
 
+### **Install Skill Otomatis dari Repo Git**
+Kabot now supports direct install from external git repo:
+
+```bash
+kabot skills install --git https://github.com/<owner>/<repo>.git
+```
+
+Useful options:
+- `--ref <tag|branch|commit>`: pin version
+- `--subdir <path>`: choose skill folder when repo has multiple `SKILL.md`
+- `--name <skill-name>`: override installed skill slug
+- `--target managed|workspace`: install into shared `~/.kabot/skills` (managed, default) or current workspace
+- `--force`: overwrite existing installed folder
+
+Example for repo that stores skill inside `skill/` folder:
+
+```bash
+kabot skills install --git https://github.com/SumeLabs/clawra.git --subdir skill
+```
+
+After install:
+1. Run `kabot config` -> **Skills** to configure env keys and dependency plan.
+2. Run `kabot doctor` to verify runtime requirements.
+
 ### **Installer Metadata (`metadata.kabot.install`)**
 Skill installer metadata supports both legacy and canonical formats:
 

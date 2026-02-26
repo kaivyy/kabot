@@ -405,6 +405,75 @@ def config(
         setup(interactive=True)
 
 
+skills_app = typer.Typer(help="Manage external skills")
+app.add_typer(skills_app, name="skills")
+
+
+@skills_app.command("install")
+def skills_install(
+    git: str = typer.Option(..., "--git", help="Git repository URL/path that contains SKILL.md"),
+    ref: str = typer.Option("", "--ref", help="Optional git ref (tag/branch/commit)"),
+    subdir: str = typer.Option(
+        "",
+        "--subdir",
+        help="Relative folder in repo containing SKILL.md (required when repo has multiple skills)",
+    ),
+    name: str = typer.Option("", "--name", help="Override installed skill name/slug"),
+    target: str = typer.Option("managed", "--target", help="Install target: managed or workspace"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing destination"),
+):
+    """Install skill from git repository into Kabot skills directory."""
+    from kabot.cli.skill_repo_installer import install_skill_from_git
+    from kabot.config.loader import load_config, save_config
+    from kabot.config.skills_settings import resolve_load_settings, set_skill_entry_enabled
+
+    cfg = load_config()
+    target_value = target.strip().lower()
+    if target_value not in {"managed", "workspace"}:
+        console.print("[red]Invalid --target. Use: managed or workspace[/red]")
+        raise typer.Exit(1)
+
+    if target_value == "workspace":
+        target_dir = cfg.workspace_path / "skills"
+    else:
+        load_settings = resolve_load_settings(cfg.skills)
+        managed_dir = str(load_settings.get("managed_dir") or "").strip()
+        if managed_dir:
+            target_dir = Path(managed_dir).expanduser()
+        else:
+            target_dir = Path("~/.kabot/skills").expanduser()
+
+    try:
+        installed = install_skill_from_git(
+            repo_url=git,
+            target_dir=target_dir,
+            ref=ref.strip() or None,
+            subdir=subdir.strip() or None,
+            skill_name=name.strip() or None,
+            overwrite=force,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+    cfg.skills = set_skill_entry_enabled(
+        cfg.skills,
+        installed.skill_key,
+        True,
+        persist_true=True,
+    )
+    save_config(cfg)
+
+    console.print(f"[green]✓[/green] Installed skill: [cyan]{installed.skill_name}[/cyan]")
+    console.print(f"  Source repo: {installed.repo_url}")
+    console.print(f"  Source dir: {installed.selected_dir}")
+    console.print(f"  Installed to: {installed.installed_dir}")
+    console.print("  Enabled in config: skills.entries.{0}.enabled=true".format(installed.skill_key))
+    console.print("\nNext:")
+    console.print("  1. Run [cyan]kabot config[/cyan] -> Skills to configure env keys/dependency plan")
+    console.print("  2. Run [cyan]kabot doctor[/cyan] to verify runtime requirements")
+
+
 def _create_workspace_templates(workspace: Path):
     """Create default workspace template files."""
     created = ensure_workspace_templates(workspace)
