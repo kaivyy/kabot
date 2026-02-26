@@ -5,7 +5,207 @@ All notable changes to Kabot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.7] - 2026-02-26
+
+### Added
+- **Skills Config Canonical Helpers**:
+  - Added `kabot/config/skills_settings.py` to normalize skill settings across canonical and legacy formats.
+  - Added canonical handling for:
+    - `skills.entries.<skill_key>`
+    - `skills.allowBundled`
+    - `skills.load.managedDir`
+    - `skills.load.extraDirs`
+  - Added helper APIs for env injection + entry updates used by CLI and setup wizard.
+- **Web Search Kimi Provider**:
+  - Added `kimi` provider support to `web_search` runtime.
+  - Added `tools.web.search.kimi_api_key` and `tools.web.search.kimi_model` config fields.
+  - Added Kimi setup prompts in setup wizard tools section.
+- **Gateway HSTS Security Header**:
+  - Added optional gateway security header config:
+    - `gateway.http.security_headers.strict_transport_security`
+    - `gateway.http.security_headers.strict_transport_security_value`
+  - Webhook gateway now emits `Strict-Transport-Security` for HTTPS/forwarded-HTTPS requests when enabled.
+- **Channels Wizard Security Inputs (`allowFrom`)**:
+  - Added explicit `allowFrom` prompts for legacy channel setup flows:
+    - Telegram, Discord, WhatsApp, Feishu, DingTalk, QQ, Email.
+  - Added Slack access policy setup in wizard:
+    - DM policy (`open` / `allowlist`) + `dm.allow_from`.
+    - Group policy (`mention` / `open` / `allowlist`) + `group_allow_from`.
+  - Added `allowFrom` prompts for channel instances (add/edit) and value parser with dedupe (comma/newline input).
+- **Per-Bot Agent Model Picker in Channels Wizard**:
+  - Added guided model picker for auto-created agents in channel instance flow (browse configured providers or manual input).
+  - Supports dedicated model selection per bot instance without forcing global default model changes.
+- **Legacy Channel AI Binding in Wizard**:
+  - Added optional AI routing step after legacy channel setup (Telegram/WhatsApp/Discord/Slack/Feishu/DingTalk/QQ/Email).
+  - Users can now bind channel to existing or new dedicated agent and set per-channel model from configured providers.
+  - Wizard creates/updates channel-level bindings (`match.channel=<channel>`, `account_id="*"`) for clear default routing.
+  - Added secure prompt behavior for existing credentials (`leave empty to keep existing`) so token values are no longer shown as defaults in prompt suffix.
+- **WhatsApp Bridge UX + Runtime Auto-Start**:
+  - Added QR login flow that auto-returns to setup wizard after connection confirmation (no longer requires manual Ctrl+C to continue setup).
+  - Added setup prompt to start WhatsApp bridge in background immediately after setup.
+  - Added bridge health helpers (`is_bridge_reachable`, `wait_for_bridge_ready`, `is_local_bridge_url`) and background launcher utility (`start_bridge_background`).
+- **OpenRouter Catalog Expansion**:
+  - Added curated OpenRouter model refs to the static registry for wizard browsing:
+    - `openrouter/auto`
+    - `openrouter/anthropic/claude-sonnet-4-5`
+    - `openrouter/anthropic/claude-opus-4-5`
+    - `openrouter/deepseek/deepseek-r1`
+    - `openrouter/qwen/qwen-2.5-vl-72b-instruct:free`
+    - `openrouter/google/gemini-2.0-flash-vision:free`
+    - `openrouter/meta-llama/llama-3.3-70b-instruct:free`
+    - `openrouter/moonshotai/kimi-k2.5`
+    - plus related refs used in OpenRouter-based flows.
+  - Added OpenRouter aliases (`openrouter`, `or-auto`, `or-sonnet`, `or-qwen-vl`) for faster model input in setup flow.
+
+### Changed
+- **Workspace Auto-Bootstrap for Persona Files**:
+  - Workspace setup now auto-initializes baseline persona files (`AGENTS.md`, `SOUL.md`, `USER.md`) plus `memory/MEMORY.md` without extra manual commands.
+  - Channel wizard auto-created agents now initialize their workspace templates automatically.
+  - Interactive `kabot setup` now creates templates in the configured workspace path (not only default path), reducing post-setup manual fixes.
+- **Skills Loader Source Precedence + Config-Aware Eligibility**:
+  - `SkillsLoader` now supports layered source precedence:
+    - workspace (`<workspace>/skills`) >
+      workspace agents (`<workspace>/.agents/skills`) >
+      personal agents (`~/.agents/skills`) >
+      managed (`~/.kabot/skills` or `skills.load.managedDir`) >
+      bundled (`kabot/skills`) >
+      extraDirs.
+  - Added managed skills support (`~/.kabot/skills`) when skills config is active.
+  - Added per-skill entry semantics in runtime/listing:
+    - `entries.<skill>.enabled` (disable skill)
+    - `entries.<skill>.env` and `apiKey` for env requirement satisfaction.
+  - Added bundled allowlist enforcement for bundled skills via `skills.allowBundled`.
+- **Setup Wizard Skills Persistence**:
+  - Skills env setup now writes to canonical `skills.entries.<skill_key>.env`.
+  - Wizard skill env injection now reads both canonical (`entries`) and legacy flat skill env formats.
+  - Skills status board now reports disabled + allowlist-blocked counts explicitly.
+  - Added hybrid skills checkbox adapter (`kabot/cli/wizard/skills_prompts.py`) with safe fallback.
+  - Skills dependency setup now runs in **manual planning mode**:
+    - setup wizard does not execute dependency installers automatically,
+    - prints per-skill install plan (and prompts node manager only when node installers are selected),
+    - keeps install preferences in canonical `skills.install`.
+- **Context Builder Skills Config Wiring**:
+  - `ContextBuilder` now accepts skills config and passes it to `SkillsLoader`.
+  - `AgentLoop` now injects runtime `config.skills` into `ContextBuilder` so prompt skill resolution follows config entries + precedence.
+- **Runtime Fallback Resilience**:
+  - Added implicit runtime fallback rule for OpenAI/OpenAI-Codex primary models:
+    - if explicit fallback chain is empty and Groq credentials exist, Kabot now auto-injects `groq/meta-llama/llama-4-scout-17b-16e-instruct` as fallback.
+- **Docs Filename Standardization**:
+  - Renamed `HOW-TO-USE.md` to `HOW_TO_USE.MD`.
+  - Updated primary README docs link to the new file name.
+- **Setup Wizard OpenAI Post-Login Chain**:
+  - OpenAI post-login default chain now appends Groq fallback when Groq credentials are configured.
+- **Skills Wizard Env Setup UX**:
+  - Skills setup now uses wording based on environment variables (`Configure skill environment variables`) instead of API-key-only phrasing.
+  - Selected skills now prompt for all missing required env vars (not only `primaryEnv` / first env), with cross-skill dedupe so shared env vars are asked once.
+- **Model Picker Credential Guardrails**:
+  - `Select Default Model` now filters aliases/model browsing to providers that already have saved API key/OAuth credentials.
+  - Manual model entry now blocks models from providers without saved credentials and shows a warning to login first.
+  - Added explicit warning when no authenticated providers are available for default model selection.
+- **Channels Wizard Multi-Bot UX**:
+  - Channel instance creation/edit flow now includes security and model choices inline, reducing manual JSON edits for multi-bot setup.
+  - Allows simpler setup for scenarios like bot A/B/C using different providers/models via agent binding + model override.
+  - Added empty-state guidance in `Manage Channel Instances` for one-click multi-bot onboarding (`Add Instance` / `Quick Add Multiple`).
+  - Renamed top menu entry to `Manage Channel Instances (Add Multiple Bots)` when instance list is empty.
+- **WhatsApp Channel Startup Behavior**:
+  - WhatsApp channel now attempts to auto-start local bridge (`ws://localhost/...`) when bridge is unreachable, then reconnects automatically.
+  - Added throttling on bridge start attempts to avoid aggressive restart loops.
+
+### Fixed
+- **Skills Config Migration Key Integrity**:
+  - Preserved constant-style env keys (e.g. `OPENAI_API_KEY`) during config camel/snake normalization and migration write-back.
+  - Added migration persistence path that writes migrated config atomically with timestamped backup copy.
+- **CLI Skill Env Injection Format Gap**:
+  - CLI startup env injection now supports both `skills.entries` and legacy flat `skills.<name>.env`.
+- **Codex Tool-Call Context Integrity (Cron/Tools)**:
+  - Fixed tool-call history assembly when assistant returns both text and tool calls in one turn.
+  - `process_tool_calls()` now preserves/attaches `tool_calls` on the assistant message instead of leaving only `tool` outputs.
+  - Prevents ChatGPT Codex backend `400` errors like:
+    - `No tool call found for function call output with call_id ...`
+  - Reduces duplicate side effects (e.g. repeated reminder scheduling) caused by replays after orphaned tool-output failures.
+- **OpenAI/Codex Runtime Fallback Regression**:
+  - Re-enabled implicit runtime fallback injection for OpenAI/OpenAI-Codex primaries when explicit chain is empty and Groq credentials are present.
+  - Added regression tests to ensure fallback is injected only for eligible OpenAI primaries and not injected for unrelated/no-credential cases.
+- **Cross-Provider Fallback Credential Leak**:
+  - Fixed runtime bug where fallback attempts could reuse primary provider token (e.g. OpenAI Codex JWT sent to Groq).
+  - LiteLLM provider now resolves API key/API base/headers per attempted model provider in fallback chain.
+  - `_make_provider()` now builds provider credential maps for primary + runtime fallback models.
+- **Regression Coverage (Fallback + Channels Wizard)**:
+  - Added tests for provider-specific credential use in cross-provider fallback path.
+  - Added tests for `allowFrom` parsing, instance config `allowFrom` capture, and per-agent model picker behavior in channel wizard.
+- **Regression Coverage (WhatsApp Bridge)**:
+  - Added setup wizard test to verify QR-connect flow + optional background bridge startup path.
+  - Added runtime channel tests to verify local bridge auto-start and non-local bridge skip behavior.
+- **OpenRouter Manual Model Input Validation**:
+  - Fixed model-format validation to accept nested provider paths (e.g. `openrouter/vendor/model:free`) instead of only two-segment IDs.
+  - Provider-scoped manual picker now auto-prefixes vendor/model style input (e.g. in OpenRouter scope, `arcee-ai/trinity-large-preview:free` becomes `openrouter/arcee-ai/trinity-large-preview:free`).
+  - Added regression tests for nested format validation, scoped autoprefix behavior, and OpenRouter catalog/model-status coverage.
+- **Expired OAuth Token Failover Latency**:
+  - Added proactive pre-check for expired `openai-codex` JWT tokens so runtime skips directly to fallback models without first waiting for repeated 401 failures.
+  - Added auth-failure cooldown in `LiteLLMProvider` (`180s`) so temporarily invalid providers are not retried on every message/critic retry loop.
+  - Extended failover classification to treat `invalid_or_expired_jwt` / `invalid or expired jwt` as `auth` errors.
+  - Added regression tests for proactive skip, cooldown behavior, and cooldown expiry re-entry.
+
+### Included From 2026-02-24 Batch
+
+#### Added
+- **Kabot-Aligned Provider Expansion (Setup + Runtime)**:
+  - Added provider/auth coverage for `together`, `venice`, `huggingface`, `qianfan`, `nvidia`, `xai`, `cerebras`, `opencode`, `xiaomi`, `volcengine`, and `byteplus`.
+  - Added additional parity providers: `synthetic`, `cloudflare-ai-gateway`, and `vercel-ai-gateway` (schema + registry + setup auth flow).
+  - Added matching provider specs in runtime registry with default API bases for OpenAI-compatible gateway flows.
+  - Added simple API-key handlers for each newly surfaced provider in setup auth flow.
+- **Expanded Static Model Catalog**:
+  - Added curated model entries across Together, Venice, Hugging Face, Qianfan, NVIDIA, OpenCode, xAI, Cerebras, Xiaomi, Volcano Engine, and BytePlus.
+  - Added full Kabot parity blocks for extended refs: Together, Venice, Kilo Gateway, OpenCode Zen static fallback set, Moonshot variants, MiniMax variants, Volcengine/BytePlus coding routes, Synthetic catalog, and gateway refs for Cloudflare/Vercel.
+  - Added aliases for fast model picking (`venice-opus`, `hf-r1`, `qianfan`, `nvidia`, `opencode`, `xai`, `cerebras`, `xiaomi`, `doubao`, `byteplus`).
+- **Model Status Coverage**:
+  - Added status catalog entries for new provider models so setup wizard can display them in model browser and picker.
+  - `model_status.py` now auto-syncs `CATALOG_ONLY` from `STATIC_MODEL_CATALOG` to reduce manual drift when model lists expand.
+
+#### Changed
+- **Provider Matching Accuracy** (`config/schema.py`):
+  - `_match_provider()` now prioritizes explicit model prefix matching (e.g. `together/...`) before keyword matching.
+  - Prevents ambiguous cross-provider keyword collisions (for example `moonshot` substring inside Together model IDs).
+- **Setup Wizard Auto Model Chain**:
+  - Simple mode auto-chain now includes newly supported providers so users can connect multiple keys and instantly get primary + fallback chains without manual JSON edits.
+- **Setup Wizard Maintainability Refactor**:
+  - Extracted reusable wizard UI primitives to `kabot/cli/wizard/ui.py` (`ClackUI`) so terminal rendering and style tuning are centralized.
+  - Extracted channel menu option composition to `kabot/cli/wizard/channel_menu.py` and wired `setup_wizard.py` to reuse it.
+  - Extracted section methods to `kabot/cli/wizard/setup_sections.py` and bound them back into `SetupWizard` to decouple section logic from the orchestrator file.
+  - Split extracted section methods into domain modules under `kabot/cli/wizard/sections/` (`core`, `model_auth`, `tools_gateway_skills`, `channels`, `operations`) with a thin binder aggregator.
+  - Reduced `kabot/cli/setup_wizard.py` to under 1000 LOC (now ~411 lines) while preserving setup wizard behavior and test coverage.
+  - Kept setup flow behavior stable while reducing coupling in `setup_wizard.py` for easier future section-level refactors.
+- **Crash Recovery Routing** (`kabot/agent/loop.py`):
+  - Recovery delivery no longer uses synthetic `system` outbound channel.
+  - Agent now resolves target from sentinel context (`message_id` first, then `session_id`) and only sends to valid channel/chat routes.
+  - Added support for instance-aware channel keys in recovery target parsing (e.g. `telegram:<instance>`).
+- **Session Memory Continuity** (`kabot/agent/loop_core/session_flow.py`):
+  - Added best-effort periodic conversation dump to daily notes via `context.memory.append_today(...)` on session finalization.
+  - Each turn now appends compact `U:`/`A:` entries with session key for better cross-session continuity.
+
+#### Fixed
+- **Auth Alias Routing**:
+  - Added compatibility aliases like `venice-ai`, `hf`, `x-ai`, and `opencode-zen` to ensure login calls resolve to the correct Kabot provider.
+  - Added underscore/hyphen mapping aliases for gateway providers (`cloudflare-ai-gateway`, `vercel-ai-gateway`) across auth save/status paths.
+- **Catalog Parity Gaps**:
+  - Closed missing provider/model parity gaps that caused Kabot-sourced model refs to appear unsupported in Kabot setup flows.
+- **Hook Event Alias Compatibility** (`kabot/plugins/hooks.py`):
+  - Hook manager now normalizes lifecycle event names so legacy uppercase aliases (e.g. `ON_STARTUP`) and canonical lowercase names (e.g. `on_startup`) interoperate.
+  - Prevents plugin hook misses caused by mixed alias/case usage across runtime and plugin registration.
+- **UTF-8 Surrogate Safety Across Runtime + Memory + Telegram**:
+  - Added centralized UTF-8 text safety helper (`kabot/utils/text_safety.py`) to normalize invalid/unpaired surrogate sequences before transport/persistence.
+  - `_sanitize_error()` now guarantees UTF-8-safe output for user-facing errors (prevents UnicodeEncodeError in downstream channels).
+  - `SQLiteMetadataStore.add_message()` now sanitizes message content before DB insert, preventing failures like `surrogates not allowed`.
+  - Telegram send path now sanitizes outgoing content/chunks before HTML/plain-text dispatch fallback.
+- **Regression Coverage**:
+  - Added tests for hook alias normalization, recovery target resolution, and daily-notes session dump behavior:
+    - `tests/plugins/test_hooks.py`
+    - `tests/agent/test_recovery_routing.py`
+    - `tests/agent/test_session_persistence_fail_open.py`
+  - Added UTF-8 safety tests for error sanitization, SQLite message persistence, and text safety helper:
+    - `tests/agent/loop_core/test_execution_runtime.py`
+    - `tests/memory/test_sqlite_store_utf8.py`
+    - `tests/utils/test_text_safety.py`
 
 ## [0.5.6] - 2026-02-24
 
@@ -15,14 +215,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Manual unload API: `memory.unload_resources()` for explicit resource cleanup
   - Recursive PyTorch module clearing with `module.cpu()` + parameter/buffer dereferencing
   - Platform-specific memory trimming: Windows `EmptyWorkingSet`, Linux `malloc_trim`, macOS `gc.collect()`
-  - Model reloads transparently on next `search_memory()` — zero quality/intelligence loss
+  - Model reloads transparently on next `search_memory()` â€” zero quality/intelligence loss
   - Thread-safe with `threading.RLock` and double-check locking pattern
 - **ChromaDB Segment Cache Cap**: Added `chroma_memory_limit_bytes=50MB` to `Settings()` to limit in-memory HNSW segment cache
 - **Memory Statistics API**: `embeddings.get_memory_stats()` returns model state, load count, and unload count
 
 ### Changed
 - **Memory Factory** (`kabot/memory/memory_factory.py`): Added `auto_unload_seconds` passthrough from config with input validation
-- **Sentence Embeddings** (`kabot/memory/sentence_embeddings.py`): Complete rewrite — added lazy loading, timer-based auto-unload, `_unload_model_internal()` with recursive cleanup, `warmup()` for background pre-loading
+- **Sentence Embeddings** (`kabot/memory/sentence_embeddings.py`): Complete rewrite â€” added lazy loading, timer-based auto-unload, `_unload_model_internal()` with recursive cleanup, `warmup()` for background pre-loading
 - **Hybrid Memory Manager** (`kabot/memory/chroma_memory.py`): ChromaDB `PersistentClient` now uses `chroma_memory_limit_bytes` cache cap; cleaned up invalid legacy config parameters
 
 ### Fixed
@@ -36,11 +236,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### How Auto-Unload Works
 ```
-Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
-                                            ↓
-                   User goes quiet → 5 min timer expires → model unloaded (443 MB*)
-                                            ↓
-                   Next message → model reloads (3-5s) → fully functional
+Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 450 MB)
+                                            â†“
+                   User goes quiet â†’ 5 min timer expires â†’ model unloaded (443 MB*)
+                                            â†“
+                   Next message â†’ model reloads (3-5s) â†’ fully functional
 ```
 > *CPython's arena-based allocator does not return freed memory to OS. Only a process restart returns to 91 MB. This is expected Python behavior, not a leak.
 
@@ -55,7 +255,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
 ### Technical Details
 - Thread-safe lazy loading with `threading.RLock` + double-check locking
 - Timer-based auto-unload with `threading.Timer` (resets on every embed call)
-- Recursive module cleanup: `module.cpu()` → clear parameters → clear buffers → `del` children
+- Recursive module cleanup: `module.cpu()` â†’ clear parameters â†’ clear buffers â†’ `del` children
 - Platform trimming: `ctypes.windll.kernel32.SetProcessWorkingSetSize` (Windows), `ctypes.CDLL(None).malloc_trim(0)` (Linux)
 - 874 tests passing, 6 skipped
 
@@ -66,7 +266,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
   - Configurable via `auto_unload_timeout` in config (default: 300s)
   - Manual unload: `memory.unload_resources()`
   - Recursive PyTorch module clearing + platform-specific memory trimming
-  - Model reloads transparently on next search — zero quality loss
+  - Model reloads transparently on next search â€” zero quality loss
 - **ChromaDB Segment Cache Cap**: Added `chroma_memory_limit_bytes=50MB` to limit in-memory segment cache
 
 ### Measured RAM (empirical, psutil RSS)
@@ -89,7 +289,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
 ### Added
 - **Tool Loop Detection** (`kabot/agent/loop_core/tool_loop_detection.py`): Detects stuck agents calling same tool repeatedly
   - Generic repeat detection (warning at 10, critical block at 20 identical calls)
-  - Ping-pong detection (A↔B alternating tool calls)
+  - Ping-pong detection (Aâ†”B alternating tool calls)
   - Sliding window of 30 calls with MD5 parameter hashing
 - **Tool Policy Profiles** (`kabot/agent/tools/tool_policy.py`): Per-agent tool access control
   - 5 profiles: minimal, coding, messaging, analysis, full
@@ -102,7 +302,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
   - Hard block below 16K tokens, warning below 32K tokens
 
 ### Changed
-- **Agent Loop**: Integrated LoopDetector — critical loops blocked, warnings logged
+- **Agent Loop**: Integrated LoopDetector â€” critical loops blocked, warnings logged
 - **Tool Registry**: Policy profile filtering in `get_definitions()`
 - **Resilience Layer**: Uses failover reason for smarter retry/fallback decisions
 
@@ -172,13 +372,13 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
 - **User-Friendly Error Messages**: Model failure errors (HTTP 400, rate limits, network drops) now show clean, actionable messages with `/switch` hints instead of raw Python exceptions with internal API URLs.
 - **Error Sanitization**: Added `_sanitize_error()` to strip internal URLs, API keys, and verbose tracebacks from all user-facing error messages in both simple and complex response paths.
 - **Multilingual Processing Status**: Replaced hardcoded Indonesian "Sedang memproses..." status with language-neutral English "Processing your request..." for global users.
-- **AI-as-Developer Execution Discipline**: Added critical system prompt rules that force the AI to write scripts on-the-fly, execute them immediately using `exec`, verify results, and schedule recurring jobs using `cron` — instead of just describing what to do. Includes cross-platform detection for Windows, Linux, macOS, and Termux.
+- **AI-as-Developer Execution Discipline**: Added critical system prompt rules that force the AI to write scripts on-the-fly, execute them immediately using `exec`, verify results, and schedule recurring jobs using `cron` â€” instead of just describing what to do. Includes cross-platform detection for Windows, Linux, macOS, and Termux.
 
 ### Added
 - **Cross-Platform Server Monitor Tool**: New `server_monitor` tool provides real-time resource usage (CPU load %, RAM used/free GB, disk usage %, uptime, network I/O) with full support for Windows (PowerShell), Linux (bash), macOS (bash), and Termux (Android). Triggered by 40+ multilingual keywords across 7 languages (EN, ID, MS, TH, ZH, KO, JA).
 
 ### Changed
-- **Startup Time Optimization (~40s → ~3s to Chat-Ready)**: (1) HeartbeatService now waits 30s before first beat, preventing startup blocking. (2) SentenceTransformer embedding model pre-loads in a background thread via `warmup()`. (3) `AgentLoop.run()` kicks off `_warmup_memory()` as a non-blocking background task. Telegram is now chat-ready in ~3s instead of ~40s.
+- **Startup Time Optimization (~40s â†’ ~3s to Chat-Ready)**: (1) HeartbeatService now waits 30s before first beat, preventing startup blocking. (2) SentenceTransformer embedding model pre-loads in a background thread via `warmup()`. (3) `AgentLoop.run()` kicks off `_warmup_memory()` as a non-blocking background task. Telegram is now chat-ready in ~3s instead of ~40s.
 - **Zero-Latency Cold Start**: Migrated heavy LLM libraries (`litellm`, etc.) to lazy-loading scopes, dropping CLI startup time to `< 0.7s`.
 - **Asynchronous BM25 Indexing**: Deferred the synchronous `BM25Okapi` indexing to trigger only upon the first explicit user `search()`, removing background startup blocking.
 - **SQLite Database Tuning**: Injected PRAGMA `WAL`, `synchronous=NORMAL`, and Memory-Mapped IO pragmas to `sqlite_store.py` to massively speed up asynchronous `EpisodicExtractor` writes without locking the read loop.
@@ -189,7 +389,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
 
 - **HybridMemoryManager:** Modular memory orchestrator replacing monolithic `ChromaMemoryManager`.
 - **Smart Router:** Query-intent classifier routes to correct memory store (episodic/knowledge/hybrid). Multilingual keyword matching for 8 languages (ID, EN, ES, FR, JA, ZH, KO, TH).
-- **Reranker:** Three-stage filtering pipeline with configurable threshold (≥0.6), top-k (3), and hard token guard (500 tokens max). Reduces token injection by 60-72%.
+- **Reranker:** Three-stage filtering pipeline with configurable threshold (â‰¥0.6), top-k (3), and hard token guard (500 tokens max). Reduces token injection by 60-72%.
 - **Episodic Extractor:** LLM-based auto-extraction of user preferences, facts, and entities after each chat session. Uses existing LLM provider.
 - **Memory Pruner:** Scheduled cleanup of stale facts (>30 days) and duplicate merging. Integrates with CronService.
 - **Deduplicator:** BM25 + cosine similarity check prevents duplicate fact storage.
@@ -206,13 +406,13 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
 ### Added - Autopilot Wiring & System Events (2026-02-22)
 
 - **Heartbeat Tasks Execution:** Heartbeat now reads `HEARTBEAT.md` and dispatches active tasks as prompts on each beat.
-- **Cron → System Events:** Cron callbacks now emit system events so the agent can react to scheduled job completions.
+- **Cron â†’ System Events:** Cron callbacks now emit system events so the agent can react to scheduled job completions.
 - **Heartbeat Event Publishing:** Heartbeat injector now publishes system events into the inbound pipeline for unified processing.
 
 ### Fixed & Audited - Routing Resilience & Full Roadmap Completion (2026-02-22)
 
 - **Loop Routing Fix:** Modified `message_runtime.py` to force `run_agent_loop` for any message requiring tools or meeting complexity thresholds. This ensures deterministic tool-enforcement logic is always applied.
-- **Roadmap Final Audit:** Completed 100% verification audit for 'Full-Parity', 'OpenClaw Design', and 'Military-Grade' implementation plans. All tasks confirmed as functional and integration-tested.
+- **Roadmap Final Audit:** Completed 100% verification audit for 'Full-Parity', 'Kabot Design', and 'Military-Grade' implementation plans. All tasks confirmed as functional and integration-tested.
 
 
 ### Added & Fixed - Windows & Telegram Support (2026-02-21)
@@ -278,7 +478,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
   - Fixed logic bug where `kabot setup` failed to prompt for API keys of complex skills (Nano Banana, etc.).
   - Fixed `AttributeError` exception when running `kabot doctor` Health Check from setup wizard by adding `check_requirements` to the tool base class.
 
-### Fixed - Setup Wizard OpenClaw Config Flow (2026-02-21)
+### Fixed - Setup Wizard Kabot Config Flow (2026-02-21)
 
 - Fixed Discord advanced channel configuration in setup wizard:
   - Prevented crash when opening `Intents` prompt from advanced Discord settings.
@@ -377,7 +577,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
   - Critic retry is skipped for turns that already executed tools, preventing post-tool meta/hallucinated self-critique replies.
 - Expanded deterministic multilingual trigger/parse coverage:
   - Added reminder/weather/schedule-management keywords for Malay, Thai, and Chinese in `cron_fallback_nlp`.
-  - Extended relative-time parsing in `kabot/cron/parse.py` for `minit`, Thai units, and Chinese units (e.g. `分钟后`).
+  - Extended relative-time parsing in `kabot/cron/parse.py` for `minit`, Thai units, and Chinese units (e.g. `åˆ†é’ŸåŽ`).
   - Improved weather location extraction for mixed queries (`tanggal + suhu` / `right now`) so city parsing no longer keeps noise tokens like `berapa` or `right`.
 - Fixed root weather-tool failure mode for noisy LLM tool arguments:
   - `WeatherTool` now normalizes incoming `location` text before fetch (`suhu di cilacap sekarang` -> `Cilacap`).
@@ -387,7 +587,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
   - Added support for `png` output mode as URL passthrough for wttr.
 - Improved weather reply quality to be more human-care oriented and actionable:
   - `WeatherTool` now appends a practical care tip based on parsed temperature + condition (heat/cold/rain/storm/fog), e.g. sunscreen, hydration, jacket, umbrella.
-  - Added explicit extreme-heat tier (`>=36°C`) with stronger heatstroke caution and midday outdoor activity guidance.
+  - Added explicit extreme-heat tier (`>=36Â°C`) with stronger heatstroke caution and midday outdoor activity guidance.
   - Advice output is language-aware using existing fallback language detection (`id`/`en`/`ms`/`th`/`zh`) to reduce hardcoded single-language behavior.
   - Weather tool-call pipeline now forwards user message context (`context_text`) in both normal tool-call execution and deterministic fallback enforcement, so language matching stays consistent even when location is normalized.
 - Reduced auto-skill false positives in chat:
@@ -459,7 +659,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
   - New `content_pipeline` template
   - New `Apply Fleet Template` channel-instance flow
   - Auto-creates role agents and binds channel instances
-- Added OpenClaw-style trusted freedom profile in setup wizard (`Tools & Sandbox`):
+- Added Kabot-style trusted freedom profile in setup wizard (`Tools & Sandbox`):
   - Enables `tools.exec.auto_approve`
   - Disables HTTP guard restrictions for unrestricted integrations in trusted deployments
 - Added plugin scaffolding workflow:
@@ -475,7 +675,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
   - `tests/plugins/test_scaffold.py`
   - `tests/auth/test_oauth_provider_parity.py`
 
-### Added - Reliability, Security, and OpenClaw Parity Enhancements (2026-02-19)
+### Added - Reliability, Security, and Kabot Parity Enhancements (2026-02-19)
 
 #### OpenAI Codex OAuth + Provider Parity
 - Added ChatGPT backend compatibility improvements for OpenAI Codex OAuth:
@@ -614,7 +814,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
 - Added end-to-end instance identity propagation for multi-channel instances:
   - Channel instances now stamp inbound messages with stable instance metadata (`channel_instance.id`, `type`, `agent_binding`).
   - Inbound `channel` now preserves instance key (`<type>:<instance_id>`) for deterministic reply routing.
-- Added OpenClaw-style routing field extraction in base channel handling:
+- Added Kabot-style routing field extraction in base channel handling:
   - Maps metadata to `account_id`, `peer_kind`, `peer_id`, `guild_id`, `team_id`, `thread_id`, and `parent_peer`.
   - Improves binding/session-key resolution consistency across Telegram/Discord/Slack and other channels.
 - Added channel routing compatibility for instance channels:
@@ -658,7 +858,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
 
 ### Added - Plugin Lifecycle + Remote Env Operations Enhancements (2026-02-19)
 
-#### Plugin Lifecycle Management (OpenClaw-style parity upgrade)
+#### Plugin Lifecycle Management (Kabot-style parity upgrade)
 - Added new plugin lifecycle manager:
   - `kabot/plugins/manager.py` for install/update/enable/disable/remove/doctor flows.
   - Persistent plugin state stored in workspace plugin state file (disabled + source tracking).
@@ -805,7 +1005,7 @@ Kabot idle (91 MB) → User sends message → model loads (+359 MB = 450 MB)
 
 ### Added - Phase 14: Event Bus Expansion (2026-02-17)
 
-**OpenClaw Parity: 85% → 100% (COMPLETE)**
+**Kabot Parity: 85% â†’ 100% (COMPLETE)**
 
 This phase expands the message bus from chat-only to full system event support, enabling real-time monitoring of agent internals.
 
@@ -813,7 +1013,7 @@ This phase expands the message bus from chat-only to full system event support, 
 - **Expanded SystemEvent class** (`kabot/bus/events.py`)
 - Added factory methods for lifecycle, tool, assistant, and error events
 - Monotonic sequencing per run_id for event ordering
-- Pattern from OpenClaw: src/infra/agent-events.ts
+- Pattern from Kabot: src/infra/agent-events.ts
 
 #### Event Bus Infrastructure
 - **Enhanced MessageBus** (`kabot/bus/queue.py`)
@@ -839,17 +1039,17 @@ This phase expands the message bus from chat-only to full system event support, 
 ### Impact
 - **Before**: Event bus only supported chat messages (85% parity)
 - **After**: Full system event support with real-time monitoring (100% parity)
-- **Achievement**: 100% OpenClaw parity reached
+- **Achievement**: 100% Kabot parity reached
 
 ### References
-- Pattern source: OpenClaw src/infra/agent-events.ts
+- Pattern source: Kabot src/infra/agent-events.ts
 - Commit: `25bde71` - feat(phase-14): expand event bus to full system events
 
 ---
 
 ### Fixed - Phase 13 Completion: Critical Gap Integration (2026-02-17)
 
-**OpenClaw Parity: 65% → 85% (ACTUALLY ACHIEVED)**
+**Kabot Parity: 65% â†’ 85% (ACTUALLY ACHIEVED)**
 
 After deep verification analysis, discovered that Phase 13 initial implementation (2026-02-16) created the infrastructure but did NOT integrate it into the system. This update completes the integration:
 
@@ -884,8 +1084,8 @@ After deep verification analysis, discovered that Phase 13 initial implementatio
 - **Verification**: Ultimate verification document confirmed all gaps are now fixed
 
 ### References
-- Ultimate verification: `docs/openclaw-analysis/ultimate-verification-gap-kabot-openclaw.md`
-- Commit: `2a5e276` - feat(phase-13): complete OpenClaw parity
+- Ultimate verification: `docs/kabot-analysis/ultimate-verification-gap-kabot-kabot.md`
+- Commit: `2a5e276` - feat(phase-13): complete Kabot parity
 
 ---
 
@@ -958,9 +1158,9 @@ After deep verification analysis, discovered that Phase 13 initial implementatio
 - Cross-platform: Windows/Linux/macOS support with platform-specific implementations
 
 ### References
-- Implementation plan: `docs/plans/2026-02-16-openclaw-parity-phase-13.md`
-- Gap analysis: `docs/openclaw-analysis/kabot-gap-analysis.md`
-- Technical findings: `docs/openclaw-analysis/deep-technical-findings.md`
+- Implementation plan: `docs/plans/2026-02-16-kabot-parity-phase-13.md`
+- Gap analysis: `docs/kabot-analysis/kabot-gap-analysis.md`
+- Technical findings: `docs/kabot-analysis/deep-technical-findings.md`
 
 ---
 
@@ -968,3 +1168,5 @@ After deep verification analysis, discovered that Phase 13 initial implementatio
 
 ### Phase 12 and Earlier
 See git history for previous changes.
+
+
