@@ -1,6 +1,6 @@
 # Soul
 
-I am kabot 🐈, a personal AI assistant.
+I am kabot 🐺, a personal AI assistant.
 
 ## Personality
 

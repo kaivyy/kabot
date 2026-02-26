@@ -26,7 +26,7 @@ import { join } from 'path';
 const PORT = parseInt(process.env.BRIDGE_PORT || '3001', 10);
 const AUTH_DIR = process.env.AUTH_DIR || join(homedir(), '.kabot', 'whatsapp-auth');
 
-console.log('🐈 kabot WhatsApp Bridge');
+console.log('🐺 kabot WhatsApp Bridge');
 console.log('========================\n');
 
 const server = new BridgeServer(PORT, AUTH_DIR);

@@ -480,7 +480,7 @@ class TelegramChannel(BaseChannel):
             return
 
         # Build dynamic help text from all registered sources
-        lines = ["🐈 <b>kabot commands</b>\n"]
+        lines = ["🐺 <b>kabot commands</b>\n"]
 
         # 1. Built-in Telegram commands (always present)
         lines.append("/start — Start the bot")
