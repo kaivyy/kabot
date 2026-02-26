@@ -1,6 +1,6 @@
-# Phase 7: Vector Memory Implementation Plan
+﻿# Phase 7: Vector Memory Implementation Plan
 
-> **Goal:** Enable semantic search over long-term memory using ChromaDB embeddings, matching OpenClaw's `memory-search` capability.
+> **Goal:** Enable semantic search over long-term memory using ChromaDB embeddings, matching Kabot's `memory-search` capability.
 
 ## Task 20: Vector Store Interface
 
@@ -119,3 +119,5 @@ class MemorySearchTool(Tool):
 ```bash
 git commit -m "feat(tools): add semantic memory search tool"
 ```
+
+

@@ -62,6 +62,26 @@ class HookManager:
         }
         self._stats: dict[str, int] = {}
 
+    @staticmethod
+    def _normalize_event_name(event: HookEvent | str) -> str:
+        """Normalize known hook event aliases to canonical names."""
+        if isinstance(event, HookEvent):
+            return event.value
+
+        name = str(event).strip()
+        if not name:
+            return name
+
+        enum_key = name.upper()
+        if enum_key in HookEvent.__members__:
+            return HookEvent[enum_key].value
+
+        for hook_event in HookEvent:
+            if name.lower() == hook_event.value:
+                return hook_event.value
+
+        return name
+
     def on(self, event: HookEvent | str, handler: HookHandler) -> None:
         """
         Register a handler for an event.
@@ -70,7 +90,7 @@ class HookManager:
             event: The event type to listen for.
             handler: Async function to call when event fires.
         """
-        event_name = event.value if isinstance(event, HookEvent) else event
+        event_name = self._normalize_event_name(event)
         if event_name not in self._listeners:
             self._listeners[event_name] = []
         self._listeners[event_name].append(handler)
@@ -83,7 +103,7 @@ class HookManager:
         Returns:
             True if the handler was found and removed.
         """
-        event_name = event.value if isinstance(event, HookEvent) else event
+        event_name = self._normalize_event_name(event)
         listeners = self._listeners.get(event_name, [])
         if handler in listeners:
             listeners.remove(handler)
@@ -104,7 +124,7 @@ class HookManager:
         Returns:
             List of results from all handlers.
         """
-        event_name = event.value if isinstance(event, HookEvent) else event
+        event_name = self._normalize_event_name(event)
         listeners = self._listeners.get(event_name, [])
 
         if not listeners:
@@ -138,7 +158,7 @@ class HookManager:
         Returns:
             Final data after all handlers have processed it.
         """
-        event_name = event.value if isinstance(event, HookEvent) else event
+        event_name = self._normalize_event_name(event)
         listeners = self._listeners.get(event_name, [])
 
         current_data = data
@@ -155,7 +175,7 @@ class HookManager:
     def handler_count(self, event: HookEvent | str | None = None) -> int:
         """Get number of registered handlers."""
         if event:
-            event_name = event.value if isinstance(event, HookEvent) else event
+            event_name = self._normalize_event_name(event)
             return len(self._listeners.get(event_name, []))
         return sum(len(h) for h in self._listeners.values())
 

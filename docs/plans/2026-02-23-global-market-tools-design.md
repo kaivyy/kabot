@@ -1,4 +1,4 @@
-# Global Market Tools — Design Doc
+﻿# Global Market Tools â€” Design Doc
 
 **Date:** 2026-02-23
 **Approach:** "The Pure Plugin" (AI Discovery)
@@ -13,7 +13,7 @@ The `stock`, `stock_analysis`, and `crypto` tools contain hardcoded Indonesian m
 
 Kabot is open-source and should support **all global markets** without regional bias.
 
-## Design: AI-First Discovery (OpenClaw Philosophy)
+## Design: AI-First Discovery (Kabot Philosophy)
 
 Shift all market intelligence to the AI layer. Tools become **pure data fetchers** with no built-in knowledge of specific markets, tickers, or coins.
 
@@ -21,7 +21,7 @@ Shift all market intelligence to the AI layer. Tools become **pure data fetchers
 1. **Remove** `TOP10_ID` keyword and hardcoded symbol list (lines 42-45)
 2. **Update** `description` to guide AI: use `web_search` first if ticker is unknown
 3. **Update** `symbol` parameter description with global examples (AAPL, 7203.T, SAP.DE, BBCA.JK)
-4. **Remove** `market` parameter (redundant — Yahoo handles exchange suffixes natively)
+4. **Remove** `market` parameter (redundant â€” Yahoo handles exchange suffixes natively)
 
 ### StockAnalysisTool Changes
 1. **Update** `symbol` description: replace `.JK`-only examples with global examples
@@ -40,7 +40,9 @@ Shift all market intelligence to the AI layer. Tools become **pure data fetchers
 
 ## Verification
 - Run existing tests (if any)
-- Manual test: ask AI \"berapa harga saham Telkom?\" → AI should search ticker first, then call tool
-- Manual test: ask AI \"harga Dogecoin\" → AI should know `dogecoin` or search CoinGecko
+- Manual test: ask AI \"berapa harga saham Telkom?\" â†’ AI should search ticker first, then call tool
+- Manual test: ask AI \"harga Dogecoin\" â†’ AI should know `dogecoin` or search CoinGecko
 ", "Complexity": 5, "Description": "Design document for globalizing market tools using the Pure Plugin / AI Discovery approach.", "EmptyFile": false, "IsArtifact": false, "Overwrite": true, "TargetFile": "C:\\Users\\Arvy Kairi\\Desktop\\bot\\kabot\\docs\\plans\\2026-02-23-global-market-tools-design.md"
 }
+
+

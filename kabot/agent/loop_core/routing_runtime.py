@@ -1,4 +1,4 @@
-"""Routing/model resolution helpers extracted from AgentLoop."""
+﻿"""Routing/model resolution helpers extracted from AgentLoop."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def route_context_for_message(loop: Any, msg: InboundMessage) -> dict[str, Any]:
 
 
 def resolve_route_for_message(loop: Any, msg: InboundMessage) -> dict[str, str]:
-    """Resolve OpenClaw-compatible route for a message with instance-aware context."""
+    """Resolve Kabot-compatible route for a message with instance-aware context."""
     from kabot.routing.bindings import resolve_agent_route
 
     ctx = route_context_for_message(loop, msg)
@@ -84,7 +84,7 @@ def resolve_models_for_message(loop: Any, msg: InboundMessage) -> list[str]:
     if agent_model:
         primary = loop.registry.resolve(agent_model)
 
-        # OpenClaw-compatible behavior: per-agent fallbacks override global fallbacks.
+        # Kabot-compatible behavior: per-agent fallbacks override global fallbacks.
         agent_fallbacks = resolve_agent_model_fallbacks(loop.config, agent_id)
         if agent_fallbacks:
             fallback_models = [loop.registry.resolve(m) for m in agent_fallbacks]
@@ -109,3 +109,5 @@ def resolve_agent_id_for_message(loop: Any, msg: InboundMessage) -> str:
     """Resolve routed agent id for this message."""
     route = resolve_route_for_message(loop, msg)
     return route["agent_id"]
+
+

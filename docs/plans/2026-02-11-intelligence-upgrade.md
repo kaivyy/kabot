@@ -1,8 +1,8 @@
-# Kabot Intelligence Upgrade Implementation Plan
+﻿# Kabot Intelligence Upgrade Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Upgrade Kabot with enterprise-grade features (Auto-Retry, Hybrid Memory, Adaptive Context) to match OpenClaw's capabilities.
+**Goal:** Upgrade Kabot with enterprise-grade features (Auto-Retry, Hybrid Memory, Adaptive Context) to match Kabot's capabilities.
 
 **Architecture:**
 1.  **Auto-Retry**: Implement `tenacity` retry logic with smart fallback chain (Primary -> Fallback -> Backup).
@@ -227,3 +227,5 @@ git commit -m "feat: implement adaptive context with AI router"
 ```
 
 ---
+
+

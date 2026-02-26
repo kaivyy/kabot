@@ -1,6 +1,6 @@
 ﻿"""MiniMax Portal OAuth handler — device code flow (Global + CN).
 
-Mirrors OpenClaw's extensions/minimax-portal-auth/oauth.ts.
+Mirrors Kabot's extensions/minimax-portal-auth/oauth.ts.
 Uses device code grant with region selection: Global (api.minimax.io)
 or China (api.minimaxi.com). Same client_id for both regions.
 """
@@ -20,7 +20,7 @@ from kabot.auth.handlers.base import AuthHandler
 
 console = Console()
 
-# ── OAuth constants (from OpenClaw minimax-portal-auth plugin) ─────────────
+# -- OAuth constants (from Kabot minimax-portal-auth plugin) -------------
 MINIMAX_CLIENT_ID = "78257093-7e40-4613-99e0-527b14b39113"
 MINIMAX_SCOPE = "group_id profile model.completion"
 MINIMAX_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:user_code"
@@ -39,7 +39,7 @@ REGIONS = {
 }
 
 
-# ── PKCE helper ─────────────────────────────────────────────────────────────
+# -- PKCE helper -------------------------------------------------------------
 
 def _generate_pkce() -> tuple:
     """Generate PKCE verifier + S256 challenge + state."""
@@ -50,7 +50,7 @@ def _generate_pkce() -> tuple:
     return verifier, challenge, state
 
 
-# ── Device code flow ────────────────────────────────────────────────────────
+# -- Device code flow --------------------------------------------------------
 
 def _request_user_code(
     challenge: str, state: str, base_url: str
@@ -139,7 +139,7 @@ def _poll_token(
     return data
 
 
-# ── Handler ─────────────────────────────────────────────────────────────────
+# -- Handler -----------------------------------------------------------------
 
 class MiniMaxOAuthHandler(AuthHandler):
     """Handler for MiniMax Portal OAuth (device code, Global + CN)."""
@@ -169,7 +169,7 @@ class MiniMaxOAuthHandler(AuthHandler):
         try:
             code_data = _request_user_code(challenge, state, base_url)
         except Exception as exc:
-            console.print(f"[red]✗ Failed to get user code: {exc}[/red]")
+            console.print(f"[red]? Failed to get user code: {exc}[/red]")
             return {}
 
         user_code = code_data["user_code"]
@@ -185,7 +185,7 @@ class MiniMaxOAuthHandler(AuthHandler):
         # Try to open browser
         try:
             webbrowser.open(verification_uri)
-            console.print("[green]→ Browser opened[/green]")
+            console.print("[green]? Browser opened[/green]")
         except Exception:
             console.print("[yellow]Could not open browser. Please open the URL manually.[/yellow]")
 
@@ -199,7 +199,7 @@ class MiniMaxOAuthHandler(AuthHandler):
             try:
                 token_data = _poll_token(user_code, verifier, base_url)
             except RuntimeError as exc:
-                console.print(f"[red]✗ MiniMax OAuth failed: {exc}[/red]")
+                console.print(f"[red]? MiniMax OAuth failed: {exc}[/red]")
                 return {}
 
             if token_data:
@@ -212,7 +212,7 @@ class MiniMaxOAuthHandler(AuthHandler):
                 if notification:
                     console.print(f"[yellow]{notification}[/yellow]")
 
-                console.print("[green]✓ MiniMax OAuth approved![/green]")
+                console.print("[green]? MiniMax OAuth approved![/green]")
 
                 api_base = resource_url if resource_url else region_cfg["api_base"]
 
@@ -233,5 +233,7 @@ class MiniMaxOAuthHandler(AuthHandler):
             # Back-off slightly
             interval = min(interval * 1.5, 10)
 
-        console.print("[red]✗ Timed out waiting for MiniMax OAuth approval.[/red]")
+        console.print("[red]? Timed out waiting for MiniMax OAuth approval.[/red]")
         return {}
+
+

@@ -1,8 +1,8 @@
-# Multilingual User-Friendly Resilience Implementation Plan
+﻿# Multilingual User-Friendly Resilience Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Make Kabot fully multilingual (no hardcoded Indonesian for user-facing system outputs) and resilient against OpenClaw-style complexity/tool-calling failures while staying lightweight.
+**Goal:** Make Kabot fully multilingual (no hardcoded Indonesian for user-facing system outputs) and resilient against Kabot-style complexity/tool-calling failures while staying lightweight.
 
 **Architecture:** Introduce a centralized i18n layer (locale detection + catalog + formatter), route all deterministic fallback/system outputs through that layer, and consolidate multilingual intent lexicon so behavior is consistent across routing, enforcement, and cron NLP. Add strict tool-calling guardrails plus cron resource policies (dedup, limits, grouping) to keep UX reliable and runtime lightweight even with many bots/jobs.
 
@@ -110,7 +110,7 @@ MESSAGES = {
     "id": {"weather.need_location": "Saya butuh lokasi untuk cek cuaca."},
     "ms": {"weather.need_location": "Saya perlukan lokasi untuk semak cuaca."},
     "th": {"weather.need_location": "Please provide a location to check weather."},
-    "zh": {"weather.need_location": "请提供要查询天气的地点。"},
+    "zh": {"weather.need_location": "è¯·æä¾›è¦æŸ¥è¯¢å¤©æ°”çš„åœ°ç‚¹ã€‚"},
 }
 
 def tr(key: str, *, locale: str | None = None, text: str | None = None, **kwargs: object) -> str:
@@ -197,8 +197,8 @@ from kabot.agent.language.lexicon import REMINDER_TERMS, WEATHER_TERMS
 
 def test_lexicon_has_non_indonesian_terms():
     assert "remind" in REMINDER_TERMS
-    assert "提 醒".replace(" ", "") in REMINDER_TERMS
-    assert "天气" in WEATHER_TERMS
+    assert "æ é†’".replace(" ", "") in REMINDER_TERMS
+    assert "å¤©æ°”" in WEATHER_TERMS
 ```
 
 **Step 2: Run test to verify it fails**
@@ -214,15 +214,15 @@ REMINDER_TERMS = (
     "remind", "reminder", "schedule", "alarm",
     "ingatkan", "pengingat", "jadwalkan",
     "peringatan", "jadual",
-    "เตือน",
-    "提醒", "日程", "闹钟",
+    "à¹€à¸•à¸·à¸­à¸™",
+    "æé†’", "æ—¥ç¨‹", "é—¹é’Ÿ",
 )
 WEATHER_TERMS = (
     "weather", "temperature", "forecast",
     "cuaca", "suhu",
     "ramalan",
-    "อากาศ", "อุณหภูมิ",
-    "天气", "气温", "温度", "预报",
+    "à¸­à¸²à¸à¸²à¸¨", "à¸­à¸¸à¸“à¸«à¸ à¸¹à¸¡à¸´",
+    "å¤©æ°”", "æ°”æ¸©", "æ¸©åº¦", "é¢„æŠ¥",
 )
 ```
 
@@ -498,7 +498,7 @@ git commit -m "feat(wizard): add simple-first setup flow with advanced opt-in an
 **Files:**
 - Modify: `README.md`
 - Modify: `CHANGELOG.md`
-- Modify: `docs/OPENCLAW_VS_KABOT_COMPLETE_ANALYSIS.md`
+- Modify: `docs/KABOT_VS_KABOT_COMPLETE_ANALYSIS.md`
 - Create: `docs/trouble/multilingual-and-tool-reliability.md`
 - Test: `tests/agent/test_tool_enforcement.py`
 - Test: `tests/tools/test_weather_tool.py`
@@ -537,7 +537,7 @@ Expected: PASS, no regression in reminder/weather/tool enforcement flows.
 **Step 5: Commit**
 
 ```bash
-git add README.md CHANGELOG.md docs/OPENCLAW_VS_KABOT_COMPLETE_ANALYSIS.md docs/trouble/multilingual-and-tool-reliability.md
+git add README.md CHANGELOG.md docs/KABOT_VS_KABOT_COMPLETE_ANALYSIS.md docs/trouble/multilingual-and-tool-reliability.md
 git commit -m "docs: publish multilingual reliability architecture and verification results"
 ```
 
@@ -548,4 +548,6 @@ git commit -m "docs: publish multilingual reliability architecture and verificat
 - Use `@verification-before-completion` before claiming done.
 - Keep commits small and task-scoped; do not batch unrelated changes.
 - Keep runtime lightweight: prefer grouped schedules and heartbeat batching over creating many isolated periodic jobs.
+
+
 

@@ -1,4 +1,4 @@
-# Kabot Full-Parity Verification Report (2026-02-21)
+﻿# Kabot Full-Parity Verification Report (2026-02-21)
 
 ## Scope
 
@@ -7,7 +7,7 @@ This report verifies implementation status of:
 
 Repositories used for verification:
 - Kabot: `C:/Users/Arvy Kairi/Desktop/bot/kabot`
-- OpenClaw reference: `C:/Users/Arvy Kairi/Desktop/bot/openclaw`
+- Kabot reference: `C:/Users/Arvy Kairi/Desktop/bot/kabot`
 
 Verification method:
 - Direct code inspection (`rg`, file existence checks).
@@ -29,10 +29,10 @@ Companion execution record:
 
 ## Task-by-Task Verification
 
-| Task | Plan Intent | Kabot Status | Kabot Evidence | OpenClaw Reference |
+| Task | Plan Intent | Kabot Status | Kabot Evidence | Kabot Reference |
 |---|---|---|---|---|
 | 1 | Sub-agent safety defaults config | Done | `kabot/config/schema.py` (`SubagentDefaults`, defaults fields), `tests/config/test_subagent_config.py` | `src/config/zod-schema.agent-defaults.ts`, `src/config/types.agent-defaults.ts` |
-| 2 | Enforce spawn guards (depth/children) | Done | `kabot/agent/subagent.py` (max-children and depth checks), `tests/agent/test_subagent_limits.py` | `src/agents/subagent-spawn.ts`, `src/agents/openclaw-tools.subagents.sessions-spawn-depth-limits.test.ts` |
+| 2 | Enforce spawn guards (depth/children) | Done | `kabot/agent/subagent.py` (max-children and depth checks), `tests/agent/test_subagent_limits.py` | `src/agents/subagent-spawn.ts`, `src/agents/kabot-tools.subagents.sessions-spawn-depth-limits.test.ts` |
 | 3 | Heartbeat delivery + active hours config | Done | `kabot/config/schema.py` (`HeartbeatDefaults`), `kabot/heartbeat/service.py` (`is_within_active_hours`), `tests/heartbeat/test_heartbeat_config.py` | `src/infra/heartbeat-active-hours.ts`, `src/infra/heartbeat-runner.ts` |
 | 4 | Cron delivery modes (announce/webhook/none) | Done | `kabot/cron/types.py` (`CronDeliveryConfig`), `kabot/cron/delivery.py`, `tests/cron/test_cron_delivery_modes.py` | `src/agents/tools/cron-tool.ts`, `src/gateway/server-cron.ts`, `src/gateway/server.cron.e2e.test.ts` |
 | 5 | Webhook POST + HMAC signature | Done | `kabot/cron/service.py` (`_deliver_webhook`, `X-Kabot-Signature`), `tests/cron/test_cron_webhook_post.py` | `src/gateway/server-cron.ts` (webhook posting path and headers) |
@@ -42,7 +42,7 @@ Companion execution record:
 | 9 | Discord interaction handler | Done | `kabot/channels/discord.py` (`INTERACTION_CREATE`, `_handle_interaction_create`), `tests/channels/test_discord_interaction.py` | `src/discord/monitor/agent-components.ts` (custom_id parse, reply/ack flow) |
 | 10 | Docker sandbox module | Done | `kabot/sandbox/docker_sandbox.py` aligned (`mode="off"` default, inactive exec returns `None`), `tests/sandbox/test_docker_sandbox.py` expanded | `src/agents/sandbox/docker.ts`, `src/agents/sandbox/context.ts`, `Dockerfile.sandbox`, `Dockerfile.sandbox-common` |
 | 11 | Security audit trail logger | Done | Added `kabot/security/audit_trail.py` and `tests/security/test_audit_trail.py` | `src/security/audit.ts`, `src/security/audit-channel.ts`, `src/config/io.ts` (`config-audit.jsonl`) |
-| 12 | Changelog update | Done | Updated parity section in `CHANGELOG.md` including `build_select_menu` and `AuditTrail` | `CHANGELOG.md` in OpenClaw for parity style reference |
+| 12 | Changelog update | Done | Updated parity section in `CHANGELOG.md` including `build_select_menu` and `AuditTrail` | `CHANGELOG.md` in Kabot for parity style reference |
 | 13 | Final integration test | Done | `pytest tests/ -q` => `774 passed, 6 skipped` | N/A (Kabot test-gate task) |
 
 ---
@@ -87,3 +87,5 @@ Several planned test filenames differ from implemented files but still validate 
 - Planned `tests/channels/test_telegram_inline_keyboard.py` -> implemented `tests/channels/test_telegram_buttons.py`
 - Planned `tests/channels/test_telegram_callback_query.py` -> implemented `tests/channels/test_telegram_callback.py`
 - Planned `tests/channels/test_discord_interaction_handler.py` -> implemented `tests/channels/test_discord_interaction.py`
+
+

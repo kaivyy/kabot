@@ -6,7 +6,11 @@ from kabot.providers.registry import ModelRegistry
 
 def validate_format(model_id: str) -> bool:
     """Check if model ID follows provider/model-name format."""
-    return "/" in model_id and len(model_id.split("/")) == 2
+    value = (model_id or "").strip()
+    if "/" not in value:
+        return False
+    provider, model_name = value.split("/", 1)
+    return bool(provider.strip() and model_name.strip())
 
 
 def resolve_alias(alias: str) -> Optional[str]:

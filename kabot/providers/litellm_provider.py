@@ -1,9 +1,11 @@
 """LiteLLM provider implementation for multi-provider support."""
 
 import asyncio
+import base64
 import json
 import logging
 import os
+import time
 from typing import Any
 
 import litellm
@@ -23,6 +25,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from kabot.core.failover_error import resolve_failover_reason, should_fallback, should_retry
 from kabot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from kabot.providers.chatgpt_backend_client import (
     build_chatgpt_headers,
@@ -42,7 +45,7 @@ class LiteLLMProvider(LLMProvider):
 
     Supports OpenRouter, Anthropic, OpenAI, Gemini, and many other providers through
     a unified interface.  Provider-specific logic is driven by the registry
-    (see providers/registry.py) — no if-elif chains needed here.
+    (see providers/registry.py) â€” no if-elif chains needed here.
     """
 
     def __init__(
@@ -53,11 +56,21 @@ class LiteLLMProvider(LLMProvider):
         extra_headers: dict[str, str] | None = None,
         provider_name: str | None = None,
         fallbacks: list[str] | None = None,
+        provider_api_keys: dict[str, str] | None = None,
+        provider_api_bases: dict[str, str] | None = None,
+        provider_extra_headers: dict[str, dict[str, str]] | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
         self.fallbacks = fallbacks or []
+        self.provider_api_keys = self._normalize_provider_map(provider_api_keys)
+        self.provider_api_bases = self._normalize_provider_map(provider_api_bases)
+        self.provider_extra_headers = self._normalize_provider_headers_map(provider_extra_headers)
+        self._default_provider_key = self._normalize_provider_key(self._provider_name_from_model(default_model))
+        self._auth_failure_cooldowns: dict[str, float] = {}
+        # Cooldown auth-failed models to avoid repeating 401s every retry/message.
+        self._auth_failure_cooldown_seconds = 180
 
         # Detect gateway / local deployment.
         # provider_name (from config key) is the primary signal;
@@ -76,6 +89,114 @@ class LiteLLMProvider(LLMProvider):
         # Drop unsupported parameters for providers (e.g., gpt-5 rejects some params)
         litellm.drop_params = True
 
+    @staticmethod
+    def _normalize_provider_key(provider: str | None) -> str | None:
+        if not provider:
+            return None
+        return provider.strip().lower().replace("_", "-")
+
+    def _normalize_provider_map(self, values: dict[str, str] | None) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        if not values:
+            return normalized
+
+        for provider, value in values.items():
+            provider_key = self._normalize_provider_key(provider)
+            if provider_key and value:
+                normalized[provider_key] = value
+        return normalized
+
+    def _normalize_provider_headers_map(
+        self, values: dict[str, dict[str, str]] | None
+    ) -> dict[str, dict[str, str]]:
+        normalized: dict[str, dict[str, str]] = {}
+        if not values:
+            return normalized
+
+        for provider, headers in values.items():
+            provider_key = self._normalize_provider_key(provider)
+            if provider_key and headers:
+                normalized[provider_key] = dict(headers)
+        return normalized
+
+    def _provider_name_from_model(self, model: str) -> str | None:
+        spec = find_by_model(model)
+        if spec:
+            return spec.name
+        if "/" in model:
+            return model.split("/", 1)[0]
+        return None
+
+    def _resolve_runtime_options(
+        self, model: str
+    ) -> tuple[str | None, str | None, str | None, dict[str, str]]:
+        provider_key = self._normalize_provider_key(self._provider_name_from_model(model))
+
+        request_api_key = self.provider_api_keys.get(provider_key or "")
+        request_api_base = self.provider_api_bases.get(provider_key or "")
+        request_headers = dict(self.provider_extra_headers.get(provider_key or "", {}))
+
+        if not request_api_key and (not provider_key or provider_key == self._default_provider_key):
+            request_api_key = self.api_key
+        if not request_api_base and (not provider_key or provider_key == self._default_provider_key):
+            request_api_base = self.api_base
+        if not request_headers and (not provider_key or provider_key == self._default_provider_key):
+            request_headers = dict(self.extra_headers)
+
+        return provider_key, request_api_key, request_api_base, request_headers
+
+    def _mark_auth_failure_cooldown(self, model: str) -> None:
+        cooldown_seconds = int(getattr(self, "_auth_failure_cooldown_seconds", 0) or 0)
+        if cooldown_seconds <= 0:
+            return
+        self._auth_failure_cooldowns[model] = time.time() + cooldown_seconds
+        logger.warning(
+            "Model %s marked in auth cooldown for %ss after authentication failure.",
+            model,
+            cooldown_seconds,
+        )
+
+    @staticmethod
+    def _is_jwt_expired(token: str | None, skew_seconds: int = 15) -> bool:
+        value = (token or "").strip()
+        if value.count(".") != 2:
+            return False
+        try:
+            payload_b64 = value.split(".")[1]
+            padding = "=" * (-len(payload_b64) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8"))
+            exp = payload.get("exp")
+            if not isinstance(exp, (int, float)):
+                return False
+            return float(exp) <= (time.time() + skew_seconds)
+        except Exception:
+            return False
+
+    def _is_openai_codex_token_expired_for_model(self, model: str) -> bool:
+        if not model.startswith("openai-codex/"):
+            return False
+        _, request_api_key, _, _ = self._resolve_runtime_options(model)
+        return self._is_jwt_expired(request_api_key)
+
+    def _apply_auth_cooldown_filter(self, models_to_try: list[str]) -> list[str]:
+        now = time.time()
+        active_models: list[str] = []
+        for model in models_to_try:
+            expires_at = self._auth_failure_cooldowns.get(model)
+            if expires_at is None and self._is_openai_codex_token_expired_for_model(model):
+                self._mark_auth_failure_cooldown(model)
+                expires_at = self._auth_failure_cooldowns.get(model)
+            if expires_at and expires_at > now:
+                remaining = max(1, int(expires_at - now))
+                logger.info(
+                    "Skipping model %s due auth cooldown (%ss remaining).",
+                    model,
+                    remaining,
+                )
+                continue
+            active_models.append(model)
+        return active_models or models_to_try
+
     def _setup_env(self, api_key: str, api_base: str | None, model: str) -> None:
         """Set environment variables based on detected provider."""
         spec = self._gateway or find_by_model(model)
@@ -89,8 +210,8 @@ class LiteLLMProvider(LLMProvider):
             os.environ.setdefault(spec.env_key, api_key)
 
         # Resolve env_extras placeholders:
-        #   {api_key}  → user's API key
-        #   {api_base} → user's api_base, falling back to spec.default_api_base
+        #   {api_key}  â†’ user's API key
+        #   {api_base} â†’ user's api_base, falling back to spec.default_api_base
         effective_base = api_base or spec.default_api_base
         for env_name, env_val in spec.env_extras:
             resolved = env_val.replace("{api_key}", api_key)
@@ -103,7 +224,8 @@ class LiteLLMProvider(LLMProvider):
             # Gateway mode: apply gateway prefix, skip provider-specific prefixes
             prefix = self._gateway.litellm_prefix
             if self._gateway.strip_model_prefix:
-                model = model.split("/")[-1]
+                if "/" in model:
+                    model = model.split("/", 1)[1]
             if prefix and not model.startswith(f"{prefix}/"):
                 model = f"{prefix}/{model}"
             return model
@@ -147,14 +269,30 @@ class LiteLLMProvider(LLMProvider):
         )
 
         resolved_model = self._resolve_model(model)
+        _, request_api_key, request_api_base, request_headers = self._resolve_runtime_options(model)
 
         # OpenAI Codex specific handling (ChatGPT backend API)
         if self._is_openai_codex(resolved_model):
-            return await self._chat_openai_codex(messages, tools, resolved_model, max_tokens, temperature)
+            return await self._chat_openai_codex(
+                messages,
+                tools,
+                resolved_model,
+                max_tokens,
+                temperature,
+                api_key=request_api_key,
+            )
 
         # OpenRouter specific handling
         if self._is_openrouter(resolved_model):
-            return await self._chat_openrouter(messages, tools, resolved_model, max_tokens, temperature)
+            return await self._chat_openrouter(
+                messages,
+                tools,
+                resolved_model,
+                max_tokens,
+                temperature,
+                api_key=request_api_key,
+                extra_headers=request_headers,
+            )
 
         kwargs: dict[str, Any] = {
             "model": resolved_model,
@@ -166,16 +304,16 @@ class LiteLLMProvider(LLMProvider):
         # Apply model-specific overrides (e.g. kimi-k2.5 temperature)
         self._apply_model_overrides(resolved_model, kwargs)
 
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
+        if request_api_key:
+            kwargs["api_key"] = request_api_key
 
         # Pass api_base for custom endpoints
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
+        if request_api_base:
+            kwargs["api_base"] = request_api_base
 
         # Pass extra headers
-        if self.extra_headers and "extra_headers" not in kwargs:
-            kwargs["extra_headers"] = self.extra_headers
+        if request_headers and "extra_headers" not in kwargs:
+            kwargs["extra_headers"] = request_headers
 
         if tools:
             kwargs["tools"] = tools
@@ -294,6 +432,7 @@ class LiteLLMProvider(LLMProvider):
             for fb in self.fallbacks:
                 if fb != primary_model:
                     models_to_try.append(fb)
+        models_to_try = self._apply_auth_cooldown_filter(models_to_try)
 
         last_exception = None
 
@@ -312,7 +451,27 @@ class LiteLLMProvider(LLMProvider):
                 last_exception = e
                 continue
             except InvalidRequestError as e:
-                # Fail fast on invalid requests (e.g. context too long, bad tools)
+                # LiteLLM often wraps upstream HTTP errors as InvalidRequestError with status=400.
+                # For failover decisions we prefer message-based classification in this case.
+                status_code = getattr(e, "status_code", None)
+                if status_code == 400:
+                    status_code = None
+                reason = resolve_failover_reason(
+                    status=status_code,
+                    message=str(e),
+                    error_code=getattr(e, "code", None),
+                )
+                if reason == "auth":
+                    self._mark_auth_failure_cooldown(attempt_model)
+                fallback_eligible = should_fallback(reason) or should_retry(reason) or reason in ("timeout", "unknown")
+                if fallback_eligible:
+                    logger.warning(
+                        f"Invalid request for {attempt_model} classified as {reason}; trying next fallback model."
+                    )
+                    last_exception = e
+                    continue
+
+                # Keep fail-fast behavior for deterministic bad requests (format/schema/context issues).
                 logger.error(f"Invalid request for {attempt_model}: {e}")
                 raise e
             except Exception as e:
@@ -323,6 +482,13 @@ class LiteLLMProvider(LLMProvider):
                 # "InvalidRequestError... fails fast".
                 # We'll treat unknown exceptions as potential availability issues (like some weird HTTP errors)
                 # unless they look like bad requests.
+                reason = resolve_failover_reason(
+                    status=getattr(e, "status_code", None),
+                    message=str(e),
+                    error_code=getattr(e, "code", None),
+                )
+                if reason == "auth":
+                    self._mark_auth_failure_cooldown(attempt_model)
                 logger.warning(f"Unexpected error for {attempt_model}: {e}. Trying next...")
                 last_exception = e
                 continue
@@ -353,20 +519,22 @@ class LiteLLMProvider(LLMProvider):
         model: str,
         max_tokens: int,
         temperature: float,
+        api_key: str | None = None,
     ) -> LLMResponse:
         """Handle OpenAI Codex requests using ChatGPT backend API."""
 
         def _make_request():
-            if not self.api_key:
+            request_api_key = api_key or self.api_key
+            if not request_api_key:
                 raise ValueError("No API key for OpenAI Codex")
 
             # Verify it's a JWT token
-            if not self.api_key.startswith("eyJ"):
+            if not request_api_key.startswith("eyJ"):
                 raise ValueError("OpenAI Codex requires OAuth JWT token, not API key")
 
             try:
                 # Extract account ID from JWT token
-                account_id = extract_account_id(self.api_key)
+                account_id = extract_account_id(request_api_key)
             except ValueError as e:
                 raise ValueError(f"Invalid OAuth token: {e}")
 
@@ -383,7 +551,7 @@ class LiteLLMProvider(LLMProvider):
                 stream=True,
             )
 
-            headers = build_chatgpt_headers(self.api_key, account_id)
+            headers = build_chatgpt_headers(request_api_key, account_id)
 
             # Debug logging
             logger.info(f"ChatGPT Backend API Request - Model: {api_model}, Account: {account_id[:8]}...")
@@ -511,12 +679,14 @@ class LiteLLMProvider(LLMProvider):
         model: str,
         max_tokens: int,
         temperature: float,
+        api_key: str | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> LLMResponse:
         """Handle OpenRouter requests using raw requests lib."""
 
         def _make_request():
-            api_key = self.api_key or os.environ.get("OPENROUTER_API_KEY")
-            if not api_key:
+            request_api_key = api_key or self.api_key or os.environ.get("OPENROUTER_API_KEY")
+            if not request_api_key:
                 raise ValueError("OPENROUTER_API_KEY not found")
 
             # Prepare model name
@@ -527,10 +697,12 @@ class LiteLLMProvider(LLMProvider):
                     api_model = stripped
 
             headers = {
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": f"Bearer {request_api_key}",
                 "Content-Type": "application/json",
             }
-            if self.extra_headers:
+            if extra_headers:
+                headers.update(extra_headers)
+            elif self.extra_headers:
                 headers.update(self.extra_headers)
 
             # Prepare messages
@@ -720,3 +892,4 @@ class LiteLLMProvider(LLMProvider):
     def get_default_model(self) -> str:
         """Get the default model."""
         return self.default_model
+

@@ -1,8 +1,8 @@
-# The Ultimate Beginner's Guide to Kabot
+﻿# The Ultimate Beginner's Guide to Kabot
 
 Welcome to **Kabot**, your personal, locally-hosted AI assistant framework designed to become your ultimate "Second Brain." Kabot allows you to build highly intelligent AI agents that work for you 24/7 on your local machine (like a Mac Mini, PC, or VPS). You can even create distributed teams of specialized agents tailored to different roles.
 
-This tutorial is written specifically for beginners. It will guide you step-by-step on how to run, configure, and maximize all of Kabot's features—no coding experience required!
+This tutorial is written specifically for beginners. It will guide you step-by-step on how to run, configure, and maximize all of Kabot's featuresâ€”no coding experience required!
 
 ---
 
@@ -47,7 +47,19 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 
 ### b) Model / Auth (Providers, Keys, OAuth)
 *   **What it does:** Connects Kabot to its "Main Brain" (the LLM API, such as Claude, Gemini, or OpenAI) and securely stores your API keys.
-*   **How to use it:** Select your provider/model and add your API key (OpenAI, Anthropic, OpenRouter, Groq, etc.). Kabot supports fallbacks, so you can set a primary model and a backup model if the first one fails. For quick switches in chat, use `/switch <model>`.
+*   **How to use it (simple mode flow):**
+    *   Open **Model/Auth** and choose **Provider Login (Auto model + fallback)**.
+    *   Paste API key or OAuth token for any provider you want.
+    *   Kabot auto-builds a primary + fallback model chain from your connected providers.
+    *   If you prefer, choose **Select Default Model (Optional manual override)** and pick from the full model catalog.
+    *   You can still type a custom model manually (`provider/model`) any time.
+*   **Provider coverage (Kabot-aligned):**
+    *   OpenAI, OpenAI Codex, Anthropic, Gemini, Groq, DeepSeek, Mistral, Moonshot, MiniMax, DashScope/Qwen, Zhipu.
+    *   OpenRouter, Kilo Gateway, Together, Venice, Hugging Face, Qianfan, NVIDIA.
+    *   xAI, Cerebras, OpenCode Zen, Xiaomi MiMo, Volcano Engine, BytePlus.
+    *   Synthetic, Cloudflare AI Gateway, Vercel AI Gateway.
+*   **Fallback behavior:** Kabot supports fallback chains, so if your primary model fails (rate-limit/auth/outage), it automatically tries the next configured model. If you use an OpenAI/OpenAI-Codex primary model and leave fallback chain empty, Kabot can auto-inject Groq fallback at runtime when a Groq key is available. For quick switches in chat, use `/switch <model>`.
+*   **Catalog parity note:** Kabot now ships broad Kabot-aligned model refs, including extended Venice/Together/Kilo/OpenCode/Synthetic and coding endpoints (`volcengine-plan/*`, `byteplus-plan/*`).
 
 ### c) Memory (Backend, Embeddings, Database)
 *   **What it does:** Controls how Kabot remembers conversations, facts, and user preferences. It is the core of Kabot's "Second Brain".
@@ -60,6 +72,12 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 ### d) Tools & Sandbox (Search, Docker, Shell)
 *   **What it does:** Gives physical superpowers to your agent. Without tools, Kabot is just a chatbot. With tools, Kabot becomes a proactive assistant.
 *   **How to use it:** Here, you toggle access to Kabot's abilities. You can grant it permission to type Terminal commands, read files on your hard drive, or use web search and fetch tools. Docker sandboxing can be enabled for safer command execution.
+*   **Web search providers:** `web_search` supports Brave, Perplexity, Grok, and Kimi. In setup wizard tools menu, you can input each API key and choose default search provider automatically.
+
+### d1) Gateway (Port, Host, Bindings)
+*   **What it does:** Controls how Kabot exposes webhook/gateway endpoints on your machine/server.
+*   **How to use it:** In Gateway setup, choose bind mode, port, auth token, and optional Tailscale funnel.
+*   **HSTS option:** For HTTPS deployments (or HTTPS reverse proxy), you can enable `Strict-Transport-Security` header and set custom value from Gateway setup.
 
 ### e) Skills (Install & Configure)
 *   **What it does:** Injects "SOPs" (Standard Operating Procedures) or foundational expertise directly into the agent's initial prompt.
@@ -127,7 +145,7 @@ Kabot now includes sophisticated backend systems that prevent common AI agent fa
 - Automatically detects when AI gets stuck calling the same tool repeatedly
 - **Warning threshold**: 10 identical calls - logs warning but allows execution
 - **Critical threshold**: 20 identical calls - blocks execution and returns error
-- **Ping-pong detection**: Identifies alternating tool patterns (e.g., read_file ↔ write_file)
+- **Ping-pong detection**: Identifies alternating tool patterns (e.g., read_file â†” write_file)
 - **Example**: If AI calls `exec ls` 20 times with same params, Kabot blocks it and explains the loop
 
 **Tool Policy Profiles**
@@ -146,7 +164,7 @@ Kabot now includes sophisticated backend systems that prevent common AI agent fa
 - **Categories**: billing, rate_limit, auth, timeout, format, model_not_found, unknown
 - **Auto-retry**: Rate limits and timeouts trigger automatic retry
 - **Auto-fallback**: Billing, auth, and model errors trigger model fallback
-- **Example**: 429 rate limit → rotate API key → retry; 401 auth → fallback to secondary model
+- **Example**: 429 rate limit â†’ rotate API key â†’ retry; 401 auth â†’ fallback to secondary model
 
 **Context Management** (Already Active)
 - **Context Window Guard**: Prevents crashes from small context windows (blocks < 16K tokens, warns < 32K)
@@ -304,7 +322,7 @@ When you first start Kabot with hybrid memory, you'll see this warning:
 ```
 Loading sentence-transformers model: all-MiniLM-L6-v2
 Warning: You are sending unauthenticated requests to the HF Hub.
-Loading weights: 100%|████████████████████| 103/103 [00:00<00:00, 1843.23it/s]
+Loading weights: 100%|â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ| 103/103 [00:00<00:00, 1843.23it/s]
 ```
 
 **This warning is normal and can be ignored!** The model downloads successfully without authentication.
@@ -485,8 +503,8 @@ For hybrid mode, you can specify a custom embedding model:
 
 | Feature | Hybrid | SQLite Only | Disabled |
 |---------|--------|-------------|----------|
-| Semantic search | ✅ Yes | ❌ No | ❌ No |
-| Keyword search | ✅ Yes | ✅ Yes | ❌ No |
+| Semantic search | âœ… Yes | âŒ No | âŒ No |
+| Keyword search | âœ… Yes | âœ… Yes | âŒ No |
 | Memory footprint | ~500MB | ~50MB | 0MB |
 | Startup time | ~5s | <1s | <1s |
 | Dependencies | ChromaDB, sentence-transformers | None | None |
@@ -536,18 +554,18 @@ While the Setup Wizard (`kabot setup` / `kabot config`) covers 99% of your needs
 Inside the chat (CLI, Telegram, WhatsApp, etc.) you can control Kabot using slash commands.
 
 **Core commands:**
-*   `/help` — list available commands.
-*   `/status` — system snapshot (CPU/RAM, provider, model, uptime).
-*   `/switch <model>` — switch active LLM model (example: `/switch openai/gpt-4o`).
-*   `/doctor` — run diagnostics from chat (same as CLI doctor).
-*   `/benchmark` — quick model performance benchmark.
-*   `/sysinfo` — detailed system info.
-*   `/uptime` — show how long Kabot has been running.
-*   `/clip <text>` — copy text to system clipboard (where supported).
+*   `/help` â€” list available commands.
+*   `/status` â€” system snapshot (CPU/RAM, provider, model, uptime).
+*   `/switch <model>` â€” switch active LLM model (example: `/switch openai/gpt-4o`).
+*   `/doctor` â€” run diagnostics from chat (same as CLI doctor).
+*   `/benchmark` â€” quick model performance benchmark.
+*   `/sysinfo` â€” detailed system info.
+*   `/uptime` â€” show how long Kabot has been running.
+*   `/clip <text>` â€” copy text to system clipboard (where supported).
 
 **Admin commands (restricted):**
-*   `/update` — pull updates and restart (admin only).
-*   `/restart` — restart Kabot process (admin only).
+*   `/update` â€” pull updates and restart (admin only).
+*   `/restart` â€” restart Kabot process (admin only).
 
 **Example:**
 ```
@@ -555,6 +573,140 @@ Inside the chat (CLI, Telegram, WhatsApp, etc.) you can control Kabot using slas
 /switch anthropic/claude-3-5-sonnet-20241022
 /doctor
 ```
+
+---
+
+## 10a. Adding New Models (Complete Guide)
+
+This section explains exactly how to add and use new AI models in Kabot, from beginner-friendly setup to developer-level extension.
+
+### A) Easiest Way (No Coding): Add model via Setup Wizard
+
+1. Open setup:
+```bash
+kabot config
+```
+2. Go to **Model/Auth**.
+3. Choose **Provider Login (Auto model + fallback)** and enter API key/OAuth for your provider.
+4. Choose **Select Default Model (Optional manual override)**.
+5. Either:
+   - pick from catalog/browser, or
+   - choose **Enter Model ID or Alias Manually** and type `provider/model`.
+
+Examples you can type manually:
+- `openai/gpt-4o`
+- `anthropic/claude-3-5-sonnet-20241022`
+- `together/moonshotai/Kimi-K2.5`
+- `venice/llama-3.3-70b`
+- `huggingface/deepseek-ai/DeepSeek-R1`
+- `qianfan/deepseek-v3.2`
+- `nvidia/nvidia/llama-3.1-nemotron-70b-instruct`
+- `synthetic/hf:MiniMaxAI/MiniMax-M2.1`
+- `cloudflare-ai-gateway/claude-sonnet-4-5`
+- `vercel-ai-gateway/anthropic/claude-opus-4.6`
+
+### B) Quick Runtime Switch (Without reopening setup)
+
+Inside chat:
+```text
+/switch provider/model
+```
+Example:
+```text
+/switch venice/llama-3.3-70b
+```
+
+### C) Manual Config Edit (Power User, still no code changes)
+
+Config location:
+- Windows: `C:\Users\<YourUser>\.kabot\config.json`
+- Linux/macOS: `~/.kabot/config.json`
+
+Open quickly:
+```bash
+kabot config --edit
+```
+
+Set primary + fallback chain:
+```json
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "together/moonshotai/Kimi-K2.5",
+        "fallbacks": [
+          "venice/llama-3.3-70b",
+          "huggingface/deepseek-ai/DeepSeek-R1"
+        ]
+      }
+    }
+  }
+}
+```
+
+Then restart Kabot so the new defaults are loaded.
+
+### D) How to Add a Completely New Provider/Model in Code (Developer)
+
+If the provider is not yet supported in Kabot, add it in these files:
+
+1. **Provider runtime metadata**
+- File: `kabot/providers/registry.py`
+- Add a `ProviderSpec` with:
+  - `name`
+  - `env_key`
+  - `default_api_base`
+  - prefix behavior (`litellm_prefix` or gateway mode)
+
+2. **Config schema**
+- File: `kabot/config/schema.py`
+- Add provider field in `ProvidersConfig`, e.g.:
+```python
+newprovider: ProviderConfig = Field(default_factory=ProviderConfig)
+```
+
+3. **Auth menu + handler**
+- Files:
+  - `kabot/auth/menu.py`
+  - `kabot/auth/handlers/simple.py`
+  - `kabot/auth/manager.py`
+- Add provider entry in `AUTH_PROVIDERS`.
+- Add `SimpleKeyHandler` subclass.
+- Add alias mapping (optional, recommended).
+
+4. **Model catalog (for setup browser UX)**
+- File: `kabot/providers/catalog.py`
+- Add entries to `KABOT_PARITY_MODELS` (uses helper `_parity_model(...)`).
+- Add optional aliases in `populate_registry(...)`.
+
+5. **Model status badge (optional)**
+- File: `kabot/providers/model_status.py`
+- `CATALOG_ONLY` is auto-synced from `STATIC_MODEL_CATALOG`.
+- Add only `WORKING_MODELS` overrides if you have explicit verification data.
+
+6. **Tests**
+- Extend:
+  - `tests/providers/test_registry.py`
+  - `tests/auth/test_menu.py`
+  - `tests/auth/test_manager.py`
+  - `tests/providers/test_model_status.py`
+  - `tests/cli/test_setup_wizard_default_model.py`
+
+Run verification:
+```bash
+pytest tests/providers/test_registry.py tests/providers/test_model_status.py tests/auth/test_menu.py tests/auth/test_manager.py tests/cli/test_setup_wizard_default_model.py tests/config/test_agent_config.py -q
+```
+
+### E) Troubleshooting New Model Not Working
+
+- **Error: provider not found**
+  - Model prefix is not registered in `registry.py` or `schema.py`.
+- **Error: authentication failed / 401**
+  - Wrong API key or wrong provider key field in config.
+- **Model exists but not shown in setup browser**
+  - Not added to `catalog.py` yet (you can still enter manually).
+- **Model selected but routes to wrong provider**
+  - Check prefix and provider matching logic in `config/schema.py`.
 
 ---
 
@@ -597,7 +749,7 @@ Kabot includes 36 built-in tools that give AI powerful capabilities. Here's the 
   - Example: "Learn this 300-page manual" (attach file)
 
 ### **Web & Internet**
-- **web_search** - Search the web (DuckDuckGo)
+- **web_search** - Search the web (Brave / Perplexity / Grok / Kimi)
   - Example: "Search for latest React 19 features"
 - **web_fetch** - Fetch and parse web pages
   - Example: "Fetch the content from https://example.com/docs"
@@ -670,10 +822,10 @@ Skills are markdown-based SOPs (Standard Operating Procedures) that teach Kabot 
 
 ### **Workflow Chains**
 Skills can chain together for complex tasks:
-- **brainstorming** → writing-plans → executing-plans
-- **systematic-debugging** → test-driven-development
-- **executing-plans** → finishing-a-development-branch
-- **requesting-code-review** → finishing-a-development-branch
+- **brainstorming** â†’ writing-plans â†’ executing-plans
+- **systematic-debugging** â†’ test-driven-development
+- **executing-plans** â†’ finishing-a-development-branch
+- **requesting-code-review** â†’ finishing-a-development-branch
 
 ### **Core Development Skills**
 - **brainstorming** - Design & requirements exploration before coding
@@ -686,7 +838,7 @@ Skills can chain together for complex tasks:
   - Auto-triggers: After executing-plans completes
 - **systematic-debugging** - Deep debugging with execution flow analysis
   - Auto-triggers: "debug", "fix bug", "error", "not working"
-- **test-driven-development** - TDD workflow (test → implement → verify)
+- **test-driven-development** - TDD workflow (test â†’ implement â†’ verify)
   - Auto-triggers: "write tests", "TDD", "test first"
 - **requesting-code-review** - Request code review with context
   - Auto-triggers: "review my code", "code review"
@@ -731,9 +883,92 @@ You can also manually invoke skills:
 User: "Use the systematic-debugging skill to fix this error"
 ```
 
-### **Skills Location**
-- Built-in skills: `kabot/skills/`
-- Custom skills: `~/.kabot/workspaces/<workspace>/skills/`
+### **Skills Source Layers**
+Kabot checks skill folders in deterministic order. Lowest priority is loaded first, highest priority can override name conflicts:
+1. `skills.load.extraDirs` (optional external packs)
+2. Bundled skills (`kabot/skills`)
+3. Managed shared skills (`skills.load.managedDir`, default `~/.kabot/skills`)
+4. Personal agents skills (`~/.agents/skills`)
+5. Workspace agents skills (`<workspace>/.agents/skills`)
+6. Workspace direct skills (`<workspace>/skills`)
+
+If a skill name exists in multiple locations, the highest layer above wins.
+
+### **Skills Config (`skills.entries`)**
+Kabot now supports per-skill config using canonical structure:
+
+```json
+{
+  "skills": {
+    "allowBundled": ["github", "cron"],
+    "load": {
+      "managedDir": "~/.kabot/skills",
+      "extraDirs": ["~/my-skill-pack/skills"]
+    },
+    "install": {
+      "mode": "manual",
+      "nodeManager": "npm",
+      "preferBrew": true
+    },
+    "entries": {
+      "notion": {
+        "enabled": true,
+        "env": {
+          "NOTION_API_KEY": "your-key"
+        }
+      },
+      "trello": {
+        "enabled": false
+      }
+    }
+  }
+}
+```
+
+Notes:
+- `entries.<skill>.enabled=false` disables that skill.
+- `entries.<skill>.env` is injected automatically at runtime (if env var is not already set).
+- `install.mode` defaults to `manual`: setup wizard only generates install commands (it does not run them automatically).
+- `install.nodeManager` is used when a selected skill has node-based installer metadata.
+- `install.preferBrew` affects installer recommendation order.
+- Legacy flat config (e.g. `skills.notion.env`) is still supported for backward compatibility.
+
+### **Installer Metadata (`metadata.kabot.install`)**
+Skill installer metadata supports both legacy and canonical formats:
+
+Legacy single command:
+```json
+{
+  "metadata": {
+    "kabot": {
+      "install": { "cmd": "pip install some-tool" }
+    }
+  }
+}
+```
+
+Canonical list format (recommended):
+```json
+{
+  "metadata": {
+    "kabot": {
+      "install": [
+        { "kind": "node", "package": "@org/cli", "os": ["windows", "linux", "macos"] },
+        { "kind": "brew", "formula": "jq", "os": ["macos"] },
+        { "kind": "go", "module": "github.com/org/tool@latest" },
+        { "kind": "uv", "package": "nano-pdf" },
+        { "kind": "download", "url": "https://example.com/releases/tool.zip" },
+        { "kind": "cmd", "cmd": "python -m pip install tool" }
+      ]
+    }
+  }
+}
+```
+
+Wizard behavior:
+- Shows installable skills with checkbox + per-skill hint.
+- If node installers are selected, asks preferred node manager (`npm`/`pnpm`/`yarn`/`bun`).
+- Prints manual install plan per skill (cross-platform aware), then returns to setup flow.
 
 ---
 
@@ -821,7 +1056,7 @@ Kabot supports spawning background subagents for parallel task execution:
 ```
 User: "Spawn a subagent to monitor logs while I work on the code"
 Kabot: [Uses spawn tool]
-Kabot: "✅ Subagent spawned (ID: sub_abc123). It will monitor logs and report back."
+Kabot: "âœ… Subagent spawned (ID: sub_abc123). It will monitor logs and report back."
 ```
 
 ### **Auth Rotation (Zero-Downtime)**
@@ -838,8 +1073,8 @@ api_keys:
 ```
 
 **Behavior:**
-- On 429 rate limit → rotate to next key
-- On 401 auth error → rotate to next key
+- On 429 rate limit â†’ rotate to next key
+- On 401 auth error â†’ rotate to next key
 - 60-second cooldown per failed key
 
 ### **Model Fallback Cascade**
@@ -854,9 +1089,9 @@ fallback_models:
 ```
 
 **Behavior:**
-- Primary model fails → try gpt-4o
-- gpt-4o fails → try gemini-pro
-- All fail → return error to user
+- Primary model fails â†’ try gpt-4o
+- gpt-4o fails â†’ try gemini-pro
+- All fail â†’ return error to user
 
 ### **Context Window Guard**
 Prevents crashes from context overflow:
@@ -891,3 +1126,5 @@ You are now fully equipped to unleash Kabot. You have mastered:
 - AI-as-Developer Capabilities
 
 Start experimenting! Use `kabot config` to partition your agents by role, teach them with `kabot train`, leverage skills for complex workflows, and watch your productivity level up.
+
+

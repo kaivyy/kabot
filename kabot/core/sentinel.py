@@ -1,7 +1,7 @@
-"""
+﻿"""
 Crash recovery sentinel for seamless restart UX.
 
-Pattern from OpenClaw: server-restart-sentinel.ts
+Pattern from Kabot: server-restart-sentinel.ts
 Black box recorder that detects unclean shutdowns and provides recovery context.
 """
 
@@ -132,7 +132,7 @@ class CrashSentinel:
 
 
 # Recovery message template
-RECOVERY_MESSAGE = """🔄 I just restarted after an unexpected shutdown.
+RECOVERY_MESSAGE = """NOTICE: I just restarted after an unexpected shutdown.
 
 **Last session**: {session_id}
 **Last message**: {message_id}
@@ -156,3 +156,5 @@ def format_recovery_message(crash_data: Dict[str, str]) -> str:
         message_id=crash_data.get('message_id', 'unknown'),
         datetime=crash_data.get('datetime', 'unknown')
     )
+
+

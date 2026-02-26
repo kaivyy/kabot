@@ -1,4 +1,4 @@
-"""Tests for agent configuration schema."""
+﻿"""Tests for agent configuration schema."""
 
 import time
 
@@ -10,6 +10,7 @@ from kabot.config.schema import (
     AgentsConfig,
     AuthProfile,
     Config,
+    MemoryConfig,
     ProviderConfig,
     ProvidersConfig,
 )
@@ -145,6 +146,57 @@ def test_provider_match_accepts_setup_token_profile_credentials():
     assert cfg.get_provider_name("anthropic/claude-sonnet-4-5") == "anthropic"
 
 
+def test_provider_match_supports_mistral():
+    cfg = Config(
+        agents=AgentsConfig(defaults=AgentDefaults(model="mistral/mistral-large-latest")),
+        providers=ProvidersConfig(
+            mistral=ProviderConfig(
+                api_key="mistral-key",
+            ),
+        ),
+    )
+    assert cfg.get_provider_name("mistral/mistral-large-latest") == "mistral"
+
+
+def test_provider_match_supports_kilocode():
+    cfg = Config(
+        agents=AgentsConfig(defaults=AgentDefaults(model="kilocode/anthropic/claude-opus-4.6")),
+        providers=ProvidersConfig(
+            kilocode=ProviderConfig(
+                api_key="kilo-key",
+                api_base="https://api.kilo.ai/api/gateway/",
+            ),
+        ),
+    )
+    assert cfg.get_provider_name("kilocode/anthropic/claude-opus-4.6") == "kilocode"
+
+
+def test_provider_match_supports_synthetic():
+    cfg = Config(
+        agents=AgentsConfig(defaults=AgentDefaults(model="synthetic/hf:MiniMaxAI/MiniMax-M2.1")),
+        providers=ProvidersConfig(
+            synthetic=ProviderConfig(
+                api_key="synthetic-key",
+                api_base="https://api.synthetic.new/anthropic",
+            ),
+        ),
+    )
+    assert cfg.get_provider_name("synthetic/hf:MiniMaxAI/MiniMax-M2.1") == "synthetic"
+
+
+def test_provider_match_supports_cloudflare_ai_gateway():
+    cfg = Config(
+        agents=AgentsConfig(defaults=AgentDefaults(model="cloudflare-ai-gateway/claude-sonnet-4-5")),
+        providers=ProvidersConfig(
+            cloudflare_ai_gateway=ProviderConfig(
+                api_key="cf-key",
+                api_base="https://gateway.ai.cloudflare.com/v1/account/gateway/anthropic",
+            ),
+        ),
+    )
+    assert cfg.get_provider_name("cloudflare-ai-gateway/claude-sonnet-4-5") == "cloudflare-ai-gateway"
+
+
 def test_get_api_key_returns_setup_token_from_active_profile():
     cfg = Config(
         agents=AgentsConfig(defaults=AgentDefaults(model="anthropic/claude-sonnet-4-5")),
@@ -204,3 +256,17 @@ async def test_get_api_key_async_uses_default_model_provider_for_refresh(monkeyp
 
     assert token == "new-token"
     assert called["provider"] == "openai-codex"
+
+
+def test_config_has_memory_defaults():
+    cfg = Config()
+    assert cfg.memory.backend == "hybrid"
+    assert cfg.memory.embedding_provider == "sentence"
+    assert cfg.memory.enable_hybrid_search is True
+
+
+def test_config_memory_can_be_overridden():
+    cfg = Config(memory=MemoryConfig(backend="sqlite_only", embedding_provider="ollama"))
+    assert cfg.memory.backend == "sqlite_only"
+    assert cfg.memory.embedding_provider == "ollama"
+

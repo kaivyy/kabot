@@ -1,10 +1,10 @@
-# OpenClaw-Style Universal Integrations (Meta + Multi-Bot) Implementation Plan
+﻿# Kabot-Style Universal Integrations (Meta + Multi-Bot) Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Upgrade Kabot so users can safely build "do anything" automations (including Meta Threads/Instagram) through secure API/webhook integrations, easier multi-bot setup, and plugin scaffolding.
 
-**Architecture:** Follow OpenClaw's extensibility pattern: keep core small, add capability through plugins/tools/extensions. Implement a hardened HTTP integration layer (SSRF guard + signature validation), then expose Meta Graph actions as tools and webhook routes. Add fleet-oriented setup UX so multiple bots can be created and bound to different agents/models quickly.
+**Architecture:** Follow Kabot's extensibility pattern: keep core small, add capability through plugins/tools/extensions. Implement a hardened HTTP integration layer (SSRF guard + signature validation), then expose Meta Graph actions as tools and webhook routes. Add fleet-oriented setup UX so multiple bots can be created and bound to different agents/models quickly.
 
 **Tech Stack:** Python 3.11+, aiohttp, httpx, Pydantic, Typer, pytest.
 
@@ -336,7 +336,7 @@ git commit -m "feat(setup): add fleet templates for multi-bot multi-ai configura
 
 ---
 
-### Task 5: Plugin Scaffold Command (OpenClaw-style "skill creator" workflow)
+### Task 5: Plugin Scaffold Command (Kabot-style "skill creator" workflow)
 
 **Files:**
 - Create: `kabot/plugins/scaffold.py`
@@ -493,7 +493,7 @@ git commit -m "feat(auth): add oauth parity diagnostics across providers"
 **Files:**
 - Modify: `README.md`
 - Modify: `CHANGELOG.md`
-- Modify: `docs/OPENCLAW_VS_KABOT_COMPLETE_ANALYSIS.md` (if Kabot-side mirror exists, update that one)
+- Modify: `docs/KABOT_VS_KABOT_COMPLETE_ANALYSIS.md` (if Kabot-side mirror exists, update that one)
 - Create: `docs/integrations/meta-threads-instagram.md`
 
 **Step 1: Add docs tests/check script (optional quick guard)**
@@ -533,15 +533,17 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add README.md CHANGELOG.md docs/integrations/meta-threads-instagram.md docs/OPENCLAW_VS_KABOT_COMPLETE_ANALYSIS.md
+git add README.md CHANGELOG.md docs/integrations/meta-threads-instagram.md docs/KABOT_VS_KABOT_COMPLETE_ANALYSIS.md
 git commit -m "docs: add meta integration, fleet setup, and parity guidance"
 ```
 
 ---
 
-Plan complete and saved to `docs/plans/2026-02-19-openclaw-style-universal-integrations-implementation.md`. Two execution options:
+Plan complete and saved to `docs/plans/2026-02-19-kabot-style-universal-integrations-implementation.md`. Two execution options:
 
 1. **Subagent-Driven (this session)** - Execute task-by-task now in this session with checkpoints after each task.
 2. **Parallel Session (separate)** - Open a fresh implementation session using the executing-plans flow.
 
 Which approach?
+
+

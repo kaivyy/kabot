@@ -21,6 +21,18 @@ _PROVIDER_ALIASES = {
     "gemini": "google",
     "moonshot": "kimi",
     "vllm": "ollama",
+    "kilo": "kilocode",
+    "venice-ai": "venice",
+    "venice_ai": "venice",
+    "hf": "huggingface",
+    "huggingface-hub": "huggingface",
+    "x-ai": "xai",
+    "opencode-zen": "opencode",
+    "volcengine-plan": "volcengine",
+    "byteplus-plan": "byteplus",
+    "doubao": "volcengine",
+    "cloudflare_ai_gateway": "cloudflare-ai-gateway",
+    "vercel_ai_gateway": "vercel-ai-gateway",
 }
 
 _ALIAS_DEFAULT_METHODS = {
@@ -52,7 +64,7 @@ class AuthManager:
         Returns:
             True if authentication successful, False otherwise
         """
-        # Normalize provider aliases used by OpenClaw-style IDs.
+        # Normalize provider aliases used by Kabot-style IDs.
         original_provider_id = provider_id
         provider_id = _PROVIDER_ALIASES.get(provider_id, provider_id)
         if method_id is None:
@@ -74,7 +86,7 @@ class AuthManager:
             # If only 1 method, use it directly (no menu)
             if len(methods) == 1:
                 method_id = list(methods.keys())[0]
-                console.print(f"│  [dim]Using {methods[method_id]['label']}[/dim]")
+                console.print(f"|  [dim]Using {methods[method_id]['label']}[/dim]")
             else:
                 # Show method selection menu
                 method_id = self._prompt_method_selection(provider_id, methods)
@@ -97,22 +109,22 @@ class AuthManager:
         try:
             auth_data = handler.authenticate()
         except KeyboardInterrupt:
-            console.print("\n│  [yellow]Authentication cancelled.[/yellow]")
+            console.print("\n|  [yellow]Authentication cancelled.[/yellow]")
             return False
         except TimeoutError:
-            console.print("\n│  [red]Authentication timed out.[/red]")
+            console.print("\n|  [red]Authentication timed out.[/red]")
             return False
         except Exception as e:
-            console.print(f"\n│  [bold red]Authentication failed:[/bold red] {e}")
+            console.print(f"\n|  [bold red]Authentication failed:[/bold red] {e}")
             return False
 
         if not auth_data:
-            console.print("│  [yellow]No credentials provided.[/yellow]")
+            console.print("|  [yellow]No credentials provided.[/yellow]")
             return False
 
         # 6. Validate auth data
         if not self._validate_auth_data(auth_data):
-            console.print("│  [bold red]Error:[/bold red] Invalid authentication data format.")
+            console.print("|  [bold red]Error:[/bold red] Invalid authentication data format.")
             return False
 
         # 7. Save credentials
@@ -135,16 +147,17 @@ class AuthManager:
         """Show interactive method selection menu using arrow keys."""
         provider_name = AUTH_PROVIDERS[provider_id]["name"]
 
-        console.print("│")
+        console.print("|")
         choices = []
         for mid, info in methods.items():
             choices.append(questionary.Choice(
                 title=f"{info['label']} - {info['description']}",
                 value=mid
             ))
+        choices.append(questionary.Choice(title="Back", value="__back__"))
 
         result = questionary.select(
-            f"◇  Select authentication method for {provider_name}",
+            f"*  Select authentication method for {provider_name}",
             choices=choices,
             style=questionary.Style([
                 ('qmark', 'fg:cyan bold'),
@@ -155,6 +168,9 @@ class AuthManager:
             ])
         ).ask()
 
+        if result in {None, "__back__", "back"}:
+            console.print("|  [yellow]Cancelled[/yellow]")
+            return None
         return result
 
     def _validate_auth_data(self, auth_data: Dict[str, Any]) -> bool:
@@ -185,6 +201,19 @@ class AuthManager:
             "google": "gemini",
             "kimi": "moonshot",
             "ollama": "vllm",
+            "venice-ai": "venice",
+            "venice_ai": "venice",
+            "huggingface-hub": "huggingface",
+            "hf": "huggingface",
+            "x-ai": "xai",
+            "opencode-zen": "opencode",
+            "volcengine-plan": "volcengine",
+            "byteplus-plan": "byteplus",
+            "doubao": "volcengine",
+            "cloudflare-ai-gateway": "cloudflare_ai_gateway",
+            "cloudflare_ai_gateway": "cloudflare_ai_gateway",
+            "vercel-ai-gateway": "vercel_ai_gateway",
+            "vercel_ai_gateway": "vercel_ai_gateway",
         }
         try:
             current_config = load_config()
@@ -197,7 +226,7 @@ class AuthManager:
                     provider_config_obj = getattr(current_config.providers, config_key, None)
 
                     if provider_config_obj is None:
-                        console.print(f"│  [yellow]Warning: Provider '{prov_name}' not in config schema[/yellow]")
+                        console.print(f"|  [yellow]Warning: Provider '{prov_name}' not in config schema[/yellow]")
                         continue
 
                     # Multi-profile logic
@@ -222,7 +251,7 @@ class AuthManager:
             return True
 
         except Exception as e:
-            console.print(f"│  [bold red]Error saving config:[/bold red] {e}")
+            console.print(f"|  [bold red]Error saving config:[/bold red] {e}")
             return False
 
     def get_status(self):
@@ -242,7 +271,23 @@ class AuthManager:
             "google": "gemini",
             "ollama": "vllm",
             "kimi": "moonshot",
-            "minimax": "minimax"
+            "minimax": "minimax",
+            "mistral": "mistral",
+            "kilocode": "kilocode",
+            "venice": "venice",
+            "huggingface": "huggingface",
+            "qianfan": "qianfan",
+            "nvidia": "nvidia",
+            "xai": "xai",
+            "cerebras": "cerebras",
+            "opencode": "opencode",
+            "xiaomi": "xiaomi",
+            "volcengine": "volcengine",
+            "byteplus": "byteplus",
+            "together": "together",
+            "synthetic": "synthetic",
+            "cloudflare-ai-gateway": "cloudflare_ai_gateway",
+            "vercel-ai-gateway": "vercel_ai_gateway",
         }
 
         for pid, meta in AUTH_PROVIDERS.items():
@@ -342,3 +387,5 @@ class AuthManager:
             "alias_checks": alias_checks,
             "issues": issues,
         }
+
+

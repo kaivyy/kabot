@@ -1,4 +1,4 @@
-"""Base channel interface for chat platforms."""
+﻿"""Base channel interface for chat platforms."""
 
 from abc import ABC, abstractmethod
 from typing import Any
@@ -139,7 +139,7 @@ class BaseChannel(ABC):
         await self.bus.publish_inbound(msg)
 
     def _extract_routing_fields(self, chat_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        """Extract OpenClaw-style routing fields from channel metadata."""
+        """Extract Kabot-style routing fields from channel metadata."""
         routing: dict[str, Any] = {
             "account_id": None,
             "peer_kind": None,
@@ -221,3 +221,5 @@ class BaseChannel(ABC):
     def is_running(self) -> bool:
         """Check if the channel is running."""
         return self._running
+
+

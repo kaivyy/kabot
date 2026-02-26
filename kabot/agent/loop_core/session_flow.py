@@ -57,6 +57,31 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
     return session
 
 
+def _append_daily_notes_summary(loop: Any, msg: InboundMessage, final_content: str | None) -> None:
+    """Best-effort periodic memory dump for each completed conversation turn."""
+    context = getattr(loop, "context", None)
+    daily_memory = getattr(context, "memory", None) if context else None
+    append_today = getattr(daily_memory, "append_today", None)
+    if not callable(append_today):
+        return
+
+    user_text = (msg.content or "").strip()
+    assistant_text = (final_content or "").strip()
+    if not user_text and not assistant_text:
+        return
+
+    lines = [f"- [{msg.session_key}]"]
+    if user_text:
+        lines.append(f"  U: {user_text}")
+    if assistant_text:
+        lines.append(f"  A: {assistant_text}")
+
+    try:
+        append_today("\n".join(lines))
+    except Exception as exc:
+        logger.warning(f"Daily notes append failed for {msg.session_key}: {exc}")
+
+
 async def finalize_session(
     loop: Any,
     msg: InboundMessage,
@@ -75,5 +100,7 @@ async def finalize_session(
             loop.sessions.save(session)
         except Exception as exc:
             logger.warning(f"Session save failed for {msg.session_key}: {exc}")
+
+    _append_daily_notes_summary(loop, msg, final_content)
 
     return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=final_content or "")

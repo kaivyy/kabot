@@ -1,4 +1,4 @@
-"""Tests for AuthManager with multi-method support."""
+﻿"""Tests for AuthManager with multi-method support."""
 from unittest.mock import MagicMock, patch
 
 
@@ -16,6 +16,22 @@ def test_list_providers_returns_list():
     assert isinstance(providers, list)
     assert "openai" in providers
     assert "anthropic" in providers
+    assert "mistral" in providers
+    assert "kilocode" in providers
+    assert "together" in providers
+    assert "venice" in providers
+    assert "huggingface" in providers
+    assert "qianfan" in providers
+    assert "nvidia" in providers
+    assert "xai" in providers
+    assert "cerebras" in providers
+    assert "opencode" in providers
+    assert "xiaomi" in providers
+    assert "volcengine" in providers
+    assert "byteplus" in providers
+    assert "synthetic" in providers
+    assert "cloudflare-ai-gateway" in providers
+    assert "vercel-ai-gateway" in providers
 
 
 def test_load_handler_dynamically():
@@ -132,6 +148,24 @@ def test_login_alias_vllm_maps_to_ollama(mock_save, mock_load):
     assert result is True
 
 
+@patch('kabot.auth.manager.AuthManager._load_handler')
+@patch('kabot.auth.manager.AuthManager._save_credentials')
+def test_login_alias_venice_ai_maps_to_venice(mock_save, mock_load):
+    """venice-ai alias should map to venice provider."""
+    mock_handler = MagicMock()
+    mock_handler.authenticate.return_value = {"providers": {"venice": {"api_key": "test"}}}
+    mock_load.return_value = mock_handler
+    mock_save.return_value = True
+
+    from kabot.auth.manager import AuthManager
+    manager = AuthManager()
+
+    result = manager.login("venice-ai", method_id="api_key")
+
+    mock_load.assert_called_once_with("venice", "api_key")
+    assert result is True
+
+
 def test_validate_auth_data_accepts_setup_token():
     """setup_token payload should be recognized as valid auth data."""
     from kabot.auth.manager import AuthManager
@@ -139,6 +173,25 @@ def test_validate_auth_data_accepts_setup_token():
     manager = AuthManager()
     auth_data = {"providers": {"anthropic": {"setup_token": "sk-ant-oat01-example"}}}
     assert manager._validate_auth_data(auth_data) is True
+
+
+@patch("kabot.auth.manager.questionary.select")
+def test_prompt_method_selection_supports_back(mock_select):
+    """Method selection should allow user to go back/cancel."""
+    from kabot.auth.manager import AuthManager
+
+    mock_select.return_value.ask.return_value = "__back__"
+    manager = AuthManager()
+
+    result = manager._prompt_method_selection(
+        "openai",
+        {
+            "api_key": {"label": "API Key", "description": "Manual"},
+            "oauth": {"label": "OAuth", "description": "Browser login"},
+        },
+    )
+
+    assert result is None
 
 
 @patch('kabot.auth.manager.AuthManager._load_handler')
@@ -153,3 +206,4 @@ def test_login_handles_keyboard_interrupt(mock_load):
     result = manager.login("openai", method_id="api_key")
 
     assert result is False
+

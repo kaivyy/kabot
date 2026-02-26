@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+import time
 
 from loguru import logger
 
 from kabot.bus.events import OutboundMessage
 from kabot.bus.queue import MessageBus
 from kabot.channels.base import BaseChannel
+from kabot.cli.bridge_utils import is_bridge_reachable, is_local_bridge_url, start_bridge_background
 from kabot.config.schema import WhatsAppConfig
 
 
@@ -26,6 +28,27 @@ class WhatsAppChannel(BaseChannel):
         self.config: WhatsAppConfig = config
         self._ws = None
         self._connected = False
+        self._next_bridge_start_attempt_at = 0.0
+
+    def _ensure_bridge_ready(self) -> None:
+        """Start local bridge automatically when it is not reachable."""
+        bridge_url = self.config.bridge_url
+        if not is_local_bridge_url(bridge_url):
+            return
+        if is_bridge_reachable(bridge_url):
+            return
+
+        now = time.monotonic()
+        if now < self._next_bridge_start_attempt_at:
+            return
+        self._next_bridge_start_attempt_at = now + 30.0
+
+        logger.info(f"WhatsApp bridge not reachable at {bridge_url}; attempting background start")
+        started = start_bridge_background(bridge_url=bridge_url, wait_seconds=20.0)
+        if started:
+            logger.info("WhatsApp bridge is ready")
+        else:
+            logger.warning("Failed to confirm WhatsApp bridge startup")
 
     async def start(self) -> None:
         """Start the WhatsApp channel by connecting to the bridge."""
@@ -38,6 +61,7 @@ class WhatsAppChannel(BaseChannel):
         self._running = True
 
         while self._running:
+            self._ensure_bridge_ready()
             try:
                 async with websockets.connect(bridge_url) as ws:
                     self._ws = ws

@@ -1,4 +1,4 @@
-"""Async message queue for decoupled channel-agent communication."""
+﻿"""Async message queue for decoupled channel-agent communication."""
 
 import asyncio
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ class MessageBus:
     Async message bus that decouples chat channels from the agent core.
 
     Phase 14: Expanded to support full system events (lifecycle, tool, error)
-    Pattern from OpenClaw: src/infra/agent-events.ts
+    Pattern from Kabot: src/infra/agent-events.ts
 
     Channels push messages to the inbound queue, and the agent processes
     them and pushes responses to the outbound queue.
@@ -152,3 +152,5 @@ class MessageBus:
     def system_events_size(self) -> int:
         """Number of pending system events."""
         return self.system_events.qsize()
+
+

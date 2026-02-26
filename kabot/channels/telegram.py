@@ -21,6 +21,7 @@ from kabot.bus.events import OutboundMessage
 from kabot.bus.queue import MessageBus
 from kabot.channels.base import BaseChannel
 from kabot.config.schema import TelegramConfig
+from kabot.utils.text_safety import ensure_utf8_text
 
 if TYPE_CHECKING:
     from kabot.session.manager import SessionManager
@@ -331,9 +332,11 @@ class TelegramChannel(BaseChannel):
 
             # 1. Send text content if present (and not just a placeholder)
             if msg.content and msg.content.strip():
-                chunks = _split_message(msg.content, max_length=4000)
+                safe_content = ensure_utf8_text(msg.content)
+                chunks = _split_message(safe_content, max_length=4000)
 
                 for i, chunk in enumerate(chunks):
+                    chunk = ensure_utf8_text(chunk)
                     # Only attach reply_markup to the last chunk
                     chunk_markup = reply_markup if i == len(chunks) - 1 else None
 

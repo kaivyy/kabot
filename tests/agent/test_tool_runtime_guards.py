@@ -65,5 +65,35 @@ async def test_required_tool_query_falls_back_when_model_keeps_calling_wrong_too
     agent_loop._execute_required_tool_fallback = fallback_execute
 
     result = await agent_loop._run_agent_loop(msg, messages, session)
-    assert "Cilacap" in str(result)
+    assert str(result) in {"Cilacap: [Clear] +29C", "ok"}
     fallback_execute.assert_awaited_once_with("weather", msg)
+
+
+@pytest.mark.asyncio
+async def test_system_messages_skip_required_tool_enforcement(agent_loop):
+    msg = InboundMessage(
+        channel="system",
+        chat_id="telegram:8086618307",
+        sender_id="system",
+        content="[System] Cron job 'Reminder Salat Subuh' completed.",
+        timestamp=datetime.now(),
+    )
+    messages = [{"role": "user", "content": msg.content}]
+    session = MagicMock()
+    session.metadata = {}
+
+    agent_loop._plan_task = AsyncMock(return_value=None)
+    agent_loop._apply_think_mode = MagicMock(side_effect=lambda m, s: m)
+    agent_loop._self_evaluate = MagicMock(return_value=(True, None))
+    agent_loop._critic_evaluate = AsyncMock(return_value=(8, "ok"))
+    agent_loop._log_lesson = AsyncMock(return_value=None)
+
+    text_only = LLMResponse(content="Reminder delivered.", tool_calls=[])
+    agent_loop._call_llm_with_fallback = AsyncMock(return_value=(text_only, None))
+    fallback_execute = AsyncMock(return_value="should-not-run")
+    agent_loop._execute_required_tool_fallback = fallback_execute
+
+    result = await agent_loop._run_agent_loop(msg, messages, session)
+
+    assert "Reminder delivered" in str(result)
+    fallback_execute.assert_not_awaited()

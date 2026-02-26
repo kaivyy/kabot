@@ -203,3 +203,23 @@ async def test_hook_lifecycle_events():
         "message:world",
         "shutdown"
     ]
+
+
+@pytest.mark.asyncio
+async def test_hook_event_aliases_are_case_insensitive():
+    """Legacy uppercase and canonical lowercase event names should interoperate."""
+    hooks = HookManager()
+    fired: list[str] = []
+
+    async def on_startup():
+        fired.append("startup")
+
+    # Register lowercase canonical name, emit uppercase legacy alias.
+    hooks.on("on_startup", on_startup)
+    await hooks.emit("ON_STARTUP")
+
+    # Register uppercase alias too; emit lowercase should still hit both.
+    hooks.on("ON_STARTUP", on_startup)
+    await hooks.emit("on_startup")
+
+    assert fired == ["startup", "startup", "startup"]

@@ -1,4 +1,4 @@
-# Multi-Method Authentication System Design
+﻿# Multi-Method Authentication System Design
 
 **Date**: 2026-02-12
 **Status**: Approved
@@ -7,7 +7,7 @@
 
 ---
 
-## 📋 Executive Summary
+## ðŸ“‹ Executive Summary
 
 ### Problem Statement
 
@@ -19,7 +19,7 @@ Kabot currently supports only **one authentication method per provider** (API Ke
 
 ### Solution
 
-Implement a **multi-method authentication system** inspired by OpenClaw's architecture, supporting:
+Implement a **multi-method authentication system** inspired by Kabot's architecture, supporting:
 - **6 providers** (OpenAI, Anthropic, Google, Ollama, Kimi, MiniMax)
 - **13 authentication methods** total
 - **Backward compatibility** with existing single-method handlers
@@ -27,15 +27,15 @@ Implement a **multi-method authentication system** inspired by OpenClaw's archit
 
 ### Success Criteria
 
-- ✅ All 6 providers working with all methods
-- ✅ OAuth works on local and VPS
-- ✅ 85%+ test coverage
-- ✅ Zero regressions in existing auth flow
-- ✅ Backward compatible with v0.x
+- âœ… All 6 providers working with all methods
+- âœ… OAuth works on local and VPS
+- âœ… 85%+ test coverage
+- âœ… Zero regressions in existing auth flow
+- âœ… Backward compatible with v0.x
 
 ---
 
-## 🎯 Scope
+## ðŸŽ¯ Scope
 
 ### In Scope
 
@@ -93,19 +93,19 @@ Implement a **multi-method authentication system** inspired by OpenClaw's archit
 
 ---
 
-## 🏗️ Architecture
+## ðŸ—ï¸ Architecture
 
 ### Current Architecture (v0.x)
 
 ```
 User runs: kabot auth login openai
-    ↓
+    â†“
 AuthManager.login(provider_id)
-    ↓
+    â†“
 Load single handler: AUTH_PROVIDERS[provider_id]["handler"]
-    ↓
-Handler.authenticate() → Returns API key
-    ↓
+    â†“
+Handler.authenticate() â†’ Returns API key
+    â†“
 Save to config
 ```
 
@@ -115,30 +115,30 @@ Save to config
 
 ```
 User runs: kabot auth login openai [--method oauth]
-    ↓
+    â†“
 AuthManager.login(provider_id, method_id=None)
-    ↓
+    â†“
 If method_id is None:
     Show method selection menu
     User selects: [1] API Key or [2] OAuth
-    ↓
+    â†“
 Load handler dynamically:
     AUTH_PROVIDERS[provider_id]["methods"][method_id]["handler"]
-    ↓
-Handler.authenticate() → Returns credentials
-    ↓
+    â†“
+Handler.authenticate() â†’ Returns credentials
+    â†“
 Save to config
 ```
 
 **Benefits**:
-- ✅ Multiple methods per provider
-- ✅ Interactive or direct selection
-- ✅ Extensible (easy to add new methods)
-- ✅ Backward compatible (single-method providers auto-skip menu)
+- âœ… Multiple methods per provider
+- âœ… Interactive or direct selection
+- âœ… Extensible (easy to add new methods)
+- âœ… Backward compatible (single-method providers auto-skip menu)
 
 ---
 
-## 📦 Component Design
+## ðŸ“¦ Component Design
 
 ### 1. Menu Structure (`kabot/auth/menu.py`)
 
@@ -251,7 +251,7 @@ AUTH_PROVIDERS = {
 ```
 
 **Key Changes:**
-- `handler` field → `methods` dict
+- `handler` field â†’ `methods` dict
 - Each method has: `label`, `description`, `handler` (as string path)
 - Handler path as string for lazy loading (avoid circular imports)
 
@@ -451,20 +451,20 @@ class AuthHandler(ABC):
 
 ```
 kabot/auth/handlers/
-├── __init__.py
-├── base.py                    # Base handler (existing)
-├── utils.py                   # Utilities (existing)
-├── openai_key.py             # New: OpenAI API Key
-├── openai_oauth.py           # New: OpenAI OAuth
-├── anthropic_key.py          # New: Anthropic API Key
-├── anthropic_token.py        # New: Anthropic Setup Token
-├── google_key.py             # New: Google API Key
-├── google_oauth.py           # New: Google OAuth
-├── ollama_url.py             # Rename: ollama.py → ollama_url.py
-├── kimi_key.py               # New: Kimi API Key
-├── kimi_code.py              # New: Kimi Code subscription
-├── minimax_key.py            # New: MiniMax API Key
-└── minimax_coding.py         # New: MiniMax Coding Plan
+â”œâ”€â”€ __init__.py
+â”œâ”€â”€ base.py                    # Base handler (existing)
+â”œâ”€â”€ utils.py                   # Utilities (existing)
+â”œâ”€â”€ openai_key.py             # New: OpenAI API Key
+â”œâ”€â”€ openai_oauth.py           # New: OpenAI OAuth
+â”œâ”€â”€ anthropic_key.py          # New: Anthropic API Key
+â”œâ”€â”€ anthropic_token.py        # New: Anthropic Setup Token
+â”œâ”€â”€ google_key.py             # New: Google API Key
+â”œâ”€â”€ google_oauth.py           # New: Google OAuth
+â”œâ”€â”€ ollama_url.py             # Rename: ollama.py â†’ ollama_url.py
+â”œâ”€â”€ kimi_key.py               # New: Kimi API Key
+â”œâ”€â”€ kimi_code.py              # New: Kimi Code subscription
+â”œâ”€â”€ minimax_key.py            # New: MiniMax API Key
+â””â”€â”€ minimax_coding.py         # New: MiniMax Coding Plan
 ```
 
 **Example Handler: OpenAI API Key**
@@ -625,7 +625,7 @@ class OAuthCallbackServer:
         </head>
         <body>
             <div class="success">
-                <h1>✓ Authentication Successful</h1>
+                <h1>âœ“ Authentication Successful</h1>
                 <p>You can close this window and return to the terminal.</p>
             </div>
         </body>
@@ -774,9 +774,9 @@ def auth_login(
     success = manager.login(provider, method_id=method)
 
     if success:
-        console.print(f"\n[green]✓ Successfully configured {provider}![/green]")
+        console.print(f"\n[green]âœ“ Successfully configured {provider}![/green]")
     else:
-        console.print(f"\n[red]✗ Authentication failed[/red]")
+        console.print(f"\n[red]âœ— Authentication failed[/red]")
         raise typer.Exit(1)
 ```
 
@@ -820,7 +820,7 @@ def auth_methods(
 
 ---
 
-## 🧪 Testing Strategy
+## ðŸ§ª Testing Strategy
 
 ### Test Coverage Goals
 
@@ -832,61 +832,61 @@ def auth_methods(
 
 ```
 tests/
-├── auth/
-│   ├── test_manager.py           # AuthManager tests (~10 tests)
-│   ├── test_menu.py              # Menu structure tests (~5 tests)
-│   ├── test_oauth_callback.py    # OAuth server tests (~5 tests)
-│   ├── handlers/
-│   │   ├── test_openai_key.py    # ~4 tests
-│   │   ├── test_openai_oauth.py  # ~3 tests
-│   │   ├── test_anthropic_key.py # ~4 tests
-│   │   ├── test_anthropic_token.py # ~3 tests
-│   │   ├── test_google_key.py    # ~4 tests
-│   │   ├── test_google_oauth.py  # ~3 tests
-│   │   ├── test_kimi_key.py      # ~4 tests
-│   │   ├── test_kimi_code.py     # ~3 tests
-│   │   ├── test_minimax_key.py   # ~4 tests
-│   │   └── test_minimax_coding.py # ~3 tests
-│   └── utils/
-│       ├── test_vps_detection.py # ~5 tests
-│       └── test_oauth_flow.py    # ~3 tests
-└── cli/
-    └── test_auth_commands.py     # ~5 tests
+â”œâ”€â”€ auth/
+â”‚   â”œâ”€â”€ test_manager.py           # AuthManager tests (~10 tests)
+â”‚   â”œâ”€â”€ test_menu.py              # Menu structure tests (~5 tests)
+â”‚   â”œâ”€â”€ test_oauth_callback.py    # OAuth server tests (~5 tests)
+â”‚   â”œâ”€â”€ handlers/
+â”‚   â”‚   â”œâ”€â”€ test_openai_key.py    # ~4 tests
+â”‚   â”‚   â”œâ”€â”€ test_openai_oauth.py  # ~3 tests
+â”‚   â”‚   â”œâ”€â”€ test_anthropic_key.py # ~4 tests
+â”‚   â”‚   â”œâ”€â”€ test_anthropic_token.py # ~3 tests
+â”‚   â”‚   â”œâ”€â”€ test_google_key.py    # ~4 tests
+â”‚   â”‚   â”œâ”€â”€ test_google_oauth.py  # ~3 tests
+â”‚   â”‚   â”œâ”€â”€ test_kimi_key.py      # ~4 tests
+â”‚   â”‚   â”œâ”€â”€ test_kimi_code.py     # ~3 tests
+â”‚   â”‚   â”œâ”€â”€ test_minimax_key.py   # ~4 tests
+â”‚   â”‚   â””â”€â”€ test_minimax_coding.py # ~3 tests
+â”‚   â””â”€â”€ utils/
+â”‚       â”œâ”€â”€ test_vps_detection.py # ~5 tests
+â”‚       â””â”€â”€ test_oauth_flow.py    # ~3 tests
+â””â”€â”€ cli/
+    â””â”€â”€ test_auth_commands.py     # ~5 tests
 ```
 
 ### Key Test Scenarios
 
 **AuthManager:**
-- ✅ Login with method specified
-- ✅ Login without method (shows menu)
-- ✅ Login with single-method provider (auto-skip menu)
-- ✅ Invalid provider
-- ✅ Invalid method
-- ✅ Authentication cancelled (KeyboardInterrupt)
-- ✅ Authentication timeout
-- ✅ Auth data validation
+- âœ… Login with method specified
+- âœ… Login without method (shows menu)
+- âœ… Login with single-method provider (auto-skip menu)
+- âœ… Invalid provider
+- âœ… Invalid method
+- âœ… Authentication cancelled (KeyboardInterrupt)
+- âœ… Authentication timeout
+- âœ… Auth data validation
 
 **Handlers:**
-- ✅ Env var detection and usage
-- ✅ Manual input
-- ✅ Invalid input handling
-- ✅ OAuth flow (local mode)
-- ✅ OAuth flow (VPS mode)
+- âœ… Env var detection and usage
+- âœ… Manual input
+- âœ… Invalid input handling
+- âœ… OAuth flow (local mode)
+- âœ… OAuth flow (VPS mode)
 
 **OAuth Callback:**
-- ✅ Successful callback
-- ✅ Invalid state (CSRF protection)
-- ✅ Timeout handling
+- âœ… Successful callback
+- âœ… Invalid state (CSRF protection)
+- âœ… Timeout handling
 
 **CLI:**
-- ✅ `kabot auth login <provider>`
-- ✅ `kabot auth login <provider> --method <method>`
-- ✅ `kabot auth methods <provider>`
-- ✅ Invalid provider/method
+- âœ… `kabot auth login <provider>`
+- âœ… `kabot auth login <provider> --method <method>`
+- âœ… `kabot auth methods <provider>`
+- âœ… Invalid provider/method
 
 ---
 
-## 📚 Documentation
+## ðŸ“š Documentation
 
 ### Files to Update/Create
 
@@ -907,7 +907,7 @@ tests/
 
 ---
 
-## 📅 Implementation Timeline
+## ðŸ“… Implementation Timeline
 
 ### Phase 1: Foundation (Week 1)
 - Menu structure refactor
@@ -944,26 +944,26 @@ tests/
 
 ---
 
-## 🔄 Migration & Backward Compatibility
+## ðŸ”„ Migration & Backward Compatibility
 
 ### Backward Compatibility
 
-- ✅ **Zero breaking changes**
-- ✅ Existing API key flows work unchanged
-- ✅ Single-method providers auto-skip menu
-- ✅ Config format unchanged
+- âœ… **Zero breaking changes**
+- âœ… Existing API key flows work unchanged
+- âœ… Single-method providers auto-skip menu
+- âœ… Config format unchanged
 
 ### Migration Path for Users
 
 ```bash
 # Before (v0.x)
 kabot auth login openai
-# → Always API key
+# â†’ Always API key
 
 # After (v1.x)
 kabot auth login openai
-# → Shows method menu if multiple methods
-# → Auto-uses API key if single method
+# â†’ Shows method menu if multiple methods
+# â†’ Auto-uses API key if single method
 
 # Direct method selection (new)
 kabot auth login openai --method oauth
@@ -978,7 +978,7 @@ kabot auth login openai --method oauth
 
 ---
 
-## 📊 Success Metrics
+## ðŸ“Š Success Metrics
 
 ### Functionality
 - [ ] All 6 providers working with all methods
@@ -1003,7 +1003,7 @@ kabot auth login openai --method oauth
 
 ---
 
-## 🚨 Risks & Mitigations
+## ðŸš¨ Risks & Mitigations
 
 ### Risk 1: OAuth Callback Port Conflicts
 **Risk**: Port 8765 might be in use
@@ -1027,7 +1027,7 @@ kabot auth login openai --method oauth
 
 ---
 
-## 🎯 Future Enhancements (Out of Scope)
+## ðŸŽ¯ Future Enhancements (Out of Scope)
 
 - Device Flow (GitHub Copilot style)
 - Additional providers (DeepSeek, xAI, Groq)
@@ -1038,9 +1038,11 @@ kabot auth login openai --method oauth
 
 ---
 
-## ✅ Approval
+## âœ… Approval
 
 **Design Approved**: 2026-02-12
 **Next Steps**: Create implementation plan
 
 **Implementation Plan**: See `docs/plans/2026-02-12-multi-method-auth-implementation.md`
+
+

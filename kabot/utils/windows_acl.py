@@ -1,7 +1,7 @@
-"""
+﻿"""
 Windows ACL (Access Control List) security checker.
 
-Pattern from OpenClaw: security/windows-acl.ts
+Pattern from Kabot: security/windows-acl.ts
 Uses icacls to check file/directory permissions on Windows.
 """
 
@@ -303,3 +303,5 @@ class WindowsACL:
 
         path_str = str(path).lower()
         return any(pattern in path_str for pattern in sensitive_patterns)
+
+

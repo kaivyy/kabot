@@ -33,6 +33,7 @@ from kabot.cron.callbacks import (
 from kabot.cron.callbacks import (
     strip_reminder_context as _strip_reminder_context_impl,
 )
+from kabot.utils.workspace_templates import ensure_workspace_templates
 
 app = typer.Typer(
     name="kabot",
@@ -348,7 +349,6 @@ def setup(
 ):
     """Interactive setup wizard for configuring kabot."""
     from kabot.config.loader import get_config_path, save_config
-    from kabot.utils.helpers import get_workspace_path
 
     config_path = get_config_path()
 
@@ -370,7 +370,7 @@ def setup(
         console.print(f"\n[green]✓ Configuration saved to {config_path}[/green]")
 
         # Create workspace and templates
-        workspace = get_workspace_path()
+        workspace = Path(config.agents.defaults.workspace).expanduser()
         _create_workspace_templates(workspace)
         console.print(f"[green]✓ Workspace ready at {workspace}[/green]")
 
@@ -407,74 +407,10 @@ def config(
 
 def _create_workspace_templates(workspace: Path):
     """Create default workspace template files."""
-    templates = {
-        "AGENTS.md": """# Agent Instructions
-
-You are a helpful AI assistant. Be concise, accurate, and friendly.
-
-## Guidelines
-
-- Always explain what you're doing before taking actions
-- Ask for clarification when the request is ambiguous
-- Use tools to help accomplish tasks
-- Remember important information in your memory files
-""",
-        "SOUL.md": """# Soul
-
-I am kabot, a lightweight AI assistant.
-
-## Personality
-
-- Helpful and friendly
-- Concise and to the point
-- Curious and eager to learn
-
-## Values
-
-- Accuracy over speed
-- User privacy and safety
-- Transparency in actions
-""",
-        "USER.md": """# User
-
-Information about the user goes here.
-
-## Preferences
-
-- Communication style: (casual/formal)
-- Timezone: (your timezone)
-- Language: (your preferred language)
-""",
-    }
-
-    for filename, content in templates.items():
-        file_path = workspace / filename
-        if not file_path.exists():
-            file_path.write_text(content)
-            console.print(f"  [dim]Created {filename}[/dim]")
-
-    # Create memory directory and MEMORY.md
-    memory_dir = workspace / "memory"
-    memory_dir.mkdir(exist_ok=True)
-    memory_file = memory_dir / "MEMORY.md"
-    if not memory_file.exists():
-        memory_file.write_text("""# Long-term Memory
-
-This file stores important information that should persist across sessions.
-
-## User Information
-
-(Important facts about the user)
-
-## Preferences
-
-(User preferences learned over time)
-
-## Important Notes
-
-(Things to remember)
-""")
-        console.print("  [dim]Created memory/MEMORY.md[/dim]")
+    created = ensure_workspace_templates(workspace)
+    for file_path in created:
+        relative = file_path.relative_to(workspace)
+        console.print(f"  [dim]Created {relative}[/dim]")
 
 
 def _merge_fallbacks(primary: str, *groups: list[str]) -> list[str]:
@@ -487,6 +423,62 @@ def _merge_fallbacks(primary: str, *groups: list[str]) -> list[str]:
             if model not in merged:
                 merged.append(model)
     return merged
+
+
+def _provider_has_credentials(provider_config) -> bool:
+    """Check if provider has any usable credentials configured."""
+    if not provider_config:
+        return False
+
+    if provider_config.api_key or provider_config.setup_token:
+        return True
+
+    active_id = getattr(provider_config, "active_profile", "default")
+    profiles = getattr(provider_config, "profiles", {}) or {}
+    active = profiles.get(active_id)
+    if active and (active.api_key or active.oauth_token or active.setup_token):
+        return True
+
+    for profile in profiles.values():
+        if profile.api_key or profile.oauth_token or profile.setup_token:
+            return True
+
+    return False
+
+
+def _implicit_runtime_fallbacks(config, primary: str, explicit_chain: list[str]) -> list[str]:
+    """
+    Build implicit runtime fallback chain when user did not configure one explicitly.
+
+    Rule:
+    - Only when the user has no explicit fallback chain.
+    - Only for OpenAI/OpenAI-Codex primaries.
+    - If Groq credentials exist, inject Groq Llama-4 Scout as emergency failover.
+    """
+    if explicit_chain:
+        return []
+
+    primary_l = str(primary or "").lower()
+    if not (primary_l.startswith("openai/") or primary_l.startswith("openai-codex/")):
+        return []
+
+    groq_cfg = getattr(getattr(config, "providers", None), "groq", None)
+    if not _provider_has_credentials(groq_cfg):
+        return []
+
+    return ["groq/meta-llama/llama-4-scout-17b-16e-instruct"]
+
+
+def _resolve_runtime_fallbacks(
+    config,
+    primary: str,
+    model_fallbacks: list[str],
+    provider_fallbacks: list[str],
+) -> list[str]:
+    """Resolve effective runtime fallback chain (explicit + implicit)."""
+    explicit_chain = _merge_fallbacks(primary, model_fallbacks, provider_fallbacks)
+    implicit_chain = _implicit_runtime_fallbacks(config, primary, explicit_chain)
+    return _merge_fallbacks(primary, explicit_chain, implicit_chain)
 
 
 def _resolve_model_runtime(config) -> tuple[str, list[str]]:
@@ -519,7 +511,34 @@ def _make_provider(config):
     p = config.get_provider(model)
     provider_name = config.get_provider_name(model)
     provider_fallbacks = list(p.fallbacks) if p else []
-    runtime_fallbacks = _merge_fallbacks(model, model_fallbacks, provider_fallbacks)
+    runtime_fallbacks = _resolve_runtime_fallbacks(
+        config=config,
+        primary=model,
+        model_fallbacks=model_fallbacks,
+        provider_fallbacks=provider_fallbacks,
+    )
+    runtime_models = [model, *runtime_fallbacks]
+
+    provider_api_keys: dict[str, str] = {}
+    provider_api_bases: dict[str, str] = {}
+    provider_extra_headers: dict[str, dict[str, str]] = {}
+    for runtime_model in runtime_models:
+        provider_name_for_model = config.get_provider_name(runtime_model)
+        if not provider_name_for_model:
+            continue
+
+        runtime_key = _resolve_api_key_with_refresh(config, runtime_model)
+        if runtime_key:
+            provider_api_keys[provider_name_for_model] = runtime_key
+
+        runtime_api_base = config.get_api_base(runtime_model)
+        if runtime_api_base:
+            provider_api_bases[provider_name_for_model] = runtime_api_base
+
+        runtime_provider_cfg = config.get_provider(runtime_model)
+        runtime_headers = getattr(runtime_provider_cfg, "extra_headers", None)
+        if runtime_headers:
+            provider_extra_headers[provider_name_for_model] = dict(runtime_headers)
 
     # Special handling for Letta provider
     if provider_name == "letta":
@@ -532,7 +551,7 @@ def _make_provider(config):
         )
 
     # Check for credentials (API key or OAuth token)
-    api_key = _resolve_api_key_with_refresh(config, model)
+    api_key = provider_api_keys.get(provider_name or "") or _resolve_api_key_with_refresh(config, model)
     if not api_key and not model.startswith("bedrock/"):
         console.print("[red]Error: No API key or OAuth token configured.[/red]")
         console.print("Set one in ~/.kabot/config.json under providers section")
@@ -540,11 +559,14 @@ def _make_provider(config):
 
     return LiteLLMProvider(
         api_key=api_key,
-        api_base=config.get_api_base(model),
+        api_base=provider_api_bases.get(provider_name or "") or config.get_api_base(model),
         default_model=model,
         extra_headers=p.extra_headers if p else None,
         provider_name=provider_name,
         fallbacks=runtime_fallbacks,
+        provider_api_keys=provider_api_keys,
+        provider_api_bases=provider_api_bases,
+        provider_extra_headers=provider_extra_headers,
     )
 
 
@@ -553,13 +575,13 @@ def _inject_skill_env(config):
     if not hasattr(config, "skills"):
         return
 
+    from kabot.config.skills_settings import iter_skill_env_pairs
+
     count = 0
-    for skill_name, skill_cfg in config.skills.items():
-        env_vars = skill_cfg.get("env", {})
-        for key, value in env_vars.items():
-            if key and value and key not in os.environ:
-                os.environ[key] = value
-                count += 1
+    for _, key, value in iter_skill_env_pairs(config.skills):
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+            count += 1
     if count > 0:
         console.print(f"[dim]Injected {count} skill environment variables[/dim]")
 
@@ -689,10 +711,11 @@ def gateway(
 
     runtime_model, model_fallbacks = _resolve_model_runtime(config)
     p = config.get_provider(runtime_model)
-    runtime_fallbacks = _merge_fallbacks(
-        runtime_model,
-        model_fallbacks,
-        list(p.fallbacks) if p else [],
+    runtime_fallbacks = _resolve_runtime_fallbacks(
+        config=config,
+        primary=runtime_model,
+        model_fallbacks=model_fallbacks,
+        provider_fallbacks=list(p.fallbacks) if p else [],
     )
 
     # Create agent with cron service
@@ -740,11 +763,22 @@ def gateway(
     )
 
     # Create webhook server
+    gateway_security_headers = getattr(getattr(config.gateway, "http", None), "security_headers", None)
     webhook_server = WebhookServer(
         bus,
         auth_token=config.gateway.auth_token or None,
         meta_verify_token=getattr(getattr(config.integrations, "meta", None), "verify_token", None),
         meta_app_secret=getattr(getattr(config.integrations, "meta", None), "app_secret", None),
+        strict_transport_security=bool(
+            getattr(gateway_security_headers, "strict_transport_security", False)
+        ),
+        strict_transport_security_value=str(
+            getattr(
+                gateway_security_headers,
+                "strict_transport_security_value",
+                "max-age=31536000; includeSubDomains",
+            )
+        ),
     )
 
     # Create channel manager
@@ -854,10 +888,11 @@ def agent(
 
     runtime_model, model_fallbacks = _resolve_model_runtime(config)
     p = config.get_provider(runtime_model)
-    runtime_fallbacks = _merge_fallbacks(
-        runtime_model,
-        model_fallbacks,
-        list(p.fallbacks) if p else [],
+    runtime_fallbacks = _resolve_runtime_fallbacks(
+        config=config,
+        primary=runtime_model,
+        model_fallbacks=model_fallbacks,
+        provider_fallbacks=list(p.fallbacks) if p else [],
     )
 
     # Initialize CronService (required for reminder tools)
@@ -1246,20 +1281,12 @@ def channels_status():
 @channels_app.command("login")
 def channels_login():
     """Link device via QR code."""
-    import subprocess
+    from kabot.cli.bridge_utils import run_bridge_login
+    from kabot.config.loader import load_config
 
-    from kabot.cli.bridge_utils import get_bridge_dir
-    bridge_dir = get_bridge_dir()
-
-    console.print(f"{__logo__} Starting bridge...")
-    console.print("Scan the QR code to connect.\n")
-
-    try:
-        subprocess.run(["npm", "start"], cwd=bridge_dir, check=True)
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]Bridge failed: {e}[/red]")
-    except FileNotFoundError:
-        console.print("[red]npm not found. Please install Node.js.[/red]")
+    config = load_config()
+    bridge_url = config.channels.whatsapp.bridge_url
+    run_bridge_login(stop_when_connected=False, bridge_url=bridge_url)
 
 
 # ============================================================================

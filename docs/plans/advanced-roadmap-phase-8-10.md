@@ -1,11 +1,11 @@
-# Advanced Kabot Roadmap: Phases 8-10 🚀
+﻿# Advanced Kabot Roadmap: Phases 8-10 ðŸš€
 *Detailed Technical Specification - 2026-02-15*
 
-Master blueprint for elevating Kabot to enterprise-grade, mirroring OpenClaw's architecture.
+Master blueprint for elevating Kabot to enterprise-grade, mirroring Kabot's architecture.
 
 ---
 
-## ⚙️ Phase 8: System Internals
+## âš™ï¸ Phase 8: System Internals
 
 ### 1. Slash Command Router (`kabot/core/router.py`)
 
@@ -31,11 +31,11 @@ class CommandRouter:
 | `env_vars` | Check required vars | Prompt user |
 
 ### 4. Update System (`kabot/infra/update.py`)
-Git Pull → Dep Check → Install → Doctor → Restart
+Git Pull â†’ Dep Check â†’ Install â†’ Doctor â†’ Restart
 
 ---
 
-## 🏗️ Phase 9: Architecture Overhaul
+## ðŸ—ï¸ Phase 9: Architecture Overhaul
 
 ### 1. MsgContext Schema (`kabot/core/types.py`)
 ```python
@@ -46,7 +46,7 @@ class MsgContext(BaseModel):
 ```
 
 ### 2. Input Adaptors (`kabot/channels/`)
-- `InputMonitor(ABC)` → `start()`, `on_event(raw)` → normalize → dispatch
+- `InputMonitor(ABC)` â†’ `start()`, `on_event(raw)` â†’ normalize â†’ dispatch
 - Implementations: `WebMonitor`, `WhatsappMonitor`
 
 ### 3. Directives (`kabot/core/directives.py`)
@@ -59,7 +59,7 @@ class MsgContext(BaseModel):
 
 ---
 
-## 🔌 Phase 10: Plugin System
+## ðŸ”Œ Phase 10: Plugin System
 
 ### 1. Manifest (`plugin.json`)
 ```json
@@ -67,7 +67,9 @@ class MsgContext(BaseModel):
 ```
 
 ### 2. Loader (`kabot/plugins/loader.py`)
-Scan `plugins/` → parse manifest → `importlib.import_module` → `register()`
+Scan `plugins/` â†’ parse manifest â†’ `importlib.import_module` â†’ `register()`
 
 ### 3. Hooks (`kabot/core/hooks.py`)
 Events: `ON_MESSAGE`, `PRE_LLM_CALL`, `POST_LLM_CALL`, `ON_TOOL_CALL`
+
+

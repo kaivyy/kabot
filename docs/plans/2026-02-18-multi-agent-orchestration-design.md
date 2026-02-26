@@ -1,4 +1,4 @@
-# Multi-Agent Orchestration System Design
+﻿# Multi-Agent Orchestration System Design
 
 **Date**: 2026-02-18
 **Status**: Design Phase
@@ -15,7 +15,7 @@ This design implements a multi-agent orchestration system that enables:
 
 ## Current State Analysis
 
-**Kabot & OpenClaw Current Architecture:**
+**Kabot & Kabot Current Architecture:**
 - Both only support parent-child task delegation
 - No agent-to-agent peer communication
 - No role-based model assignment
@@ -182,32 +182,32 @@ multi_agent:
 **Example Flow**:
 ```
 User: "Implement user authentication"
-  ↓
+  â†“
 Master Agent (GPT-4o):
   - Analyzes request
   - Delegates to Brainstorming Agent: "Design auth approaches"
-  ↓
+  â†“
 Brainstorming Agent (Claude Sonnet):
   - Proposes 3 approaches
   - Returns design options
-  ↓
+  â†“
 Master Agent:
   - Selects approach
   - Delegates to Executor Agent: "Implement JWT auth"
-  ↓
+  â†“
 Executor Agent (Kimi):
   - Writes code
   - Runs tests
   - Returns implementation
-  ↓
+  â†“
 Master Agent:
   - Delegates to Verifier Agent: "Review auth implementation"
-  ↓
+  â†“
 Verifier Agent (Claude Sonnet):
   - Reviews code
   - Checks security
   - Returns feedback
-  ↓
+  â†“
 Master Agent:
   - Aggregates all results
   - Responds to user
@@ -334,31 +334,31 @@ Master Agent:
 
 ```
 kabot/
-├── agent/
-│   ├── agent_registry.py       # NEW: Agent tracking
-│   ├── agent_comm.py           # NEW: Agent-to-agent communication
-│   ├── role_manager.py         # NEW: Role-based assignment
-│   ├── coordinator.py          # NEW: Task coordination
-│   ├── mode_manager.py         # NEW: Mode selection
-│   └── loop.py                 # MODIFIED: Check mode, route to coordinator
-├── bot/
-│   └── bot_registry.py         # NEW: Multi-bot tracking
-├── bus/
-│   └── queue.py                # MODIFIED: Add agent_messages queue
-└── config/
-    └── schema.py               # MODIFIED: Add multi_agent config
+â”œâ”€â”€ agent/
+â”‚   â”œâ”€â”€ agent_registry.py       # NEW: Agent tracking
+â”‚   â”œâ”€â”€ agent_comm.py           # NEW: Agent-to-agent communication
+â”‚   â”œâ”€â”€ role_manager.py         # NEW: Role-based assignment
+â”‚   â”œâ”€â”€ coordinator.py          # NEW: Task coordination
+â”‚   â”œâ”€â”€ mode_manager.py         # NEW: Mode selection
+â”‚   â””â”€â”€ loop.py                 # MODIFIED: Check mode, route to coordinator
+â”œâ”€â”€ bot/
+â”‚   â””â”€â”€ bot_registry.py         # NEW: Multi-bot tracking
+â”œâ”€â”€ bus/
+â”‚   â””â”€â”€ queue.py                # MODIFIED: Add agent_messages queue
+â””â”€â”€ config/
+    â””â”€â”€ schema.py               # MODIFIED: Add multi_agent config
 
 tests/
-├── agent/
-│   ├── test_agent_registry.py
-│   ├── test_agent_comm.py
-│   ├── test_role_manager.py
-│   ├── test_coordinator.py
-│   └── test_mode_manager.py
-├── bot/
-│   └── test_bot_registry.py
-└── integration/
-    └── test_multi_agent_workflow.py
+â”œâ”€â”€ agent/
+â”‚   â”œâ”€â”€ test_agent_registry.py
+â”‚   â”œâ”€â”€ test_agent_comm.py
+â”‚   â”œâ”€â”€ test_role_manager.py
+â”‚   â”œâ”€â”€ test_coordinator.py
+â”‚   â””â”€â”€ test_mode_manager.py
+â”œâ”€â”€ bot/
+â”‚   â””â”€â”€ test_bot_registry.py
+â””â”€â”€ integration/
+    â””â”€â”€ test_multi_agent_workflow.py
 ```
 
 ## Security Considerations
@@ -386,14 +386,14 @@ tests/
 
 ## Success Criteria
 
-1. ✅ Multiple agents can communicate with each other
-2. ✅ Role-based model assignment works correctly
-3. ✅ Task coordination distributes work appropriately
-4. ✅ Multiple bots can share one agent pool
-5. ✅ Users can switch between single/multi modes
-6. ✅ One model can power multiple agents/bots
-7. ✅ All tests pass (unit + integration)
-8. ✅ Performance acceptable (< 2x overhead vs single-agent)
+1. âœ… Multiple agents can communicate with each other
+2. âœ… Role-based model assignment works correctly
+3. âœ… Task coordination distributes work appropriately
+4. âœ… Multiple bots can share one agent pool
+5. âœ… Users can switch between single/multi modes
+6. âœ… One model can power multiple agents/bots
+7. âœ… All tests pass (unit + integration)
+8. âœ… Performance acceptable (< 2x overhead vs single-agent)
 
 ## Next Steps
 
@@ -402,3 +402,5 @@ tests/
 3. Implement components in order (Phase 1-6)
 4. Integration testing
 5. Documentation and examples
+
+

@@ -1,9 +1,9 @@
-# Advanced Kabot Features Specification 🚀
-*Based on OpenClaw "Gold Standard" Architecture - 2026-02-15*
+﻿# Advanced Kabot Features Specification ðŸš€
+*Based on Kabot "Gold Standard" Architecture - 2026-02-15*
 
-This document outlines the design for adding enterprise-grade management features to Kabot, mirroring the capabilities found in OpenClaw.
+This document outlines the design for adding enterprise-grade management features to Kabot, mirroring the capabilities found in Kabot.
 
-## 1. Modular Slash Command System (`/switch`, `/status`) ⚡
+## 1. Modular Slash Command System (`/switch`, `/status`) âš¡
 
 **Goal**: Allow users to control Kabot via chat commands (e.g., changing models, checking status) without breaking the conversation flow.
 
@@ -29,12 +29,12 @@ Instead of hardcoding commands in the `AgentLoop`, we will introduce a `CommandR
 
 ---
 
-## 2. Software Update System (`kbt update`) 🔄
+## 2. Software Update System (`kbt update`) ðŸ”„
 
 **Goal**: Enable Kabot to update itself from the git repository, handling dependencies and rebuilds automatically.
 
-### OpenClaw Pattern
-OpenClaw uses a CLI command (`openclaw update`) that orchestrates a multi-step workflow.
+### Kabot Pattern
+Kabot uses a CLI command (`kabot update`) that orchestrates a multi-step workflow.
 
 ### Implementation Plan
 - **Service**: `kabot.infra.update.UpdateService`
@@ -47,12 +47,12 @@ OpenClaw uses a CLI command (`openclaw update`) that orchestrates a multi-step w
 
 ---
 
-## 3. Database & System Doctor (`kbt doctor`) 🩺
+## 3. Database & System Doctor (`kbt doctor`) ðŸ©º
 
 **Goal**: Automatic diagnosis and repair of system state, database schemas, and configuration.
 
-### OpenClaw Pattern
-OpenClaw uses a "Doctor" concept that runs a series of checks and offers "Auto-Fix" solutions (including migrations).
+### Kabot Pattern
+Kabot uses a "Doctor" concept that runs a series of checks and offers "Auto-Fix" solutions (including migrations).
 
 ### Implementation Plan
 - **Service**: `kabot.core.doctor.DoctorService`
@@ -67,7 +67,7 @@ OpenClaw uses a "Doctor" concept that runs a series of checks and offers "Auto-F
 
 ---
 
-## 4. System Control & Network Management 🎛️
+## 4. System Control & Network Management ðŸŽ›ï¸
 
 **Goal**: low-level system control (restart modem, restart service).
 
@@ -76,11 +76,11 @@ OpenClaw uses a "Doctor" concept that runs a series of checks and offers "Auto-F
 - **Functions**:
   - `restart_service()`: Uses `systemctl restart kabot` (Linux) or `subprocess` (Windows/Docker).
   - `restart_network()`: Executes platform-specific network restart commands (e.g., `ipconfig /renew` or router API calls via `RouterTool`).
-  - **Notification**: On startup, Kabot checks a "restart_flag" file. If present, it sends a "I'm back online! 🟢" message to the last user.
+  - **Notification**: On startup, Kabot checks a "restart_flag" file. If present, it sends a "I'm back online! ðŸŸ¢" message to the last user.
 
 ---
 
-## 5. Speed & Benchmarking (`/benchmark`) 🏎️
+## 5. Speed & Benchmarking (`/benchmark`) ðŸŽï¸
 
 **Goal**: Measure and compare AI model performance.
 
@@ -98,9 +98,9 @@ OpenClaw uses a "Doctor" concept that runs a series of checks and offers "Auto-F
 ```markdown
 | Model | TTFT (ms) | TPS | Status |
 | :--- | :--- | :--- | :--- |
-| GPT-4o | 450ms | 80 | 🟢 Fast |
-| Gemini 1.5 | 800ms | 120 | 🚀 Turbo |
-| Local LLM | 1200ms | 30 | 🐢 Slow |
+| GPT-4o | 450ms | 80 | ðŸŸ¢ Fast |
+| Gemini 1.5 | 800ms | 120 | ðŸš€ Turbo |
+| Local LLM | 1200ms | 30 | ðŸ¢ Slow |
 ```
 
 ---
@@ -112,3 +112,5 @@ OpenClaw uses a "Doctor" concept that runs a series of checks and offers "Auto-F
 2. **Status & Benchmark**: Create `StatusService` and `BenchmarkTool`.
 3. **Doctor & Update**: Create `DoctorService` and `UpdateService`.
 4. **Integration**: Wire everything into the CLI and Agent Loop.
+
+

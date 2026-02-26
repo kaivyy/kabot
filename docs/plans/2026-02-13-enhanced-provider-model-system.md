@@ -1,8 +1,8 @@
-# Enhanced Provider & Model System Implementation Plan
+﻿# Enhanced Provider & Model System Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Transform Kabot's model management into a mature, plugin-based system supporting extensive metadata, dynamic scanning, and aliases (OpenClaw-style).
+**Goal:** Transform Kabot's model management into a mature, plugin-based system supporting extensive metadata, dynamic scanning, and aliases (Kabot-style).
 
 **Architecture:** 
 1. **Model Metadata Schema**: Define strict types for model properties (cost, context, capabilities).
@@ -110,3 +110,5 @@ Show a beautiful Rich table with prices, context window, and status (configured/
 
 **Step 3: Documentation**
 Update `docs/models/` with the new system details.
+
+

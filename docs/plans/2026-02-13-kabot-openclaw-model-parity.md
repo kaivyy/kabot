@@ -1,4 +1,4 @@
-# Kabot OpenClaw-Style Model & Provider System (v2.0)
+﻿# Kabot Kabot-Style Model & Provider System (v2.0)
 
 **Date**: 2026-02-13
 **Status**: Draft / Design
@@ -7,10 +7,10 @@
 
 ---
 
-## 📋 Executive Summary
+## ðŸ“‹ Executive Summary
 
 ### Problem Statement
-Current Kabot (v1.0.0) has a solid foundation for multi-method auth, but model management is still "static" and lacks the depth found in OpenClaw. Users cannot easily discover new models, see accurate pricing, or use short aliases for complex model IDs.
+Current Kabot (v1.0.0) has a solid foundation for multi-method auth, but model management is still "static" and lacks the depth found in Kabot. Users cannot easily discover new models, see accurate pricing, or use short aliases for complex model IDs.
 
 ### Objective
 Rebuild the Provider and Model system to support:
@@ -21,7 +21,7 @@ Rebuild the Provider and Model system to support:
 
 ---
 
-## 🏗️ Architecture Overview
+## ðŸ—ï¸ Architecture Overview
 
 ### Current Architecture (LiteLLM-Direct)
 ```
@@ -42,7 +42,7 @@ User (Alias/ID) -> Smart Resolver
 
 ---
 
-## 📦 Component Design
+## ðŸ“¦ Component Design
 
 ### 1. Data Models (`kabot/providers/models.py`)
 Every model is treated as a `ModelMetadata` object:
@@ -58,12 +58,12 @@ Every model is treated as a `ModelMetadata` object:
 ### 2. Provider Plugins (`kabot/providers/plugins/`)
 Each folder contains:
 - `__init__.py`: Registration logic.
-- `manifest.py`: Static list of models (OpenClaw-style).
+- `manifest.py`: Static list of models (Kabot-style).
 - `auth.py`: Existing auth handlers (already implemented in v1.0.0).
 
 ---
 
-## 📅 Implementation Phases
+## ðŸ“… Implementation Phases
 
 ### Phase 1: Foundation & Registry (Week 1)
 - **Metadata Definitions**: Implement Pydantic models for Model properties.
@@ -98,7 +98,7 @@ Each folder contains:
 
 ---
 
-## 🛠️ CLI Command Specification
+## ðŸ› ï¸ CLI Command Specification
 
 | Command | Action |
 | :--- | :--- |
@@ -109,7 +109,7 @@ Each folder contains:
 
 ---
 
-## 🧪 Testing & Success Criteria
+## ðŸ§ª Testing & Success Criteria
 
 ### Success Metrics
 - [ ] Support for 25+ providers via Hybrid Registry.
@@ -121,3 +121,5 @@ Each folder contains:
 - **Alias Test**: `resolve("sonnet")` returns full Anthropic ID.
 - **Metadata Test**: Registry returns correct context window for `kimi-k2.5`.
 - **Scan Test**: Adding a new model via LiteLLM is detected by `models scan`.
+
+

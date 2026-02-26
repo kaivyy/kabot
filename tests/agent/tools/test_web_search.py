@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from kabot.agent.tools.web_search import WebSearchTool
+
+
+class _DummyResponse:
+    def __init__(self, payload: dict[str, Any], status_code: int = 200):
+        self._payload = payload
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+class _DummyAsyncClient:
+    def __init__(self, payload: dict[str, Any], status_code: int = 200):
+        self._payload = payload
+        self._status_code = status_code
+
+    async def __aenter__(self) -> "_DummyAsyncClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def post(self, *args: Any, **kwargs: Any) -> _DummyResponse:
+        return _DummyResponse(self._payload, status_code=self._status_code)
+
+
+def test_web_search_provider_explicit_kimi():
+    tool = WebSearchTool(provider="kimi", kimi_api_key="kimi-key-1")
+    assert tool.provider == "kimi"
+
+
+def test_web_search_provider_auto_uses_kimi_when_key_present():
+    tool = WebSearchTool(provider="auto", kimi_api_key="kimi-key-1")
+    assert tool.provider == "kimi"
+
+
+@pytest.mark.asyncio
+async def test_web_search_kimi_parses_text_and_sources(monkeypatch):
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": "Kimi answer",
+                    "annotations": [
+                        {"url": "https://example.com/a"},
+                        {"uri": "https://example.com/b"},
+                    ],
+                }
+            }
+        ],
+        "citations": ["https://example.com/c"],
+    }
+    monkeypatch.setattr(
+        "kabot.agent.tools.web_search.httpx.AsyncClient",
+        lambda: _DummyAsyncClient(payload),
+    )
+
+    tool = WebSearchTool(
+        provider="kimi",
+        kimi_api_key="kimi-key-1",
+        kimi_model="kimi-k2.5",
+    )
+    result = await tool.execute("kimi parsing query")
+
+    assert "[Kimi]" in result
+    assert "Kimi answer" in result
+    assert "https://example.com/a" in result
+    assert "https://example.com/c" in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_kimi_fallback_to_brave(monkeypatch):
+    tool = WebSearchTool(
+        provider="kimi",
+        kimi_api_key="kimi-key-1",
+        api_key="brave-key-1",
+    )
+
+    async def _boom(query: str) -> str:
+        raise RuntimeError("kimi unavailable")
+
+    async def _brave(query: str, count: int) -> str:
+        return "brave-fallback-ok"
+
+    monkeypatch.setattr(tool, "_search_kimi", _boom)
+    monkeypatch.setattr(tool, "_search_brave", _brave)
+
+    result = await tool.execute("fallback query")
+    assert "brave-fallback-ok" in result

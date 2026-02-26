@@ -115,6 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Skills Config Migration Key Integrity**:
   - Preserved constant-style env keys (e.g. `OPENAI_API_KEY`) during config camel/snake normalization and migration write-back.
   - Added migration persistence path that writes migrated config atomically with timestamped backup copy.
+- **Wizard Select Non-TTY Crash**:
+  - Fixed `kabot config` traceback in non-interactive/piped terminals (`NoConsoleScreenBufferError` from prompt_toolkit).
+  - `ClackUI.clack_select()` now falls back safely when stdin/stdout are not TTY while keeping normal interactive UX unchanged.
+  - Added regression test for non-TTY select fallback.
 - **CLI Skill Env Injection Format Gap**:
   - CLI startup env injection now supports both `skills.entries` and legacy flat `skills.<name>.env`.
 - **Codex Tool-Call Context Integrity (Cron/Tools)**:

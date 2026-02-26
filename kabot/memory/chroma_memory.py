@@ -1,4 +1,4 @@
-"""ChromaDB-based memory manager with Ollama embeddings and SQLite metadata."""
+﻿"""ChromaDB-based memory manager with Ollama embeddings and SQLite metadata."""
 
 import hashlib
 import math
@@ -27,7 +27,7 @@ class HybridMemoryManager(MemoryBackend):
     - Ollama: Local embeddings (no API cost)
     - SQLite: Metadata and parent-child relationships
 
-    Prevents OpenClaw's amnesia issues by:
+    Prevents Kabot's amnesia issues by:
     1. Maintaining proper parent-child message chains
     2. Never truncating tool results aggressively
     3. Preserving full conversation context
@@ -694,7 +694,7 @@ class HybridMemoryManager(MemoryBackend):
         """
         Get recent conversation context with full message chains.
 
-        Unlike OpenClaw's aggressive pruning, this preserves:
+        Unlike Kabot's aggressive pruning, this preserves:
         - Full tool call details
         - Complete tool results
         - Proper parent-child relationships
@@ -797,7 +797,7 @@ class HybridMemoryManager(MemoryBackend):
         """
         Compact old messages while preserving important context.
 
-        Unlike OpenClaw's aggressive compaction, this:
+        Unlike Kabot's aggressive compaction, this:
         1. Keeps recent N messages intact
         2. Summarizes older messages into key facts
         3. Maintains tool result references
@@ -864,7 +864,7 @@ class HybridMemoryManager(MemoryBackend):
 
         return provider_info
 
-    # ── Lessons (Metacognition) ─────────────────────────────────
+    # â”€â”€ Lessons (Metacognition) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def save_lesson(self, trigger: str, mistake: str, fix: str,
                           guardrail: str, score_before: int | None = None,
@@ -895,3 +895,5 @@ class HybridMemoryManager(MemoryBackend):
 
 # Backward compatibility alias
 ChromaMemoryManager = HybridMemoryManager
+
+

@@ -1,4 +1,4 @@
-# Kabot Memory System - Modular Architecture
+﻿# Kabot Memory System - Modular Architecture
 
 ## Overview
 
@@ -9,80 +9,80 @@ Kabot's memory system is a modular, swappable architecture designed to prevent *
 ### High-Level Design
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      User Configuration                      │
-│                    (config.json or Wizard)                   │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-                             ▼
-                    ┌────────────────┐
-                    │ MemoryFactory  │
-                    │  (Dispatcher)  │
-                    └────────┬───────┘
-                             │
-         ┌───────────────────┼───────────────────┐
-         │                   │                   │
-         ▼                   ▼                   ▼
-┌─────────────────┐  ┌──────────────┐  ┌─────────────────┐
-│ HybridMemory    │  │ SQLiteMemory │  │   NullMemory    │
-│ (Full Power)    │  │ (Lightweight)│  │   (Disabled)    │
-└─────────────────┘  └──────────────┘  └─────────────────┘
-         │                   │                   │
-         ▼                   ▼                   ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    MemoryBackend ABC                         │
-│  (Contract: add_message, search_memory, remember_fact, etc.) │
-└─────────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                      User Configuration                      â”‚
+â”‚                    (config.json or Wizard)                   â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                             â”‚
+                             â–¼
+                    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+                    â”‚ MemoryFactory  â”‚
+                    â”‚  (Dispatcher)  â”‚
+                    â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜
+                             â”‚
+         â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+         â”‚                   â”‚                   â”‚
+         â–¼                   â–¼                   â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ HybridMemory    â”‚  â”‚ SQLiteMemory â”‚  â”‚   NullMemory    â”‚
+â”‚ (Full Power)    â”‚  â”‚ (Lightweight)â”‚  â”‚   (Disabled)    â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚                   â”‚                   â”‚
+         â–¼                   â–¼                   â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                    MemoryBackend ABC                         â”‚
+â”‚  (Contract: add_message, search_memory, remember_fact, etc.) â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ### Hybrid Backend Architecture (Default)
 
 ```
-┌─────────────────┐
-│   User Message  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  Sentence-Transformers  │  ← Pure Python, Free
-│  (Embedding Model)      │     all-MiniLM-L6-v2
-│                         │     Lazy Loading
-└────────┬────────────────┘
-         │                 ┌──────────────────────┐
-         │                 │  Auto-Unload Timer   │
-         │                 │  (5min idle)         │
-         │                 │  → Unload Model      │
-         │                 │  → Free ~550MB RAM   │
-         │                 └──────────────────────┘
-         ▼
-┌─────────────────────────┐
-│       ChromaDB          │  ← Vector Storage
-│   (Semantic Search)     │     Cosine Similarity
-└────────┬────────────────┘
-         │
-         ├─────────────────┐
-         │                 │
-         ▼                 ▼
-┌─────────────┐   ┌──────────────┐
-│   BM25      │   │  Smart Router│
-│ (Keyword)   │   │  (Episodic/  │
-│             │   │  Knowledge)  │
-└─────────────┘   └──────────────┘
-         │                 │
-         └────────┬────────┘
-                  ▼
-         ┌─────────────────┐
-         │    Reranker     │
-         │ (Temporal Decay │
-         │  + MMR Diversity)│
-         └────────┬────────┘
-                  │
-                  ▼
-         ┌─────────────────┐
-         │     SQLite      │  ← Metadata & Relationships
-         │ (Parent-Child   │     Proper Message Trees
-         │     Chain)      │
-         └─────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚   User Message  â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚
+         â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚  Sentence-Transformers  â”‚  â† Pure Python, Free
+â”‚  (Embedding Model)      â”‚     all-MiniLM-L6-v2
+â”‚                         â”‚     Lazy Loading
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚                 â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+         â”‚                 â”‚  Auto-Unload Timer   â”‚
+         â”‚                 â”‚  (5min idle)         â”‚
+         â”‚                 â”‚  â†’ Unload Model      â”‚
+         â”‚                 â”‚  â†’ Free ~550MB RAM   â”‚
+         â”‚                 â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚       ChromaDB          â”‚  â† Vector Storage
+â”‚   (Semantic Search)     â”‚     Cosine Similarity
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚
+         â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+         â”‚                 â”‚
+         â–¼                 â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚   BM25      â”‚   â”‚  Smart Routerâ”‚
+â”‚ (Keyword)   â”‚   â”‚  (Episodic/  â”‚
+â”‚             â”‚   â”‚  Knowledge)  â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚                 â”‚
+         â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                  â–¼
+         â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+         â”‚    Reranker     â”‚
+         â”‚ (Temporal Decay â”‚
+         â”‚  + MMR Diversity)â”‚
+         â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                  â”‚
+                  â–¼
+         â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+         â”‚     SQLite      â”‚  â† Metadata & Relationships
+         â”‚ (Parent-Child   â”‚     Proper Message Trees
+         â”‚     Chain)      â”‚
+         â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ## Components
@@ -254,7 +254,7 @@ When you first start Kabot with hybrid memory backend, you'll see:
 Loading sentence-transformers model: all-MiniLM-L6-v2
 Warning: You are sending unauthenticated requests to the HF Hub.
 Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-Loading weights: 100%|████████████████████| 103/103 [00:00<00:00, 1843.23it/s]
+Loading weights: 100%|â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ| 103/103 [00:00<00:00, 1843.23it/s]
 ```
 
 **This warning is normal and can be ignored!** The model downloads successfully without authentication.
@@ -395,9 +395,9 @@ def _configure_memory(self) -> None:
     backend = ClackUI.clack_select(
         "Memory backend",
         choices=[
-            "Hybrid (ChromaDB + SQLite + BM25) — Full power",
-            "SQLite Only — Lightweight, no embeddings",
-            "Disabled — No memory at all",
+            "Hybrid (ChromaDB + SQLite + BM25) â€” Full power",
+            "SQLite Only â€” Lightweight, no embeddings",
+            "Disabled â€” No memory at all",
         ]
     )
 
@@ -413,9 +413,9 @@ def _configure_memory(self) -> None:
 
 **Access**: Run `kabot config` and select "Memory" from the menu.
 
-## Advantages vs OpenClaw
+## Advantages vs Kabot
 
-| Aspect | OpenClaw | Kabot Memory System |
+| Aspect | Kabot | Kabot Memory System |
 |--------|----------|---------------------|
 | **Parent Chain** | Broken during compaction | Always preserved |
 | **Tool Results** | Aggressively truncated | Stored completely |
@@ -496,10 +496,10 @@ pip install chromadb>=0.4.18 sentence-transformers>=2.2.0 torch
 ```
 
 **Installed Versions**:
-- ✅ chromadb 1.5.0
-- ✅ sentence-transformers 5.2.2
-- ✅ torch 2.10.0
-- ✅ numpy 2.2.6
+- âœ… chromadb 1.5.0
+- âœ… sentence-transformers 5.2.2
+- âœ… torch 2.10.0
+- âœ… numpy 2.2.6
 
 ### SQLite Only Backend
 
@@ -568,27 +568,27 @@ Memory System:
 
 ```
 kabot/memory/
-├── __init__.py                  # Module exports with lazy loading
-├── memory_backend.py            # Abstract base class (ABC)
-├── memory_factory.py            # Backend factory
-├── chroma_memory.py             # Hybrid backend (ChromaDB + SQLite + BM25)
-├── sqlite_memory.py             # SQLite-only backend
-├── null_memory.py               # Disabled backend (no-op)
-├── sentence_embeddings.py       # Sentence-Transformers provider
-├── ollama_embeddings.py         # Ollama provider (alternative)
-├── sqlite_store.py              # SQLite metadata storage
-├── smart_router.py              # Query routing (episodic/knowledge)
-├── reranker.py                  # Result optimization
-├── episodic_extractor.py        # Fact extraction from conversations
-└── memory_pruner.py             # Old memory cleanup
+â”œâ”€â”€ __init__.py                  # Module exports with lazy loading
+â”œâ”€â”€ memory_backend.py            # Abstract base class (ABC)
+â”œâ”€â”€ memory_factory.py            # Backend factory
+â”œâ”€â”€ chroma_memory.py             # Hybrid backend (ChromaDB + SQLite + BM25)
+â”œâ”€â”€ sqlite_memory.py             # SQLite-only backend
+â”œâ”€â”€ null_memory.py               # Disabled backend (no-op)
+â”œâ”€â”€ sentence_embeddings.py       # Sentence-Transformers provider
+â”œâ”€â”€ ollama_embeddings.py         # Ollama provider (alternative)
+â”œâ”€â”€ sqlite_store.py              # SQLite metadata storage
+â”œâ”€â”€ smart_router.py              # Query routing (episodic/knowledge)
+â”œâ”€â”€ reranker.py                  # Result optimization
+â”œâ”€â”€ episodic_extractor.py        # Fact extraction from conversations
+â””â”€â”€ memory_pruner.py             # Old memory cleanup
 ```
 
 ## Backend Comparison
 
 | Feature | Hybrid | SQLite Only | Disabled |
 |---------|--------|-------------|----------|
-| Semantic search | ✅ Yes | ❌ No | ❌ No |
-| Keyword search | ✅ Yes | ✅ Yes | ❌ No |
+| Semantic search | âœ… Yes | âŒ No | âŒ No |
+| Keyword search | âœ… Yes | âœ… Yes | âŒ No |
 | Memory footprint | ~250MB idle / ~500MB active | ~50MB | 0MB |
 | Startup time | ~5s (on first use) | <1s | <1s |
 | Dependencies | ChromaDB, sentence-transformers | None | None |
@@ -675,10 +675,12 @@ pip install chromadb sentence-transformers
 
 ---
 
-**Status**: ✅ PRODUCTION READY
+**Status**: âœ… PRODUCTION READY
 **Version**: 0.5.6
 **Last Updated**: 2026-02-24
 **Tests**: 60/60 passing
 **Backends**: 3 (Hybrid, SQLite Only, Disabled)
 **Default Model**: all-MiniLM-L6-v2 (384 dimensions)
 **Windows Compatible**: Subprocess communication fixed (v0.5.6)
+
+

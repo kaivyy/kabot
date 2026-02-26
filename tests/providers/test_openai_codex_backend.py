@@ -244,3 +244,55 @@ def test_build_chatgpt_request_adds_default_instructions_when_missing():
 
     assert isinstance(body.get("instructions"), str)
     assert body["instructions"].strip() != ""
+
+
+def test_build_chatgpt_request_drops_orphan_function_call_output_without_assistant_call():
+    body = build_chatgpt_request(
+        model="gpt-5.3-codex",
+        messages=[
+            {
+                "role": "tool",
+                "tool_call_id": "call_orphan_1",
+                "name": "cron",
+                "content": "Created job",
+            },
+            {"role": "user", "content": "lanjut"},
+        ],
+    )
+
+    output_items = [item for item in body["input"] if item.get("type") == "function_call_output"]  # type: ignore[index]
+    assert output_items == []
+
+
+def test_build_chatgpt_request_drops_unmatched_function_call_output_when_ids_mismatch():
+    body = build_chatgpt_request(
+        model="gpt-5.3-codex",
+        messages=[
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_other",
+                        "type": "function",
+                        "function": {
+                            "name": "cron",
+                            "arguments": "{\"action\":\"add\"}",
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_real",
+                "name": "cron",
+                "content": "Created job",
+            },
+            {"role": "user", "content": "lanjut"},
+        ],
+    )
+
+    output_items = [item for item in body["input"] if item.get("type") == "function_call_output"]  # type: ignore[index]
+    function_calls = [item for item in body["input"] if item.get("type") == "function_call"]  # type: ignore[index]
+
+    assert function_calls == []
+    assert output_items == []

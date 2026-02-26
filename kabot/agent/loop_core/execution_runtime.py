@@ -8,6 +8,7 @@ from typing import Any
 from loguru import logger
 
 from kabot.bus.events import InboundMessage, OutboundMessage
+from kabot.utils.text_safety import ensure_utf8_text
 
 
 def _sanitize_error(error_str: str) -> str:
@@ -20,13 +21,14 @@ def _sanitize_error(error_str: str) -> str:
     # Truncate excessively long messages
     if len(sanitized) > 200:
         sanitized = sanitized[:200] + "..."
-    return sanitized
+    return ensure_utf8_text(sanitized)
 
 
 async def run_simple_response(loop: Any, msg: InboundMessage, messages: list) -> str | None:
     """Direct single-shot response for simple queries (no loop, no tools)."""
     try:
-        model = loop._resolve_model_for_message(msg)
+        models_to_try = loop._resolve_models_for_message(msg)
+        model = models_to_try[0]
 
         if loop.context_guard.check_overflow(messages, model):
             logger.warning("Context overflow detected in simple response, compacting history")
@@ -36,18 +38,23 @@ async def run_simple_response(loop: Any, msg: InboundMessage, messages: list) ->
             if loop.context_guard.check_overflow(messages, model):
                 logger.warning("Context still over limit after compaction")
 
-        response = await loop.provider.chat(
-            messages=messages,
-            model=model,
-        )
+        response, error = await loop._call_llm_with_fallback(messages, models_to_try)
+        if not response:
+            error_hint = _sanitize_error(str(error)) if error else "unknown error"
+            return (
+                "An error occurred while processing your message.\n"
+                f"Error: {error_hint}\n\n"
+                "Hint: use /switch <model> to change model, or try again in a moment."
+            )
+
         return response.content or ""
     except Exception as e:
         logger.error(f"Simple response failed: {e}")
         error_hint = _sanitize_error(str(e))
         return (
-            f"\u26a0\ufe0f An error occurred while processing your message.\n"
+            "An error occurred while processing your message.\n"
             f"Error: {error_hint}\n\n"
-            f"\ud83d\udca1 Try: /switch <model> to change model, or try again in a moment."
+            "Hint: use /switch <model> to change model, or try again in a moment."
         )
 
 
@@ -62,6 +69,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     critic_retried = 0
     tool_enforcement_retried = False
     required_tool = loop._required_tool_for_query(msg.content)
+    # Synthetic/system callbacks (cron completion, heartbeat, etc.) should not
+    # trigger hard tool-enforcement loops from reminder/weather keywords inside
+    # system-generated text.
+    if (msg.channel or "").lower() == "system" or (msg.sender_id or "").lower() == "system":
+        required_tool = None
     tools_executed = False
 
     is_weak_model = loop._is_weak_model(model)
@@ -124,9 +136,9 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             # User-friendly error: never expose raw exception / internal URLs
             error_hint = _sanitize_error(str(error)) if error else "unknown error"
             return (
-                f"⚠️ All available AI models failed to respond.\n"
+                f"WARNING: All available AI models failed to respond.\n"
                 f"Error: {error_hint}\n\n"
-                f"💡 Try: /switch <model> to change model, or try again in a moment."
+                f"Tip: Try /switch <model> to change model, or try again in a moment."
             )
 
         if required_tool and response.has_tool_calls:
@@ -234,7 +246,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             if response.has_tool_calls:
                 # If the AI generated tool calls but forgot to say anything,
                 # send a progressive status update to the user automatically.
-                display_content = response.content or "Processing your request, please wait... ⏳"
+                display_content = response.content or "Processing your request, please wait..."
                 await loop.bus.publish_outbound(OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id, content=display_content
                 ))
@@ -332,8 +344,34 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
         {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
         for tc in response.tool_calls
     ]
-    if not response.content:
-        messages = loop.context.add_assistant_message(messages, None, tool_call_dicts, reasoning_content=response.reasoning_content)
+    if response.content:
+        # Keep tool_calls attached to assistant messages even when content exists.
+        # Without this, tool outputs can become orphaned in history and codex
+        # backend may reject the request with "No tool call found ...".
+        attached_to_last = False
+        if messages and isinstance(messages[-1], dict):
+            last = messages[-1]
+            if (
+                last.get("role") == "assistant"
+                and "tool_calls" not in last
+                and str(last.get("content", "")) == str(response.content or "")
+            ):
+                last["tool_calls"] = tool_call_dicts
+                if response.reasoning_content and not last.get("reasoning_content"):
+                    last["reasoning_content"] = response.reasoning_content
+                attached_to_last = True
+
+        if not attached_to_last:
+            messages = loop.context.add_assistant_message(
+                messages,
+                response.content,
+                tool_call_dicts,
+                reasoning_content=response.reasoning_content,
+            )
+    else:
+        messages = loop.context.add_assistant_message(
+            messages, None, tool_call_dicts, reasoning_content=response.reasoning_content
+        )
 
     tc_data = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in response.tool_calls]
     await loop.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data)
@@ -357,7 +395,7 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
         if loop_result.stuck:
             if loop_result.level == "critical":
                 # Block execution and return error
-                error_msg = f"⚠️ Tool loop detected: {loop_result.message}"
+                error_msg = f"WARNING: Tool loop detected: {loop_result.message}"
                 logger.warning(f"Tool loop blocked: {tc.name} - {loop_result.message}")
                 messages = loop.context.add_tool_result(messages, tc.id, tc.name, error_msg)
                 await loop.memory.add_message(
@@ -413,3 +451,4 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
 def format_tool_result(loop: Any, result: Any) -> str:
     """Format tool result for LLM context."""
     return str(result)
+

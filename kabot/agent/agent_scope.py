@@ -1,8 +1,8 @@
-"""Agent scope resolution utilities.
+﻿"""Agent scope resolution utilities.
 
 This module provides functions to resolve agent-specific configuration
 details from the Config object, including default agent, workspace paths,
-model assignments, and OpenClaw-compatible per-agent configs.
+model assignments, and Kabot-compatible per-agent configs.
 """
 
 from pathlib import Path
@@ -239,3 +239,5 @@ def resolve_agent_heartbeat(config: Config, agent_id: str) -> int | None:
         return None
 
     return agent.heartbeat
+
+

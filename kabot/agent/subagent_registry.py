@@ -1,4 +1,4 @@
-"""Persistent subagent registry for tracking background tasks across restarts."""
+﻿"""Persistent subagent registry for tracking background tasks across restarts."""
 
 import json
 import time
@@ -32,7 +32,7 @@ class SubagentRegistry:
     """
     Persistent registry for subagent tasks.
 
-    Pattern from OpenClaw: src/agents/subagent-registry.ts
+    Pattern from Kabot: src/agents/subagent-registry.ts
     Tracks subagent lifecycle across process restarts.
     """
 
@@ -227,3 +227,5 @@ class SubagentRegistry:
 
         except Exception as e:
             logger.error(f"Failed to save subagent registry: {e}")
+
+

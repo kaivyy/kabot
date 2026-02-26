@@ -1,4 +1,4 @@
-"""Configuration schema using Pydantic."""
+﻿"""Configuration schema using Pydantic."""
 
 from __future__ import annotations
 
@@ -104,8 +104,8 @@ class SlackConfig(BaseModel):
 class QQConfig(BaseModel):
     """QQ channel configuration using botpy SDK."""
     enabled: bool = False
-    app_id: str = ""  # 机器人 ID (AppID) from q.qq.com
-    secret: str = ""  # 机器人密钥 (AppSecret) from q.qq.com
+    app_id: str = ""  # æœºå™¨äºº ID (AppID) from q.qq.com
+    secret: str = ""  # æœºå™¨äººå¯†é’¥ (AppSecret) from q.qq.com
     allow_from: list[str] = Field(default_factory=list)  # Allowed user openids (empty = public access)
 
 
@@ -283,17 +283,42 @@ class ProvidersConfig(BaseModel):
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
     openai_codex: ProviderConfig = Field(default_factory=ProviderConfig)
+    mistral: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
+    kilocode: ProviderConfig = Field(default_factory=ProviderConfig)
+    together: ProviderConfig = Field(default_factory=ProviderConfig)
+    venice: ProviderConfig = Field(default_factory=ProviderConfig)
+    huggingface: ProviderConfig = Field(default_factory=ProviderConfig)
+    qianfan: ProviderConfig = Field(default_factory=ProviderConfig)
+    nvidia: ProviderConfig = Field(default_factory=ProviderConfig)
+    xai: ProviderConfig = Field(default_factory=ProviderConfig)
+    cerebras: ProviderConfig = Field(default_factory=ProviderConfig)
+    opencode: ProviderConfig = Field(default_factory=ProviderConfig)
+    xiaomi: ProviderConfig = Field(default_factory=ProviderConfig)
+    volcengine: ProviderConfig = Field(default_factory=ProviderConfig)
+    byteplus: ProviderConfig = Field(default_factory=ProviderConfig)
+    synthetic: ProviderConfig = Field(default_factory=ProviderConfig)
+    cloudflare_ai_gateway: ProviderConfig = Field(default_factory=ProviderConfig)
+    vercel_ai_gateway: ProviderConfig = Field(default_factory=ProviderConfig)
     deepseek: ProviderConfig = Field(default_factory=ProviderConfig)
     groq: ProviderConfig = Field(default_factory=ProviderConfig)
     zhipu: ProviderConfig = Field(default_factory=ProviderConfig)
-    dashscope: ProviderConfig = Field(default_factory=ProviderConfig)  # 阿里云通义千问
+    dashscope: ProviderConfig = Field(default_factory=ProviderConfig)  # é˜¿é‡Œäº‘é€šä¹‰åƒé—®
     vllm: ProviderConfig = Field(default_factory=ProviderConfig)
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     minimax: ProviderConfig = Field(default_factory=ProviderConfig)
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
     letta: ProviderConfig = Field(default_factory=ProviderConfig)  # Letta stateful agent platform
+
+
+class GatewaySecurityHeadersConfig(BaseModel):
+    strict_transport_security: bool = False
+    strict_transport_security_value: str = "max-age=31536000; includeSubDomains"
+
+
+class GatewayHttpConfig(BaseModel):
+    security_headers: GatewaySecurityHeadersConfig = Field(default_factory=GatewaySecurityHeadersConfig)
 
 
 class GatewayConfig(BaseModel):
@@ -303,18 +328,21 @@ class GatewayConfig(BaseModel):
     bind_mode: str = "local" # loopback, local, public
     auth_token: str = ""     # Bearer token for API access
     tailscale: bool = False  # Enable Tailscale exposure
+    http: GatewayHttpConfig = Field(default_factory=GatewayHttpConfig)
 
 
 class WebSearchConfig(BaseModel):
     """Web search tool configuration."""
     api_key: str = ""  # Brave Search API key (default provider)
     max_results: int = 5
-    provider: str = "brave"  # "brave" | "perplexity" | "grok"
+    provider: str = "brave"  # "brave" | "perplexity" | "grok" | "kimi" | "auto"
     cache_ttl_minutes: int = 5
     perplexity_api_key: str = ""
     perplexity_model: str = "sonar-pro"
     xai_api_key: str = ""
     xai_model: str = "grok-3-mini"
+    kimi_api_key: str = ""
+    kimi_model: str = "moonshot-v1-8k"
 
 
 class WebFetchConfig(BaseModel):
@@ -352,6 +380,16 @@ class ToolsConfig(BaseModel):
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
+
+
+class MemoryConfig(BaseModel):
+    """Memory backend configuration."""
+
+    backend: str = "hybrid"  # "hybrid" | "sqlite_only" | "disabled"
+    embedding_provider: str = "sentence"  # "sentence" | "ollama"
+    embedding_model: str | None = None
+    enable_hybrid_search: bool = True
+    auto_unload_timeout: int = 300
 
 
 class BootstrapParityConfig(BaseModel):
@@ -426,9 +464,10 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     bootstrap: BootstrapParityConfig = Field(default_factory=BootstrapParityConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
-    skills: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    skills: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def workspace_path(self) -> Path:
@@ -462,6 +501,31 @@ class Config(BaseSettings):
                 if profile.api_key or profile.oauth_token or profile.setup_token:
                     return True
             return False
+
+        # Match by explicit provider prefix first to avoid ambiguous keyword collisions.
+        # Example: together/moonshotai/... should resolve to provider=together, not moonshot.
+        if "/" in model_lower:
+            prefix = model_lower.split("/", 1)[0]
+            provider_aliases = {
+                "google": "gemini",
+                "google-gemini-cli": "gemini",
+                "qwen-portal": "dashscope",
+                "zai": "zhipu",
+                "z-ai": "zhipu",
+                "x-ai": "xai",
+                "minimax-portal": "minimax",
+                "volcengine-plan": "volcengine",
+                "byteplus-plan": "byteplus",
+            }
+            provider_name = provider_aliases.get(prefix, prefix)
+            for spec in PROVIDERS:
+                if spec.name != provider_name:
+                    continue
+                config_key = spec.name.replace("-", "_")
+                provider_cfg = getattr(self.providers, config_key, None)
+                if provider_cfg and has_credentials(provider_cfg):
+                    return provider_cfg, spec.name
+                break
 
         # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
@@ -578,3 +642,4 @@ class Config(BaseSettings):
             if spec and spec.is_gateway and spec.default_api_base:
                 return spec.default_api_base
         return None
+

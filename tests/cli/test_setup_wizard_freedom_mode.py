@@ -1,13 +1,13 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 from kabot.cli.setup_wizard import SetupWizard
 
 
-def test_set_openclaw_freedom_mode_enables_unrestricted_profile(monkeypatch, tmp_path):
+def test_set_kabot_freedom_mode_enables_unrestricted_profile(monkeypatch, tmp_path):
     monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
     wizard = SetupWizard()
 
-    wizard._set_openclaw_freedom_mode(True)
+    wizard._set_kabot_freedom_mode(True)
 
     assert wizard.config.tools.exec.auto_approve is True
     assert wizard.config.tools.restrict_to_workspace is False
@@ -16,12 +16,12 @@ def test_set_openclaw_freedom_mode_enables_unrestricted_profile(monkeypatch, tmp
     assert wizard.config.integrations.http_guard.deny_hosts == []
 
 
-def test_set_openclaw_freedom_mode_off_restores_safe_defaults(monkeypatch, tmp_path):
+def test_set_kabot_freedom_mode_off_restores_safe_defaults(monkeypatch, tmp_path):
     monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
     wizard = SetupWizard()
-    wizard._set_openclaw_freedom_mode(True)
+    wizard._set_kabot_freedom_mode(True)
 
-    wizard._set_openclaw_freedom_mode(False)
+    wizard._set_kabot_freedom_mode(False)
 
     assert wizard.config.tools.exec.auto_approve is False
     assert wizard.config.integrations.http_guard.enabled is True
@@ -52,3 +52,5 @@ def test_setup_wizard_advanced_mode_shows_full_sections(monkeypatch, tmp_path):
     assert "gateway" in options
     assert "doctor" in options
     assert "logging" in options
+
+

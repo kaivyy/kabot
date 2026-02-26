@@ -1,4 +1,4 @@
-"""Tests for multi-method auth menu structure."""
+﻿"""Tests for multi-method auth menu structure."""
 
 
 def test_auth_providers_has_methods_dict():
@@ -56,3 +56,42 @@ def test_get_method_choices_returns_list():
         assert "id" in choice
         assert "label" in choice
         assert "description" in choice
+
+
+def test_auth_menu_includes_mistral_and_kilocode():
+    from kabot.auth.menu import AUTH_PROVIDERS
+
+    assert "mistral" in AUTH_PROVIDERS
+    assert "kilocode" in AUTH_PROVIDERS
+
+    assert AUTH_PROVIDERS["mistral"]["methods"]["api_key"]["handler"] == (
+        "kabot.auth.handlers.simple.MistralKeyHandler"
+    )
+    assert AUTH_PROVIDERS["kilocode"]["methods"]["api_key"]["handler"] == (
+        "kabot.auth.handlers.simple.KiloCodeKeyHandler"
+    )
+
+
+def test_auth_menu_includes_kabot_parity_providers():
+    from kabot.auth.menu import AUTH_PROVIDERS
+
+    for provider in [
+        "together",
+        "venice",
+        "huggingface",
+        "qianfan",
+        "nvidia",
+        "xai",
+        "cerebras",
+        "opencode",
+        "xiaomi",
+        "volcengine",
+        "byteplus",
+        "synthetic",
+        "cloudflare-ai-gateway",
+        "vercel-ai-gateway",
+    ]:
+        assert provider in AUTH_PROVIDERS
+        assert "api_key" in AUTH_PROVIDERS[provider]["methods"]
+
+

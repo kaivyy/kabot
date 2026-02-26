@@ -1,6 +1,6 @@
-# Phase 9: Architecture Overhaul (OpenClaw Parity) 🏗️
+﻿# Phase 9: Architecture Overhaul (Kabot Parity) ðŸ—ï¸
 
-This phase focuses on refactoring Kabot's core architecture to match the robust, scalable patterns found in the OpenClaw codebase.
+This phase focuses on refactoring Kabot's core architecture to match the robust, scalable patterns found in the Kabot codebase.
 
 ## 1. Input Adaptors (Decoupling Channel Logic)
 
@@ -54,3 +54,5 @@ This phase focuses on refactoring Kabot's core architecture to match the robust,
 -   [ ] Update `config.json` schema to support key lists.
 -   [ ] Implement `rotate_key()` in `AuthManager`.
 -   [ ] Add fallback logic to `ModelRegistry`.
+
+

@@ -39,6 +39,7 @@ class SubagentManager:
         bus: MessageBus,
         model: str | None = None,
         brave_api_key: str | None = None,
+        web_search_config: Any | None = None,
         exec_config: ExecToolConfig | None = None,
         restrict_to_workspace: bool = False,
         http_guard: Any | None = None,
@@ -50,6 +51,7 @@ class SubagentManager:
         self.bus = bus
         self.model = model or provider.get_default_model()
         self.brave_api_key = brave_api_key
+        self.web_search_config = web_search_config
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self.http_guard = http_guard
@@ -154,7 +156,20 @@ class SubagentManager:
                 restrict_to_workspace=self.restrict_to_workspace,
                 auto_approve=bool(getattr(self.exec_config, "auto_approve", False)),
             ))
-            tools.register(WebSearchTool(api_key=self.brave_api_key))
+            search_cfg = self.web_search_config
+            tools.register(
+                WebSearchTool(
+                    api_key=getattr(search_cfg, "api_key", self.brave_api_key),
+                    max_results=getattr(search_cfg, "max_results", 5),
+                    provider=getattr(search_cfg, "provider", "brave"),
+                    perplexity_api_key=getattr(search_cfg, "perplexity_api_key", ""),
+                    perplexity_model=getattr(search_cfg, "perplexity_model", "sonar-pro"),
+                    xai_api_key=getattr(search_cfg, "xai_api_key", ""),
+                    xai_model=getattr(search_cfg, "xai_model", "grok-3-mini"),
+                    kimi_api_key=getattr(search_cfg, "kimi_api_key", ""),
+                    kimi_model=getattr(search_cfg, "kimi_model", "moonshot-v1-8k"),
+                )
+            )
             tools.register(WebFetchTool(http_guard=self.http_guard))
             tools.register(MetaGraphTool(meta_config=self.meta_config))
 

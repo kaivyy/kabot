@@ -1,6 +1,6 @@
 ﻿"""Google Antigravity OAuth handler — PKCE + localhost callback.
 
-Mirrors OpenClaw's extensions/google-antigravity-auth/index.ts.
+Mirrors Kabot's extensions/google-antigravity-auth/index.ts.
 Uses the same client_id, client_secret, scopes, and token endpoint.
 """
 
@@ -21,7 +21,7 @@ from kabot.auth.handlers.base import AuthHandler
 
 console = Console()
 
-# ── OAuth constants (from OpenClaw google-antigravity-auth plugin) ──────────
+# -- OAuth constants (from Kabot google-antigravity-auth plugin) ----------
 GOOGLE_CLIENT_ID = (
     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep"
     ".apps.googleusercontent.com"
@@ -47,12 +47,12 @@ RESPONSE_HTML = """<!DOCTYPE html>
 <body style="font-family:system-ui;display:flex;justify-content:center;
 align-items:center;height:100vh;margin:0;background:#1a1a2e;color:#e0e0e0">
 <div style="text-align:center">
-<h1 style="color:#00d4ff">✓ Authentication complete</h1>
+<h1 style="color:#00d4ff">? Authentication complete</h1>
 <p>You can close this tab and return to the terminal.</p>
 </div></body></html>"""
 
 
-# ── PKCE helpers ────────────────────────────────────────────────────────────
+# -- PKCE helpers ------------------------------------------------------------
 
 def _generate_pkce() -> tuple:
     """Generate PKCE verifier + S256 challenge."""
@@ -62,7 +62,7 @@ def _generate_pkce() -> tuple:
     return verifier, challenge
 
 
-# ── Callback server ────────────────────────────────────────────────────────
+# -- Callback server --------------------------------------------------------
 
 class _CallbackHandler(BaseHTTPRequestHandler):
     """Tiny HTTP handler that captures the OAuth callback."""
@@ -114,7 +114,7 @@ def _wait_for_callback(expected_state: str, timeout: int = 300) -> Optional[str]
     return server._oauth_code  # type: ignore[attr-defined]
 
 
-# ── Token exchange ──────────────────────────────────────────────────────────
+# -- Token exchange ----------------------------------------------------------
 
 def _exchange_code(code: str, verifier: str) -> Dict[str, Any]:
     """Exchange authorization code for tokens."""
@@ -149,7 +149,7 @@ def _fetch_user_email(access_token: str) -> Optional[str]:
     return None
 
 
-# ── Handler ─────────────────────────────────────────────────────────────────
+# -- Handler -----------------------------------------------------------------
 
 class GoogleOAuthHandler(AuthHandler):
     """Handler for Google Antigravity OAuth (PKCE + localhost callback)."""
@@ -183,7 +183,7 @@ class GoogleOAuthHandler(AuthHandler):
 
         try:
             webbrowser.open(auth_url)
-            console.print("[green]→ Browser opened for Google sign-in[/green]")
+            console.print("[green]? Browser opened for Google sign-in[/green]")
             code = _wait_for_callback(state, timeout=300)
         except Exception:
             code = None
@@ -204,11 +204,11 @@ class GoogleOAuthHandler(AuthHandler):
                 code = qs.get("code", [None])[0]
                 cb_state = qs.get("state", [None])[0]
                 if cb_state != state:
-                    console.print("[red]✗ State mismatch — possible CSRF. Please retry.[/red]")
+                    console.print("[red]? State mismatch — possible CSRF. Please retry.[/red]")
                     return None
 
         if not code:
-            console.print("[red]✗ No authorization code received.[/red]")
+            console.print("[red]? No authorization code received.[/red]")
             return None
 
         # Exchange code for tokens
@@ -216,7 +216,7 @@ class GoogleOAuthHandler(AuthHandler):
         try:
             token_data = _exchange_code(code, verifier)
         except httpx.HTTPStatusError as exc:
-            console.print(f"[red]✗ Token exchange failed: {exc.response.text}[/red]")
+            console.print(f"[red]? Token exchange failed: {exc.response.text}[/red]")
             return None
 
         import time
@@ -227,9 +227,9 @@ class GoogleOAuthHandler(AuthHandler):
         # Fetch user email
         email = _fetch_user_email(access_token)
         if email:
-            console.print(f"[green]✓ Authenticated as {email}[/green]")
+            console.print(f"[green]? Authenticated as {email}[/green]")
         else:
-            console.print("[green]✓ Authentication successful[/green]")
+            console.print("[green]? Authentication successful[/green]")
 
         return {
             "providers": {
@@ -244,3 +244,5 @@ class GoogleOAuthHandler(AuthHandler):
                 }
             }
         }
+
+

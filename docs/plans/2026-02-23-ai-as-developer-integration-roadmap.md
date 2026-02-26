@@ -1,10 +1,10 @@
-# AI-as-Developer Integration Roadmap
+﻿# AI-as-Developer Integration Roadmap
 
-> **Integration Document**: This document reconciles `2026-02-23-openclaw-parity.md` (tactical implementation) with `AI-AS-DEVELOPER-GAP-ANALYSIS.md` (strategic analysis) into a unified roadmap.
+> **Integration Document**: This document reconciles `2026-02-23-kabot-parity.md` (tactical implementation) with `AI-AS-DEVELOPER-GAP-ANALYSIS.md` (strategic analysis) into a unified roadmap.
 
 ## Executive Summary
 
-**Purpose**: Achieve OpenClaw parity for Kabot's AI-as-Developer capabilities through a phased approach that combines immediate tactical wins with strategic long-term improvements.
+**Purpose**: Achieve Kabot parity for Kabot's AI-as-Developer capabilities through a phased approach that combines immediate tactical wins with strategic long-term improvements.
 
 **Timeline**:
 - **Phase 0 (Immediate)**: ~95 minutes - 6 tactical modules from parity plan
@@ -19,7 +19,7 @@
 
 ## Phase 0: Immediate Tactical Wins (~95 minutes)
 
-**Goal**: Implement 6 OpenClaw parity modules for immediate impact.
+**Goal**: Implement 6 Kabot parity modules for immediate impact.
 
 ### Task 1: Context Window Guard (P0/HIGH) - 15 min
 **Gap Analysis Mapping**: Auto Compaction (Category 8)
@@ -420,10 +420,10 @@ class WorkspaceGuard:
 **Gap Analysis Reference**: Category 1 (Execute-and-Verify)
 
 **Enhancement**: Add verification templates for common operations
-- File write → Read back and compare
-- Git commit → Verify with git log
-- Package install → Import test
-- Config change → Validate syntax
+- File write â†’ Read back and compare
+- Git commit â†’ Verify with git log
+- Package install â†’ Import test
+- Config change â†’ Validate syntax
 
 **Files**:
 - Enhance: `kabot/agent/verification.py`
@@ -505,11 +505,11 @@ class WorkspaceGuard:
 - Create: `tests/integration/test_ai_as_developer_full.py`
 
 **Test Scenarios**:
-1. Context overflow → Auto-compaction → Continued execution
-2. Tool loop → Detection → Break with explanation
-3. Model failure → Fallback chain → Success
-4. Shell injection attempt → Preflight block → User warning
-5. Subagent spawn → Monitor → Kill on timeout
+1. Context overflow â†’ Auto-compaction â†’ Continued execution
+2. Tool loop â†’ Detection â†’ Break with explanation
+3. Model failure â†’ Fallback chain â†’ Success
+4. Shell injection attempt â†’ Preflight block â†’ User warning
+5. Subagent spawn â†’ Monitor â†’ Kill on timeout
 
 ---
 
@@ -532,25 +532,25 @@ class WorkspaceGuard:
 
 | Feature | Phase 0 | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Priority |
 |---------|---------|---------|---------|---------|---------|----------|
-| Context Window Guard | ✓ | | | | | P0/HIGH |
-| Context Compaction | ✓ | | | | | P0/HIGH |
-| Tool Loop Detection | ✓ | | | | | P1/MEDIUM |
-| Tool Policy Profiles | ✓ | | | | | P1/MEDIUM |
-| Error Classification | ✓ | | | | | P2/LOW |
-| Result Guard | ✓ | | | | | P2/LOW |
-| Model Fallback | | ✓ | | | | HIGH |
-| Preflight Validation | | ✓ | | | | HIGH |
-| Sandbox Validation | | ✓ | | | | HIGH |
-| Workspace Guards | | ✓ | | | | HIGH |
-| Enhanced Verify | | | ✓ | | | MEDIUM |
-| Retry Strategies | | | ✓ | | | MEDIUM |
-| Subagent Monitor | | | ✓ | | | MEDIUM |
-| Kill/Abort | | | | ✓ | | HIGH |
-| Symlink Detection | | | | ✓ | | MEDIUM |
-| Code Validation | | | | ✓ | | MEDIUM |
-| Integration Tests | | | | | ✓ | HIGH |
-| Performance | | | | | ✓ | MEDIUM |
-| Documentation | | | | | ✓ | MEDIUM |
+| Context Window Guard | âœ“ | | | | | P0/HIGH |
+| Context Compaction | âœ“ | | | | | P0/HIGH |
+| Tool Loop Detection | âœ“ | | | | | P1/MEDIUM |
+| Tool Policy Profiles | âœ“ | | | | | P1/MEDIUM |
+| Error Classification | âœ“ | | | | | P2/LOW |
+| Result Guard | âœ“ | | | | | P2/LOW |
+| Model Fallback | | âœ“ | | | | HIGH |
+| Preflight Validation | | âœ“ | | | | HIGH |
+| Sandbox Validation | | âœ“ | | | | HIGH |
+| Workspace Guards | | âœ“ | | | | HIGH |
+| Enhanced Verify | | | âœ“ | | | MEDIUM |
+| Retry Strategies | | | âœ“ | | | MEDIUM |
+| Subagent Monitor | | | âœ“ | | | MEDIUM |
+| Kill/Abort | | | | âœ“ | | HIGH |
+| Symlink Detection | | | | âœ“ | | MEDIUM |
+| Code Validation | | | | âœ“ | | MEDIUM |
+| Integration Tests | | | | | âœ“ | HIGH |
+| Performance | | | | | âœ“ | MEDIUM |
+| Documentation | | | | | âœ“ | MEDIUM |
 
 ---
 
@@ -590,21 +590,21 @@ class WorkspaceGuard:
 ## Cross-References
 
 **From Gap Analysis to Parity Plan**:
-- Category 1 (Execute-and-Verify) → Task 3 (Loop Detection), Task 11 (Enhanced Verify)
-- Category 2 (Auto-Retry) → Task 5 (Error Classification), Task 7 (Model Fallback), Task 12 (Retry Strategies)
-- Category 3 (Orchestration) → Task 13 (Subagent Monitor), Task 14 (Kill/Abort)
-- Category 5 (Tool Policies) → Task 4 (Policy Profiles)
-- Category 6 (Security) → Task 6 (Result Guard), Task 8 (Preflight), Task 9 (Sandbox), Task 10 (Workspace Guards), Task 15 (Symlink Detection)
-- Category 7 (Code Generation) → Task 16 (Code Validation)
-- Category 8 (Context Management) → Task 1 (Context Guard), Task 2 (Compaction)
+- Category 1 (Execute-and-Verify) â†’ Task 3 (Loop Detection), Task 11 (Enhanced Verify)
+- Category 2 (Auto-Retry) â†’ Task 5 (Error Classification), Task 7 (Model Fallback), Task 12 (Retry Strategies)
+- Category 3 (Orchestration) â†’ Task 13 (Subagent Monitor), Task 14 (Kill/Abort)
+- Category 5 (Tool Policies) â†’ Task 4 (Policy Profiles)
+- Category 6 (Security) â†’ Task 6 (Result Guard), Task 8 (Preflight), Task 9 (Sandbox), Task 10 (Workspace Guards), Task 15 (Symlink Detection)
+- Category 7 (Code Generation) â†’ Task 16 (Code Validation)
+- Category 8 (Context Management) â†’ Task 1 (Context Guard), Task 2 (Compaction)
 
 **From Parity Plan to Gap Analysis**:
-- Task 1 (Context Guard) → Category 8 (Context Management)
-- Task 2 (Compaction) → Category 8 (Context Management)
-- Task 3 (Loop Detection) → Category 1 (Execute-and-Verify), Category 2 (Auto-Retry)
-- Task 4 (Policy Profiles) → Category 5 (Tool Policies)
-- Task 5 (Error Classification) → Category 2 (Auto-Retry)
-- Task 6 (Result Guard) → Category 6 (Security & Validation)
+- Task 1 (Context Guard) â†’ Category 8 (Context Management)
+- Task 2 (Compaction) â†’ Category 8 (Context Management)
+- Task 3 (Loop Detection) â†’ Category 1 (Execute-and-Verify), Category 2 (Auto-Retry)
+- Task 4 (Policy Profiles) â†’ Category 5 (Tool Policies)
+- Task 5 (Error Classification) â†’ Category 2 (Auto-Retry)
+- Task 6 (Result Guard) â†’ Category 6 (Security & Validation)
 
 ---
 
@@ -614,7 +614,7 @@ class WorkspaceGuard:
 
 **8 Weeks (Phase 1-4)**: Strategic implementation of remaining gaps with comprehensive testing, documentation, and optimization. This includes more complex features requiring design decisions, integration work, and thorough validation.
 
-**Relationship**: Phase 0 provides immediate value and can be deployed independently. Phases 1-4 build on Phase 0 to achieve complete OpenClaw parity with production-grade quality.
+**Relationship**: Phase 0 provides immediate value and can be deployed independently. Phases 1-4 build on Phase 0 to achieve complete Kabot parity with production-grade quality.
 
 ---
 
@@ -634,8 +634,10 @@ This document should be updated:
 - After each phase completion
 - When new gaps are identified
 - When priorities change based on production feedback
-- When OpenClaw introduces new features
+- When Kabot introduces new features
 
 **Last Updated**: 2026-02-23
 **Version**: 1.0
 **Status**: Ready for Review
+
+

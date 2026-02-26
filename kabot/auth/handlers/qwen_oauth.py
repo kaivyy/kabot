@@ -1,6 +1,6 @@
 ﻿"""Qwen Portal OAuth handler — device code flow.
 
-Mirrors OpenClaw's extensions/qwen-portal-auth/oauth.ts.
+Mirrors Kabot's extensions/qwen-portal-auth/oauth.ts.
 Uses device code grant: user gets a code, opens URL in browser to approve,
 Kabot polls the token endpoint until approved.
 """
@@ -19,7 +19,7 @@ from kabot.auth.handlers.base import AuthHandler
 
 console = Console()
 
-# ── OAuth constants (from OpenClaw qwen-portal-auth plugin) ────────────────
+# -- OAuth constants (from Kabot qwen-portal-auth plugin) ----------------
 QWEN_CLIENT_ID = "f0304373b74a44d2b584a3fb70ca9e56"
 QWEN_BASE_URL = "https://chat.qwen.ai"
 QWEN_DEVICE_CODE_URL = f"{QWEN_BASE_URL}/api/v1/oauth2/device/code"
@@ -29,7 +29,7 @@ QWEN_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 QWEN_API_BASE = "https://portal.qwen.ai/v1"
 
 
-# ── PKCE helper ─────────────────────────────────────────────────────────────
+# -- PKCE helper -------------------------------------------------------------
 
 def _generate_pkce() -> tuple:
     """Generate PKCE verifier + S256 challenge."""
@@ -39,7 +39,7 @@ def _generate_pkce() -> tuple:
     return verifier, challenge
 
 
-# ── Device code flow ────────────────────────────────────────────────────────
+# -- Device code flow --------------------------------------------------------
 
 def _request_device_code(challenge: str) -> Dict[str, Any]:
     """Request a device code from Qwen's OAuth endpoint."""
@@ -102,7 +102,7 @@ def _poll_token(device_code: str, verifier: str) -> Optional[Dict[str, Any]]:
     return data
 
 
-# ── Handler ─────────────────────────────────────────────────────────────────
+# -- Handler -----------------------------------------------------------------
 
 class QwenOAuthHandler(AuthHandler):
     """Handler for Qwen Portal OAuth (device code flow)."""
@@ -123,7 +123,7 @@ class QwenOAuthHandler(AuthHandler):
         try:
             device_data = _request_device_code(challenge)
         except Exception as exc:
-            console.print(f"[red]✗ Failed to get device code: {exc}[/red]")
+            console.print(f"[red]? Failed to get device code: {exc}[/red]")
             return {}
 
         user_code = device_data["user_code"]
@@ -143,7 +143,7 @@ class QwenOAuthHandler(AuthHandler):
         # Try to open browser
         try:
             webbrowser.open(verification_uri)
-            console.print("[green]→ Browser opened[/green]")
+            console.print("[green]? Browser opened[/green]")
         except Exception:
             console.print("[yellow]Could not open browser. Please open the URL manually.[/yellow]")
 
@@ -158,7 +158,7 @@ class QwenOAuthHandler(AuthHandler):
             try:
                 token_data = _poll_token(device_code, verifier)
             except RuntimeError as exc:
-                console.print(f"[red]✗ Qwen OAuth failed: {exc}[/red]")
+                console.print(f"[red]? Qwen OAuth failed: {exc}[/red]")
                 return {}
 
             if token_data:
@@ -167,7 +167,7 @@ class QwenOAuthHandler(AuthHandler):
                 expires_in = token_data.get("expires_in", 3600)  # Default 1 hour
                 resource_url = token_data.get("resource_url", "")
 
-                console.print("[green]✓ Qwen OAuth approved![/green]")
+                console.print("[green]? Qwen OAuth approved![/green]")
 
                 api_base = resource_url if resource_url else QWEN_API_BASE
                 # Normalize base URL
@@ -190,5 +190,7 @@ class QwenOAuthHandler(AuthHandler):
             # Back-off slightly
             interval = min(interval * 1.2, 10)
 
-        console.print("[red]✗ Timed out waiting for Qwen OAuth approval.[/red]")
+        console.print("[red]? Timed out waiting for Qwen OAuth approval.[/red]")
         return {}
+
+

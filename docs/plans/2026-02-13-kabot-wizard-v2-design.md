@@ -1,4 +1,4 @@
-# Design Doc: Kabot Modular Setup Wizard (v2.0)
+﻿# Design Doc: Kabot Modular Setup Wizard (v2.0)
 
 **Date**: 2026-02-13
 **Status**: Design / Detailed Spec
@@ -6,18 +6,18 @@
 
 ---
 
-## 📋 1. Vision & Goals
+## ðŸ“‹ 1. Vision & Goals
 The objective is to replace the current linear setup process with an interactive, modular, and visually professional TUI (Terminal User Interface) that provides real-time feedback about the user's environment.
 
 ### Key Goals:
-- **Aesthetic Parity**: Match the "Clack" library look used by OpenClaw (`┌`, `│`, `└`, `◇`).
+- **Aesthetic Parity**: Match the "Clack" library look used by Kabot (`â”Œ`, `â”‚`, `â””`, `â—‡`).
 - **Non-Linear Configuration**: Allow users to jump directly to "Channels" without re-entering "Model" settings.
 - **Environment Awareness**: Real-time probing of the Gateway port.
 - **Dynamic Content**: Auto-calculate model counts per provider for the selection menu.
 
 ---
 
-## 🏗️ 2. Visual Component Library
+## ðŸ—ï¸ 2. Visual Component Library
 
 ### 2.1 The Logo Header
 A large, multi-line ASCII art logo using standard block characters, followed by a version and tagline string.
@@ -25,23 +25,23 @@ A large, multi-line ASCII art logo using standard block characters, followed by 
 ### 2.2 The "Summary Box"
 A visually distinct panel that appears at the top of the wizard if an existing configuration is detected.
 ```text
-┌  Existing config detected ──────────╮
-│                                     │
-│  Model: anthropic/claude-3-opus     │
-│  Gateway: http://localhost:18790    │
-│                                     │
-├─────────────────────────────────────╯
+â”Œ  Existing config detected â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â•®
+â”‚                                     â”‚
+â”‚  Model: anthropic/claude-3-opus     â”‚
+â”‚  Gateway: http://localhost:18790    â”‚
+â”‚                                     â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â•¯
 ```
 
 ### 2.3 Command Prefixes
-- `◇`: Information / Prompt.
-- `●`: Selected / Active item.
-- `○`: Inactive / Selectable item.
-- `◆`: Multi-select or Action item.
+- `â—‡`: Information / Prompt.
+- `â—`: Selected / Active item.
+- `â—‹`: Inactive / Selectable item.
+- `â—†`: Multi-select or Action item.
 
 ---
 
-## ⚙️ 3. Technical Specifications
+## âš™ï¸ 3. Technical Specifications
 
 ### 3.1 Probing Logic (`kabot/utils/network.py`)
 ```python
@@ -63,7 +63,7 @@ The wizard will maintain a `WizardState` object during the session to track whic
 
 ---
 
-## 📅 4. Phased Implementation Roadmap
+## ðŸ“… 4. Phased Implementation Roadmap
 
 ### Phase 1: Brand & Layout Foundation
 - **UI Toolkit**: Create a `ClackUI` helper class in `setup_wizard.py` to handle consistent indenting and character prefixes.
@@ -92,7 +92,9 @@ The wizard will maintain a `WizardState` object during the session to track whic
 
 ---
 
-## 🧪 5. Testing Plan
+## ðŸ§ª 5. Testing Plan
 1.  **Visual Audit**: Ensure no line breaks or formatting issues across different terminal widths.
 2.  **State Audit**: Verify that selecting a model doesn't erase existing channel settings.
 3.  **Probing Test**: Run `kabot gateway` in a separate window and verify the wizard detects it live.
+
+

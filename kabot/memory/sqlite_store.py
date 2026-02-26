@@ -7,6 +7,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from kabot.utils.text_safety import ensure_utf8_text
+
 
 class SQLiteMetadataStore:
     """
@@ -193,13 +195,14 @@ class SQLiteMetadataStore:
             metadata: Additional metadata
         """
         try:
+            safe_content = ensure_utf8_text(content)
             with self._get_connection() as conn:
                 conn.execute(
                     """INSERT INTO messages
                        (message_id, session_id, parent_id, role, content,
                         message_type, tool_calls, tool_results, metadata)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (message_id, session_id, parent_id, role, content,
+                    (message_id, session_id, parent_id, role, safe_content,
                      message_type,
                      json.dumps(tool_calls) if tool_calls else None,
                      json.dumps(tool_results) if tool_results else None,

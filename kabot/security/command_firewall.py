@@ -1,7 +1,7 @@
-"""
+﻿"""
 Granular command execution firewall.
 
-Pattern from OpenClaw: infra/exec-approvals.ts
+Pattern from Kabot: infra/exec-approvals.ts
 Provides allowlist/deny/ask policies with tamper-proof configuration.
 """
 
@@ -674,3 +674,5 @@ class CommandFirewall:
         except Exception as e:
             logger.error(f"Error adding to allowlist: {e}")
             return False
+
+

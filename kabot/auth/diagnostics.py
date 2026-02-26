@@ -19,7 +19,7 @@ class DependencyStatus:
     error_message: Optional[str] = None
 
 def render_help_panel(tool_name: str, install_cmd: str, docs_url: Optional[str] = None):
-    """Render an OpenClaw-style help panel for a missing dependency."""
+    """Render an Kabot-style help panel for a missing dependency."""
     help_text = Text.from_markup(
         f"\n[bold red]Failed to find {tool_name}.[/bold red]\n\n"
         f"Kabot requires this tool to extract authentication secrets automatically.\n\n"
@@ -63,3 +63,5 @@ class GuidedInstaller:
         except Exception as e:
             console.print(f"[bold red]Installation failed:[/bold red] {e}")
             return False
+
+

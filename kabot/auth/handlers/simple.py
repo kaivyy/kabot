@@ -42,7 +42,8 @@ class SimpleKeyHandler(AuthHandler):
                 return {"providers": {self.provider_id: {"api_key": env_key}}}
 
         # Manual input
-        api_key = secure_input(f"Enter {self._name} API Key")
+        console.print("[dim]Paste key and press Enter. Input is visible.[/dim]")
+        api_key = (Prompt.ask(f"Enter {self._name} API Key", password=False) or "").strip()
 
         if not api_key:
             return None
@@ -69,6 +70,193 @@ class GroqKeyHandler(SimpleKeyHandler):
             "GROQ_API_KEY",
             "https://console.groq.com/keys"
         )
+
+
+class MistralKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "mistral",
+            "Mistral",
+            "MISTRAL_API_KEY",
+            "https://console.mistral.ai/api-keys"
+        )
+
+
+class KiloCodeKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "kilocode",
+            "Kilo Gateway",
+            "KILOCODE_API_KEY",
+            "https://app.kilo.ai"
+        )
+
+
+class TogetherKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "together",
+            "Together AI",
+            "TOGETHER_API_KEY",
+            "https://api.together.xyz/settings/api-keys"
+        )
+
+
+class VeniceKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "venice",
+            "Venice AI",
+            "VENICE_API_KEY",
+            "https://venice.ai"
+        )
+
+
+class HuggingFaceKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "huggingface",
+            "Hugging Face",
+            "HF_TOKEN",
+            "https://huggingface.co/settings/tokens"
+        )
+
+
+class QianfanKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "qianfan",
+            "Qianfan",
+            "QIANFAN_API_KEY",
+            "https://console.bce.baidu.com/qianfan/ais/console/apiKey"
+        )
+
+
+class NvidiaKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "nvidia",
+            "NVIDIA",
+            "NVIDIA_API_KEY",
+            "https://catalog.ngc.nvidia.com/"
+        )
+
+
+class XAIKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "xai",
+            "xAI",
+            "XAI_API_KEY",
+            "https://x.ai"
+        )
+
+
+class CerebrasKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "cerebras",
+            "Cerebras",
+            "CEREBRAS_API_KEY",
+            "https://inference.cerebras.ai"
+        )
+
+
+class OpenCodeKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "opencode",
+            "OpenCode Zen",
+            "OPENCODE_API_KEY",
+            "https://opencode.ai"
+        )
+
+
+class XiaomiKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "xiaomi",
+            "Xiaomi MiMo",
+            "XIAOMI_API_KEY",
+            "https://platform.xiaomimimo.com/#/console/api-keys"
+        )
+
+
+class VolcengineKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "volcengine",
+            "Volcano Engine",
+            "VOLCANO_ENGINE_API_KEY",
+            "https://console.volcengine.com/ark"
+        )
+
+
+class BytePlusKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "byteplus",
+            "BytePlus",
+            "BYTEPLUS_API_KEY",
+            "https://console.byteplus.com/ark"
+        )
+
+
+class SyntheticKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "synthetic",
+            "Synthetic",
+            "SYNTHETIC_API_KEY",
+            "https://api.synthetic.new/"
+        )
+
+
+class CloudflareAIGatewayKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "cloudflare-ai-gateway",
+            "Cloudflare AI Gateway",
+            "CLOUDFLARE_AI_GATEWAY_API_KEY",
+            "https://dash.cloudflare.com/"
+        )
+
+    def authenticate(self) -> Dict[str, Any]:
+        """Ask API key plus account/gateway IDs to build API base URL."""
+        data = super().authenticate()
+        if not data:
+            return None
+
+        account_id = Prompt.ask("Enter Cloudflare Account ID", default="").strip()
+        gateway_id = Prompt.ask("Enter Cloudflare Gateway ID", default="").strip()
+        if account_id and gateway_id:
+            api_base = f"https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/anthropic"
+            data["providers"]["cloudflare-ai-gateway"]["api_base"] = api_base
+        return data
+
+
+class VercelAIGatewayKeyHandler(SimpleKeyHandler):
+    def __init__(self):
+        super().__init__(
+            "vercel-ai-gateway",
+            "Vercel AI Gateway",
+            "AI_GATEWAY_API_KEY",
+            "https://vercel.com/ai-gateway"
+        )
+
+    def authenticate(self) -> Dict[str, Any]:
+        """Ask API key and optionally override API base URL."""
+        data = super().authenticate()
+        if not data:
+            return None
+
+        api_base = Prompt.ask(
+            "Enter Vercel AI Gateway API Base URL",
+            default="https://ai-gateway.vercel.sh/v1"
+        ).strip()
+        if api_base:
+            data["providers"]["vercel-ai-gateway"]["api_base"] = api_base
+        return data
 
 
 class OpenRouterKeyHandler(SimpleKeyHandler):
@@ -156,3 +344,4 @@ class VLLMHandler(SimpleKeyHandler):
                 }
             }
         }
+

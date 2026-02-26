@@ -1,8 +1,10 @@
-"""Configuration loading utilities."""
+﻿"""Configuration loading utilities."""
 
 import json
 import os
 import shutil
+from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -57,8 +59,15 @@ def load_config(config_path: Path | None = None) -> Config:
             # Use utf-8-sig to tolerate BOM-prefixed JSON written by some tools.
             with open(path, encoding="utf-8-sig") as f:
                 data = json.load(f)
-            data = _migrate_config(data)
-            return Config.model_validate(convert_keys(data))
+            original_data = deepcopy(data)
+            migrated_data = _migrate_config(data)
+            if migrated_data != original_data:
+                backup_path = _persist_migrated_config(path, migrated_data)
+                print(
+                    "Info: Migrated legacy config keys to canonical format "
+                    f"(backup: {backup_path})."
+                )
+            return Config.model_validate(convert_keys(migrated_data))
         except (json.JSONDecodeError, ValueError) as e:
             print(f"Warning: Failed to load config from {path}: {e}")
             print("Using default configuration.")
@@ -91,7 +100,7 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
         # Atomic rename (replace existing if possible)
         if os.name == 'nt': # Windows
             if path.exists():
-                # Create backup like OpenClaw
+                # Create backup like Kabot
                 backup_path = path.with_suffix(".json.bak")
                 try:
                     if backup_path.exists():
@@ -190,7 +199,31 @@ def _migrate_config(data: dict) -> dict:
 
         # Prevent validation failure due extra field on current schema.
         data.pop("threads", None)
+
+    # Canonicalize skills structure (entries/load/install).
+    skills_cfg = data.get("skills")
+    if isinstance(skills_cfg, dict):
+        from kabot.config.skills_settings import normalize_skills_settings
+
+        normalized_skills = normalize_skills_settings(skills_cfg)
+        data["skills"] = convert_to_camel(normalized_skills)
     return data
+
+
+def _persist_migrated_config(path: Path, migrated_data: dict) -> Path:
+    """Write migrated config and keep a timestamped pre-migration backup."""
+    backup_dir = path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = backup_dir / f"{path.stem}.{ts}.pre-migration{path.suffix}"
+    if path.exists():
+        shutil.copy2(path, backup_path)
+
+    temp_path = path.with_suffix(".tmp")
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(migrated_data, f, indent=2)
+    os.replace(temp_path, path)
+    return backup_path
 
 
 def convert_keys(data: Any) -> Any:
@@ -211,8 +244,18 @@ def convert_to_camel(data: Any) -> Any:
     return data
 
 
+def _is_constant_style_key(name: str) -> bool:
+    """Return True for constant-style keys like ENV_VAR names."""
+    if not name:
+        return False
+    return all(ch.isupper() or ch.isdigit() or ch == "_" for ch in name)
+
+
 def camel_to_snake(name: str) -> str:
     """Convert camelCase to snake_case."""
+    # Preserve ENV-like constant keys (e.g. OPENAI_API_KEY).
+    if _is_constant_style_key(name):
+        return name
     result = []
     for i, char in enumerate(name):
         if char.isupper() and i > 0:
@@ -223,5 +266,10 @@ def camel_to_snake(name: str) -> str:
 
 def snake_to_camel(name: str) -> str:
     """Convert snake_case to camelCase."""
+    # Preserve ENV-like constant keys (e.g. OPENAI_API_KEY).
+    if _is_constant_style_key(name):
+        return name
     components = name.split("_")
     return components[0] + "".join(x.title() for x in components[1:])
+
+

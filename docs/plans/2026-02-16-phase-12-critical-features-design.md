@@ -1,13 +1,13 @@
-# Phase 12: Critical OpenClaw Features - Design Document
+﻿# Phase 12: Critical Kabot Features - Design Document
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:writing-plans to create implementation plan from this design.
 
 **Date:** 2026-02-16
-**Status:** Design Approved ✅
+**Status:** Design Approved âœ…
 
 ## Goal
 
-Implement critical production reliability features from OpenClaw to prevent bot crashes and enhance user control:
+Implement critical production reliability features from Kabot to prevent bot crashes and enhance user control:
 1. Tool Result Truncation - Prevent context overflow from large tool outputs
 2. Directives Behavior - Complete Phase 11 work by consuming parsed directives
 
@@ -19,9 +19,9 @@ Implement critical production reliability features from OpenClaw to prevent bot 
 - Auth Rotation System
 
 **Current Gaps:**
-- No tool result size limits → bot crashes on large outputs (e.g., `cat huge_file.log`)
-- Directives parsed but not consumed → no behavior modification
-- ~16% OpenClaw feature parity
+- No tool result size limits â†’ bot crashes on large outputs (e.g., `cat huge_file.log`)
+- Directives parsed but not consumed â†’ no behavior modification
+- ~16% Kabot feature parity
 
 **Phase 12 Scope:**
 - Tool Result Truncation (HIGH priority - stability critical)
@@ -111,7 +111,7 @@ class ToolResultTruncator:
         keep_tokens = int(self.threshold * 0.8)
         truncated = self._truncate_to_tokens(result, keep_tokens)
 
-        warning = f"\n\n⚠️ [Output truncated: {token_count} tokens exceeds limit of {self.threshold}. Showing first {keep_tokens} tokens. Use pagination or filters to get specific data.]"
+        warning = f"\n\nâš ï¸ [Output truncated: {token_count} tokens exceeds limit of {self.threshold}. Showing first {keep_tokens} tokens. Use pagination or filters to get specific data.]"
 
         return truncated + warning
 
@@ -140,7 +140,7 @@ class ToolResultTruncator:
 ```
 
 **Key Design Decisions:**
-- **30% limit**: Matches OpenClaw, prevents single tool from dominating context
+- **30% limit**: Matches Kabot, prevents single tool from dominating context
 - **Keep first 80%**: Preserves most important context (beginning of output)
 - **Graceful fallback**: Character-based estimation if tiktoken unavailable
 - **Clear warning**: User knows output was truncated and why
@@ -236,23 +236,23 @@ def _get_tool_permissions(self, session: Session) -> dict:
 
 ```
 User Message
-    ↓
+    â†“
 AgentLoop._process_message()
-    ↓
+    â†“
 Tool Execution (e.g., ExecTool.execute())
-    ↓
+    â†“
 Raw Result (potentially huge - e.g., 200KB log file)
-    ↓
+    â†“
 ToolResultTruncator.truncate(result, tool_name)
-    ↓
-    ├─ Count tokens using tiktoken
-    ├─ If > threshold (38K tokens):
-    │   ├─ Truncate to 80% of threshold (~30K tokens)
-    │   └─ Append warning message
-    └─ Return (truncated or original)
-    ↓
-Truncated Result → LLM Context
-    ↓
+    â†“
+    â”œâ”€ Count tokens using tiktoken
+    â”œâ”€ If > threshold (38K tokens):
+    â”‚   â”œâ”€ Truncate to 80% of threshold (~30K tokens)
+    â”‚   â””â”€ Append warning message
+    â””â”€ Return (truncated or original)
+    â†“
+Truncated Result â†’ LLM Context
+    â†“
 LLM Response (no crash, context preserved)
 ```
 
@@ -262,7 +262,7 @@ User: "cat large_log.txt"
 Tool Output: 200KB text (50K tokens)
 Truncator: Detects 50K > 38K threshold
 Truncator: Keeps first 30K tokens + warning
-LLM sees: 30K tokens + "⚠️ Output truncated..."
+LLM sees: 30K tokens + "âš ï¸ Output truncated..."
 Result: Bot continues working, no crash
 ```
 
@@ -270,9 +270,9 @@ Result: Bot continues working, no crash
 
 ```
 User: "/think /verbose analyze this code"
-    ↓
+    â†“
 DirectiveParser.parse() [Phase 11 - already exists]
-    ↓
+    â†“
 Parsed: {
     has_directives: true,
     think_mode: true,
@@ -280,27 +280,27 @@ Parsed: {
     elevated_mode: false,
     cleaned_message: "analyze this code"
 }
-    ↓
+    â†“
 Store in session.metadata['directives'] = {
     'think': True,
     'verbose': True,
     'elevated': False
 }
-    ↓
+    â†“
 Cleaned message: "analyze this code"
-    ↓
+    â†“
 AgentLoop checks directives at multiple points:
-    │
-    ├─ Before LLM call: _apply_think_mode()
-    │   └─ Inject reasoning system prompt
-    │   └─ Messages: [system_prompt, reasoning_prompt, user_message]
-    │
-    ├─ During tool execution: _get_tool_permissions()
-    │   └─ Set auto_approve=False, restrict_to_workspace=True (elevated=False)
-    │
-    └─ After tool execution: _should_log_verbose()
-        └─ Append tool results to response
-        └─ Response: "Analysis: ...\n\n[DEBUG] Tool: read_file\n[DEBUG] Result: ..."
+    â”‚
+    â”œâ”€ Before LLM call: _apply_think_mode()
+    â”‚   â””â”€ Inject reasoning system prompt
+    â”‚   â””â”€ Messages: [system_prompt, reasoning_prompt, user_message]
+    â”‚
+    â”œâ”€ During tool execution: _get_tool_permissions()
+    â”‚   â””â”€ Set auto_approve=False, restrict_to_workspace=True (elevated=False)
+    â”‚
+    â””â”€ After tool execution: _should_log_verbose()
+        â””â”€ Append tool results to response
+        â””â”€ Response: "Analysis: ...\n\n[DEBUG] Tool: read_file\n[DEBUG] Result: ..."
 ```
 
 **Key Points:**
@@ -343,7 +343,7 @@ def truncate(self, result: str, tool_name: str) -> str:
             return result
 
         truncated = result[:int(max_chars * 0.8)]
-        warning = f"\n\n⚠️ [Output truncated: ~{len(result)} chars exceeds limit.]"
+        warning = f"\n\nâš ï¸ [Output truncated: ~{len(result)} chars exceeds limit.]"
         return truncated + warning
 ```
 
@@ -352,7 +352,7 @@ def truncate(self, result: str, tool_name: str) -> str:
 except Exception as e:
     logger.error(f"Critical truncation error for {tool_name}: {e}")
     # Last resort: return original with warning
-    return result + f"\n\n⚠️ [Truncation failed: {e}]"
+    return result + f"\n\nâš ï¸ [Truncation failed: {e}]"
 ```
 
 ### 2. Directives Error Handling
@@ -433,7 +433,7 @@ def test_truncator_allows_small_results():
     result = truncator.truncate(small_result, "test_tool")
 
     assert result == small_result
-    assert "⚠️" not in result
+    assert "âš ï¸" not in result
 
 def test_truncator_truncates_large_results():
     """Large results are truncated with warning."""
@@ -443,7 +443,7 @@ def test_truncator_truncates_large_results():
     result = truncator.truncate(large_result, "test_tool")
 
     assert len(result) < len(large_result)
-    assert "⚠️" in result
+    assert "âš ï¸" in result
     assert "Output truncated" in result
     assert str(50000) in result  # Shows original token count
 
@@ -467,7 +467,7 @@ def test_truncator_fallback_on_tiktoken_error():
         result = truncator.truncate(large_result, "test_tool")
 
         assert len(result) < len(large_result)
-        assert "⚠️" in result
+        assert "âš ï¸" in result
 
 def test_truncator_handles_empty_result():
     """Handles empty results gracefully."""
@@ -610,7 +610,7 @@ async def test_directives_error_handling():
 
 ```python
 async def test_full_flow_with_truncation():
-    """Test complete flow: user message → tool execution → truncation → LLM response."""
+    """Test complete flow: user message â†’ tool execution â†’ truncation â†’ LLM response."""
     # Setup agent with truncator
     # Execute tool that returns large output
     # Verify output was truncated
@@ -618,7 +618,7 @@ async def test_full_flow_with_truncation():
     # Verify bot didn't crash
 
 async def test_full_flow_with_directives():
-    """Test complete flow: user message with directives → behavior modification."""
+    """Test complete flow: user message with directives â†’ behavior modification."""
     # Send message: "/think /verbose read large_file.txt"
     # Verify directives parsed and stored
     # Verify think mode applied (reasoning prompt injected)
@@ -666,7 +666,7 @@ pytest tests/agent/test_directives_behavior.py --cov=kabot.agent.loop --cov-repo
 
 No new configuration needed. Uses existing:
 - `agents.defaults.max_tokens` (128000) for context window size
-- Tool truncation uses hardcoded 30% share (matches OpenClaw)
+- Tool truncation uses hardcoded 30% share (matches Kabot)
 
 ### Backwards Compatibility
 
@@ -692,29 +692,29 @@ No new configuration needed. Uses existing:
 
 ### Phase 12 Complete When:
 
-1. ✅ **ToolResultTruncator implemented**
+1. âœ… **ToolResultTruncator implemented**
    - Class created with truncate() method
    - Uses tiktoken for token counting
    - Fallback to character-based estimation
    - 30% context window limit enforced
 
-2. ✅ **Directives behavior implemented**
+2. âœ… **Directives behavior implemented**
    - `/think` mode: reasoning prompt + deeper analysis
    - `/verbose` mode: debug logging + intermediate results
    - `/elevated` mode: auto-approve + extended permissions
    - All three directives consumed from session.metadata
 
-3. ✅ **Integration complete**
+3. âœ… **Integration complete**
    - Truncator called after all tool executions
    - Directives checked at appropriate points in AgentLoop
    - No breaking changes to existing functionality
 
-4. ✅ **Tests passing**
+4. âœ… **Tests passing**
    - >80% test coverage for new code
    - All unit tests passing
    - Integration tests passing
 
-5. ✅ **Documentation updated**
+5. âœ… **Documentation updated**
    - Implementation log created
    - User-facing docs explain directives usage
 
@@ -726,10 +726,10 @@ pytest tests/agent/test_truncator.py -v
 pytest tests/agent/test_directives_behavior.py -v
 
 # Manual validation
-# 1. Execute tool with large output → verify truncation
-# 2. Send "/think analyze code" → verify reasoning shown
-# 3. Send "/verbose read file" → verify debug output
-# 4. Send "/elevated exec command" → verify auto-approval
+# 1. Execute tool with large output â†’ verify truncation
+# 2. Send "/think analyze code" â†’ verify reasoning shown
+# 3. Send "/verbose read file" â†’ verify debug output
+# 4. Send "/elevated exec command" â†’ verify auto-approval
 ```
 
 ---
@@ -746,7 +746,9 @@ After design approval:
 
 ## References
 
-- **OpenClaw Analysis**: `docs/openclaw-analysis/deep-technical-findings.md`
-- **Phase 11 Implementation**: `docs/logs/2026-02-15-phase-11-openclaw-parity.md`
-- **Phase 11 Plan**: `docs/plans/2026-02-15-openclaw-parity-phase-11.md`
-- **Verification Report**: Conversation 2026-02-15 (OpenClaw feature verification)
+- **Kabot Analysis**: `docs/kabot-analysis/deep-technical-findings.md`
+- **Phase 11 Implementation**: `docs/logs/2026-02-15-phase-11-kabot-parity.md`
+- **Phase 11 Plan**: `docs/plans/2026-02-15-kabot-parity-phase-11.md`
+- **Verification Report**: Conversation 2026-02-15 (Kabot feature verification)
+
+

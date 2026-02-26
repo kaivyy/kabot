@@ -1,6 +1,6 @@
-/**
+﻿/**
  * WhatsApp client wrapper using Baileys.
- * Based on OpenClaw's working implementation.
+ * Based on Kabot's working implementation.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -50,7 +50,7 @@ export class WhatsAppClient {
 
     console.log(`Using Baileys version: ${version.join('.')}`);
 
-    // Create socket following OpenClaw's pattern
+    // Create socket following Kabot's pattern
     this.sock = makeWASocket({
       auth: {
         creds: state.creds,
@@ -77,7 +77,7 @@ export class WhatsAppClient {
 
       if (qr) {
         // Display QR code in terminal
-        console.log('\n📱 Scan this QR code with WhatsApp (Linked Devices):\n');
+        console.log('\nðŸ“± Scan this QR code with WhatsApp (Linked Devices):\n');
         qrcode.generate(qr, { small: true });
         this.options.onQR(qr);
       }
@@ -98,7 +98,7 @@ export class WhatsAppClient {
           }, 5000);
         }
       } else if (connection === 'open') {
-        console.log('✅ Connected to WhatsApp');
+        console.log('âœ… Connected to WhatsApp');
         this.options.onStatus('connected');
       }
     });
@@ -253,3 +253,5 @@ export class WhatsAppClient {
     }
   }
 }
+
+

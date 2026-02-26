@@ -1,6 +1,6 @@
-"""Agent binding resolution for message routing.
+﻿"""Agent binding resolution for message routing.
 
-This module implements OpenClaw-compatible routing with priority-based matching:
+This module implements Kabot-compatible routing with priority-based matching:
 1. Peer matching (specific user/chat)
 2. Parent peer matching (thread inheritance)
 3. Guild matching (Discord servers)
@@ -129,7 +129,7 @@ def resolve_agent_route(
 ) -> ResolvedRoute:
     """Resolve which agent should handle a message based on bindings.
 
-    Priority order (OpenClaw-compatible):
+    Priority order (Kabot-compatible):
     1. Peer matching (specific user/chat)
     2. Parent peer matching (thread inheritance)
     3. Guild matching (Discord servers)
@@ -257,3 +257,5 @@ def resolve_agent_route(
     # Priority 7: Default agent
     default_agent = resolve_default_agent_id(config)
     return _build_route(default_agent, "default")
+
+

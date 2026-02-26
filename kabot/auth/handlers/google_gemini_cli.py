@@ -13,7 +13,7 @@ console = Console()
 class GoogleGeminiCLIHandler(AuthHandler):
     """
     Advanced OAuth handler that extracts secrets from the @google/gemini-cli tool.
-    Matches OpenClaw behavior for seamless Google integration.
+    Matches Kabot behavior for seamless Google integration.
     """
 
     @property
@@ -35,7 +35,7 @@ class GoogleGeminiCLIHandler(AuthHandler):
 
             if Confirm.ask("\nWould you like me to attempt automatic installation?"):
                 if GuidedInstaller.try_install(install_cmd):
-                    console.print("[green]✓ Installation successful![/green]")
+                    console.print("[green]? Installation successful![/green]")
                     module_path = find_node_module("@google/gemini-cli")
                 else:
                     return {}
@@ -44,7 +44,7 @@ class GoogleGeminiCLIHandler(AuthHandler):
                 return {}
 
         if not module_path:
-            console.print("[red]✗ Still cannot find gemini-cli after install. Please check your PATH.[/red]")
+            console.print("[red]? Still cannot find gemini-cli after install. Please check your PATH.[/red]")
             return {}
 
         # 2. Secret Extraction (The "Detective" Step)
@@ -70,10 +70,10 @@ class GoogleGeminiCLIHandler(AuthHandler):
                 break
 
         if not js_file:
-            console.print("[red]✗ Could not find oauth2.js in the gemini-cli installation.[/red]")
+            console.print("[red]? Could not find oauth2.js in the gemini-cli installation.[/red]")
             return {}
 
-        # Regex patterns from OpenClaw source
+        # Regex patterns from Kabot source
         patterns = {
             "client_id": r"(\d+-[a-z0-9]+\.apps\.googleusercontent\.com)",
             "client_secret": r"(GOCSPX-[A-Za-z0-9_-]+)"
@@ -82,12 +82,12 @@ class GoogleGeminiCLIHandler(AuthHandler):
         secrets = ExtractionEngine.extract_from_file(js_file, patterns)
 
         if "client_id" not in secrets:
-            console.print("[red]✗ Failed to extract Client ID from source code.[/red]")
+            console.print("[red]? Failed to extract Client ID from source code.[/red]")
             return {}
 
         # 3. OAuth Flow
         # Use port 8085 as per Gemini CLI standard
-        console.print(f"[green]✓ Extracted Client ID: {secrets['client_id'][:10]}...[/green]")
+        console.print(f"[green]? Extracted Client ID: {secrets['client_id'][:10]}...[/green]")
 
         # In a real scenario, we would use these extracted secrets to build the Auth URL.
         # For this parity implementation, we trigger the OAuth flow.
@@ -105,3 +105,5 @@ class GoogleGeminiCLIHandler(AuthHandler):
                 }
             }
         }
+
+

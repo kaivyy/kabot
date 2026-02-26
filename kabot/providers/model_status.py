@@ -1,4 +1,6 @@
-"""Model status tracking for setup wizard."""
+﻿"""Model status tracking for setup wizard."""
+
+from kabot.providers.catalog import STATIC_MODEL_CATALOG
 
 WORKING_MODELS = {
     "openai/gpt-4o",
@@ -10,6 +12,7 @@ WORKING_MODELS = {
     "anthropic/claude-3-opus-20240229",
     "google/gemini-1.5-pro",
     "google/gemini-1.5-flash",
+    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
     "groq/llama3-70b-8192",
     "groq/mixtral-8x7b-32768",
 }
@@ -25,7 +28,33 @@ CATALOG_ONLY = {
     "google-gemini-cli/gemini-3-pro-preview",
     "moonshot/kimi-k2.5",
     "minimax/MiniMax-M2.1",
+    "mistral/mistral-large-latest",
+    "mistral/pixtral-large-latest",
+    "kilocode/anthropic/claude-opus-4.6",
+    "kilocode/openai/gpt-5.2",
+    "together/moonshotai/Kimi-K2.5",
+    "together/meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    "together/deepseek-ai/DeepSeek-R1",
+    "venice/llama-3.3-70b",
+    "venice/claude-opus-45",
+    "huggingface/deepseek-ai/DeepSeek-R1",
+    "huggingface/deepseek-ai/DeepSeek-V3.1",
+    "qianfan/deepseek-v3.2",
+    "qianfan/ernie-5.0-thinking-preview",
+    "nvidia/nvidia/llama-3.1-nemotron-70b-instruct",
+    "nvidia/meta/llama-3.3-70b-instruct",
+    "opencode/claude-opus-4-6",
+    "xai/grok-4.1-mini",
+    "cerebras/zai-glm-4.7",
+    "xiaomi/mimo-v2-flash",
+    "volcengine/doubao-seed-1-8-251228",
+    "byteplus/seed-1-8-251228",
 }
+
+# Keep setup status in sync with the static model registry.
+for _metadata in STATIC_MODEL_CATALOG:
+    if _metadata.id not in WORKING_MODELS:
+        CATALOG_ONLY.add(_metadata.id)
 
 UNSUPPORTED_PROVIDERS = {
     "kimi-coding",
@@ -54,9 +83,11 @@ def get_model_status(model_id: str) -> str:
 def get_status_indicator(status: str) -> str:
     """Return visual indicator for status."""
     indicators = {
-        "working": "✓",
-        "catalog": "⚠",
-        "unsupported": "✗",
+        # ASCII-only markers to avoid mojibake in non-UTF8 terminals.
+        "working": "OK",
+        "catalog": "!",
+        "unsupported": "X",
         "unknown": "?",
     }
     return indicators.get(status, "?")
+

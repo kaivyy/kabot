@@ -167,6 +167,36 @@ def _append_assistant_tool_calls(
     return appended
 
 
+def _prune_orphan_tool_outputs(input_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop function_call_output entries that have no paired function_call."""
+    function_call_ids = {
+        str(item.get("call_id")).strip()
+        for item in input_messages
+        if item.get("type") == "function_call" and item.get("call_id")
+    }
+
+    if not function_call_ids:
+        dropped = sum(1 for item in input_messages if item.get("type") == "function_call_output")
+        if dropped:
+            logger.debug(f"Dropping {dropped} orphan function_call_output item(s): no function_call present")
+        return [item for item in input_messages if item.get("type") != "function_call_output"]
+
+    filtered: list[dict[str, Any]] = []
+    dropped = 0
+    for item in input_messages:
+        if item.get("type") == "function_call_output":
+            call_id = str(item.get("call_id") or "").strip()
+            if call_id not in function_call_ids:
+                dropped += 1
+                continue
+        filtered.append(item)
+
+    if dropped:
+        logger.debug(f"Dropping {dropped} orphan function_call_output item(s): missing matching call_id")
+
+    return filtered
+
+
 def build_chatgpt_request(
     model: str,
     messages: List[Dict[str, Any]],
@@ -234,6 +264,9 @@ def build_chatgpt_request(
             if msg.get(field) is not None:
                 normalized[field] = msg.get(field)
         input_messages.append(normalized)
+
+    # Guard against truncated histories that keep tool outputs but lose tool calls.
+    input_messages = _prune_orphan_tool_outputs(input_messages)
 
     body: Dict[str, Any] = {
         "model": model,

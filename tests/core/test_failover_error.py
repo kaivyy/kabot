@@ -29,6 +29,10 @@ def test_timeout_from_message():
     assert resolve_failover_reason(message="Request timed out") == "timeout"
 
 
+def test_503_is_timeout():
+    assert resolve_failover_reason(status=503) == "timeout"
+
+
 def test_400_is_format():
     assert resolve_failover_reason(status=400) == "format"
 
@@ -51,6 +55,15 @@ def test_billing_from_message():
 
 def test_auth_from_message():
     assert resolve_failover_reason(message="invalid api key") == "auth"
+
+
+def test_auth_from_expired_jwt_message():
+    assert (
+        resolve_failover_reason(
+            message='GroqException - {"error":{"message":"invalid or expired jwt","code":"invalid_or_expired_jwt"}}'
+        )
+        == "auth"
+    )
 
 
 def test_should_retry_rate_limit():
@@ -81,3 +94,4 @@ def test_failover_error_exception():
     error = FailoverError("Test error", "rate_limit")
     assert error.reason == "rate_limit"
     assert str(error) == "Test error"
+

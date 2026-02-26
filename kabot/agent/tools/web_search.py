@@ -1,4 +1,6 @@
-"""Web search tool with multi-provider support (Brave, Perplexity, Grok)."""
+"""Web search tool with multi-provider support (Brave, Perplexity, Grok, Kimi)."""
+
+from __future__ import annotations
 
 import os
 from typing import Any
@@ -15,10 +17,11 @@ _SEARCH_CACHE = TTLCache(default_ttl_seconds=300)
 BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 PERPLEXITY_ENDPOINT = "https://api.perplexity.ai/chat/completions"
 XAI_ENDPOINT = "https://api.x.ai/v1/responses"
+KIMI_ENDPOINT = "https://api.moonshot.ai/v1/chat/completions"
 
 
 class WebSearchTool(Tool):
-    """Search the web using Brave, Perplexity, or Grok."""
+    """Search the web using Brave, Perplexity, Grok, or Kimi."""
 
     name = "web_search"
     description = "Search the web. Returns titles, URLs, and snippets."
@@ -26,9 +29,9 @@ class WebSearchTool(Tool):
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Search query"},
-            "count": {"type": "integer", "description": "Results (1-10)", "minimum": 1, "maximum": 10}
+            "count": {"type": "integer", "description": "Results (1-10)", "minimum": 1, "maximum": 10},
         },
-        "required": ["query"]
+        "required": ["query"],
     }
 
     def __init__(
@@ -40,67 +43,114 @@ class WebSearchTool(Tool):
         perplexity_model: str = "sonar-pro",
         xai_api_key: str | None = None,
         xai_model: str = "grok-3-mini",
+        kimi_api_key: str | None = None,
+        kimi_model: str = "moonshot-v1-8k",
         cache_ttl_minutes: int = 5,
     ):
         self.brave_api_key = api_key or os.environ.get("BRAVE_API_KEY", "")
         self.max_results = max_results
+
         self.perplexity_api_key = perplexity_api_key or os.environ.get("PERPLEXITY_API_KEY", "")
         self.perplexity_model = perplexity_model
+
         self.xai_api_key = xai_api_key or os.environ.get("XAI_API_KEY", "")
         self.xai_model = xai_model
+
+        self.kimi_api_key = (
+            kimi_api_key
+            or os.environ.get("KIMI_API_KEY", "")
+            or os.environ.get("MOONSHOT_API_KEY", "")
+        )
+        self.kimi_model = kimi_model
+
         self.cache_ttl = cache_ttl_minutes * 60
 
-        # Auto-detect best available provider
-        if provider == "brave":
-            self.provider = provider
-        elif provider == "perplexity" and self.perplexity_api_key:
-            self.provider = "perplexity"
-        elif provider == "grok" and self.xai_api_key:
-            self.provider = "grok"
+        requested = (provider or "brave").strip().lower()
+        if requested in {"auto", "default"}:
+            self.provider = self._pick_provider()
         else:
-            # Fallback chain: configured → perplexity → grok → brave
-            if self.perplexity_api_key:
-                self.provider = "perplexity"
-            elif self.xai_api_key:
-                self.provider = "grok"
-            else:
-                self.provider = "brave"
+            self.provider = self._pick_provider(preferred=requested)
+
+    def _pick_provider(self, preferred: str | None = None) -> str:
+        has_keys = {
+            "perplexity": bool(self.perplexity_api_key),
+            "grok": bool(self.xai_api_key),
+            "kimi": bool(self.kimi_api_key),
+            "brave": bool(self.brave_api_key),
+        }
+
+        if preferred == "brave":
+            return "brave"
+        if preferred == "perplexity" and has_keys["perplexity"]:
+            return "perplexity"
+        if preferred == "grok" and has_keys["grok"]:
+            return "grok"
+        if preferred == "kimi" and has_keys["kimi"]:
+            return "kimi"
+
+        if preferred and preferred not in {"brave", "perplexity", "grok", "kimi"}:
+            logger.warning(f"Unknown web_search provider '{preferred}', using best available provider")
+
+        for candidate in ("perplexity", "grok", "kimi"):
+            if has_keys[candidate]:
+                return candidate
+
+        return "brave"
+
+    def _fallback_candidates(self, exclude: str) -> list[str]:
+        candidates: list[str] = []
+        if self.perplexity_api_key:
+            candidates.append("perplexity")
+        if self.xai_api_key:
+            candidates.append("grok")
+        if self.kimi_api_key:
+            candidates.append("kimi")
+        if self.brave_api_key:
+            candidates.append("brave")
+
+        return [name for name in candidates if name != exclude]
+
+    async def _run_provider(self, provider: str, query: str, count: int) -> str:
+        if provider == "perplexity":
+            return await self._search_perplexity(query)
+        if provider == "grok":
+            return await self._search_grok(query)
+        if provider == "kimi":
+            return await self._search_kimi(query)
+        return await self._search_brave(query, count)
 
     async def execute(self, query: str, count: int | None = None, **kwargs: Any) -> str:
         n = min(max(count or self.max_results, 1), 10)
 
-        # Check cache
         cache_key = f"{self.provider}:{query}:{n}"
         cached = _SEARCH_CACHE.get(cache_key)
         if cached:
             return f"[cached] {cached}"
 
         try:
-            if self.provider == "perplexity":
-                result = await self._search_perplexity(query)
-            elif self.provider == "grok":
-                result = await self._search_grok(query)
-            else:
-                result = await self._search_brave(query, n)
-
+            result = await self._run_provider(self.provider, query, n)
             _SEARCH_CACHE.set(cache_key, result, self.cache_ttl)
             return result
-
         except Exception as e:
             logger.warning(f"Search failed with {self.provider}: {e}")
-            # Fallback to Brave if premium provider fails
-            if self.provider != "brave" and self.brave_api_key:
+            last_error: Exception = e
+            for fallback_provider in self._fallback_candidates(exclude=self.provider):
                 try:
-                    result = await self._search_brave(query, n)
+                    logger.info(f"Trying web_search fallback provider: {fallback_provider}")
+                    result = await self._run_provider(fallback_provider, query, n)
                     _SEARCH_CACHE.set(cache_key, result, self.cache_ttl)
                     return result
-                except Exception as e2:
-                    return f"Error: All search providers failed. Last: {e2}"
-            return f"Error: {e}"
+                except Exception as fallback_error:
+                    last_error = fallback_error
+                    logger.warning(
+                        f"Search fallback failed with {fallback_provider}: {fallback_error}"
+                    )
+            return f"Error: All search providers failed. Last: {last_error}"
 
     async def _search_brave(self, query: str, count: int) -> str:
         if not self.brave_api_key:
             return "Error: BRAVE_API_KEY not configured"
+
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 BRAVE_ENDPOINT,
@@ -124,6 +174,7 @@ class WebSearchTool(Tool):
     async def _search_perplexity(self, query: str) -> str:
         if not self.perplexity_api_key:
             return "Error: PERPLEXITY_API_KEY not configured"
+
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 PERPLEXITY_ENDPOINT,
@@ -151,6 +202,7 @@ class WebSearchTool(Tool):
     async def _search_grok(self, query: str) -> str:
         if not self.xai_api_key:
             return "Error: XAI_API_KEY not configured"
+
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 XAI_ENDPOINT,
@@ -168,7 +220,6 @@ class WebSearchTool(Tool):
             r.raise_for_status()
 
         data = r.json()
-        # Parse xAI Responses API format
         text = ""
         for output in data.get("output", []):
             if output.get("type") == "message":
@@ -184,3 +235,89 @@ class WebSearchTool(Tool):
         if citations:
             result += "\n\nSources:\n" + "\n".join(f"- {url}" for url in citations[:5])
         return result
+
+    async def _search_kimi(self, query: str) -> str:
+        if not self.kimi_api_key:
+            return "Error: KIMI_API_KEY or MOONSHOT_API_KEY not configured"
+
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                KIMI_ENDPOINT,
+                json={
+                    "model": self.kimi_model,
+                    "messages": [{"role": "user", "content": query}],
+                    "tools": [{"type": "web_search"}],
+                    "tool_choice": "auto",
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.kimi_api_key}",
+                },
+                timeout=30.0,
+            )
+            r.raise_for_status()
+
+        data = r.json()
+        message = data.get("choices", [{}])[0].get("message", {}) or {}
+        content = self._extract_text_content(message.get("content"))
+        if not content:
+            content = self._extract_text_content(data.get("output_text")) or "No response"
+
+        sources = self._extract_sources(data, message)
+        result = f"[Kimi] {content}"
+        if sources:
+            result += "\n\nSources:\n" + "\n".join(f"- {url}" for url in sources[:5])
+        return result
+
+    def _extract_text_content(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip()
+
+        if isinstance(value, dict):
+            for key in ("text", "content", "output_text"):
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            return ""
+
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                extracted = self._extract_text_content(item)
+                if extracted:
+                    parts.append(extracted)
+            return "\n".join(parts).strip()
+
+        return ""
+
+    def _extract_sources(self, payload: dict[str, Any], message: dict[str, Any]) -> list[str]:
+        raw_sources: list[Any] = []
+        raw_sources.extend(payload.get("citations", []) or [])
+        raw_sources.extend(message.get("citations", []) or [])
+        raw_sources.extend(message.get("annotations", []) or [])
+
+        normalized: list[str] = []
+        for item in raw_sources:
+            if isinstance(item, str):
+                candidate = item.strip()
+            elif isinstance(item, dict):
+                candidate = str(
+                    item.get("url")
+                    or item.get("uri")
+                    or item.get("link")
+                    or ""
+                ).strip()
+            else:
+                candidate = ""
+
+            if candidate:
+                normalized.append(candidate)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for url in normalized:
+            if url in seen:
+                continue
+            seen.add(url)
+            deduped.append(url)
+        return deduped

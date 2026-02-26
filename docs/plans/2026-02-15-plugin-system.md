@@ -1,6 +1,6 @@
-# Phase 6: Plugin System Implementation Plan
+﻿# Phase 6: Plugin System Implementation Plan
 
-> **Goal:** Enable dynamic loading of skills/tools from a `plugins/` directory, matching OpenClaw's flexibility.
+> **Goal:** Enable dynamic loading of skills/tools from a `plugins/` directory, matching Kabot's flexibility.
 
 ## Task 18: Plugin Loader & Registry
 
@@ -158,3 +158,5 @@ def plugins_cmd(action: str = "list"):
 ```bash
 git commit -m "feat(cli): add plugins list command"
 ```
+
+

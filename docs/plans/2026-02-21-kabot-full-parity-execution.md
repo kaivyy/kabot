@@ -1,4 +1,4 @@
-# Kabot Full-Parity Execution Record (2026-02-21)
+﻿# Kabot Full-Parity Execution Record (2026-02-21)
 
 ## Scope
 
@@ -8,7 +8,7 @@ Execution reference:
 
 Repositories checked:
 - Kabot: `C:/Users/Arvy Kairi/Desktop/bot/kabot`
-- OpenClaw reference: `C:/Users/Arvy Kairi/Desktop/bot/openclaw`
+- Kabot reference: `C:/Users/Arvy Kairi/Desktop/bot/kabot`
 
 ---
 
@@ -62,9 +62,9 @@ Result:
 
 ---
 
-## OpenClaw Reference Check
+## Kabot Reference Check
 
-Direct existence validation in `C:/Users/Arvy Kairi/Desktop/bot/openclaw`:
+Direct existence validation in `C:/Users/Arvy Kairi/Desktop/bot/kabot`:
 - `src/config/zod-schema.agent-defaults.ts` -> OK
 - `src/config/types.agent-defaults.ts` -> OK
 - `src/agents/subagent-spawn.ts` -> OK
@@ -88,3 +88,5 @@ Direct existence validation in `C:/Users/Arvy Kairi/Desktop/bot/openclaw`:
 
 - Kabot parity roadmap (2026-02-21) is fully executed.
 - Verification state is green and documented.
+
+

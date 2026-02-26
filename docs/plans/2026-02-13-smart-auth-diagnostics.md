@@ -1,4 +1,4 @@
-# Comprehensive Smart Auth Diagnostics & Discovery Design
+﻿# Comprehensive Smart Auth Diagnostics & Discovery Design
 
 **Status**: Draft
 **Date**: 2026-02-13
@@ -7,7 +7,7 @@
 
 ---
 
-## 🏗️ 1. Architectural Overview
+## ðŸ—ï¸ 1. Architectural Overview
 
 The goal is to create a "zero-configuration" experience for complex providers like Google Gemini CLI, where Kabot automatically finds or installs requirements and extracts hidden secrets from local source code.
 
@@ -15,11 +15,11 @@ The goal is to create a "zero-configuration" experience for complex providers li
 - **The Checker (`kabot/auth/diagnostics.py`)**: Responsible for pre-flight validation. It doesn't just check if a file exists; it checks if it's executable and returns the right version.
 - **The Scout (`kabot/auth/discovery.py`)**: A tiered search engine. It starts with the most efficient search (PATH) and falls back to aggressive filesystem scanning if needed.
 - **The Surgeon (`kabot/auth/extraction.py`)**: A new utility to parse non-standard credential files (JS, JSON, YAML) using Regex and AST parsing to pull out OAuth Client IDs.
-- **The UI (`rich` integration)**: Beautiful, OpenClaw-style help boxes that provide actionable instructions.
+- **The UI (`rich` integration)**: Beautiful, Kabot-style help boxes that provide actionable instructions.
 
 ---
 
-## 📂 2. Technical Specification
+## ðŸ“‚ 2. Technical Specification
 
 ### 2.1 Tiered Search Strategy
 Discovery will follow this strict priority:
@@ -40,7 +40,7 @@ For `@google/gemini-cli`, we specifically target `oauth2.js`.
 
 ---
 
-## 📅 3. Phased Implementation Tasks
+## ðŸ“… 3. Phased Implementation Tasks
 
 ### Phase 1: Diagnostic Foundation
 - [ ] **Task 1.1**: Implement `DependencyStatus` dataclass.
@@ -70,7 +70,7 @@ For `@google/gemini-cli`, we specifically target `oauth2.js`.
 
 ---
 
-## 🛡️ 4. Edge Case Handling
+## ðŸ›¡ï¸ 4. Edge Case Handling
 
 | Scenario | Strategy |
 | :--- | :--- |
@@ -81,8 +81,10 @@ For `@google/gemini-cli`, we specifically target `oauth2.js`.
 
 ---
 
-## 🧪 5. Verification Plan
+## ðŸ§ª 5. Verification Plan
 
 1.  **Unit Tests**: Mock `shutil.which` and `os.path.exists` to test all 5 search tiers.
 2.  **Mock Extraction**: Create a fake `oauth2.js` and verify regex accuracy.
-3.  **UI Verification**: Manually trigger the help panel to ensure formatting matches OpenClaw's aesthetic.
+3.  **UI Verification**: Manually trigger the help panel to ensure formatting matches Kabot's aesthetic.
+
+

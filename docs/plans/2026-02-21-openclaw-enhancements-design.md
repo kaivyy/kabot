@@ -1,16 +1,16 @@
-# OpenClaw-Inspired Enhancement Plan
+﻿# Kabot-Inspired Enhancement Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Adapt 6 key features from OpenClaw into Kabot for safety, automation, and interactive UX.
+**Goal:** Adapt 6 key features from Kabot into Kabot for safety, automation, and interactive UX.
 
-**Architecture:** Inside-Out approach — Phase 2 (safety), Phase 3 (cron delivery), Phase 4 (interactive UI), Phase 5 (sandbox). Each phase is independently deployable. All changes use existing Pydantic schema patterns and pytest class-based testing.
+**Architecture:** Inside-Out approach â€” Phase 2 (safety), Phase 3 (cron delivery), Phase 4 (interactive UI), Phase 5 (sandbox). Each phase is independently deployable. All changes use existing Pydantic schema patterns and pytest class-based testing.
 
 **Tech Stack:** Python 3.11+, Pydantic, pytest, python-telegram-bot, discord.py REST API, aiohttp, Docker SDK (optional)
 
 ---
 
-## Task 1: Sub-agent Depth Control — Config Schema
+## Task 1: Sub-agent Depth Control â€” Config Schema
 
 **Files:**
 - Modify: `kabot/config/schema.py:140-186`
@@ -45,7 +45,7 @@ class TestSubagentDefaults:
 **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/config/test_subagent_config.py -v`
-Expected: FAIL — `ImportError: cannot import name 'SubagentDefaults'`
+Expected: FAIL â€” `ImportError: cannot import name 'SubagentDefaults'`
 
 **Step 3: Write implementation**
 
@@ -152,7 +152,7 @@ class TestSubagentLimits:
 **Step 2: Run test**
 
 Run: `pytest tests/agent/test_subagent_limits.py -v`
-Expected: FAIL — `TypeError: __init__() got unexpected keyword argument 'subagent_config'`
+Expected: FAIL â€” `TypeError: __init__() got unexpected keyword argument 'subagent_config'`
 
 **Step 3: Implement**
 
@@ -280,7 +280,7 @@ class TestHeartbeatActiveHours:
         assert result is False
 ```
 
-**Step 2: Run test** → FAIL (import errors)
+**Step 2: Run test** â†’ FAIL (import errors)
 
 **Step 3: Implement**
 
@@ -317,7 +317,7 @@ def is_within_active_hours(start: str, end: str, *, test_hour: int | None = None
 
 Update `HeartbeatService._loop()` to use `is_within_active_hours()`.
 
-**Step 4:** `pytest tests/heartbeat/test_heartbeat_config.py -v` → PASS
+**Step 4:** `pytest tests/heartbeat/test_heartbeat_config.py -v` â†’ PASS
 
 **Step 5: Commit**
 
@@ -373,7 +373,7 @@ class TestResolveDeliveryPlan:
         assert plan["mode"] == "none"
 
     def test_legacy_deliver_true(self):
-        """Jobs without delivery config but deliver=True → announce."""
+        """Jobs without delivery config but deliver=True â†’ announce."""
         job = CronJob(id="j4", name="test",
                       schedule=CronSchedule(kind="every"),
                       payload=CronPayload(message="hi", deliver=True, channel="telegram", to="123"))
@@ -381,7 +381,7 @@ class TestResolveDeliveryPlan:
         assert plan["mode"] == "announce"
 
     def test_legacy_deliver_false(self):
-        """Jobs with deliver=False → none."""
+        """Jobs with deliver=False â†’ none."""
         job = CronJob(id="j5", name="test",
                       schedule=CronSchedule(kind="every"),
                       payload=CronPayload(message="hi", deliver=False))
@@ -389,7 +389,7 @@ class TestResolveDeliveryPlan:
         assert plan["mode"] == "none"
 ```
 
-**Step 2:** `pytest tests/cron/test_cron_delivery_modes.py -v` → FAIL
+**Step 2:** `pytest tests/cron/test_cron_delivery_modes.py -v` â†’ FAIL
 
 **Step 3: Implement**
 
@@ -448,7 +448,7 @@ def infer_delivery(session_key: str) -> dict | None:
     return {"channel": channel, "to": to}
 ```
 
-**Step 4:** `pytest tests/cron/test_cron_delivery_modes.py -v` → PASS
+**Step 4:** `pytest tests/cron/test_cron_delivery_modes.py -v` â†’ PASS
 
 **Step 5: Commit**
 
@@ -509,7 +509,7 @@ class TestWebhookPost:
 
 **Step 2:** FAIL
 
-**Step 3: Implement** — add `_deliver_webhook()` async function to `cron/service.py`:
+**Step 3: Implement** â€” add `_deliver_webhook()` async function to `cron/service.py`:
 
 ```python
 import hashlib, hmac, httpx, json as _json
@@ -579,7 +579,7 @@ class TestBuildInlineKeyboard:
 
 **Step 2:** FAIL
 
-**Step 3: Implement** — add `build_inline_keyboard()` to `channels/telegram.py`:
+**Step 3: Implement** â€” add `build_inline_keyboard()` to `channels/telegram.py`:
 
 ```python
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -621,11 +621,11 @@ git commit -m "feat(telegram): add inline keyboard button support"
 - Modify: `kabot/channels/telegram.py`
 - Test: `tests/channels/test_telegram_callback.py`
 
-**Step 1: Write failing test** — test that callback queries produce `InboundMessage` on bus
+**Step 1: Write failing test** â€” test that callback queries produce `InboundMessage` on bus
 
 **Step 2:** FAIL
 
-**Step 3: Implement** — add `_on_callback_query()` handler, register `CallbackQueryHandler` in `start()`
+**Step 3: Implement** â€” add `_on_callback_query()` handler, register `CallbackQueryHandler` in `start()`
 
 **Step 4:** PASS
 
@@ -796,7 +796,7 @@ git commit -m "feat(sandbox): add Docker sandbox module with exec isolation"
 **Step 1: Prepend new section under `## [Unreleased]`:**
 
 ```markdown
-### Added - OpenClaw-Inspired Enhancements (2026-02-21)
+### Added - Kabot-Inspired Enhancements (2026-02-21)
 
 - **Sub-agent Safety Limits:**
   - Added `SubagentDefaults` config with `max_spawn_depth`, `max_children_per_agent`, `archive_after_minutes`.
@@ -828,7 +828,7 @@ git commit -m "feat(sandbox): add Docker sandbox module with exec isolation"
 
 ```bash
 git add CHANGELOG.md
-git commit -m "docs: update CHANGELOG with OpenClaw-inspired enhancements"
+git commit -m "docs: update CHANGELOG with Kabot-inspired enhancements"
 ```
 
 ---
@@ -847,5 +847,7 @@ Expected: All existing tests + new tests pass. No regressions.
 
 ```bash
 git add -A
-git commit -m "chore: final integration verification for OpenClaw enhancements"
+git commit -m "chore: final integration verification for Kabot enhancements"
 ```
+
+

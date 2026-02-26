@@ -1,8 +1,8 @@
-# OpenClaw Codex Parity Implementation Plan
+﻿# Kabot Codex Parity Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Align kabot with OpenClaw code for OpenAI Codex OAuth, including model normalization, spark catalog fallback, and default model behavior, then port changes to main.
+**Goal:** Align kabot with Kabot code for OpenAI Codex OAuth, including model normalization, spark catalog fallback, and default model behavior, then port changes to main.
 
 **Architecture:** Add a lightweight model-normalization helper in kabot config resolution so `openai/gpt-5.3-codex*` routes to `openai-codex` for credential lookup. Extend the model catalog/status to include `gpt-5.3-codex-spark`, and ensure `agents.defaults.model` supports `str | AgentModelConfig` without breaking summaries or provider matching. Update docs/tests accordingly and apply the same changes to main.
 
@@ -210,7 +210,7 @@ git commit -m "feat(catalog): add codex spark model"
 
 ---
 
-### Task 3: Docs parity with OpenClaw code
+### Task 3: Docs parity with Kabot code
 
 **Files:**
 - Modify: any existing kabot docs that mention Codex/OpenAI defaults (search-driven)
@@ -229,7 +229,7 @@ Run: `rg -n "openai|codex" docs`
 
 ```bash
 git add docs
-git commit -m "docs: align codex oauth defaults with OpenClaw"
+git commit -m "docs: align codex oauth defaults with Kabot"
 ```
 
 ---
@@ -264,14 +264,16 @@ Run targeted tests on main:
 
 ```bash
 git add kabot/config/schema.py kabot/cli/setup_wizard.py kabot/providers/catalog.py kabot/providers/model_status.py tests/config/test_agent_config.py tests/providers/test_model_status.py docs
-git commit -m "feat: align codex oauth parity with OpenClaw"
+git commit -m "feat: align codex oauth parity with Kabot"
 ```
 
 ---
 
-Plan complete and saved to `docs/plans/2026-02-19-openclaw-codex-parity-implementation.md`. Two execution options:
+Plan complete and saved to `docs/plans/2026-02-19-kabot-codex-parity-implementation.md`. Two execution options:
 
-1. **Subagent-Driven (this session)** — I dispatch fresh subagent per task, review between tasks, fast iteration
-2. **Parallel Session (separate)** — Open new session with executing-plans, batch execution with checkpoints
+1. **Subagent-Driven (this session)** â€” I dispatch fresh subagent per task, review between tasks, fast iteration
+2. **Parallel Session (separate)** â€” Open new session with executing-plans, batch execution with checkpoints
 
 Which approach?
+
+

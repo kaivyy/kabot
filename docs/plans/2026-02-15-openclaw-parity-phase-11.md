@@ -1,10 +1,10 @@
-# OpenClaw Parity - Phase 11 Implementation Plan
+﻿# Kabot Parity - Phase 11 Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Implement critical OpenClaw features for production reliability: Auto-Compaction, Directives Parser, and Auth Rotation.
+**Goal:** Implement critical Kabot features for production reliability: Auto-Compaction, Directives Parser, and Auth Rotation.
 
-**Architecture:** Add context management layer, inline command parser, and multi-key auth rotation to match OpenClaw's resilience patterns.
+**Architecture:** Add context management layer, inline command parser, and multi-key auth rotation to match Kabot's resilience patterns.
 
 **Tech Stack:** Python 3.13, pytest, asyncio, tiktoken (token counting)
 
@@ -129,7 +129,7 @@ class ContextGuard:
 
         except ImportError:
             logger.warning("tiktoken not available, using character-based estimation")
-            # Fallback: rough estimate (4 chars ≈ 1 token)
+            # Fallback: rough estimate (4 chars â‰ˆ 1 token)
             total_chars = sum(len(str(msg.get("content", ""))) for msg in messages)
             estimated_tokens = total_chars // 4
             return estimated_tokens > self.threshold
@@ -923,9 +923,9 @@ by automatically rotating to next available API key."
 
 **Phase 11 Implementation Complete:**
 
-1. ✅ **Auto-Compaction** - Prevents context overflow crashes
-2. ✅ **Directives Parser** - Power-user inline commands
-3. ✅ **Auth Rotation** - Production reliability with multi-key support
+1. âœ… **Auto-Compaction** - Prevents context overflow crashes
+2. âœ… **Directives Parser** - Power-user inline commands
+3. âœ… **Auth Rotation** - Production reliability with multi-key support
 
 **Total Tests:** 14 new tests
 **Files Created:** 6 new files
@@ -935,3 +935,5 @@ by automatically rotating to next available API key."
 - Task 4: Input Adaptors (normalize channel events)
 - Task 5: Event Injection (heartbeat with cron results)
 - Task 6: Enhanced Doctor Service
+
+

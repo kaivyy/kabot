@@ -1,7 +1,7 @@
-"""Kimi (Moonshot AI) API Key authentication handler.
+﻿"""Kimi (Moonshot AI) API Key authentication handler.
 
 Supports both international (.ai) and China (.cn) endpoints,
-matching OpenClaw's moonshot-api-key and moonshot-api-key-cn options.
+matching Kabot's moonshot-api-key and moonshot-api-key-cn options.
 """
 
 import os
@@ -15,7 +15,7 @@ from kabot.auth.utils import secure_input
 
 console = Console()
 
-# Moonshot API endpoints (from OpenClaw onboard-auth.models.ts)
+# Moonshot API endpoints (from Kabot onboard-auth.models.ts)
 ENDPOINTS = {
     "international": "https://api.moonshot.ai/v1",
     "china": "https://api.moonshot.cn/v1",
@@ -75,3 +75,5 @@ class KimiKeyHandler(AuthHandler):
                 }
             }
         }
+
+

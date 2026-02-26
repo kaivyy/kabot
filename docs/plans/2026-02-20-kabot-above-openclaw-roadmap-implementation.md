@@ -1,8 +1,8 @@
-# Kabot Above OpenClaw Roadmap Implementation Plan
+﻿# Kabot Above Kabot Roadmap Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Deliver six concrete upgrades (control UI, approvals governance, metrics+SLO, dashboard productization, channel expansion, and head-to-head benchmarking) so Kabot is measurably stronger than OpenClaw in daily operations.
+**Goal:** Deliver six concrete upgrades (control UI, approvals governance, metrics+SLO, dashboard productization, channel expansion, and head-to-head benchmarking) so Kabot is measurably stronger than Kabot in daily operations.
 
 **Architecture:** Build a lightweight control plane on top of existing `aiohttp` gateway primitives, then instrument the runtime with first-party metrics and SLO checks. Keep approvals and channel work modular: extend existing `CommandFirewall` and `ChannelManager` instead of replacing them. Finish with a repeatable benchmark harness that produces comparable evidence, not subjective claims.
 
@@ -368,18 +368,18 @@ git commit -m "feat(channels): add signal and webchat channel adapters with mana
 
 ---
 
-### Task 6: Automated Kabot vs OpenClaw Benchmark Harness
+### Task 6: Automated Kabot vs Kabot Benchmark Harness
 
 **Files:**
 - Create: `benchmarks/scenarios/basic.yaml`
 - Create: `benchmarks/scenarios/tools.yaml`
 - Create: `benchmarks/reports/.gitkeep`
-- Create: `scripts/benchmarks/compare_openclaw.py`
+- Create: `scripts/benchmarks/compare_kabot.py`
 - Modify: `kabot/cli/commands.py`
 - Modify: `README.md`
-- Create: `docs/benchmarks/kabot-vs-openclaw.md`
+- Create: `docs/benchmarks/kabot-vs-kabot.md`
 - Test: `tests/cli/test_benchmark_compare_command.py`
-- Test: `tests/benchmarks/test_compare_openclaw.py`
+- Test: `tests/benchmarks/test_compare_kabot.py`
 
 **Step 1: Write the failing tests**
 
@@ -387,7 +387,7 @@ git commit -m "feat(channels): add signal and webchat channel adapters with mana
 def test_benchmark_compare_command_writes_report(runner, tmp_path):
     result = runner.invoke(
         app,
-        ["benchmark", "compare", "--openclaw-dir", str(tmp_path), "--out", str(tmp_path / "r.json")],
+        ["benchmark", "compare", "--kabot-dir", str(tmp_path), "--out", str(tmp_path / "r.json")],
     )
     assert result.exit_code == 0
     assert (tmp_path / "r.json").exists()
@@ -395,25 +395,25 @@ def test_benchmark_compare_command_writes_report(runner, tmp_path):
 
 ```python
 def test_compare_script_outputs_summary_json(tmp_path):
-    output = run_compare_once(kabot_cmd=["echo", "ok"], openclaw_cmd=["echo", "ok"], out_file=tmp_path / "r.json")
-    assert output["winner"] in {"kabot", "openclaw", "tie"}
+    output = run_compare_once(kabot_cmd=["echo", "ok"], kabot_cmd=["echo", "ok"], out_file=tmp_path / "r.json")
+    assert output["winner"] in {"kabot", "kabot", "tie"}
     assert "task_completion_rate" in output["metrics"]["kabot"]
 ```
 
 **Step 2: Run tests to verify they fail**
 
-Run: `pytest tests/cli/test_benchmark_compare_command.py tests/benchmarks/test_compare_openclaw.py -q`  
+Run: `pytest tests/cli/test_benchmark_compare_command.py tests/benchmarks/test_compare_kabot.py -q`  
 Expected: FAIL (benchmark command/script missing).
 
 **Step 3: Write minimal implementation**
 
 ```python
-# scripts/benchmarks/compare_openclaw.py
-def run_compare_once(kabot_cmd, openclaw_cmd, out_file):
+# scripts/benchmarks/compare_kabot.py
+def run_compare_once(kabot_cmd, kabot_cmd, out_file):
     report = {
         "metrics": {
             "kabot": {"task_completion_rate": 1.0, "p95_latency_ms": 100},
-            "openclaw": {"task_completion_rate": 1.0, "p95_latency_ms": 100},
+            "kabot": {"task_completion_rate": 1.0, "p95_latency_ms": 100},
         },
         "winner": "tie",
     }
@@ -424,20 +424,20 @@ def run_compare_once(kabot_cmd, openclaw_cmd, out_file):
 ```python
 # cli/commands.py (benchmark group excerpt)
 @app.command("benchmark-compare")
-def benchmark_compare(openclaw_dir: Path, out: Path = Path("benchmarks/reports/latest.json")):
+def benchmark_compare(kabot_dir: Path, out: Path = Path("benchmarks/reports/latest.json")):
     ...
 ```
 
 **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/cli/test_benchmark_compare_command.py tests/benchmarks/test_compare_openclaw.py -q`  
+Run: `pytest tests/cli/test_benchmark_compare_command.py tests/benchmarks/test_compare_kabot.py -q`  
 Expected: PASS.
 
 **Step 5: Commit**
 
 ```bash
-git add benchmarks/scenarios/basic.yaml benchmarks/scenarios/tools.yaml benchmarks/reports/.gitkeep scripts/benchmarks/compare_openclaw.py kabot/cli/commands.py README.md docs/benchmarks/kabot-vs-openclaw.md tests/cli/test_benchmark_compare_command.py tests/benchmarks/test_compare_openclaw.py
-git commit -m "feat(benchmark): add automated kabot-vs-openclaw comparison harness"
+git add benchmarks/scenarios/basic.yaml benchmarks/scenarios/tools.yaml benchmarks/reports/.gitkeep scripts/benchmarks/compare_kabot.py kabot/cli/commands.py README.md docs/benchmarks/kabot-vs-kabot.md tests/cli/test_benchmark_compare_command.py tests/benchmarks/test_compare_kabot.py
+git commit -m "feat(benchmark): add automated kabot-vs-kabot comparison harness"
 ```
 
 ---
@@ -446,14 +446,14 @@ git commit -m "feat(benchmark): add automated kabot-vs-openclaw comparison harne
 
 **Files:**
 - Modify: `CHANGELOG.md`
-- Modify: `docs/OPENCLAW_VS_KABOT_COMPLETE_ANALYSIS.md`
+- Modify: `docs/KABOT_VS_KABOT_COMPLETE_ANALYSIS.md`
 
 **Step 1: Run final regression suite**
 
 Run:
 
 ```bash
-pytest tests/gateway/test_control_api.py tests/gateway/test_metrics_api.py tests/gateway/test_dashboard_static.py tests/security/test_command_firewall_governance.py tests/agent/tools/test_shell_firewall_ask_mode.py tests/cli/test_approvals_commands.py tests/channels/test_signal_channel.py tests/channels/test_webchat_channel.py tests/channels/test_multi_instance_manager.py tests/cli/test_benchmark_compare_command.py tests/benchmarks/test_compare_openclaw.py -q
+pytest tests/gateway/test_control_api.py tests/gateway/test_metrics_api.py tests/gateway/test_dashboard_static.py tests/security/test_command_firewall_governance.py tests/agent/tools/test_shell_firewall_ask_mode.py tests/cli/test_approvals_commands.py tests/channels/test_signal_channel.py tests/channels/test_webchat_channel.py tests/channels/test_multi_instance_manager.py tests/cli/test_benchmark_compare_command.py tests/benchmarks/test_compare_kabot.py -q
 ```
 
 Expected: PASS.
@@ -465,14 +465,14 @@ Expected: PASS.
 - Added `/api/metrics` and SLO auto-heal decisions.
 - Added policy priority + audit filtering for approvals.
 - Added Signal and WebChat channel adapters.
-- Added automated Kabot vs OpenClaw benchmark reports.
+- Added automated Kabot vs Kabot benchmark reports.
 ```
 
 **Step 3: Commit**
 
 ```bash
-git add CHANGELOG.md docs/OPENCLAW_VS_KABOT_COMPLETE_ANALYSIS.md
-git commit -m "docs: publish roadmap execution results for kabot-above-openclaw"
+git add CHANGELOG.md docs/KABOT_VS_KABOT_COMPLETE_ANALYSIS.md
+git commit -m "docs: publish roadmap execution results for kabot-above-kabot"
 ```
 
 ---
@@ -485,4 +485,6 @@ git commit -m "docs: publish roadmap execution results for kabot-above-openclaw"
 - Keep commits task-scoped and small; do not bundle multiple roadmap lanes in one commit.
 - Prefer compatibility facades over breaking imports (no public API breaks in `kabot/agent/loop.py`, `kabot/cron/service.py`, or channel keys).
 - Keep runtime lightweight: avoid adding heavyweight dependencies for dashboard or metrics; stay with existing aiohttp stack.
+
+
 

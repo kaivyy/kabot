@@ -1,4 +1,4 @@
-# Auto-Update System Design
+﻿# Auto-Update System Design
 
 **Date**: 2026-02-23
 **Status**: Approved
@@ -6,7 +6,7 @@
 
 ## Overview
 
-Design chatbot-accessible auto-update system for Kabot that allows users to check for updates and trigger updates via natural language, similar to OpenClaw's update functionality but accessible through chat interface.
+Design chatbot-accessible auto-update system for Kabot that allows users to check for updates and trigger updates via natural language, similar to Kabot's update functionality but accessible through chat interface.
 
 ## Requirements
 
@@ -29,8 +29,8 @@ Design chatbot-accessible auto-update system for Kabot that allows users to chec
 ### High-Level Design
 
 ```
-User Chat → AI Agent → Tools → Update Logic → Git/PyPI → Restart
-                ↓
+User Chat â†’ AI Agent â†’ Tools â†’ Update Logic â†’ Git/PyPI â†’ Restart
+                â†“
          Structured Data (no hallucination)
 ```
 
@@ -131,7 +131,7 @@ class SystemUpdateTool(Tool):
 ```
 
 **Update Flow**:
-- **Git**: `git fetch origin` → `git pull origin main` → `pip install -e .`
+- **Git**: `git fetch origin` â†’ `git pull origin main` â†’ `pip install -e .`
 - **PyPI**: `pip install --upgrade kabot`
 - **Dependencies**: `pip install -r requirements.txt` (if changed)
 
@@ -182,17 +182,17 @@ class UpdateService:
 
 ```
 User: "periksa update"
-  ↓
+  â†“
 AI calls CheckUpdateTool.execute()
-  ↓
+  â†“
 Tool detects install method (git/pip)
-  ↓
+  â†“
 Tool fetches GitHub API (with timeout 5s)
-  ↓
+  â†“
 If git: check commits behind via git rev-list
-  ↓
+  â†“
 Return JSON: {install_method, current, latest, commits_behind, update_available}
-  ↓
+  â†“
 AI parses JSON and responds naturally
 ```
 
@@ -200,25 +200,25 @@ AI parses JSON and responds naturally
 
 ```
 User: "update program"
-  ↓
+  â†“
 AI calls SystemUpdateTool.execute(confirm_restart=False)
-  ↓
+  â†“
 Tool validates: no dirty working tree, network available
-  ↓
+  â†“
 Execute update (git pull / pip upgrade)
-  ↓
+  â†“
 Install dependencies if requirements.txt changed
-  ↓
+  â†“
 Return JSON: {success, updated_from, updated_to, restart_required}
-  ↓
+  â†“
 AI asks: "Update selesai, restart sekarang?"
-  ↓
+  â†“
 User: "ya"
-  ↓
+  â†“
 AI calls SystemUpdateTool.execute(confirm_restart=True)
-  ↓
+  â†“
 Tool creates restart script and executes
-  ↓
+  â†“
 Process exits, restart script waits 2s, then restarts Kabot
 ```
 
@@ -313,3 +313,5 @@ See `2026-02-23-auto-update-system-implementation.md` for detailed implementatio
 5. No hallucination - all data comes from real sources
 6. Works on both Windows and Linux
 7. Works for both git and pip installations
+
+

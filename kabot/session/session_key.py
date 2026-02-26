@@ -1,4 +1,4 @@
-"""Session key utilities with OpenClaw-compatible format.
+﻿"""Session key utilities with Kabot-compatible format.
 
 Session key format: agent:{agentId}:{channel}:{peerKind}:{peerId}
 Examples:
@@ -264,3 +264,5 @@ def resolve_agent_id_from_session_key(session_key: str) -> str:
     if parsed:
         return normalize_agent_id(parsed.get("agent_id"))
     return DEFAULT_AGENT_ID
+
+

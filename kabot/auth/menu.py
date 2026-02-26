@@ -132,9 +132,185 @@ AUTH_PROVIDERS: Dict[str, Dict[str, Any]] = {
             }
         }
     },
+    "mistral": {
+        "name": "Mistral",
+        "description": "Mistral Large, Pixtral, Voxtral",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Mistral API key",
+                "handler": "kabot.auth.handlers.simple.MistralKeyHandler"
+            }
+        }
+    },
+    "kilocode": {
+        "name": "Kilo Gateway",
+        "description": "Unified gateway for multiple providers",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Kilo Gateway API key",
+                "handler": "kabot.auth.handlers.simple.KiloCodeKeyHandler"
+            }
+        }
+    },
+    "together": {
+        "name": "Together AI",
+        "description": "GLM, Llama, DeepSeek, Kimi catalog",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Together API key",
+                "handler": "kabot.auth.handlers.simple.TogetherKeyHandler"
+            }
+        }
+    },
+    "venice": {
+        "name": "Venice AI",
+        "description": "Privacy-focused + anonymized premium routes",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Venice API key",
+                "handler": "kabot.auth.handlers.simple.VeniceKeyHandler"
+            }
+        }
+    },
+    "huggingface": {
+        "name": "Hugging Face",
+        "description": "Inference router for many OSS models",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "HF token (HF_TOKEN)",
+                "handler": "kabot.auth.handlers.simple.HuggingFaceKeyHandler"
+            }
+        }
+    },
+    "qianfan": {
+        "name": "Qianfan",
+        "description": "Baidu unified OpenAI-compatible endpoint",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Qianfan API key",
+                "handler": "kabot.auth.handlers.simple.QianfanKeyHandler"
+            }
+        }
+    },
+    "nvidia": {
+        "name": "NVIDIA",
+        "description": "NVIDIA hosted inference (OpenAI-compatible)",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "NVIDIA API key",
+                "handler": "kabot.auth.handlers.simple.NvidiaKeyHandler"
+            }
+        }
+    },
+    "xai": {
+        "name": "xAI",
+        "description": "Grok models via xAI API",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "xAI API key",
+                "handler": "kabot.auth.handlers.simple.XAIKeyHandler"
+            }
+        }
+    },
+    "cerebras": {
+        "name": "Cerebras",
+        "description": "Cerebras Inference API",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Cerebras API key",
+                "handler": "kabot.auth.handlers.simple.CerebrasKeyHandler"
+            }
+        }
+    },
+    "opencode": {
+        "name": "OpenCode Zen",
+        "description": "Curated coding-oriented model access",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "OpenCode Zen API key",
+                "handler": "kabot.auth.handlers.simple.OpenCodeKeyHandler"
+            }
+        }
+    },
+    "xiaomi": {
+        "name": "Xiaomi MiMo",
+        "description": "MiMo provider endpoint",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Xiaomi MiMo API key",
+                "handler": "kabot.auth.handlers.simple.XiaomiKeyHandler"
+            }
+        }
+    },
+    "volcengine": {
+        "name": "Volcano Engine",
+        "description": "Doubao and China-region model gateway",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Volcano Engine API key",
+                "handler": "kabot.auth.handlers.simple.VolcengineKeyHandler"
+            }
+        }
+    },
+    "byteplus": {
+        "name": "BytePlus",
+        "description": "International ARK model gateway",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "BytePlus API key",
+                "handler": "kabot.auth.handlers.simple.BytePlusKeyHandler"
+            }
+        }
+    },
+    "synthetic": {
+        "name": "Synthetic",
+        "description": "Anthropic-compatible routed model catalog",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Synthetic API key",
+                "handler": "kabot.auth.handlers.simple.SyntheticKeyHandler"
+            }
+        }
+    },
+    "cloudflare-ai-gateway": {
+        "name": "Cloudflare AI Gateway",
+        "description": "Proxy Anthropic/OpenAI traffic via Cloudflare gateway",
+        "methods": {
+            "api_key": {
+                "label": "API Key + Gateway IDs",
+                "description": "Cloudflare gateway key and account/gateway IDs",
+                "handler": "kabot.auth.handlers.simple.CloudflareAIGatewayKeyHandler"
+            }
+        }
+    },
+    "vercel-ai-gateway": {
+        "name": "Vercel AI Gateway",
+        "description": "Unified AI routing through Vercel gateway",
+        "methods": {
+            "api_key": {
+                "label": "API Key",
+                "description": "Vercel AI Gateway API key",
+                "handler": "kabot.auth.handlers.simple.VercelAIGatewayKeyHandler"
+            }
+        }
+    },
     "groq": {
         "name": "Groq",
-        "description": "Llama 3 70B/8B (Fast inference)",
+        "description": "Llama 4 Scout (Fast inference)",
         "methods": {
             "api_key": {
                 "label": "API Key",
@@ -223,3 +399,4 @@ def get_method_choices(provider_id: str) -> List[Dict[str, str]]:
         }
         for method_id, method_info in methods.items()
     ]
+

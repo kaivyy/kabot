@@ -1,4 +1,4 @@
-# Setup Wizard UX Improvements Design
+﻿# Setup Wizard UX Improvements Design
 
 **Date:** 2026-02-19
 **Goal:** Make Kabot setup wizard beginner-friendly with clear model selection guidance
@@ -18,12 +18,12 @@ Users are confused during model selection in `kabot config`:
 **Current Experience:**
 ```
 ? Select default model
-  > openai/gpt-4o (GPT-4o) ★
-  > openai/gpt-4o-mini (GPT-4o Mini) ★
+  > openai/gpt-4o (GPT-4o) â˜…
+  > openai/gpt-4o-mini (GPT-4o Mini) â˜…
   > Enter model ID manually
 
 Enter Model ID: gpt-5.3-codex
-❌ Error: No API key configured
+âŒ Error: No API key configured
 ```
 
 **Desired Experience:**
@@ -39,7 +39,7 @@ Popular Aliases:
   Enter Model ID or Alias Manually
 
 Enter Model ID or Alias: codex
-✓ Resolved to: openai/gpt-5.1-codex
+âœ“ Resolved to: openai/gpt-5.1-codex
 ```
 
 ---
@@ -51,7 +51,7 @@ Enter Model ID or Alias: codex
 **Principle 1: Aliases as Primary Interface**
 - Show popular aliases first (codex, sonnet, gemini, gpt4o)
 - Full model IDs are secondary (for advanced users)
-- Inspired by OpenClaw's alias-first approach
+- Inspired by Kabot's alias-first approach
 
 **Principle 2: Progressive Disclosure**
 - Simple view by default
@@ -65,7 +65,7 @@ Enter Model ID or Alias: codex
 - Suggest alternatives for invalid input
 
 **Principle 4: Clear Feedback**
-- Status indicators: ✓ (working) ⚠ (catalog) ✗ (unsupported)
+- Status indicators: âœ“ (working) âš  (catalog) âœ— (unsupported)
 - Helpful error messages with suggestions
 - Examples and format hints everywhere
 
@@ -79,21 +79,21 @@ Enter Model ID or Alias: codex
 
 **New Flow:**
 ```
-┌─ Model Selection ────────────────────────────────────────┐
-│                                                          │
-│ Select default model (or use alias)                     │
-│                                                          │
-│ Popular Aliases:                                         │
-│ > codex       - OpenAI GPT-5.1 Codex (Advanced Coding)  │
-│   sonnet      - Claude 3.5 Sonnet (Latest, 200K)        │
-│   gemini      - Google Gemini 1.5 Pro (2M context)      │
-│   gpt4o       - OpenAI GPT-4o (Multi-modal)             │
-│                                                          │
-│   Browse All Models (by provider)                       │
-│   Enter Model ID or Alias Manually                      │
-│   Keep Current (openai/gpt-4o)                          │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
+â”Œâ”€ Model Selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                                                          â”‚
+â”‚ Select default model (or use alias)                     â”‚
+â”‚                                                          â”‚
+â”‚ Popular Aliases:                                         â”‚
+â”‚ > codex       - OpenAI GPT-5.1 Codex (Advanced Coding)  â”‚
+â”‚   sonnet      - Claude 3.5 Sonnet (Latest, 200K)        â”‚
+â”‚   gemini      - Google Gemini 1.5 Pro (2M context)      â”‚
+â”‚   gpt4o       - OpenAI GPT-4o (Multi-modal)             â”‚
+â”‚                                                          â”‚
+â”‚   Browse All Models (by provider)                       â”‚
+â”‚   Enter Model ID or Alias Manually                      â”‚
+â”‚   Keep Current (openai/gpt-4o)                          â”‚
+â”‚                                                          â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 **Implementation:**
@@ -112,9 +112,9 @@ Enter Model ID or Alias
 
 Format: provider/model-name  OR  alias
 Examples:
-  • openai/gpt-4o
-  • anthropic/claude-3-5-sonnet-20241022
-  • codex (alias for openai/gpt-5.1-codex)
+  â€¢ openai/gpt-4o
+  â€¢ anthropic/claude-3-5-sonnet-20241022
+  â€¢ codex (alias for openai/gpt-5.1-codex)
 
 Available aliases: codex, sonnet, gemini, gpt4o, o1, kimi
 Type 'help' to see all aliases
@@ -124,7 +124,7 @@ Your input: _
 
 **Validation Flow:**
 1. User enters input
-2. Check if it's an alias → resolve to full ID
+2. Check if it's an alias â†’ resolve to full ID
 3. Check format: must be `provider/model-name`
 4. Validate provider support in LiteLLM
 5. Show status indicator
@@ -132,16 +132,16 @@ Your input: _
 
 **Error Handling:**
 ```
-❌ Invalid format: "gpt-5.3-codex"
+âŒ Invalid format: "gpt-5.3-codex"
    Expected: provider/model-name
    Did you mean: openai/gpt-5.1-codex (alias: codex)?
 
-⚠️  Model "openai-codex/gpt-5.3-codex" is not supported
+âš ï¸  Model "openai-codex/gpt-5.3-codex" is not supported
    This provider is not available in LiteLLM.
 
    Recommended alternatives:
-   • openai/gpt-4o (alias: gpt4o)
-   • openai/gpt-5.1-codex (alias: codex)
+   â€¢ openai/gpt-4o (alias: gpt4o)
+   â€¢ openai/gpt-5.1-codex (alias: codex)
 
    Continue anyway? [y/N]
 ```
@@ -152,24 +152,24 @@ Your input: _
 
 **New Component:**
 ```
-┌─ Model Browser ─────────────────────────────────────────┐
-│ Filter: [openai ▼]                    Search: [____]    │
-├──────────────────────────────────────────────────────────┤
-│ Model ID                    Alias    Status   Context   │
-├──────────────────────────────────────────────────────────┤
-│ openai/gpt-4o              gpt4o    ✓ Ready  128K      │
-│ openai/gpt-4o-mini         gpt4m    ✓ Ready  128K      │
-│ openai/o1-preview          o1       ✓ Ready  128K      │
-│ openai/gpt-5.1-codex       codex    ⚠ Catalog 128K     │
-│ openai-codex/gpt-5.3-codex codex-pro ✗ Not Supported   │
-└──────────────────────────────────────────────────────────┘
+â”Œâ”€ Model Browser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Filter: [openai â–¼]                    Search: [____]    â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚ Model ID                    Alias    Status   Context   â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚ openai/gpt-4o              gpt4o    âœ“ Ready  128K      â”‚
+â”‚ openai/gpt-4o-mini         gpt4m    âœ“ Ready  128K      â”‚
+â”‚ openai/o1-preview          o1       âœ“ Ready  128K      â”‚
+â”‚ openai/gpt-5.1-codex       codex    âš  Catalog 128K     â”‚
+â”‚ openai-codex/gpt-5.3-codex codex-pro âœ— Not Supported   â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 
 Legend:
-✓ Ready - Tested and working with LiteLLM
-⚠ Catalog - In catalog but not verified
-✗ Not Supported - Provider not supported by LiteLLM
+âœ“ Ready - Tested and working with LiteLLM
+âš  Catalog - In catalog but not verified
+âœ— Not Supported - Provider not supported by LiteLLM
 
-Use ↑↓ to navigate, Enter to select, Esc to cancel
+Use â†‘â†“ to navigate, Enter to select, Esc to cancel
 ```
 
 **Features:**
@@ -187,29 +187,29 @@ Use ↑↓ to navigate, Enter to select, Esc to cancel
 
 **Display:**
 ```
-┌─ Available Model Aliases ───────────────────────────────┐
-│                                                          │
-│ OpenAI:                                                  │
-│   codex      → openai/gpt-5.1-codex                     │
-│   gpt4o      → openai/gpt-4o                            │
-│   gpt4m      → openai/gpt-4o-mini                       │
-│   o1         → openai/o1-preview                        │
-│                                                          │
-│ Anthropic:                                               │
-│   sonnet     → anthropic/claude-3-5-sonnet-20241022     │
-│   opus       → anthropic/claude-3-opus-20240229         │
-│   haiku      → anthropic/claude-3-5-haiku-20241022      │
-│                                                          │
-│ Google:                                                  │
-│   gemini     → google/gemini-1.5-pro                    │
-│   flash      → google/gemini-1.5-flash                  │
-│                                                          │
-│ Others:                                                  │
-│   kimi       → moonshot/kimi-k2.5                       │
-│   minimax    → minimax/MiniMax-M2.1                     │
-│                                                          │
-│ Press any key to continue...                            │
-└──────────────────────────────────────────────────────────┘
+â”Œâ”€ Available Model Aliases â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                                                          â”‚
+â”‚ OpenAI:                                                  â”‚
+â”‚   codex      â†’ openai/gpt-5.1-codex                     â”‚
+â”‚   gpt4o      â†’ openai/gpt-4o                            â”‚
+â”‚   gpt4m      â†’ openai/gpt-4o-mini                       â”‚
+â”‚   o1         â†’ openai/o1-preview                        â”‚
+â”‚                                                          â”‚
+â”‚ Anthropic:                                               â”‚
+â”‚   sonnet     â†’ anthropic/claude-3-5-sonnet-20241022     â”‚
+â”‚   opus       â†’ anthropic/claude-3-opus-20240229         â”‚
+â”‚   haiku      â†’ anthropic/claude-3-5-haiku-20241022      â”‚
+â”‚                                                          â”‚
+â”‚ Google:                                                  â”‚
+â”‚   gemini     â†’ google/gemini-1.5-pro                    â”‚
+â”‚   flash      â†’ google/gemini-1.5-flash                  â”‚
+â”‚                                                          â”‚
+â”‚ Others:                                                  â”‚
+â”‚   kimi       â†’ moonshot/kimi-k2.5                       â”‚
+â”‚   minimax    â†’ minimax/MiniMax-M2.1                     â”‚
+â”‚                                                          â”‚
+â”‚ Press any key to continue...                            â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ### 5. Model Status Database
@@ -292,19 +292,19 @@ def format_validation_error(error: ValidationError) -> str:
 
 ```
 User Input
-    ↓
-Is it an alias? → Yes → Resolve to full ID
-    ↓ No
+    â†“
+Is it an alias? â†’ Yes â†’ Resolve to full ID
+    â†“ No
 Format validation (provider/model-name)
-    ↓
+    â†“
 Provider support check
-    ↓
+    â†“
 Model status lookup (working/catalog/unsupported)
-    ↓
+    â†“
 Display status indicator
-    ↓
+    â†“
 Confirmation (if warnings)
-    ↓
+    â†“
 Save to config
 ```
 
@@ -324,12 +324,12 @@ Popular Aliases:
 
 [User selects "codex"]
 
-✓ Selected: openai/gpt-5.1-codex
-⚠ Note: This model is in catalog but not verified to work.
+âœ“ Selected: openai/gpt-5.1-codex
+âš  Note: This model is in catalog but not verified to work.
   If you encounter issues, try: openai/gpt-4o (alias: gpt4o)
 
 Continue? [Y/n] y
-✓ Model set to openai/gpt-5.1-codex
+âœ“ Model set to openai/gpt-5.1-codex
 ```
 
 ### Example 2: Power User Manual Entry
@@ -342,23 +342,23 @@ Enter Model ID or Alias
 
 Format: provider/model-name  OR  alias
 Examples:
-  • openai/gpt-4o
-  • codex (alias)
+  â€¢ openai/gpt-4o
+  â€¢ codex (alias)
 
 Your input: gpt-5.3-codex
 
-❌ Invalid format: "gpt-5.3-codex"
+âŒ Invalid format: "gpt-5.3-codex"
    Expected: provider/model-name
 
    Did you mean one of these?
-   • openai/gpt-5.1-codex (alias: codex)
-   • openai/gpt-4o (alias: gpt4o)
+   â€¢ openai/gpt-5.1-codex (alias: codex)
+   â€¢ openai/gpt-4o (alias: gpt4o)
 
 Your input: openai/gpt-4o
 
-✓ Valid model ID
-✓ Status: Ready (tested and working)
-✓ Model set to openai/gpt-4o
+âœ“ Valid model ID
+âœ“ Status: Ready (tested and working)
+âœ“ Model set to openai/gpt-4o
 ```
 
 ### Example 3: Advanced User Browsing
@@ -367,20 +367,20 @@ Your input: openai/gpt-4o
 ? Select default model (or use alias)
   [User selects "Browse All Models"]
 
-┌─ Model Browser ─────────────────────────────────────────┐
-│ Filter: [all providers ▼]                               │
-├──────────────────────────────────────────────────────────┤
-│ Model ID                    Alias    Status   Context   │
-├──────────────────────────────────────────────────────────┤
-│ openai/gpt-4o              gpt4o    ✓ Ready  128K      │
-│ anthropic/claude-3-5-sonnet sonnet   ✓ Ready  200K      │
-│ google/gemini-1.5-pro      gemini   ✓ Ready  2M        │
-│ openai/gpt-5.1-codex       codex    ⚠ Catalog 128K     │
-└──────────────────────────────────────────────────────────┘
+â”Œâ”€ Model Browser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Filter: [all providers â–¼]                               â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚ Model ID                    Alias    Status   Context   â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚ openai/gpt-4o              gpt4o    âœ“ Ready  128K      â”‚
+â”‚ anthropic/claude-3-5-sonnet sonnet   âœ“ Ready  200K      â”‚
+â”‚ google/gemini-1.5-pro      gemini   âœ“ Ready  2M        â”‚
+â”‚ openai/gpt-5.1-codex       codex    âš  Catalog 128K     â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 
 [User selects openai/gpt-4o]
 
-✓ Model set to openai/gpt-4o
+âœ“ Model set to openai/gpt-4o
 ```
 
 ---
@@ -451,7 +451,9 @@ Your input: openai/gpt-4o
 
 ## References
 
-- OpenClaw model reference: `docs/models/openclaw-model-reference.md`
+- Kabot model reference: `docs/models/kabot-model-reference.md`
 - Current catalog: `kabot/providers/catalog.py`
 - Setup wizard: `kabot/cli/setup_wizard.py`
 - Auth menu: `kabot/auth/menu.py`
+
+

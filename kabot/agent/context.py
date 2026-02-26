@@ -1,4 +1,4 @@
-"""Context builder for assembling agent prompts."""
+﻿"""Context builder for assembling agent prompts."""
 
 import base64
 import mimetypes
@@ -87,15 +87,21 @@ class TokenBudget:
 
     def truncate_history(self, messages: list[dict], budget: int) -> list[dict]:
         """Truncate conversation history to fit budget, keeping most recent."""
-        # Always keep system message (index 0)
-        if len(messages) <= 1:
-            return messages
+        if not messages:
+            return []
+
+        if len(messages) == 1:
+            return messages if isinstance(messages[0], dict) else []
 
         # Count from most recent backwards
         kept_messages = []
         token_count = 0
+        invalid_entries = 0
 
         for msg in reversed(messages[1:]):  # Skip system message
+            if not isinstance(msg, dict):
+                invalid_entries += 1
+                continue
             msg_text = str(msg.get("content", ""))
             msg_tokens = self.count_tokens(msg_text)
 
@@ -105,7 +111,19 @@ class TokenBudget:
             kept_messages.insert(0, msg)
             token_count += msg_tokens
 
-        return [messages[0]] + kept_messages
+        head = messages[0]
+        if isinstance(head, dict):
+            result = [head] + kept_messages
+        else:
+            invalid_entries += 1
+            result = kept_messages
+
+        if invalid_entries:
+            logger.warning(
+                f"Dropped {invalid_entries} malformed history entries (expected dict messages)"
+            )
+
+        return result
 
 
 class ContextBuilder:
@@ -141,11 +159,11 @@ You are an expert software engineer. Be systematic and thorough.
 - Use appropriate tools: read_file, edit_file, write_file, exec""",
 
         "CHAT": """# Role: Conversational Companion
-You are a warm, natural conversationalist — like a reliable friend who happens to be really capable.
+You are a warm, natural conversationalist â€” like a reliable friend who happens to be really capable.
 - Talk like a real person. No templates, no "Very well, I will..." formulas.
 - Match the user's energy: if they're casual, you're casual. If they're serious, you're focused.
 - Speak naturally. Example: "Got it!" instead of "I will process your request immediately."
-- Emojis are fine but sparingly — max 1-2 per message, only when it feels genuine.
+- Emojis are fine but sparingly â€” max 1-2 per message, only when it feels genuine.
 - NEVER narrate your internal process ("I am processing...", "Checking in progress...").
 - When you USE a tool, just do it. Let the result speak. Don't announce it first.
 - NEVER use markdown horizontal rules like "---" to separate text.
@@ -177,9 +195,9 @@ You are a helpful AI assistant. Be direct, competent, and resourceful.
 - Server monitoring: Use server_monitor to check REAL-TIME resource usage (CPU load %, RAM used/free, disk usage %, uptime)
 - Cleanup: Use cleanup_system to free disk space (temp files, caches, recycle bin, etc.)
 - Configuration: If user gives you an API key or Token (like Meta, OpenAI, etc), use edit_file to save it into ~/.kabot/config.json under the proper integration section immediately. Do not just remember it in chat.
-- Never say "I cannot access files" — you CAN with read_file
-- Never fabricate information — always verify with tools first
-- NEVER tell the user to "run this command yourself" — YOU have exec, get_system_info, and cleanup_system tools, use them directly
+- Never say "I cannot access files" â€” you CAN with read_file
+- Never fabricate information â€” always verify with tools first
+- NEVER tell the user to "run this command yourself" â€” YOU have exec, get_system_info, and cleanup_system tools, use them directly
 
 ## Complex Tasks
 For building applications or major features:
@@ -196,9 +214,9 @@ When user asks you to BUILD, CREATE, SET UP, or AUTOMATE something (a script, mo
 4. If it needs to run periodically, use cron to schedule it
 5. If it needs to alert the user, use the message tool or write a script that calls an API
 
-NEVER stop at "I wrote the file". Always continue to: run it → check output → report actual results.
-NEVER say "you can run this later" — RUN IT NOW and confirm success or failure.
-If something fails, diagnose immediately and fix it — do not wait for user to notice.
+NEVER stop at "I wrote the file". Always continue to: run it â†’ check output â†’ report actual results.
+NEVER say "you can run this later" â€” RUN IT NOW and confirm success or failure.
+If something fails, diagnose immediately and fix it â€” do not wait for user to notice.
 
 ## Cross-Platform Execution
 Detect the OS and use appropriate commands:
@@ -209,10 +227,10 @@ Detect the OS and use appropriate commands:
 Always check platform before writing scripts."""
     }
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, skills_config: dict | None = None):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
-        self.skills = SkillsLoader(workspace)
+        self.skills = SkillsLoader(workspace, skills_config=skills_config)
 
     def build_system_prompt(self, skill_names: list[str] | None = None, profile: str = "GENERAL", tool_names: list[str] | None = None, current_message: str | None = None) -> str:
         """
@@ -252,10 +270,10 @@ Always check platform before writing scripts."""
             parts.append(f"""## Your Callable Tools
 You have these tools available: {tools_str}
 When a user asks to do something these tools can handle, USE THE TOOL IMMEDIATELY.
-NEVER say "I cannot access files" — you CAN with read_file.
-NEVER fabricate file contents — always use read_file first.
-NEVER say "I cannot run commands" — you CAN with exec.
-NEVER tell the user to "run this in your terminal" — YOU can run it with exec, get_system_info, or cleanup_system.
+NEVER say "I cannot access files" â€” you CAN with read_file.
+NEVER fabricate file contents â€” always use read_file first.
+NEVER say "I cannot run commands" â€” you CAN with exec.
+NEVER tell the user to "run this in your terminal" â€” YOU can run it with exec, get_system_info, or cleanup_system.
 For PC specs / hardware info questions, ALWAYS call get_system_info tool first.
 For cleanup / free space / optimize requests, ALWAYS call cleanup_system tool first.
 When user asks to build/create/automate something: use write_file to create scripts, exec to run them, and cron to schedule them. ALWAYS verify results with exec after running.""")
@@ -308,7 +326,7 @@ Follow these guardrails to avoid repeating past mistakes.""")
         if skills_summary:
             parts.append(f"""# Available Skills (Reference Documents)
 
-⚠️ IMPORTANT: Skills listed below are NOT callable tools. To use a skill:
+âš ï¸ IMPORTANT: Skills listed below are NOT callable tools. To use a skill:
 1. Call read_file with the skill's <location> path
 2. Follow the instructions inside that SKILL.md
 NEVER attempt to call a skill name directly as a tool function.
@@ -326,7 +344,7 @@ Skills with available="false" need dependencies installed first.
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
 
-        return f"""# kabot 🐈
+        return f"""# kabot ðŸˆ
 
 You are kabot, a helpful AI assistant. You have access to tools that allow you to:
 - Read, write, and edit files
@@ -359,21 +377,21 @@ For normal conversation, just respond with text - do not call the message tool.
 Always be helpful, accurate, and concise.
 CRITICAL: If you need to use a tool (like downloading files, checking weather, etc.), you MUST generate a conversational text response along with the tool call.
 DO NOT send a blank text response. Tell the user what you are doing.
-- For general tasks: "Tunggu sebentar ya, aku lagi ngebersihin file sampah di PC kamu... 🧹"
+- For general tasks: "Tunggu sebentar ya, aku lagi ngebersihin file sampah di PC kamu... ðŸ§¹"
 - For CODING tasks: You MUST explicitly mention which file you are about to create, edit, or delete. (e.g. "Aku sedang menulis kode baru ke `src/main.py`..." atau "Memeriksa konfigurasi di `config.yaml`...")
 This text will be sent to the user immediately while the tool runs in the background.
 
 REMINDERS & SCHEDULING:
 - When user asks to be reminded or to schedule something, ALWAYS use the 'cron' tool.
 - NEVER fake a countdown, write "(1 menit kemudian...)" or pretend time has passed.
-- Flow: call cron tool → confirm it's set → the cron service will deliver the message automatically when the time comes.
+- Flow: call cron tool â†’ confirm it's set â†’ the cron service will deliver the message automatically when the time comes.
 - For "ingatkan X menit lagi", calculate the target time = current time + X minutes, then use cron with at_time.
 - After the reminder fires, the cron job auto-deletes (one_shot/delete_after_run).
 - COMPLEX SCHEDULES (e.g., "3 days work, 1 day off", rotating shifts): Standard cron expressions CANNOT handle modulus-day rotation. If a user asks for this, DO NOT guess a random cron_expr. Instead, use 'at_time' to schedule just the NEXT shift/alarm, and politely explain that you can't build native infinite rotating shifts, but you'll remind them for the next one, OR suggest setting up a daily script (via 'exec' or 'write_file') to calculate shifts mathematically.
 
 NATURAL CONVERSATION:
 - Do NOT use internal labels like "PHASE 1", "ACKNOWLEDGMENT", or "PLAN" in your response.
-- Speak naturally like a human colleague — like a dependable friend.
+- Speak naturally like a human colleague â€” like a dependable friend.
 - Match the user's language, tone, and energy level.
 - Be direct: instead of "I will now use the tool", just DO IT.
 - NEVER use robotic template language like "Very well, I will process your request."
@@ -586,3 +604,4 @@ If you are performing a multi-step task, start the first step NOW."""
 
         messages.append(msg)
         return messages
+

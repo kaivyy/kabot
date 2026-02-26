@@ -54,9 +54,27 @@ def open_browser(url: str):
 
 def secure_input(prompt_text: str) -> str:
     """
-    Securely prompt for input (masks characters).
+    Securely prompt for input (masks characters by default).
+
+    Falls back to visible input when hidden/password prompt is not supported
+    by the active terminal.
     """
-    return Prompt.ask(prompt_text, password=True)
+    try:
+        value = Prompt.ask(prompt_text, password=True)
+    except Exception:
+        value = None
+
+    value = (value or "").strip()
+    if value:
+        return value
+
+    # Some terminals (especially on Windows) can fail to capture hidden input.
+    try:
+        console.print("[dim]Hidden input unavailable. Switching to visible input.[/dim]")
+        fallback = Prompt.ask(prompt_text, password=False)
+        return (fallback or "").strip()
+    except Exception:
+        return ""
 
 def run_oauth_flow(auth_url: str, port: int = 8765) -> Optional[str]:
     """

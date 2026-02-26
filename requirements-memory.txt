@@ -1,5 +1,5 @@
-# Memory System Requirements for Kabot
-# Prevents amnesia and hallucination issues like OpenClaw
+﻿# Memory System Requirements for Kabot
+# Prevents amnesia and hallucination issues like Kabot
 
 # Vector Database
 chromadb>=0.4.18
@@ -19,3 +19,5 @@ httpx>=0.25.0
 # Optional: Faster vector operations
 numpy>=1.24.0
 torch>=2.0.0
+
+

@@ -1,8 +1,8 @@
-# Advanced Skill-Creator Implementation Plan
+﻿# Advanced Skill-Creator Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Upgrade Kabot's `skill-creator` to match OpenClaw's advanced version, enabling self-improvement and high-quality skill generation with progressive disclosure patterns.
+**Goal:** Upgrade Kabot's `skill-creator` to match Kabot's advanced version, enabling self-improvement and high-quality skill generation with progressive disclosure patterns.
 
 **Architecture:** Adopt the "Progressive Disclosure" pattern for skills: small main `SKILL.md` (<500 lines) + `references/` folder for docs + `scripts/` for logic. Implement standard metadata validation.
 
@@ -139,7 +139,7 @@ def init_skill(name):
     (base / "SKILL.md").write_text(f"""---
 metadata:
   kabot:
-    emoji: 🧩
+    emoji: ðŸ§©
     description: {name} skill
 ---
 
@@ -187,3 +187,5 @@ Check if `kabot/skills/joke-teller` has:
 ```bash
 rm -rf kabot/skills/joke-teller
 ```
+
+

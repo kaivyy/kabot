@@ -13,15 +13,50 @@ class WebhookServer:
         auth_token: str | None = None,
         meta_verify_token: str | None = None,
         meta_app_secret: str | None = None,
+        strict_transport_security: bool = False,
+        strict_transport_security_value: str = "max-age=31536000; includeSubDomains",
     ):
         self.bus = bus
         self.auth_token = (auth_token or "").strip()
         self.meta_verify_token = (meta_verify_token or "").strip()
         self.meta_app_secret = (meta_app_secret or "").strip()
-        self.app = web.Application()
+        self.strict_transport_security = bool(strict_transport_security)
+        self.strict_transport_security_value = (
+            strict_transport_security_value.strip()
+            if isinstance(strict_transport_security_value, str)
+            else "max-age=31536000; includeSubDomains"
+        ) or "max-age=31536000; includeSubDomains"
+
+        @web.middleware
+        async def security_headers_middleware(
+            request: web.Request,
+            handler,
+        ) -> web.StreamResponse:
+            response = await handler(request)
+            if self.strict_transport_security and self._is_https_request(request):
+                response.headers["Strict-Transport-Security"] = self.strict_transport_security_value
+            return response
+
+        self.app = web.Application(middlewares=[security_headers_middleware])
         self.app.router.add_post("/webhooks/trigger", self.handle_trigger)
         self.app.router.add_get("/webhooks/meta", self.handle_meta_verify)
         self.app.router.add_post("/webhooks/meta", self.handle_meta_event)
+
+    def _is_https_request(self, request: web.Request) -> bool:
+        if bool(getattr(request, "secure", False)):
+            return True
+
+        forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
+        if forwarded_proto:
+            tokens = [token.strip().lower() for token in forwarded_proto.split(",")]
+            if "https" in tokens:
+                return True
+
+        forwarded = request.headers.get("Forwarded", "").lower()
+        if "proto=https" in forwarded:
+            return True
+
+        return False
 
     async def handle_trigger(self, request: web.Request) -> web.Response:
         """Handle incoming webhook trigger."""

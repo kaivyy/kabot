@@ -1,38 +1,38 @@
-# OpenClaw Parity Phase 13: Resilience & Security Hardening
+﻿# Kabot Parity Phase 13: Resilience & Security Hardening
 
-> **Status**: 🟡 Planning
+> **Status**: ðŸŸ¡ Planning
 > **Date**: 2026-02-16
 > **Prerequisites**: Phase 12 Complete (Directives, ToolResultTruncator, Context Guard)
-> **Target Parity**: 65% → 85%
+> **Target Parity**: 65% â†’ 85%
 
 ---
 
 ## Executive Summary
 
-Phase 13 focuses on closing critical gaps in **Resilience** and **Security** to bring kabot from 65% to 85% OpenClaw parity. Based on the gap analysis verification, we have strong intelligence (95%) but weak resilience (60%) and security (45%).
+Phase 13 focuses on closing critical gaps in **Resilience** and **Security** to bring kabot from 65% to 85% Kabot parity. Based on the gap analysis verification, we have strong intelligence (95%) but weak resilience (60%) and security (45%).
 
 ### Current State (Verified 2026-02-16)
 
 | Category | Current % | Target % | Priority |
 |----------|-----------|----------|----------|
-| 🛡️ Resilience | 60% | 90% | 🔴 Critical |
-| 👮 Security | 45% | 80% | 🔴 Critical |
-| 🧠 Intelligence | 95% | 95% | ✅ Maintain |
+| ðŸ›¡ï¸ Resilience | 60% | 90% | ðŸ”´ Critical |
+| ðŸ‘® Security | 45% | 80% | ðŸ”´ Critical |
+| ðŸ§  Intelligence | 95% | 95% | âœ… Maintain |
 
 ### Critical Gaps to Address
 
-1. **PID Locking** (0% → 100%) - Prevents race conditions in multi-process scenarios
-2. **Windows ACL Security** (0% → 100%) - Currently explicitly skipped, contradicts gap analysis
-3. **Crash Recovery Sentinel** (0% → 100%) - Seamless recovery UX after crashes
-4. **Granular Command Approvals** (40% → 100%) - Allowlist/deny patterns with tamper-proofing
-5. **Security Audit Completion** (50% → 100%) - Enable Windows checks, add network validation
+1. **PID Locking** (0% â†’ 100%) - Prevents race conditions in multi-process scenarios
+2. **Windows ACL Security** (0% â†’ 100%) - Currently explicitly skipped, contradicts gap analysis
+3. **Crash Recovery Sentinel** (0% â†’ 100%) - Seamless recovery UX after crashes
+4. **Granular Command Approvals** (40% â†’ 100%) - Allowlist/deny patterns with tamper-proofing
+5. **Security Audit Completion** (50% â†’ 100%) - Enable Windows checks, add network validation
 
 ---
 
 ## Phase 13 Implementation Plan
 
 ### Task 1: PID Locking System
-**Priority**: 🔴 Critical
+**Priority**: ðŸ”´ Critical
 **Estimated Complexity**: Medium
 **Files to Create/Modify**:
 - `kabot/utils/pid_lock.py` (new)
@@ -47,7 +47,7 @@ Phase 13 focuses on closing critical gaps in **Resilience** and **Security** to 
 class PIDLock:
     """
     File-based process locking with stale lock recovery.
-    Pattern from OpenClaw: agents/session-write-lock.ts
+    Pattern from Kabot: agents/session-write-lock.ts
     """
     def __init__(self, lock_path: Path, timeout: int = 30):
         self.lock_path = lock_path
@@ -83,15 +83,15 @@ class PIDLock:
 - Test cross-platform compatibility (Windows/Linux)
 
 **Acceptance Criteria**:
-- ✅ No race conditions when multiple processes access same files
-- ✅ Stale locks automatically recovered
-- ✅ Works on Windows and Linux
-- ✅ 90%+ test coverage
+- âœ… No race conditions when multiple processes access same files
+- âœ… Stale locks automatically recovered
+- âœ… Works on Windows and Linux
+- âœ… 90%+ test coverage
 
 ---
 
 ### Task 2: Crash Recovery Sentinel
-**Priority**: 🔴 Critical
+**Priority**: ðŸ”´ Critical
 **Estimated Complexity**: Medium
 **Files to Create/Modify**:
 - `kabot/core/sentinel.py` (new)
@@ -106,7 +106,7 @@ class PIDLock:
 class CrashSentinel:
     """
     Black box recorder for crash recovery.
-    Pattern from OpenClaw: server-restart-sentinel.ts
+    Pattern from Kabot: server-restart-sentinel.ts
     """
     def __init__(self, sentinel_path: Path):
         self.sentinel_path = sentinel_path
@@ -134,7 +134,7 @@ class CrashSentinel:
 2.3. Add recovery message template
 ```python
 RECOVERY_MESSAGE = """
-🔄 I just restarted after an unexpected shutdown.
+ðŸ”„ I just restarted after an unexpected shutdown.
 
 Last session: {session_id}
 Last message: {message_id}
@@ -149,15 +149,15 @@ I'm back online and ready to continue. What were we working on?
 - Test clean shutdown (no sentinel)
 
 **Acceptance Criteria**:
-- ✅ Sentinel file created before each message processing
-- ✅ Sentinel cleared on clean shutdown
-- ✅ Recovery message sent after crash
-- ✅ User experience is seamless
+- âœ… Sentinel file created before each message processing
+- âœ… Sentinel cleared on clean shutdown
+- âœ… Recovery message sent after crash
+- âœ… User experience is seamless
 
 ---
 
 ### Task 3: Windows ACL Security
-**Priority**: 🔴 Critical
+**Priority**: ðŸ”´ Critical
 **Estimated Complexity**: High
 **Files to Modify**:
 - `kabot/utils/security_audit.py` (modify)
@@ -171,7 +171,7 @@ I'm back online and ready to continue. What were we working on?
 class WindowsACL:
     """
     Windows ACL checker using icacls.
-    Pattern from OpenClaw: security/windows-acl.ts
+    Pattern from Kabot: security/windows-acl.ts
     """
     @staticmethod
     def check_directory_permissions(path: Path) -> List[SecurityFinding]:
@@ -205,15 +205,15 @@ class WindowsACL:
 - Test secure vs insecure configurations
 
 **Acceptance Criteria**:
-- ✅ Windows ACL checks enabled (not skipped)
-- ✅ Detects insecure file permissions
-- ✅ Clear remediation instructions in findings
-- ✅ Works on Windows 10/11
+- âœ… Windows ACL checks enabled (not skipped)
+- âœ… Detects insecure file permissions
+- âœ… Clear remediation instructions in findings
+- âœ… Works on Windows 10/11
 
 ---
 
 ### Task 4: Granular Command Approvals
-**Priority**: 🟠 High
+**Priority**: ðŸŸ  High
 **Estimated Complexity**: High
 **Files to Create/Modify**:
 - `kabot/security/command_firewall.py` (new)
@@ -228,7 +228,7 @@ class WindowsACL:
 class CommandFirewall:
     """
     Granular command execution firewall.
-    Pattern from OpenClaw: infra/exec-approvals.ts
+    Pattern from Kabot: infra/exec-approvals.ts
     """
     def __init__(self, config_path: Path):
         self.config_path = config_path
@@ -284,15 +284,15 @@ denylist:
 - Test policy modes (deny/ask/allowlist)
 
 **Acceptance Criteria**:
-- ✅ Granular pattern-based approvals work
-- ✅ Tamper detection prevents unauthorized changes
-- ✅ Clear audit trail of all command executions
-- ✅ User-friendly approval prompts
+- âœ… Granular pattern-based approvals work
+- âœ… Tamper detection prevents unauthorized changes
+- âœ… Clear audit trail of all command executions
+- âœ… User-friendly approval prompts
 
 ---
 
 ### Task 5: Security Audit Completion
-**Priority**: 🟠 High
+**Priority**: ðŸŸ  High
 **Estimated Complexity**: Medium
 **Files to Modify**:
 - `kabot/utils/security_audit.py` (modify)
@@ -347,10 +347,10 @@ def check_redaction_policy(config: Dict[str, Any]) -> List[SecurityFinding]:
 - Test remediation suggestions
 
 **Acceptance Criteria**:
-- ✅ Network security checks implemented
-- ✅ Redaction policy validation works
-- ✅ Enhanced secret scanning catches more patterns
-- ✅ 85%+ test coverage
+- âœ… Network security checks implemented
+- âœ… Redaction policy validation works
+- âœ… Enhanced secret scanning catches more patterns
+- âœ… 85%+ test coverage
 
 ---
 
@@ -398,9 +398,9 @@ def check_redaction_policy(config: Dict[str, Any]) -> List[SecurityFinding]:
 ## Success Metrics
 
 ### Quantitative
-- Resilience parity: 60% → 90%
-- Security parity: 45% → 80%
-- Overall parity: 65% → 85%
+- Resilience parity: 60% â†’ 90%
+- Security parity: 45% â†’ 80%
+- Overall parity: 65% â†’ 85%
 - Test coverage: 85%+
 - Zero race conditions in stress tests
 
@@ -476,13 +476,15 @@ def check_redaction_policy(config: Dict[str, Any]) -> List[SecurityFinding]:
 
 ## Conclusion
 
-Phase 13 transforms kabot from a smart but fragile system into a production-ready, secure agent. By implementing PID locking, crash recovery, Windows ACL checks, granular command approvals, and completing the security audit, we achieve 85% OpenClaw parity and establish a solid foundation for advanced features in Phase 14+.
+Phase 13 transforms kabot from a smart but fragile system into a production-ready, secure agent. By implementing PID locking, crash recovery, Windows ACL checks, granular command approvals, and completing the security audit, we achieve 85% Kabot parity and establish a solid foundation for advanced features in Phase 14+.
 
 **Key Deliverables**:
-1. ✅ Zero race conditions (PID Locking)
-2. ✅ Seamless crash recovery (Sentinel)
-3. ✅ Windows security parity (ACL checks)
-4. ✅ Production-grade command safety (Firewall)
-5. ✅ Comprehensive security auditing
+1. âœ… Zero race conditions (PID Locking)
+2. âœ… Seamless crash recovery (Sentinel)
+3. âœ… Windows security parity (ACL checks)
+4. âœ… Production-grade command safety (Firewall)
+5. âœ… Comprehensive security auditing
 
 **Next Steps**: Begin implementation with Task 1 (PID Locking System).
+
+

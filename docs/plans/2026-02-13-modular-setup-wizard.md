@@ -1,10 +1,10 @@
-# Modular Setup Wizard (OpenClaw-Style) Implementation Plan
+﻿# Modular Setup Wizard (Kabot-Style) Implementation Plan
 
 **Goal:** Transform Kabot's setup process into a modular, interactive TUI wizard with real-time environment probing and advanced model filtering.
 
 ---
 
-## 🏗️ Architecture
+## ðŸ—ï¸ Architecture
 
 1.  **UI Component Layer**: Custom wrappers around `rich` to emulate the "Clack" aesthetic (vertical lines, dots, and boxes).
 2.  **Probing Engine**: Lightweight async check to see if the Gateway (Port 18790) is reachable.
@@ -13,19 +13,19 @@
 
 ---
 
-## 📅 Implementation Phases
+## ðŸ“… Implementation Phases
 
 ### Phase 1: Brand & Layout (The "Clack" Look)
 **Files:** `kabot/cli/setup_wizard.py`
 - [ ] Add ASCII Art logo.
-- [ ] Implement `draw_box(content)` and `draw_divider()` using Clack-style characters (`┌`, `│`, `└`, `◇`).
+- [ ] Implement `draw_box(content)` and `draw_divider()` using Clack-style characters (`â”Œ`, `â”‚`, `â””`, `â—‡`).
 - [ ] Create `summarize_config()` to show the active model and gateway status in a side-panel style box.
 
 ### Phase 2: The Probing Engine
 **Files:** `kabot/utils/network.py` (New), `kabot/cli/setup_wizard.py`
 - [ ] Implement `is_gateway_reachable(host, port)` using a short-timeout socket connection.
 - [ ] Integrate probing into the main setup menu:
-    - `● Local (reachable)` or `● Local (not detected)`.
+    - `â— Local (reachable)` or `â— Local (not detected)`.
 
 ### Phase 3: Modular Section Selection
 **Files:** `kabot/cli/setup_wizard.py`
@@ -48,8 +48,10 @@
 
 ---
 
-## 🧪 Success Criteria
-- [ ] The setup wizard looks visually similar to the `openclaw config` screenshot.
+## ðŸ§ª Success Criteria
+- [ ] The setup wizard looks visually similar to the `kabot config` screenshot.
 - [ ] Probing correctly identifies if `kabot gateway` is running.
 - [ ] User can configure "Channels" without having to re-configure "Model".
 - [ ] Model aliases are correctly resolved during the selection process.
+
+

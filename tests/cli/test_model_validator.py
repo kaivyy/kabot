@@ -4,11 +4,15 @@
 def test_validate_format_valid():
     from kabot.cli.model_validator import validate_format
     assert validate_format("openai/gpt-4o")
+    assert validate_format("openrouter/anthropic/claude-sonnet-4-5")
+    assert validate_format("openrouter/arcee-ai/trinity-large-preview:free")
 
 
 def test_validate_format_invalid():
     from kabot.cli.model_validator import validate_format
     assert not validate_format("gpt-4o")
+    assert not validate_format("openrouter/")
+    assert not validate_format("/gpt-4o")
 
 
 def test_resolve_alias():

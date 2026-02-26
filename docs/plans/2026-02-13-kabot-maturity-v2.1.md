@@ -1,22 +1,22 @@
-# Design & Implementation Plan: Kabot v2.1 (Maturity Phase)
+﻿# Design & Implementation Plan: Kabot v2.1 (Maturity Phase)
 
-**Goal:** Achieve full architectural and visual parity with OpenClaw by implementing multi-agent isolation, a pro-active diagnostic engine (`doctor`), and a high-fidelity TUI.
+**Goal:** Achieve full architectural and visual parity with Kabot by implementing multi-agent isolation, a pro-active diagnostic engine (`doctor`), and a high-fidelity TUI.
 
 ---
 
-## 🏗️ 1. Modern Architecture (Multi-Agent Home)
+## ðŸ—ï¸ 1. Modern Architecture (Multi-Agent Home)
 
 We are moving from a flat structure to a hierarchical one. This prevents memory contamination and allows specialized agents.
 
 ### 1.1 Folder Structure
 ```text
 ~/.kabot/
-├── global_config.json      # Shared API keys (The Token Sink)
-└── agents/
-    └── main/               # Default agent ID
-        ├── agent_config.json # Specific instructions/model for this agent
-        ├── sessions/       # Chat history (SQLite)
-        └── memory/         # Vector DB (ChromaDB)
+â”œâ”€â”€ global_config.json      # Shared API keys (The Token Sink)
+â””â”€â”€ agents/
+    â””â”€â”€ main/               # Default agent ID
+        â”œâ”€â”€ agent_config.json # Specific instructions/model for this agent
+        â”œâ”€â”€ sessions/       # Chat history (SQLite)
+        â””â”€â”€ memory/         # Vector DB (ChromaDB)
 ```
 
 ### 1.2 Configuration Mapping
@@ -26,7 +26,7 @@ The `Config` object will now distinguish between:
 
 ---
 
-## 🛠️ 2. The Diagnostic Engine (`kabot doctor`)
+## ðŸ› ï¸ 2. The Diagnostic Engine (`kabot doctor`)
 
 A hybrid system that runs standalone or as a summary during status checks.
 
@@ -52,9 +52,9 @@ async def probe_openai(api_key):
 
 ---
 
-## 🎨 3. Visual Parity (Clack-Style TUI)
+## ðŸŽ¨ 3. Visual Parity (Clack-Style TUI)
 
-Implementing a UI library inside `kabot/cli/setup_wizard.py` to handle the OpenClaw aesthetic.
+Implementing a UI library inside `kabot/cli/setup_wizard.py` to handle the Kabot aesthetic.
 
 ### 3.1 UI Toolkit Code Example
 ```python
@@ -66,13 +66,13 @@ def draw_clack_box(title, content, style="dim"):
         border_style=style,
         box=box.ROUNDED
     )
-    console.print("│")
-    console.print(f"◇  {panel}")
+    console.print("â”‚")
+    console.print(f"â—‡  {panel}")
 ```
 
 ---
 
-## 📅 4. Implementation Phases
+## ðŸ“… 4. Implementation Phases
 
 ### Phase 1: Migration & Multi-Agent Logic
 - [ ] **Task 1.1**: Update `kabot/config/loader.py` to handle `agents/` subdirectories.
@@ -89,13 +89,15 @@ def draw_clack_box(title, content, style="dim"):
 - [ ] **Task 3.2**: Update `models list` to show "Missing Requirements" for specific skills.
 
 ### Phase 4: Final TUI Polish
-- [ ] **Task 4.1**: Refactor `setup_wizard.py` to use the vertical line (`│`) and boxed summary patterns.
+- [ ] **Task 4.1**: Refactor `setup_wizard.py` to use the vertical line (`â”‚`) and boxed summary patterns.
 - [ ] **Task 4.2**: Add real-time port probing to the main menu.
 
 ---
 
-## 🧪 5. Verification & Success Criteria
+## ðŸ§ª 5. Verification & Success Criteria
 
 1.  **Isolation Test**: Create agent `work` and agent `personal`. Verify `work` cannot see `personal` memory.
 2.  **Doctor Test**: Delete `sessions/` folder. Verify `kabot doctor` reports a **CRITICAL** error.
 3.  **Probing Test**: Change OpenAI key to an invalid one. Verify `kabot status` marks it as **FAILED**.
+
+

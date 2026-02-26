@@ -1,4 +1,4 @@
-"""Event types for the message bus."""
+﻿"""Event types for the message bus."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 @dataclass
 class InboundMessage:
-    """Message received from a chat channel (OpenClaw-compatible)."""
+    """Message received from a chat channel (Kabot-compatible)."""
 
     channel: str  # telegram, discord, slack, whatsapp
     sender_id: str  # User identifier
@@ -18,7 +18,7 @@ class InboundMessage:
     metadata: dict[str, Any] = field(default_factory=dict)  # Channel-specific data
     _session_key: str | None = None  # Override for session key
 
-    # OpenClaw-compatible routing fields
+    # Kabot-compatible routing fields
     account_id: str | None = None  # Account/user identifier for routing
     peer_kind: str | None = None  # Peer type: "direct", "group", "channel"
     peer_id: str | None = None  # Peer identifier
@@ -52,7 +52,7 @@ class SystemEvent:
     """
     System event for monitoring and debugging.
 
-    Pattern from OpenClaw: src/infra/agent-events.ts
+    Pattern from Kabot: src/infra/agent-events.ts
     Enables real-time monitoring of agent internals.
     """
 
@@ -105,3 +105,5 @@ class SystemEvent:
             timestamp=datetime.now().timestamp(),
             data={"error_type": error_type, "message": message, **kwargs}
         )
+
+

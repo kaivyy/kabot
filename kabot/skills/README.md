@@ -1,4 +1,4 @@
-# kabot Skills
+﻿# kabot Skills
 
 This directory contains built-in skills that extend kabot's capabilities.
 
@@ -10,8 +10,8 @@ Each skill is a directory containing a `SKILL.md` file with:
 
 ## Attribution
 
-These skills are adapted from [OpenClaw](https://github.com/openclaw/openclaw)'s skill system.
-The skill format and metadata structure follow OpenClaw's conventions to maintain compatibility.
+These skills are adapted from [Kabot](https://github.com/kabot/kabot)'s skill system.
+The skill format and metadata structure follow Kabot's conventions to maintain compatibility.
 
 ## Available Skills
 
@@ -22,3 +22,4 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `summarize` | Summarize URLs, files, and YouTube videos |
 | `tmux` | Remote-control tmux sessions |
 | `skill-creator` | Create new skills |
+

@@ -1,10 +1,10 @@
-# Advanced Kabot Features Implementation Plan
+﻿# Advanced Kabot Features Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Upgrade Kabot's cron tool, agent loop, and gateway to match OpenClaw's production-grade capabilities.
+**Goal:** Upgrade Kabot's cron tool, agent loop, and gateway to match Kabot's production-grade capabilities.
 
-**Architecture:** Modular enhancement in 3 phases — (1) Cron tool upgrade with full CRUD + delivery inference + context messages, (2) Agent loop hardening with session isolation and heartbeat, (3) Gateway REST API for cron management.
+**Architecture:** Modular enhancement in 3 phases â€” (1) Cron tool upgrade with full CRUD + delivery inference + context messages, (2) Agent loop hardening with session isolation and heartbeat, (3) Gateway REST API for cron management.
 
 **Tech Stack:** Python 3.11+, asyncio, croniter, dataclasses, Pydantic (optional for validation)
 
@@ -194,7 +194,7 @@ Expected: FAIL
 **Step 3: Add `update_job` and `get_run_history` to CronService**
 
 ```python
-# kabot/cron/service.py — add these methods to CronService class
+# kabot/cron/service.py â€” add these methods to CronService class
 
     def update_job(self, job_id: str, **kwargs) -> CronJob | None:
         """Update a job's properties."""
@@ -234,7 +234,7 @@ Expected: FAIL
 **Step 4: Add new actions to CronTool**
 
 ```python
-# kabot/agent/tools/cron.py — update execute() and add new handlers
+# kabot/agent/tools/cron.py â€” update execute() and add new handlers
 
     async def execute(self, action: str, **kwargs) -> str:
         match action:
@@ -280,7 +280,7 @@ Expected: FAIL
         lines = []
         for run in history:
             dt = datetime.fromtimestamp(run["run_at_ms"] / 1000)
-            lines.append(f"  {dt.isoformat()} — {run['status']}")
+            lines.append(f"  {dt.isoformat()} â€” {run['status']}")
         return f"Run history for {job_id}:\n" + "\n".join(lines)
 
     def _get_status(self) -> str:
@@ -299,7 +299,7 @@ git add -A && git commit -m "feat(cron): add update/run/runs/status actions"
 
 ---
 
-### Task 3: Context Messages — Attach Recent Chat to Reminders
+### Task 3: Context Messages â€” Attach Recent Chat to Reminders
 
 **Files:**
 - Modify: `kabot/agent/tools/cron.py`
@@ -331,7 +331,7 @@ def test_context_truncation():
 **Step 2: Implement context message building**
 
 ```python
-# kabot/agent/tools/cron.py — add top-level function
+# kabot/agent/tools/cron.py â€” add top-level function
 
 REMINDER_CONTEXT_MARKER = "\n\nRecent context:\n"
 MAX_CONTEXT_PER_MESSAGE = 220
@@ -432,7 +432,7 @@ def infer_delivery(session_key: str) -> dict | None:
     return {"channel": channel, "to": to}
 ```
 
-**Step 3: Wire into CronTool — auto-set delivery when not provided**
+**Step 3: Wire into CronTool â€” auto-set delivery when not provided**
 
 ```python
 # In CronTool._add_job(), after building schedule:
@@ -457,7 +457,7 @@ git commit -m "feat(cron): auto-infer delivery target from session key"
 **Files:**
 - Modify: `kabot/agent/tools/cron.py`
 
-**Step 1: Replace the minimal description with a comprehensive OpenClaw-style schema**
+**Step 1: Replace the minimal description with a comprehensive Kabot-style schema**
 
 ```python
 @property
@@ -516,7 +516,7 @@ git commit -m "feat(cron): rich tool description for better LLM accuracy"
 **Step 1: Add `process_isolated` method to AgentLoop**
 
 ```python
-# kabot/agent/loop.py — new method
+# kabot/agent/loop.py â€” new method
 
 async def process_isolated(
     self, content: str, 
@@ -538,7 +538,7 @@ async def process_isolated(
         _session_key=session_key
     )
     
-    # Build messages without history — fresh context
+    # Build messages without history â€” fresh context
     messages = self.context.build_messages(
         history=[],  # No history for isolated sessions
         current_message=content,
@@ -556,7 +556,7 @@ async def process_isolated(
 **Step 2: Update gateway's `on_cron_job` to use `process_isolated`**
 
 ```python
-# kabot/cli/commands.py — update the on_cron_job callback
+# kabot/cli/commands.py â€” update the on_cron_job callback
 
 async def on_cron_job(job: CronJob) -> str | None:
     """Execute a cron job in an isolated session."""
@@ -649,7 +649,7 @@ git commit -m "feat: add heartbeat service for periodic agent wake-ups"
 - Modify: `kabot/agent/tools/cron.py`
 - Test: `tests/cron/test_flat_params.py`
 
-**Goal:** Some weaker LLMs (e.g. Grok, some open-source models) flatten nested params instead of nesting them properly. Add recovery logic like OpenClaw does.
+**Goal:** Some weaker LLMs (e.g. Grok, some open-source models) flatten nested params instead of nesting them properly. Add recovery logic like Kabot does.
 
 **Step 1: Write the failing test**
 
@@ -666,7 +666,7 @@ def test_flat_params_recovery():
     assert True  # The execute method already handles flat params
 ```
 
-**Step 2: The current CronTool already handles flat params** (message, at_time, every_seconds are top-level). This is actually already OpenClaw-compatible. Just add validation.
+**Step 2: The current CronTool already handles flat params** (message, at_time, every_seconds are top-level). This is actually already Kabot-compatible. Just add validation.
 
 **Step 3: Commit**
 
@@ -689,13 +689,13 @@ git commit -m "test(cron): verify flat-params recovery works"
 
 **Endpoints:**
 ```
-GET    /api/cron/status          → Cron service status
-GET    /api/cron/jobs             → List all jobs
-POST   /api/cron/jobs             → Add a new job
-PATCH  /api/cron/jobs/:id         → Update a job
-DELETE /api/cron/jobs/:id         → Remove a job
-POST   /api/cron/jobs/:id/run     → Execute a job immediately
-GET    /api/cron/jobs/:id/runs    → Get run history
+GET    /api/cron/status          â†’ Cron service status
+GET    /api/cron/jobs             â†’ List all jobs
+POST   /api/cron/jobs             â†’ Add a new job
+PATCH  /api/cron/jobs/:id         â†’ Update a job
+DELETE /api/cron/jobs/:id         â†’ Remove a job
+POST   /api/cron/jobs/:id/run     â†’ Execute a job immediately
+GET    /api/cron/jobs/:id/runs    â†’ Get run history
 ```
 
 **Step 1: Write failing test**
@@ -903,7 +903,7 @@ Expected: FAIL with "unexpected keyword argument 'refresh_token'"
 **Step 3: Update AuthProfile in schema.py**
 
 ```python
-# kabot/config/schema.py — update AuthProfile class
+# kabot/config/schema.py â€” update AuthProfile class
 
 class AuthProfile(BaseModel):
     """Authentication profile for a specific account."""
@@ -941,7 +941,7 @@ git commit -m "feat(auth): extend AuthProfile with refresh_token, expires_at, to
 - Create: `kabot/auth/refresh.py`
 - Test: `tests/auth/test_refresh.py`
 
-**Goal:** Automatically refresh expired OAuth tokens before making API calls. Modeled after OpenClaw's `refreshOAuthTokenWithLock()`.
+**Goal:** Automatically refresh expired OAuth tokens before making API calls. Modeled after Kabot's `refreshOAuthTokenWithLock()`.
 
 **Step 1: Write the failing test**
 
@@ -1111,14 +1111,14 @@ git commit -m "feat(auth): add OAuth token auto-refresh service"
 
 ---
 
-### Task 13: Wire Just-In-Time Refresh with File Locking (OpenClaw Parity)
+### Task 13: Wire Just-In-Time Refresh with File Locking (Kabot Parity)
 
 **Files:**
 - Modify: `kabot/config/schema.py` (`get_api_key_async` logic)
 - Modify: `kabot/auth/service.py`
 - Test: `tests/auth/test_jit_refresh.py`
 
-**Goal:** Ensure `get_api_key()` never returns an expired token. If expired, it MUST refresh immediately before returning, using file locks to prevent race conditions (multiple processes refreshing simultaneously). This exactly matches OpenClaw's `resolveApiKeyForProfile` strategy in `auth-profiles/oauth.ts`.
+**Goal:** Ensure `get_api_key()` never returns an expired token. If expired, it MUST refresh immediately before returning, using file locks to prevent race conditions (multiple processes refreshing simultaneously). This exactly matches Kabot's `resolveApiKeyForProfile` strategy in `auth-profiles/oauth.ts`.
 
 **Step 1: Write the failing test**
 
@@ -1220,7 +1220,7 @@ async def test_get_api_key_auto_refreshes():
 **Step 2: Update `get_api_key` to check expiry**
 
 ```python
-# kabot/config/schema.py — modify get_api_key method
+# kabot/config/schema.py â€” modify get_api_key method
 
     def get_api_key(self, model: str | None = None) -> str | None:
         """Get API key for the given model. Auto-refreshes expired OAuth tokens."""
@@ -1292,7 +1292,7 @@ git commit -m "feat(auth): wire auto-refresh into provider resolution"
 - Modify: `kabot/providers/litellm_provider.py`
 - Test: `tests/auth/test_error_classification.py`
 
-**Goal:** Classify API errors properly instead of showing generic "billing" errors. Like OpenClaw's `AuthProfileFailureReason`.
+**Goal:** Classify API errors properly instead of showing generic "billing" errors. Like Kabot's `AuthProfileFailureReason`.
 
 **Step 1: Write the failing test**
 
@@ -1360,7 +1360,7 @@ def classify_auth_error(status_code: int, message: str = "") -> AuthErrorKind:
 **Step 3: Wire into LiteLLMProvider error handling**
 
 ```python
-# kabot/providers/litellm_provider.py — in chat() method's exception handler:
+# kabot/providers/litellm_provider.py â€” in chat() method's exception handler:
 from kabot.auth.errors import classify_auth_error, AuthErrorKind
 
 try:
@@ -1371,12 +1371,12 @@ except Exception as e:
         str(e)
     )
     if error_kind == AuthErrorKind.AUTH:
-        logger.warning("Auth error — token may be expired, attempting refresh...")
+        logger.warning("Auth error â€” token may be expired, attempting refresh...")
         # Trigger auto-refresh here
     elif error_kind == AuthErrorKind.BILLING:
-        logger.error("Billing error — account has insufficient credits")
+        logger.error("Billing error â€” account has insufficient credits")
     elif error_kind == AuthErrorKind.RATE_LIMIT:
-        logger.warning("Rate limited — will retry after backoff")
+        logger.warning("Rate limited â€” will retry after backoff")
     raise
 ```
 
@@ -1402,7 +1402,7 @@ git commit -m "feat(auth): add error classification (auth/billing/rate_limit)"
 **Step 1: Update OpenAI OAuth handler**
 
 ```python
-# kabot/auth/handlers/openai_oauth.py — update _exchange_and_return
+# kabot/auth/handlers/openai_oauth.py â€” update _exchange_and_return
 
     def _exchange_and_return(self, code: str, verifier: str) -> Optional[Dict[str, Any]]:
         """Exchange auth code for tokens and return credential dict."""
@@ -1417,7 +1417,7 @@ git commit -m "feat(auth): add error classification (auth/billing/rate_limit)"
             console.print("[red]No access_token returned by OpenAI.[/red]")
             return None
 
-        console.print("[green]✓ OpenAI OAuth authentication successful![/green]")
+        console.print("[green]âœ“ OpenAI OAuth authentication successful![/green]")
 
         return {
             "providers": {
@@ -1452,7 +1452,7 @@ git commit -m "feat(auth): store expiry info in all OAuth handlers"
 - Create: `kabot/agent/tools/web_fetch.py`
 - Test: `tests/tools/test_web_fetch.py`
 
-**Goal:** A production-grade HTTP fetch tool (like OpenClaw's 690-line `web-fetch.ts`) that allows the agent to call any REST API.
+**Goal:** A production-grade HTTP fetch tool (like Kabot's 690-line `web-fetch.ts`) that allows the agent to call any REST API.
 
 **Step 1: Write the failing test**
 
@@ -1523,7 +1523,7 @@ USER_AGENT = "Kabot/1.0 (AI Assistant)"
 
 
 class WebFetchTool(Tool):
-    """Fetch content from HTTP URLs — web pages, APIs, files."""
+    """Fetch content from HTTP URLs â€” web pages, APIs, files."""
     
     @property
     def name(self) -> str:
@@ -1685,7 +1685,7 @@ git commit -m "feat(tools): add web_fetch tool for HTTP APIs"
 
 ---
 
-### Task 17: Skill Creator — Template for External API Skills
+### Task 17: Skill Creator â€” Template for External API Skills
 
 **Files:**
 - Create: `kabot/skills/templates/api_skill.md`
@@ -1713,7 +1713,7 @@ This skill enables Kabot to interact with the [API Name] API.
 
 ## Available Actions
 List the actions this skill provides:
-1. **[action_name]** — Description
+1. **[action_name]** â€” Description
    - Endpoint: `GET/POST [url]`
    - Parameters: [list]
 
@@ -1742,7 +1742,7 @@ After receiving the API response:
 # kabot/skills/ev-car/SKILL.md
 ---
 name: ev-car
-description: Query EV car data — battery status, range, charging info
+description: Query EV car data â€” battery status, range, charging info
 ---
 
 # EV Car API Skill
@@ -1769,10 +1769,10 @@ Use `web_fetch` tool:
 
 ### Response Format
 Present the data as:
-- 🔋 Battery: [level]%
-- 📏 Range: [range] km  
-- ⚡ Charging: [status]
-- 🌡️ Battery Temp: [temp]°C
+- ðŸ”‹ Battery: [level]%
+- ðŸ“ Range: [range] km  
+- âš¡ Charging: [status]
+- ðŸŒ¡ï¸ Battery Temp: [temp]Â°C
 ```
 
 **Step 3: Commit**
@@ -1821,4 +1821,6 @@ Create `memory_search` tool for the agent to query long-term memory.
 
 **Total: ~19 hours of implementation**
 
-**Recommended order:** Phase 4 (auth fix) → Phase 1 (cron) → Phase 5 (API skills) → Phase 6 (plugins) → Phase 7 (memory) → Phase 2 → Phase 3
+**Recommended order:** Phase 4 (auth fix) â†’ Phase 1 (cron) â†’ Phase 5 (API skills) â†’ Phase 6 (plugins) â†’ Phase 7 (memory) â†’ Phase 2 â†’ Phase 3
+
+

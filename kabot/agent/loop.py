@@ -142,7 +142,7 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace)
+        self.context = ContextBuilder(workspace, skills_config=self.config.skills)
         self.sessions = session_manager or SessionManager(workspace)
         from kabot.memory.memory_factory import MemoryFactory
         from kabot.config.loader import load_config
@@ -183,6 +183,7 @@ class AgentLoop:
             bus=bus,
             model=self.model,
             brave_api_key=brave_api_key,
+            web_search_config=self.config.tools.web.search,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
             http_guard=getattr(getattr(self.config, "integrations", None), "http_guard", None),
@@ -259,6 +260,51 @@ class AgentLoop:
             },
         )
         await self.bus.publish_inbound(msg)
+
+    @staticmethod
+    def _resolve_recovery_target(crash_data: dict[str, Any] | None) -> tuple[str, str] | None:
+        """Resolve outbound channel/chat target for crash recovery message."""
+        if not isinstance(crash_data, dict):
+            return None
+
+        def _is_reserved(channel: str) -> bool:
+            base_channel = channel.split(":", 1)[0].lower()
+            return base_channel in {"agent", "background", "system"}
+
+        def _parse_from_message_id(raw: Any) -> tuple[str, str] | None:
+            if not isinstance(raw, str):
+                return None
+            parts = [part.strip() for part in raw.split(":")]
+            if len(parts) < 3:
+                return None
+            # message_id shape: <channel>:<chat_id>:<sender_id>
+            # channel may itself include ":" for instance-aware routing.
+            channel = ":".join(parts[:-2]).lower()
+            chat_id = parts[-2]
+            if not channel or not chat_id:
+                return None
+            if _is_reserved(channel):
+                return None
+            return channel, chat_id
+
+        def _parse_from_session_id(raw: Any) -> tuple[str, str] | None:
+            if not isinstance(raw, str):
+                return None
+            parts = [part.strip() for part in raw.split(":")]
+            if len(parts) < 2:
+                return None
+            channel = parts[0].lower()
+            chat_id = parts[1]
+            if not channel or not chat_id:
+                return None
+            if _is_reserved(channel):
+                return None
+            return channel, chat_id
+
+        target = _parse_from_message_id(crash_data.get("message_id"))
+        if target:
+            return target
+        return _parse_from_session_id(crash_data.get("session_id"))
 
     @property
     def status_service(self) -> Any:
@@ -370,6 +416,8 @@ class AgentLoop:
             perplexity_model=self.config.tools.web.search.perplexity_model,
             xai_api_key=self.config.tools.web.search.xai_api_key,
             xai_model=self.config.tools.web.search.xai_model,
+            kimi_api_key=self.config.tools.web.search.kimi_api_key,
+            kimi_model=self.config.tools.web.search.kimi_model,
             cache_ttl_minutes=self.config.tools.web.search.cache_ttl_minutes,
         ))
         self.tools.register(
@@ -527,16 +575,20 @@ class AgentLoop:
         if crash_data:
             recovery_msg = format_recovery_message(crash_data)
             logger.warning("Crash detected, sending recovery message")
-            # Send recovery message to the crashed session if we have context
-            if crash_data.get('session_id'):
+            recovery_target = self._resolve_recovery_target(crash_data)
+            if recovery_target:
+                channel, chat_id = recovery_target
                 try:
-                    await self.bus.publish_outbound(OutboundMessage(
-                        channel="system",
-                        chat_id=crash_data.get('session_id', 'unknown'),
-                        content=recovery_msg
-                    ))
+                    await self.bus.publish_outbound(
+                        OutboundMessage(channel=channel, chat_id=chat_id, content=recovery_msg)
+                    )
                 except Exception as e:
                     logger.error(f"Failed to send recovery message: {e}")
+            else:
+                logger.warning(
+                    "Skipping recovery message: no valid channel/chat target in crash data "
+                    f"(session_id={crash_data.get('session_id')}, message_id={crash_data.get('message_id')})"
+                )
 
         # Phase 10: Emit ON_STARTUP hook
         await self.hooks.emit("ON_STARTUP")

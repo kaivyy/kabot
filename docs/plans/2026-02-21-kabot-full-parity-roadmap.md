@@ -1,16 +1,16 @@
-# Kabot Full-Parity Roadmap Implementation Plan
+﻿# Kabot Full-Parity Roadmap Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Close all 10 verified gaps between Kabot and OpenClaw, transforming Kabot from a capable chatbot into a production-grade autonomous agent platform.
+**Goal:** Close all 10 verified gaps between Kabot and Kabot, transforming Kabot from a capable chatbot into a production-grade autonomous agent platform.
 
-**Architecture:** Layered inside-out approach — start with backend safety (sub-agent limits, security hardening), then automation (cron delivery, heartbeat), then interactive UX (Telegram/Discord buttons), then infrastructure (sandbox, daemon audit). Each task is independently deployable and tested. Config changes go into `schema.py` using existing Pydantic patterns. All new modules get pytest coverage.
+**Architecture:** Layered inside-out approach â€” start with backend safety (sub-agent limits, security hardening), then automation (cron delivery, heartbeat), then interactive UX (Telegram/Discord buttons), then infrastructure (sandbox, daemon audit). Each task is independently deployable and tested. Config changes go into `schema.py` using existing Pydantic patterns. All new modules get pytest coverage.
 
 **Tech Stack:** Python 3.11+, Pydantic, pytest, python-telegram-bot (InlineKeyboardMarkup), Discord REST API v10, httpx (webhook POST), aiohttp (gateway), Docker SDK (optional)
 
 **Verified Gap Counts (from source audit):**
 
-| Area | Kabot Files | OpenClaw Files |
+| Area | Kabot Files | Kabot Files |
 |---|---|---|
 | Gateway | 5 | 171 |
 | Security | 1 | 24 |
@@ -67,7 +67,7 @@ Result: `774 passed, 6 skipped`
 
 ### Detailed Evidence Report
 
-For full evidence mapping (including OpenClaw reference locations), see:
+For full evidence mapping (including Kabot reference locations), see:
 `docs/plans/2026-02-21-kabot-full-parity-verification.md`
 
 For execution timeline and closure summary, see:
@@ -114,7 +114,7 @@ class TestSubagentDefaults:
 **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/config/test_subagent_config.py -v`
-Expected: FAIL — `ImportError: cannot import name 'SubagentDefaults'`
+Expected: FAIL â€” `ImportError: cannot import name 'SubagentDefaults'`
 
 **Step 3: Write minimal implementation**
 
@@ -223,7 +223,7 @@ class TestSubagentSpawnGuards:
 **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/agent/test_subagent_limits.py -v`
-Expected: FAIL — `TypeError: __init__() got unexpected keyword argument 'subagent_config'`
+Expected: FAIL â€” `TypeError: __init__() got unexpected keyword argument 'subagent_config'`
 
 **Step 3: Write minimal implementation**
 
@@ -367,7 +367,7 @@ class TestActiveHoursCheck:
 **Step 2: Run test**
 
 Run: `pytest tests/heartbeat/test_heartbeat_delivery.py -v`
-Expected: FAIL — `ImportError: cannot import name 'HeartbeatDefaults'`
+Expected: FAIL â€” `ImportError: cannot import name 'HeartbeatDefaults'`
 
 **Step 3: Write implementation**
 
@@ -411,7 +411,7 @@ def is_within_active_hours(
     now_min = now_h * 60
     if start_min <= end_min:
         return start_min <= now_min < end_min
-    # Overnight window (e.g. 22:00 → 06:00)
+    # Overnight window (e.g. 22:00 â†’ 06:00)
     return now_min >= start_min or now_min < end_min
 ```
 
@@ -522,7 +522,7 @@ class TestResolveDeliveryPlan:
 **Step 2: Run test**
 
 Run: `pytest tests/cron/test_cron_delivery_modes.py -v`
-Expected: FAIL — `ImportError: cannot import name 'CronDeliveryConfig'`
+Expected: FAIL â€” `ImportError: cannot import name 'CronDeliveryConfig'`
 
 **Step 3: Write implementation**
 
@@ -701,7 +701,7 @@ class TestDeliverWebhook:
             assert ok is False
 ```
 
-**Step 2: Run test** → FAIL
+**Step 2: Run test** â†’ FAIL
 
 **Step 3: Write implementation**
 
@@ -740,7 +740,7 @@ async def deliver_webhook(
         return False
 ```
 
-**Step 4: Run test** → PASS (4 passed)
+**Step 4: Run test** â†’ PASS (4 passed)
 
 **Step 5: Commit**
 
@@ -802,7 +802,7 @@ class TestBuildInlineKeyboard:
         assert markup.inline_keyboard[0][0].callback_data == "Click Me"
 ```
 
-**Step 2: Run test** → FAIL
+**Step 2: Run test** â†’ FAIL
 
 **Step 3: Write implementation**
 
@@ -841,7 +841,7 @@ def build_inline_keyboard(
     return InlineKeyboardMarkup(keyboard)
 ```
 
-**Step 4: Run test** → PASS (5 passed)
+**Step 4: Run test** â†’ PASS (5 passed)
 
 **Step 5: Commit**
 
@@ -896,7 +896,7 @@ class TestCallbackQueryHandler:
         assert msg.chat_id == "456"
 ```
 
-**Step 2: Run test** → FAIL
+**Step 2: Run test** â†’ FAIL
 
 **Step 3: Implement `_on_callback_query()`** in `TelegramChannel` and register `CallbackQueryHandler` in `start()`.
 
@@ -934,7 +934,7 @@ from telegram.ext import CallbackQueryHandler
 self._app.add_handler(CallbackQueryHandler(self._on_callback_query))
 ```
 
-**Step 4: Run test** → PASS
+**Step 4: Run test** â†’ PASS
 
 **Step 5: Commit**
 
@@ -1010,7 +1010,7 @@ class TestBuildSelectMenu:
         assert len(select["options"]) == 2
 ```
 
-**Step 2: Run test** → FAIL
+**Step 2: Run test** â†’ FAIL
 
 **Step 3: Create `kabot/channels/discord_components.py`**
 
@@ -1076,7 +1076,7 @@ def build_select_menu(
     return {"type": ComponentType.ACTION_ROW, "components": [select]}
 ```
 
-**Step 4: Run test** → PASS (6 passed)
+**Step 4: Run test** â†’ PASS (6 passed)
 
 **Step 5: Commit**
 
@@ -1131,7 +1131,7 @@ class TestInteractionHandler:
         assert "approve_deploy" in msg.content
 ```
 
-**Step 2: Run test** → FAIL
+**Step 2: Run test** â†’ FAIL
 
 **Step 3: Implement** `_handle_interaction_create()` in `DiscordChannel` and add dispatch in `_gateway_loop()`:
 
@@ -1173,7 +1173,7 @@ async def _handle_interaction_create(self, payload: dict) -> None:
 
 In `_gateway_loop()`, add dispatch for event `INTERACTION_CREATE`.
 
-**Step 4: Run test** → PASS
+**Step 4: Run test** â†’ PASS
 
 **Step 5: Commit**
 
@@ -1229,7 +1229,7 @@ class TestDockerSandbox:
         assert result is None
 ```
 
-**Step 2: Run test** → FAIL
+**Step 2: Run test** â†’ FAIL
 
 **Step 3: Create `kabot/sandbox/docker_sandbox.py`**
 
@@ -1296,7 +1296,7 @@ WORKDIR /home/sandbox
 CMD ["sleep", "infinity"]
 ```
 
-**Step 4: Run test** → PASS (5 passed)
+**Step 4: Run test** â†’ PASS (5 passed)
 
 **Step 5: Commit**
 
@@ -1359,7 +1359,7 @@ class TestAuditTrail:
         assert len(results) == 2
 ```
 
-**Step 2: Run test** → FAIL
+**Step 2: Run test** â†’ FAIL
 
 **Step 3: Create `kabot/security/audit_trail.py`**
 
@@ -1417,7 +1417,7 @@ class AuditTrail:
         return results
 ```
 
-**Step 4: Run test** → PASS (4 passed)
+**Step 4: Run test** â†’ PASS (4 passed)
 
 **Step 5: Commit**
 
@@ -1458,7 +1458,7 @@ git commit -m "feat(security): add structured JSONL audit trail logger"
   - Added `kabot/sandbox/` module with `DockerSandbox` for isolated command execution.
   - Added `Dockerfile.sandbox` (Python 3.11 slim + bash/curl/git/jq/ripgrep).
 - **Security Audit Trail:**
-  - Added `AuditTrail` class — structured JSONL security logger with query support.
+  - Added `AuditTrail` class â€” structured JSONL security logger with query support.
 ```
 
 **Step 2: Commit**
@@ -1487,3 +1487,5 @@ git add -A
 git commit -m "chore: final verification for Kabot full-parity roadmap"
 git push
 ```
+
+

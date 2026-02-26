@@ -1,10 +1,10 @@
-# OpenClaw Parity: AI-as-Developer Backend Implementation Plan
+﻿# Kabot Parity: AI-as-Developer Backend Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Close all remaining gaps between Kabot and OpenClaw's AI-as-Developer backend, making Kabot 100% AI-driven with the same level of sophistication.
+**Goal:** Close all remaining gaps between Kabot and Kabot's AI-as-Developer backend, making Kabot 100% AI-driven with the same level of sophistication.
 
-**Architecture:** 6 new modules will be added to Kabot mirroring OpenClaw's approach — context compaction, context window guard, tool loop detection, tool policy profiles, failover error classification, and session tool result guard. Each is a standalone module wired into the existing agent loop.
+**Architecture:** 6 new modules will be added to Kabot mirroring Kabot's approach â€” context compaction, context window guard, tool loop detection, tool policy profiles, failover error classification, and session tool result guard. Each is a standalone module wired into the existing agent loop.
 
 **Tech Stack:** Python 3.11+, asyncio, existing Kabot agent loop / hook system / resilience layer
 
@@ -12,14 +12,14 @@
 
 ## Revised Gap Analysis (after deep source-code read)
 
-| # | Feature | OpenClaw Source | Kabot Status | Priority |
+| # | Feature | Kabot Source | Kabot Status | Priority |
 |---|---------|----------------|-------------|----------|
-| 1 | Context Compaction | `compaction.ts` (390 lines) | ❌ Missing | **P0** |
-| 2 | Context Window Guard | `context-window-guard.ts` (75 lines) | ❌ Missing | **P0** |
-| 3 | Tool Loop Detection | `tool-loop-detection.ts` (624 lines) | ❌ Missing | **P1** |
-| 4 | Tool Policy Profiles | `tool-policy.ts` (313 lines) | ❌ Missing | **P1** |
-| 5 | Failover Error Classification | `failover-error.ts` (241 lines) | ⚠️ Partial | **P2** |
-| 6 | Session Tool Result Guard | `session-tool-result-guard.ts` (253 lines) | ⚠️ Partial | **P2** |
+| 1 | Context Compaction | `compaction.ts` (390 lines) | âŒ Missing | **P0** |
+| 2 | Context Window Guard | `context-window-guard.ts` (75 lines) | âŒ Missing | **P0** |
+| 3 | Tool Loop Detection | `tool-loop-detection.ts` (624 lines) | âŒ Missing | **P1** |
+| 4 | Tool Policy Profiles | `tool-policy.ts` (313 lines) | âŒ Missing | **P1** |
+| 5 | Failover Error Classification | `failover-error.ts` (241 lines) | âš ï¸ Partial | **P2** |
+| 6 | Session Tool Result Guard | `session-tool-result-guard.ts` (253 lines) | âš ï¸ Partial | **P2** |
 
 ---
 
@@ -89,7 +89,7 @@ Expected: FAIL (module not found)
 
 ```python
 # kabot/agent/loop_core/context_guard.py
-"""Context window size guard — prevents crashes from undersized models."""
+"""Context window size guard â€” prevents crashes from undersized models."""
 
 from __future__ import annotations
 from dataclasses import dataclass
@@ -149,13 +149,13 @@ Expected: ALL PASS
 **Step 5: Wire into agent loop**
 
 Modify: `kabot/agent/loop_core/execution_runtime.py`
-— In `run_agent_loop()`, before calling `call_llm_with_fallback()`, call `evaluate_context_window_guard()` and log warning or return early if blocked.
+â€” In `run_agent_loop()`, before calling `call_llm_with_fallback()`, call `evaluate_context_window_guard()` and log warning or return early if blocked.
 
 **Step 6: Commit**
 
 ```bash
 git add kabot/agent/loop_core/context_guard.py tests/test_context_guard.py
-git commit -m "feat: add context window guard (OpenClaw parity)"
+git commit -m "feat: add context window guard (Kabot parity)"
 ```
 
 ---
@@ -167,7 +167,7 @@ git commit -m "feat: add context window guard (OpenClaw parity)"
 - Test: `tests/test_compaction.py`
 - Modify: `kabot/agent/loop_core/execution_runtime.py`
 
-**What it does:** When context window overflows, automatically summarizes older messages into a compressed summary instead of crashing. Uses the LLM itself to generate summaries (just like OpenClaw uses `generateSummary()`).
+**What it does:** When context window overflows, automatically summarizes older messages into a compressed summary instead of crashing. Uses the LLM itself to generate summaries (just like Kabot uses `generateSummary()`).
 
 **Step 1: Write failing tests**
 
@@ -217,12 +217,12 @@ Expected: FAIL
 
 ```python
 # kabot/agent/loop_core/compaction.py
-"""Context compaction — auto-summarize history when token limit is reached."""
+"""Context compaction â€” auto-summarize history when token limit is reached."""
 
 from __future__ import annotations
 from typing import Any
 
-DEFAULT_TOKENS_PER_CHAR = 0.25  # rough estimate: 4 chars ≈ 1 token
+DEFAULT_TOKENS_PER_CHAR = 0.25  # rough estimate: 4 chars â‰ˆ 1 token
 
 
 def estimate_tokens(content: str | list[dict[str, Any]]) -> int:
@@ -328,13 +328,13 @@ Expected: ALL PASS
 **Step 5: Wire into agent loop**
 
 Modify: `kabot/agent/loop_core/execution_runtime.py:run_agent_loop()`
-— Before each LLM call, check `estimate_tokens(messages)` against context window. If > 80% of window, call `prune_history_for_context()` and optionally `summarize_for_compaction()`.
+â€” Before each LLM call, check `estimate_tokens(messages)` against context window. If > 80% of window, call `prune_history_for_context()` and optionally `summarize_for_compaction()`.
 
 **Step 6: Commit**
 
 ```bash
 git add kabot/agent/loop_core/compaction.py tests/test_compaction.py
-git commit -m "feat: add context compaction with auto-summarization (OpenClaw parity)"
+git commit -m "feat: add context compaction with auto-summarization (Kabot parity)"
 ```
 
 ---
@@ -416,7 +416,7 @@ Run: `python -m pytest tests/test_tool_loop_detection.py -v`
 
 ```python
 # kabot/agent/loop_core/tool_loop_detection.py
-"""Tool loop detection — detect stuck agents calling same tools repeatedly."""
+"""Tool loop detection â€” detect stuck agents calling same tools repeatedly."""
 
 from __future__ import annotations
 
@@ -484,13 +484,13 @@ class LoopDetector:
             return LoopDetectionResult(
                 stuck=True, level="critical", detector="generic_repeat",
                 count=repeat_count,
-                message=f"Tool '{tool_name}' called {repeat_count} times with same params — blocked.",
+                message=f"Tool '{tool_name}' called {repeat_count} times with same params â€” blocked.",
             )
         if repeat_count >= self.warning_threshold:
             return LoopDetectionResult(
                 stuck=True, level="warning", detector="generic_repeat",
                 count=repeat_count,
-                message=f"Tool '{tool_name}' called {repeat_count} times with same params — warning.",
+                message=f"Tool '{tool_name}' called {repeat_count} times with same params â€” warning.",
             )
 
         # Ping-pong detection
@@ -507,7 +507,7 @@ class LoopDetector:
                     return LoopDetectionResult(
                         stuck=True, level="critical" if pair_count >= self.critical_threshold // 2 else "warning",
                         detector="ping_pong", count=pair_count,
-                        message=f"Ping-pong detected: {recent[0]['tool_name']} ↔ {recent[1]['tool_name']} ({pair_count} cycles)",
+                        message=f"Ping-pong detected: {recent[0]['tool_name']} â†” {recent[1]['tool_name']} ({pair_count} cycles)",
                         paired_tool=recent[1]["tool_name"],
                     )
 
@@ -515,7 +515,7 @@ class LoopDetector:
 ```
 
 **Step 4:** Run tests, verify pass
-**Step 5:** Wire into `process_tool_calls()` — before each `tools.execute()`, call `detector.check()`. If critical, return error string instead.
+**Step 5:** Wire into `process_tool_calls()` â€” before each `tools.execute()`, call `detector.check()`. If critical, return error string instead.
 **Step 6:** Commit
 
 ---
@@ -570,7 +570,7 @@ def test_apply_policy_filters_tools():
     assert "cron" not in filtered
 ```
 
-**Step 2–6:** Implement `tool_policy.py` with profiles matching OpenClaw's `TOOL_PROFILES` and `TOOL_GROUPS`, test, wire into `ToolRegistry.get_definitions()`, commit.
+**Step 2â€“6:** Implement `tool_policy.py` with profiles matching Kabot's `TOOL_PROFILES` and `TOOL_GROUPS`, test, wire into `ToolRegistry.get_definitions()`, commit.
 
 ---
 
@@ -581,7 +581,7 @@ def test_apply_policy_filters_tools():
 - Create: `kabot/core/failover_error.py`
 - Test: `tests/test_failover_error.py`
 
-**What it does:** Classify API errors into 7 categories (billing/rate_limit/auth/timeout/format/model_not_found/unknown) and respond according to each type. OpenClaw's `failover-error.ts` maps status codes + error messages + error codes to failover reasons.
+**What it does:** Classify API errors into 7 categories (billing/rate_limit/auth/timeout/format/model_not_found/unknown) and respond according to each type. Kabot's `failover-error.ts` maps status codes + error messages + error codes to failover reasons.
 
 **Step 1: Write failing tests**
 
@@ -618,7 +618,7 @@ def test_unknown_fallback():
     assert resolve_failover_reason(status=500) == "unknown"
 ```
 
-**Step 2–6:** Implement `failover_error.py` with `FailoverReason` enum and `resolve_failover_reason()`, update `ResilienceLayer.handle_error()` to use it, test, commit.
+**Step 2â€“6:** Implement `failover_error.py` with `FailoverReason` enum and `resolve_failover_reason()`, update `ResilienceLayer.handle_error()` to use it, test, commit.
 
 ---
 
@@ -655,7 +655,7 @@ def test_preserves_structure():
     assert cap_tool_result_size(result, max_chars=50_000) == result
 ```
 
-**Step 2–6:** Implement `tool_result_guard.py`, wire into `process_tool_calls()` before `memory.add_message()`, test, commit.
+**Step 2â€“6:** Implement `tool_result_guard.py`, wire into `process_tool_calls()` before `memory.add_message()`, test, commit.
 
 ---
 
@@ -687,6 +687,8 @@ python -m pytest tests/test_context_guard.py tests/test_compaction.py tests/test
 | P1 | Task 4: Tool Policy Profiles | 15 min |
 | P2 | Task 5: Failover Error Classification | 10 min |
 | P2 | Task 6: Session Tool Result Guard | 10 min |
-| — | Integration & final tests | 10 min |
+| â€” | Integration & final tests | 10 min |
 
 **Total estimated time: ~95 minutes**
+
+

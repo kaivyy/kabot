@@ -51,6 +51,8 @@ def resolve_failover_reason(
         return "auth"
     if status == 400:
         return "format"
+    if status in (502, 503, 504):
+        return "timeout"
     if status == 404:
         # Could be model not found or endpoint not found
         if "model" in msg_lower:
@@ -64,7 +66,20 @@ def resolve_failover_reason(
         return "rate_limit"
     if any(keyword in msg_lower for keyword in ["billing", "payment", "insufficient funds"]):
         return "billing"
-    if any(keyword in msg_lower for keyword in ["unauthorized", "forbidden", "invalid api key"]):
+    if any(
+        keyword in msg_lower
+        for keyword in [
+            "unauthorized",
+            "forbidden",
+            "invalid api key",
+            "authentication failed",
+            "token expired",
+            "token_expired",
+            "invalid or expired jwt",
+            "invalid_or_expired_jwt",
+            "expired jwt",
+        ]
+    ):
         return "auth"
     if any(keyword in msg_lower for keyword in ["model not found", "model does not exist"]):
         return "model_not_found"
@@ -92,3 +107,4 @@ def should_retry(reason: FailoverReason) -> bool:
 def should_fallback(reason: FailoverReason) -> bool:
     """Determine if error should trigger model fallback."""
     return reason in ("billing", "auth", "model_not_found")
+

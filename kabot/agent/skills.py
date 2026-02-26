@@ -6,7 +6,15 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import Any
 
+from kabot.config.skills_settings import (
+    get_skills_entries,
+    normalize_skills_settings,
+    resolve_allow_bundled,
+    resolve_install_settings,
+    resolve_load_settings,
+)
 from kabot.utils.skill_validator import validate_skill
 
 # Default builtin skills directory (relative to this file)
@@ -76,10 +84,37 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
 
-    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        builtin_skills_dir: Path | None = None,
+        skills_config: dict | None = None,
+    ):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
+        self.project_agents_skills = workspace / ".agents" / "skills"
+        self.personal_agents_skills = Path.home() / ".agents" / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
+        self._skills_config = normalize_skills_settings(skills_config or {})
+        load_settings = resolve_load_settings(self._skills_config)
+        self._install_settings = resolve_install_settings(self._skills_config)
+        managed_dir = load_settings.get("managed_dir")
+        if isinstance(managed_dir, str) and managed_dir.strip():
+            self.managed_skills: Path | None = Path(managed_dir).expanduser()
+        else:
+            # Global shared skills source (default).
+            self.managed_skills = Path("~/.kabot/skills").expanduser()
+
+        extra_dirs = load_settings.get("extra_dirs", [])
+        self.extra_skill_dirs: list[Path] = []
+        if isinstance(extra_dirs, list):
+            for raw in extra_dirs:
+                path_str = str(raw).strip()
+                if path_str:
+                    self.extra_skill_dirs.append(Path(path_str).expanduser())
+
+        self._allow_bundled = set(resolve_allow_bundled(self._skills_config))
+        self._skill_entries = get_skills_entries(self._skills_config)
         self._skill_index: dict[str, set[str]] | None = None  # lazy cache
         self._body_index: dict[str, set[str]] | None = None   # lazy cache
 
@@ -193,23 +228,24 @@ class SkillsLoader:
                 if chain_skill not in expanded and len(expanded) < max_results + 2:
                     expanded.append(chain_skill)
 
+        status_map = {s["name"]: s for s in self.list_skills(filter_unavailable=False)}
+
         # Validate requirements for selected skills
         validated = []
         for skill_name in expanded:
-            meta = self._get_skill_meta(skill_name)
-            if self._check_requirements(meta):
+            status = status_map.get(skill_name)
+            if status and status.get("eligible"):
                 validated.append(skill_name)
             else:
-                missing = self._get_missing_requirements(meta)
-                install_info = meta.get("install", [])
-                # Handle both dict and list formats
+                missing = self._format_skill_unavailability(status) if status else "requirements not met"
+                install_options = (status or {}).get("install", [])
                 install_cmd = ""
-                if isinstance(install_info, dict):
-                    install_cmd = install_info.get("cmd", "")
-                elif isinstance(install_info, list) and install_info:
-                    # Take first install option if list
-                    first_option = install_info[0]
-                    install_cmd = first_option.get("label", "") or first_option.get("cmd", "")
+                if isinstance(install_options, list) and install_options:
+                    first_option = install_options[0] if isinstance(install_options[0], dict) else {}
+                    install_cmd = (
+                        str(first_option.get("label", "")).strip()
+                        or str(first_option.get("cmd", "")).strip()
+                    )
                 hint = f"[SKILL_UNAVAILABLE] {skill_name} needs: {missing}"
                 if install_cmd:
                     hint += f" (install: {install_cmd})"
@@ -219,6 +255,161 @@ class SkillsLoader:
                 validated.append(f"{skill_name} [NEEDS: {missing}]")
 
         return validated[:max_results + 2]  # Allow up to 5 with chains
+
+    def _resolve_node_install_command(self, package_name: str) -> str:
+        manager = str(self._install_settings.get("node_manager") or "npm").strip().lower()
+        if manager == "pnpm":
+            return f"pnpm add -g {package_name}"
+        if manager == "yarn":
+            return f"yarn global add {package_name}"
+        if manager == "bun":
+            return f"bun add -g {package_name}"
+        return f"npm install -g {package_name}"
+
+    def _is_installer_supported_on_current_os(self, spec: dict) -> bool:
+        os_targets = spec.get("os") or []
+        if not isinstance(os_targets, list) or not os_targets:
+            return True
+        import sys
+
+        aliases = self._platform_aliases(sys.platform)
+        for target in os_targets:
+            normalized = str(target).strip().lower()
+            if normalized in aliases:
+                return True
+        return False
+
+    def _normalize_single_install_spec(self, raw: Any, index: int = 0) -> dict | None:
+        if isinstance(raw, str):
+            cmd = raw.strip()
+            if not cmd:
+                return None
+            return {
+                "id": f"cmd-{index}",
+                "kind": "cmd",
+                "label": f"Run: {cmd}",
+                "cmd": cmd,
+                "bins": [],
+                "os": [],
+            }
+
+        if not isinstance(raw, dict):
+            return None
+
+        spec = dict(raw)
+        # Legacy format: {"cmd": "..."}.
+        if "kind" not in spec and str(spec.get("cmd") or "").strip():
+            cmd = str(spec.get("cmd") or "").strip()
+            label = str(spec.get("label") or "").strip() or f"Run: {cmd}"
+            bins = spec.get("bins") if isinstance(spec.get("bins"), list) else []
+            os_list = spec.get("os") if isinstance(spec.get("os"), list) else []
+            return {
+                "id": str(spec.get("id") or f"cmd-{index}").strip() or f"cmd-{index}",
+                "kind": "cmd",
+                "label": label,
+                "cmd": cmd,
+                "bins": [str(b).strip() for b in bins if str(b).strip()],
+                "os": [str(v).strip().lower() for v in os_list if str(v).strip()],
+            }
+
+        kind = str(spec.get("kind") or "").strip().lower()
+        if kind not in {"brew", "node", "go", "uv", "download", "cmd"}:
+            return None
+
+        normalized: dict[str, Any] = {
+            "id": str(spec.get("id") or f"{kind}-{index}").strip() or f"{kind}-{index}",
+            "kind": kind,
+            "label": str(spec.get("label") or "").strip(),
+            "bins": [],
+            "os": [],
+        }
+        bins = spec.get("bins") if isinstance(spec.get("bins"), list) else []
+        normalized["bins"] = [str(b).strip() for b in bins if str(b).strip()]
+        os_list = spec.get("os") if isinstance(spec.get("os"), list) else []
+        normalized["os"] = [str(v).strip().lower() for v in os_list if str(v).strip()]
+
+        if kind == "brew":
+            formula = str(spec.get("formula") or "").strip()
+            if formula:
+                normalized["formula"] = formula
+                if not normalized["label"]:
+                    normalized["label"] = f"Install {formula} (brew)"
+                normalized["cmd"] = f"brew install {formula}"
+        elif kind == "node":
+            package = str(spec.get("package") or "").strip()
+            if package:
+                normalized["package"] = package
+                if not normalized["label"]:
+                    normalized["label"] = f"Install {package} ({self._install_settings.get('node_manager', 'npm')})"
+                normalized["cmd"] = self._resolve_node_install_command(package)
+        elif kind == "go":
+            module = str(spec.get("module") or "").strip()
+            if module:
+                normalized["module"] = module
+                if not normalized["label"]:
+                    normalized["label"] = f"Install {module} (go)"
+                normalized["cmd"] = f"go install {module}"
+        elif kind == "uv":
+            package = str(spec.get("package") or "").strip()
+            if package:
+                normalized["package"] = package
+                if not normalized["label"]:
+                    normalized["label"] = f"Install {package} (uv)"
+                normalized["cmd"] = f"uv tool install {package}"
+        elif kind == "download":
+            url = str(spec.get("url") or "").strip()
+            if url:
+                normalized["url"] = url
+                if not normalized["label"]:
+                    normalized["label"] = f"Download: {url}"
+                normalized["cmd"] = f"Download manually: {url}"
+        elif kind == "cmd":
+            cmd = str(spec.get("cmd") or "").strip()
+            if cmd:
+                normalized["cmd"] = cmd
+                if not normalized["label"]:
+                    normalized["label"] = f"Run: {cmd}"
+
+        if not normalized.get("cmd") and kind != "download":
+            return None
+        return normalized
+
+    def _normalize_install_specs(self, install_meta: Any) -> list[dict]:
+        raw_specs: list[Any]
+        if isinstance(install_meta, list):
+            raw_specs = install_meta
+        elif install_meta:
+            raw_specs = [install_meta]
+        else:
+            raw_specs = []
+
+        specs: list[dict] = []
+        for index, raw in enumerate(raw_specs):
+            spec = self._normalize_single_install_spec(raw, index=index)
+            if not spec:
+                continue
+            if not self._is_installer_supported_on_current_os(spec):
+                continue
+            specs.append(spec)
+
+        def _priority(s: dict) -> tuple[int, str]:
+            kind = str(s.get("kind") or "")
+            if kind == "uv":
+                rank = 0
+            elif kind == "node":
+                rank = 1
+            elif kind == "brew":
+                rank = 2 if bool(self._install_settings.get("prefer_brew", True)) else 4
+            elif kind == "go":
+                rank = 3
+            elif kind == "download":
+                rank = 5
+            else:
+                rank = 6
+            return rank, str(s.get("id") or "")
+
+        specs.sort(key=_priority)
+        return specs
 
     def list_skills(self, filter_unavailable: bool = True) -> list[dict]:
         """
@@ -240,39 +431,58 @@ class SkillsLoader:
             seen_names.add(name)
 
             meta = self._get_skill_meta(name)
+            install_specs = self._normalize_install_specs(meta.get("install", {}))
             desc = self._get_skill_description(name)
+            skill_key = str(meta.get("skillKey") or name).strip() or name
+            skill_cfg = self._skill_entries.get(skill_key, {})
+            if not isinstance(skill_cfg, dict):
+                skill_cfg = {}
+            disabled = skill_cfg.get("enabled") is False
+            blocked_by_allowlist = (
+                source == "builtin"
+                and len(self._allow_bundled) > 0
+                and name not in self._allow_bundled
+                and skill_key not in self._allow_bundled
+            )
 
             # Check requirements
             missing_bins = []
             missing_env = []
             requires = meta.get("requires", {})
+            entry_env = skill_cfg.get("env", {})
+            if not isinstance(entry_env, dict):
+                entry_env = {}
+            entry_api_key = str(skill_cfg.get("api_key") or "").strip()
 
             for b in requires.get("bins", []):
                 if not shutil.which(b):
                     missing_bins.append(b)
 
+            primary_env = meta.get("primaryEnv")
             for e in requires.get("env", []):
-                if not os.environ.get(e):
-                    missing_env.append(e)
+                env_name = str(e).strip()
+                if not env_name:
+                    continue
+                env_satisfied = bool(os.environ.get(env_name))
+                if not env_satisfied and entry_env.get(env_name):
+                    env_satisfied = True
+                if not env_satisfied and entry_api_key and primary_env == env_name:
+                    env_satisfied = True
+                if not env_satisfied:
+                    missing_env.append(env_name)
 
-            # Check OS (simple check against platform)
-            unsupported_os = []
-            if requires.get("os"):
-                import sys
-                required_os = requires["os"]
-                current_os = sys.platform
-                if isinstance(required_os, list):
-                    if current_os not in required_os and ("win32" not in required_os or current_os != "win32"):
-                         # Basic mapping: win32=windows, darwin=macos, linux=linux
-                         # But let's assume 'os' field matches sys.platform values or common names
-                         pass # TODO: Better OS matching
-                elif required_os != current_os:
-                     unsupported_os.append(required_os)
+            # Check OS support (metadata.os preferred, requires.os legacy fallback).
+            unsupported_os = self._missing_os(meta)
 
-            eligible = len(missing_bins) == 0 and len(missing_env) == 0 and len(unsupported_os) == 0
+            eligible = (
+                len(missing_bins) == 0
+                and len(missing_env) == 0
+                and len(unsupported_os) == 0
+                and not disabled
+                and not blocked_by_allowlist
+            )
 
             # primaryEnv logic: explicit meta > first missing env > first required env
-            primary_env = meta.get("primaryEnv")
             if not primary_env and missing_env:
                 primary_env = missing_env[0]
             if not primary_env and requires.get("env"):
@@ -280,19 +490,24 @@ class SkillsLoader:
 
             skill_info = {
                 "name": name,
+                "skill_key": skill_key,
                 "path": str(path),
                 "source": source,
                 "valid": valid,
                 "eligible": eligible,
+                "disabled": disabled,
+                "blocked_by_allowlist": blocked_by_allowlist,
                 "primaryEnv": primary_env,
                 "missing": {
                     "bins": missing_bins,
                     "env": missing_env,
                     "os": unsupported_os
                 },
-                "install": meta.get("install", {}), # e.g. {"cmd": "pip install ..."}
+                "install": install_specs,
                 "description": desc
             }
+            if install_specs:
+                skill_info["install_recommended"] = install_specs[0].get("id")
             skills.append(skill_info)
 
         # Workspace skills (highest priority)
@@ -304,6 +519,33 @@ class SkillsLoader:
                         errors = validate_skill(skill_dir)
                         _process_skill(skill_dir.name, skill_file, "workspace", len(errors) == 0)
 
+        # Project-local agents skills (next priority)
+        if self.project_agents_skills.exists():
+            for skill_dir in self.project_agents_skills.iterdir():
+                if skill_dir.is_dir():
+                    skill_file = skill_dir / "SKILL.md"
+                    if skill_file.exists():
+                        errors = validate_skill(skill_dir)
+                        _process_skill(skill_dir.name, skill_file, "agents-project", len(errors) == 0)
+
+        # Personal agents skills
+        if self.personal_agents_skills.exists():
+            for skill_dir in self.personal_agents_skills.iterdir():
+                if skill_dir.is_dir():
+                    skill_file = skill_dir / "SKILL.md"
+                    if skill_file.exists():
+                        errors = validate_skill(skill_dir)
+                        _process_skill(skill_dir.name, skill_file, "agents-personal", len(errors) == 0)
+
+        # Managed skills (next priority)
+        if self.managed_skills and self.managed_skills.exists():
+            for skill_dir in self.managed_skills.iterdir():
+                if skill_dir.is_dir():
+                    skill_file = skill_dir / "SKILL.md"
+                    if skill_file.exists():
+                        errors = validate_skill(skill_dir)
+                        _process_skill(skill_dir.name, skill_file, "managed", len(errors) == 0)
+
         # Built-in skills
         if self.builtin_skills and self.builtin_skills.exists():
             for skill_dir in self.builtin_skills.iterdir():
@@ -312,6 +554,17 @@ class SkillsLoader:
                     if skill_file.exists():
                         errors = validate_skill(skill_dir)
                         _process_skill(skill_dir.name, skill_file, "builtin", len(errors) == 0)
+
+        # Extra skills (lowest priority)
+        for extra_dir in self.extra_skill_dirs:
+            if not extra_dir.exists():
+                continue
+            for skill_dir in extra_dir.iterdir():
+                if skill_dir.is_dir():
+                    skill_file = skill_dir / "SKILL.md"
+                    if skill_file.exists():
+                        errors = validate_skill(skill_dir)
+                        _process_skill(skill_dir.name, skill_file, "extra", len(errors) == 0)
 
         # Filter by requirements
         if filter_unavailable:
@@ -333,11 +586,33 @@ class SkillsLoader:
         if workspace_skill.exists():
             return workspace_skill.read_text(encoding="utf-8")
 
+        # Check project-local agents skills
+        project_agents_skill = self.project_agents_skills / name / "SKILL.md"
+        if project_agents_skill.exists():
+            return project_agents_skill.read_text(encoding="utf-8")
+
+        # Check personal agents skills
+        personal_agents_skill = self.personal_agents_skills / name / "SKILL.md"
+        if personal_agents_skill.exists():
+            return personal_agents_skill.read_text(encoding="utf-8")
+
+        # Check managed
+        if self.managed_skills:
+            managed_skill = self.managed_skills / name / "SKILL.md"
+            if managed_skill.exists():
+                return managed_skill.read_text(encoding="utf-8")
+
         # Check built-in
         if self.builtin_skills:
             builtin_skill = self.builtin_skills / name / "SKILL.md"
             if builtin_skill.exists():
                 return builtin_skill.read_text(encoding="utf-8")
+
+        # Check extra skill dirs
+        for extra_dir in self.extra_skill_dirs:
+            extra_skill = extra_dir / name / "SKILL.md"
+            if extra_skill.exists():
+                return extra_skill.read_text(encoding="utf-8")
 
         return None
 
@@ -382,8 +657,7 @@ class SkillsLoader:
             name = escape_xml(s["name"])
             path = s["path"]
             desc = escape_xml(self._get_skill_description(s["name"]))
-            skill_meta = self._get_skill_meta(s["name"])
-            available = self._check_requirements(skill_meta)
+            available = bool(s.get("eligible"))
 
             lines.append(f"  <skill available=\"{str(available).lower()}\">")
             lines.append(f"    <name>{name}</name>")
@@ -392,7 +666,7 @@ class SkillsLoader:
 
             # Show missing requirements for unavailable skills
             if not available:
-                missing = self._get_missing_requirements(skill_meta)
+                missing = self._format_skill_unavailability(s)
                 if missing:
                     lines.append(f"    <requires>{escape_xml(missing)}</requires>")
 
@@ -411,7 +685,35 @@ class SkillsLoader:
         for env in requires.get("env", []):
             if not os.environ.get(env):
                 missing.append(f"ENV: {env}")
+        missing_os = self._missing_os(skill_meta)
+        if missing_os:
+            missing.append(f"OS: {', '.join(missing_os)}")
         return ", ".join(missing)
+
+    def _format_skill_unavailability(self, skill_info: dict | None) -> str:
+        """Format unavailability reason from list_skills() status payload."""
+        if not skill_info:
+            return "requirements not met"
+
+        reasons: list[str] = []
+        if skill_info.get("disabled"):
+            reasons.append("disabled in skills.entries")
+        if skill_info.get("blocked_by_allowlist"):
+            reasons.append("blocked by allowBundled policy")
+
+        missing = skill_info.get("missing", {})
+        if isinstance(missing, dict):
+            bins = missing.get("bins", [])
+            env = missing.get("env", [])
+            os_list = missing.get("os", [])
+            if bins:
+                reasons.extend(f"CLI: {b}" for b in bins)
+            if env:
+                reasons.extend(f"ENV: {e}" for e in env)
+            if os_list:
+                reasons.append(f"OS: {', '.join(os_list)}")
+
+        return ", ".join(reasons) if reasons else "requirements not met"
 
     def _get_skill_description(self, name: str) -> str:
         """Get the description of a skill from its frontmatter."""
@@ -438,8 +740,48 @@ class SkillsLoader:
         except (json.JSONDecodeError, TypeError):
             return {}
 
+    def _platform_aliases(self, platform: str) -> set[str]:
+        normalized = (platform or "").strip().lower()
+        if normalized == "win32":
+            return {"win32", "windows", "win", "nt"}
+        if normalized == "darwin":
+            return {"darwin", "macos", "mac", "osx"}
+        if normalized == "linux":
+            return {"linux"}
+        return {normalized}
+
+    def _required_os(self, skill_meta: dict) -> list[str]:
+        raw_os = skill_meta.get("os")
+        if raw_os is None:
+            requires = skill_meta.get("requires", {})
+            if isinstance(requires, dict):
+                raw_os = requires.get("os")
+        if raw_os is None:
+            return []
+        if isinstance(raw_os, str):
+            clean = raw_os.strip().lower()
+            return [clean] if clean else []
+        if isinstance(raw_os, list):
+            normalized: list[str] = []
+            for value in raw_os:
+                clean = str(value).strip().lower()
+                if clean:
+                    normalized.append(clean)
+            return normalized
+        return []
+
+    def _missing_os(self, skill_meta: dict) -> list[str]:
+        required_os = self._required_os(skill_meta)
+        if not required_os:
+            return []
+        import sys
+        aliases = self._platform_aliases(sys.platform)
+        if any(target in aliases for target in required_os):
+            return []
+        return required_os
+
     def _check_requirements(self, skill_meta: dict) -> bool:
-        """Check if skill requirements are met (bins, env vars)."""
+        """Check if skill requirements are met (bins, env vars, OS)."""
         requires = skill_meta.get("requires", {})
         for b in requires.get("bins", []):
             if not shutil.which(b):
@@ -447,6 +789,8 @@ class SkillsLoader:
         for env in requires.get("env", []):
             if not os.environ.get(env):
                 return False
+        if self._missing_os(skill_meta):
+            return False
         return True
 
     def _get_skill_meta(self, name: str) -> dict:

@@ -1,7 +1,7 @@
-"""
+﻿"""
 PID-based file locking with stale lock recovery.
 
-Pattern from OpenClaw: agents/session-write-lock.ts
+Pattern from Kabot: agents/session-write-lock.ts
 Prevents race conditions in multi-process scenarios.
 """
 
@@ -201,3 +201,5 @@ class PIDLock:
         """Cleanup on garbage collection."""
         if self._acquired:
             self.release()
+
+

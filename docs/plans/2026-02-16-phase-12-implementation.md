@@ -1,4 +1,4 @@
-# Phase 12: Critical OpenClaw Features - Implementation Plan
+﻿# Phase 12: Critical Kabot Features - Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -33,7 +33,7 @@ def test_truncator_allows_small_results():
     result = truncator.truncate(small_result, "test_tool")
 
     assert result == small_result
-    assert "⚠️" not in result
+    assert "âš ï¸" not in result
 ```
 
 ### Step 2: Run test to verify it fails
@@ -87,7 +87,7 @@ class ToolResultTruncator:
             truncated = self._truncate_to_tokens(result, keep_tokens)
 
             warning = (
-                f"\n\n⚠️ [Output truncated: {token_count} tokens exceeds limit of {self.threshold}. "
+                f"\n\nâš ï¸ [Output truncated: {token_count} tokens exceeds limit of {self.threshold}. "
                 f"Showing first {keep_tokens} tokens. Use pagination or filters to get specific data.]"
             )
 
@@ -101,7 +101,7 @@ class ToolResultTruncator:
                 return result
 
             truncated = result[:int(max_chars * 0.8)]
-            warning = f"\n\n⚠️ [Output truncated: ~{len(result)} chars exceeds limit.]"
+            warning = f"\n\nâš ï¸ [Output truncated: ~{len(result)} chars exceeds limit.]"
             return truncated + warning
 
     def _count_tokens(self, text: str) -> int:
@@ -146,7 +146,7 @@ def test_truncator_truncates_large_results():
     result = truncator.truncate(large_result, "test_tool")
 
     assert len(result) < len(large_result)
-    assert "⚠️" in result
+    assert "âš ï¸" in result
     assert "Output truncated" in result
 ```
 
@@ -582,7 +582,7 @@ Expected: 16/16 tests PASS, >80% coverage
    from kabot.agent.truncator import ToolResultTruncator
    t = ToolResultTruncator()
    result = t.truncate("x" * 200000, "test")
-   print("Truncated:", len(result), "⚠️" in result)
+   print("Truncated:", len(result), "âš ï¸" in result)
    ```
 
 2. **Test directives:**
@@ -603,20 +603,20 @@ Expected: 16/16 tests PASS, >80% coverage
 
 ## Success Criteria
 
-- ✅ ToolResultTruncator class implemented with 5 tests passing
-- ✅ Directives behavior methods implemented with 9 tests passing
-- ✅ Integration complete with 2 integration tests passing
-- ✅ Total: 16/16 tests passing
-- ✅ >80% test coverage for new code
-- ✅ No breaking changes to existing functionality
+- âœ… ToolResultTruncator class implemented with 5 tests passing
+- âœ… Directives behavior methods implemented with 9 tests passing
+- âœ… Integration complete with 2 integration tests passing
+- âœ… Total: 16/16 tests passing
+- âœ… >80% test coverage for new code
+- âœ… No breaking changes to existing functionality
 
 ---
 
 ## References
 
 - Design Document: `docs/plans/2026-02-16-phase-12-critical-features-design.md`
-- Phase 11 Implementation: `docs/logs/2026-02-15-phase-11-openclaw-parity.md`
-- OpenClaw Analysis: `docs/openclaw-analysis/deep-technical-findings.md`
+- Phase 11 Implementation: `docs/logs/2026-02-15-phase-11-kabot-parity.md`
+- Kabot Analysis: `docs/kabot-analysis/deep-technical-findings.md`
 
 ---
 
@@ -659,7 +659,7 @@ def clip_copy(text: str) -> bool:
 Add to `kabot/core/commands_setup.py`:
 
 ```python
-    # ─── /clip ───
+    # â”€â”€â”€ /clip â”€â”€â”€
     async def cmd_clip(ctx: CommandContext) -> str:
         if not ctx.args:
             return "Usage: `/clip <text>`"
@@ -667,8 +667,8 @@ Add to `kabot/core/commands_setup.py`:
         text = " ".join(ctx.args)
         from kabot.core.windows import clip_copy
         if clip_copy(text):
-            return "✅ Copied to clipboard!"
-        return "❌ Failed to copy (is clip.exe available?)"
+            return "âœ… Copied to clipboard!"
+        return "âŒ Failed to copy (is clip.exe available?)"
 
     router.register("/clip", cmd_clip, "Copy text to system clipboard")
 ```
@@ -706,4 +706,6 @@ def generate_launchagent_plist(label: str, workdir: str) -> str:
     # Logic for macOS plist
     pass
 ```
+
+
 
