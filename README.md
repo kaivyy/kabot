@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="kabotimg.png" alt="kabot" width="200">
+  <img src="kabotimg.png" alt="kabot" style="width:100%;max-width:100%;height:auto;display:block;">
   <h1>Kabot 🐺</h1>
   <p>
     <b>Resilient Memory. Methodical Execution. Native Reasoning.</b>
