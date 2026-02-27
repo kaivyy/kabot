@@ -32,6 +32,35 @@ def _coalesce(mapping: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _as_plain_dict(raw_skills: Any) -> dict[str, Any]:
+    """Convert dict-like or pydantic SkillsConfig payload into plain dict."""
+    if isinstance(raw_skills, dict):
+        return dict(raw_skills)
+
+    model_dump = getattr(raw_skills, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(mode="python", exclude_none=True)
+        if isinstance(dumped, dict):
+            extra = getattr(raw_skills, "__pydantic_extra__", None) or {}
+            if isinstance(extra, dict) and extra:
+                dumped = {**dumped, **extra}
+            return dumped
+
+    return {}
+
+
+def _coerce_output_type(raw_skills: Any, normalized: dict[str, Any]) -> Any:
+    """Return normalized settings preserving typed SkillsConfig when possible."""
+    if hasattr(raw_skills, "model_dump"):
+        try:
+            from kabot.config.schema import SkillsConfig
+
+            return SkillsConfig.from_raw(normalized)
+        except Exception:
+            return normalized
+    return normalized
+
+
 def _normalize_env_map(raw_env: Any) -> dict[str, str]:
     if not isinstance(raw_env, dict):
         return {}
@@ -103,14 +132,15 @@ def normalize_skills_settings(raw_skills: Any) -> dict[str, Any]:
     - load: { managed_dir?: str, extra_dirs?: list[str] } (optional)
     - install / limits (optional passthrough dict)
     """
-    if not isinstance(raw_skills, dict):
+    raw_map = _as_plain_dict(raw_skills)
+    if not isinstance(raw_map, dict):
         return {"entries": {}, "install": _normalize_install_settings({})}
 
     result: dict[str, Any] = {"entries": {}}
 
     # Legacy top-level format: skills.<skill_name> = {...}
     legacy_entries: dict[str, dict[str, Any]] = {}
-    for key, value in raw_skills.items():
+    for key, value in raw_map.items():
         if key in _RESERVED_KEYS:
             continue
         if isinstance(value, dict):
@@ -119,7 +149,7 @@ def normalize_skills_settings(raw_skills: Any) -> dict[str, Any]:
                 legacy_entries[key] = normalized
 
     # Canonical entries block
-    raw_entries = _coalesce(raw_skills, "entries")
+    raw_entries = _coalesce(raw_map, "entries")
     canonical_entries: dict[str, dict[str, Any]] = {}
     if isinstance(raw_entries, dict):
         for key, value in raw_entries.items():
@@ -144,13 +174,13 @@ def normalize_skills_settings(raw_skills: Any) -> dict[str, Any]:
         merged_entries[key] = merged
     result["entries"] = merged_entries
 
-    allow_bundled = _coalesce(raw_skills, "allow_bundled", "allowBundled")
+    allow_bundled = _coalesce(raw_map, "allow_bundled", "allowBundled")
     if isinstance(allow_bundled, list):
         cleaned = [str(v).strip() for v in allow_bundled if str(v).strip()]
         if cleaned:
             result["allow_bundled"] = cleaned
 
-    load_cfg = _coalesce(raw_skills, "load")
+    load_cfg = _coalesce(raw_map, "load")
     if isinstance(load_cfg, dict):
         load: dict[str, Any] = {}
         managed_dir = _coalesce(load_cfg, "managed_dir", "managedDir")
@@ -164,10 +194,10 @@ def normalize_skills_settings(raw_skills: Any) -> dict[str, Any]:
         if load:
             result["load"] = load
 
-    install_cfg = _coalesce(raw_skills, "install")
+    install_cfg = _coalesce(raw_map, "install")
     result["install"] = _normalize_install_settings(install_cfg)
 
-    limits_cfg = _coalesce(raw_skills, "limits")
+    limits_cfg = _coalesce(raw_map, "limits")
     if isinstance(limits_cfg, dict) and limits_cfg:
         result["limits"] = deepcopy(limits_cfg)
 
@@ -227,7 +257,7 @@ def iter_skill_env_pairs(raw_skills: Any) -> list[tuple[str, str, str]]:
     return pairs
 
 
-def set_skill_entry_env(raw_skills: Any, skill_key: str, env_key: str, env_value: str) -> dict[str, Any]:
+def set_skill_entry_env(raw_skills: Any, skill_key: str, env_key: str, env_value: str) -> Any:
     """Set env key/value under canonical skills.entries.<skill_key>.env."""
     normalized = normalize_skills_settings(raw_skills)
     entries = normalized.setdefault("entries", {})
@@ -236,7 +266,7 @@ def set_skill_entry_env(raw_skills: Any, skill_key: str, env_key: str, env_value
     env_name = str(env_key or "").strip()
     value = str(env_value or "")
     if not key or not env_name or not value:
-        return normalized
+        return _coerce_output_type(raw_skills, normalized)
 
     entry = entries.get(key)
     if not isinstance(entry, dict):
@@ -247,7 +277,7 @@ def set_skill_entry_env(raw_skills: Any, skill_key: str, env_key: str, env_value
         env_map = {}
         entry["env"] = env_map
     env_map[env_name] = value
-    return normalized
+    return _coerce_output_type(raw_skills, normalized)
 
 
 def set_skill_entry_enabled(
@@ -256,7 +286,7 @@ def set_skill_entry_enabled(
     enabled: bool,
     *,
     persist_true: bool = False,
-) -> dict[str, Any]:
+) -> Any:
     """Set enabled flag in canonical entries.
 
     If enabled=True and persist_true=False, explicit enabled flag is removed
@@ -266,7 +296,7 @@ def set_skill_entry_enabled(
     entries = normalized.setdefault("entries", {})
     key = str(skill_key or "").strip()
     if not key:
-        return normalized
+        return _coerce_output_type(raw_skills, normalized)
 
     entry = entries.get(key)
     if not isinstance(entry, dict):
@@ -280,4 +310,4 @@ def set_skill_entry_enabled(
             entry.pop("enabled", None)
     else:
         entry["enabled"] = False
-    return normalized
+    return _coerce_output_type(raw_skills, normalized)

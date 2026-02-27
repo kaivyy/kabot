@@ -227,10 +227,29 @@ Detect the OS and use appropriate commands:
 Always check platform before writing scripts."""
     }
 
-    def __init__(self, workspace: Path, skills_config: dict | None = None):
+    def __init__(self, workspace: Path, skills_config: dict | None = None, memory_config: Any | None = None):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, skills_config=skills_config)
+        self.memory_config = memory_config
+        self.graph_memory = None
+        graph_enabled = True
+        graph_limit = 8
+        if isinstance(memory_config, dict):
+            graph_enabled = bool(memory_config.get("enable_graph_memory", True))
+            graph_limit = int(memory_config.get("graph_injection_limit", 8) or 8)
+        elif memory_config is not None:
+            graph_enabled = bool(getattr(memory_config, "enable_graph_memory", True))
+            graph_limit = int(getattr(memory_config, "graph_injection_limit", 8) or 8)
+        self.graph_injection_limit = max(1, graph_limit)
+        if graph_enabled:
+            try:
+                graph_db = self.workspace / "memory_db" / "graph_memory.db"
+                if graph_db.exists():
+                    from kabot.memory.graph_memory import GraphMemory
+                    self.graph_memory = GraphMemory(graph_db, enabled=True)
+            except Exception as e:
+                logger.debug(f"Graph memory context disabled: {e}")
 
     def build_system_prompt(self, skill_names: list[str] | None = None, profile: str = "GENERAL", tool_names: list[str] | None = None, current_message: str | None = None) -> str:
         """
@@ -263,6 +282,19 @@ Always check platform before writing scripts."""
         memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
+
+        if self.graph_memory:
+            graph_query = None
+            if current_message:
+                words = [w for w in current_message.strip().split() if w]
+                if len(words) == 1 and len(words[0]) <= 64:
+                    graph_query = words[0]
+            graph_context = self.graph_memory.summarize(
+                query=graph_query,
+                limit=self.graph_injection_limit,
+            )
+            if graph_context:
+                parts.append(f"# Graph Memory\n\n{graph_context}")
 
         # Tool roster (helps weaker models understand their capabilities)
         if tool_names:

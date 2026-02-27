@@ -62,6 +62,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `openrouter/moonshotai/kimi-k2.5`
     - plus related refs used in OpenRouter-based flows.
   - Added OpenRouter aliases (`openrouter`, `or-auto`, `or-sonnet`, `or-qwen-vl`) for faster model input in setup flow.
+- **Native Graph Memory (Entity-Relation Layer)**:
+  - Added new internal graph memory store (`kabot/memory/graph_memory.py`) backed by SQLite.
+  - Automatically extracts and stores lightweight relations (e.g., `uses`, `depends_on`, `prefers`) from conversation/fact text.
+  - Added graph summary/query integration hooks in memory backends:
+    - `search_graph(entity, limit)`
+    - `get_graph_context(query, limit)`
+  - Added new tool: `graph_memory` for inspecting relation memory directly from chat/tool runtime.
+- **Default Bottleneck-Elimination Autopilot Loop**:
+  - Added `runtime.autopilot` config:
+    - `enabled`
+    - `prompt`
+    - `maxActionsPerBeat`
+  - Heartbeat service now supports default proactive patrol prompt when no active heartbeat tasks are present.
+  - Gateway heartbeat wiring now reads heartbeat/autopilot config instead of fixed hardcoded interval.
 
 ### Changed
 - **Workspace Auto-Bootstrap for Persona Files**:
@@ -96,6 +110,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Context Builder Skills Config Wiring**:
   - `ContextBuilder` now accepts skills config and passes it to `SkillsLoader`.
   - `AgentLoop` now injects runtime `config.skills` into `ContextBuilder` so prompt skill resolution follows config entries + precedence.
+- **Context Builder Graph Injection**:
+  - `ContextBuilder` now supports memory config injection and can include `# Graph Memory` summary when graph DB exists.
 - **Runtime Fallback Resilience**:
   - Added implicit runtime fallback rule for OpenAI/OpenAI-Codex primary models:
     - if explicit fallback chain is empty and Groq credentials exist, Kabot now auto-injects `groq/meta-llama/llama-4-scout-17b-16e-instruct` as fallback.
@@ -157,6 +173,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed model-format validation to accept nested provider paths (e.g. `openrouter/vendor/model:free`) instead of only two-segment IDs.
   - Provider-scoped manual picker now auto-prefixes vendor/model style input (e.g. in OpenRouter scope, `arcee-ai/trinity-large-preview:free` becomes `openrouter/arcee-ai/trinity-large-preview:free`).
   - Added regression tests for nested format validation, scoped autoprefix behavior, and OpenRouter catalog/model-status coverage.
+- **Command Firewall Preset Regression (Policy Override)**:
+  - Fixed bug where runtime preset could overwrite explicit firewall policy from `command_approvals.yaml`.
+  - Explicit `deny`/`allowlist` policies now remain authoritative; fail-safe deny remains locked on config load failure.
+  - `compat` preset keeps permissive behavior by promoting `ask` to `allowlist` only when appropriate.
 - **Expired OAuth Token Failover Latency**:
   - Added proactive pre-check for expired `openai-codex` JWT tokens so runtime skips directly to fallback models without first waiting for repeated 401 failures.
   - Added auth-failure cooldown in `LiteLLMProvider` (`180s`) so temporarily invalid providers are not retried on every message/critic retry loop.
@@ -223,6 +243,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `tests/agent/loop_core/test_execution_runtime.py`
     - `tests/memory/test_sqlite_store_utf8.py`
     - `tests/utils/test_text_safety.py`
+
+### Added - Parity Program Foundation (Wave 1 + Wave 2/3 Base) - 2026-02-27
+
+- **Runtime Typed Config (Resilience + Performance)**:
+  - Added `runtime.resilience` config block:
+    - `enabled`
+    - `dedupeToolCalls`
+    - `maxModelAttemptsPerTurn`
+    - `maxToolRetryPerTurn`
+    - `strictErrorClassification`
+    - `preventModelChainMutation`
+    - `idempotencyTtlSeconds`
+  - Added `runtime.performance` config block:
+    - `fastFirstResponse`
+    - `deferMemoryWarmup`
+    - `embedWarmupTimeoutMs`
+    - `maxContextBuildMs`
+    - `maxFirstResponseMsSoft`
+- **Typed Skills Root Contract**:
+  - Replaced loose `skills: dict` root schema with typed `SkillsConfig` model (`entries`, `allow_bundled`, `load`, `install`, `limits`).
+  - Kept backward compatibility via normalization and dict-like access helpers.
+- **Channel Adapter Registry Architecture**:
+  - Added `kabot/channels/adapters/` with:
+    - `ChannelAdapterSpec` / `AdapterCapabilities`
+    - centralized `AdapterRegistry`
+  - Channel manager now initializes legacy + instance channels through adapter registry (instead of hardcoded branch tree).
+  - Added scaffold entries for top-15 production keys and 25 experimental adapters with feature-flag-aware enablement.
+- **Config Migration Expansion**:
+  - Added migration for `tools.exec.policyPreset` in legacy configs.
+  - Added auto-injection of canonical `runtime` resilience/performance sections during migration, with existing backup flow.
+
+### Changed - Runtime Determinism, Tool Safety, and Latency
+
+- **Deterministic Fallback Pipeline** (`execution_runtime.call_llm_with_fallback`):
+  - Switched to immutable per-turn model chain snapshot (no in-place chain mutation).
+  - Added bounded attempts via `maxModelAttemptsPerTurn`.
+  - Added explicit state transitions in logs (`primary`, `auth_rotate`, `model_fallback`, `text_only_retry`).
+  - Added strict error-class mapping (`auth`, `rate_limit`, `tool_protocol`, `transient`, `fatal`) via failover classifier.
+- **Tool-Call Idempotency + Protocol Guards**:
+  - Added per-turn payload hash idempotency and `tool_call_id` replay suppression with TTL.
+  - Duplicate tool replays now return cached tool result instead of re-executing side effects.
+  - Added assistant/tool envelope guard to avoid duplicate assistant tool-call envelopes.
+  - Added status-update dedupe for repeated tool progress texts in the same turn.
+- **Fast First-Response Path**:
+  - Added deferred memory warmup mode with timeout-bound warmup (`embedWarmupTimeoutMs`).
+  - Added non-blocking memory writes for user/assistant/tool records when fast mode is enabled.
+  - Added context-build budget telemetry and soft-target first-response warnings.
+  - Added cold-start + first-response + memory-warmup telemetry log markers.
+- **Security Presets (Strict Default)**:
+  - Added `tools.exec.policy_preset` (`strict|balanced|compat`).
+  - `ExecTool` now passes preset into command firewall runtime policy selection.
+  - Firewall audit output now includes active preset metadata.
+  - Setup wizard `Tools & Sandbox -> Execution Policy` now exposes security preset selector.
+
+### Fixed - Regression and Coverage
+
+- Added/extended tests for:
+  - deterministic fallback immutability and tool-protocol text-only retry,
+  - turn-level tool idempotency suppression,
+  - runtime schema defaults and skills typed normalization,
+  - loader migration for runtime defaults + policy preset,
+  - adapter registry production/experimental behavior and manager integration.
+- Verification snapshot for this batch:
+  - `tests/agent/loop_core/test_execution_runtime.py`
+  - `tests/config/test_loader_meta_migration.py`
+  - `tests/config/test_runtime_resilience_schema.py`
+  - `tests/channels/test_multi_instance_manager.py`
+  - `tests/channels/test_adapter_registry.py`
+  - `tests/cli/test_setup_wizard_tools_menu.py`
+  - `tests/cli/test_setup_wizard_skills.py`
+  - All targeted suites pass.
 
 ## [0.5.6] - 2026-02-24
 

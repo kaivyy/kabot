@@ -207,6 +207,80 @@ def _migrate_config(data: dict) -> dict:
 
         normalized_skills = normalize_skills_settings(skills_cfg)
         data["skills"] = convert_to_camel(normalized_skills)
+
+    # Ensure tools.exec.policyPreset exists with compatibility-aware defaults.
+    tools_cfg = data.get("tools")
+    if isinstance(tools_cfg, dict):
+        exec_cfg = tools_cfg.get("exec")
+        if isinstance(exec_cfg, dict):
+            if "policyPreset" not in exec_cfg and "policy_preset" not in exec_cfg:
+                auto_approve = bool(exec_cfg.get("autoApprove", exec_cfg.get("auto_approve", False)))
+                restrict_ws = bool(
+                    tools_cfg.get("restrictToWorkspace", tools_cfg.get("restrict_to_workspace", False))
+                )
+                if auto_approve:
+                    exec_cfg["policyPreset"] = "compat"
+                elif restrict_ws:
+                    exec_cfg["policyPreset"] = "strict"
+                else:
+                    exec_cfg["policyPreset"] = "balanced"
+                tools_cfg["exec"] = exec_cfg
+
+    # Inject canonical runtime resilience/performance sections if missing.
+    runtime_cfg = data.get("runtime")
+    if not isinstance(runtime_cfg, dict):
+        runtime_cfg = {}
+        data["runtime"] = runtime_cfg
+
+    resilience_defaults = {
+        "enabled": True,
+        "dedupeToolCalls": True,
+        "maxModelAttemptsPerTurn": 4,
+        "maxToolRetryPerTurn": 1,
+        "strictErrorClassification": True,
+        "preventModelChainMutation": True,
+        "idempotencyTtlSeconds": 600,
+    }
+    performance_defaults = {
+        "fastFirstResponse": True,
+        "deferMemoryWarmup": True,
+        "embedWarmupTimeoutMs": 1200,
+        "maxContextBuildMs": 500,
+        "maxFirstResponseMsSoft": 4000,
+    }
+    autopilot_defaults = {
+        "enabled": True,
+        "prompt": (
+            "Autopilot patrol: review recent context, pending schedules, and recent failures. "
+            "Identify one highest bottleneck that blocks user outcomes. "
+            "Execute at most one safe action to reduce it; otherwise respond with 'no_action'."
+        ),
+        "maxActionsPerBeat": 1,
+    }
+
+    resilience_cfg = runtime_cfg.get("resilience")
+    if not isinstance(resilience_cfg, dict):
+        resilience_cfg = {}
+    for key, default_val in resilience_defaults.items():
+        if key not in resilience_cfg:
+            resilience_cfg[key] = default_val
+    runtime_cfg["resilience"] = resilience_cfg
+
+    performance_cfg = runtime_cfg.get("performance")
+    if not isinstance(performance_cfg, dict):
+        performance_cfg = {}
+    for key, default_val in performance_defaults.items():
+        if key not in performance_cfg:
+            performance_cfg[key] = default_val
+    runtime_cfg["performance"] = performance_cfg
+
+    autopilot_cfg = runtime_cfg.get("autopilot")
+    if not isinstance(autopilot_cfg, dict):
+        autopilot_cfg = {}
+    for key, default_val in autopilot_defaults.items():
+        if key not in autopilot_cfg:
+            autopilot_cfg[key] = default_val
+    runtime_cfg["autopilot"] = autopilot_cfg
     return data
 
 

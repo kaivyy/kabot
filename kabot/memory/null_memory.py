@@ -31,3 +31,9 @@ class NullMemory(MemoryBackend):
 
     def health_check(self):
         return {"status": "ok", "backend": "disabled", "message": "Memory disabled"}
+
+    def search_graph(self, entity: str, limit: int = 10):
+        return []
+
+    def get_graph_context(self, query: str | None = None, limit: int = 8):
+        return ""

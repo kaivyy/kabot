@@ -2,11 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from loguru import logger
 
 from kabot.bus.events import InboundMessage, OutboundMessage
+
+
+def _defer_memory_writes(loop: Any) -> bool:
+    perf_cfg = getattr(loop, "runtime_performance", None)
+    if not perf_cfg:
+        return False
+    return bool(getattr(perf_cfg, "fast_first_response", True))
+
+
+def _schedule_memory_write(loop: Any, coro: Any, *, label: str) -> None:
+    task = asyncio.create_task(coro)
+    pending = getattr(loop, "_pending_memory_tasks", None)
+    if not isinstance(pending, set):
+        pending = set()
+        setattr(loop, "_pending_memory_tasks", pending)
+    pending.add(task)
+
+    def _done_callback(done_task: asyncio.Task) -> None:
+        pending.discard(done_task)
+        try:
+            done_task.result()
+        except Exception as exc:
+            logger.warning(f"Background memory write failed ({label}): {exc}")
+
+    task.add_done_callback(_done_callback)
 
 
 def get_session_key(loop: Any, msg: InboundMessage) -> str:
@@ -37,7 +63,14 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
 
     session = loop.sessions.get_or_create(session_key)
     loop.memory.create_session(session_key, msg.channel, msg.chat_id, msg.sender_id)
-    await loop.memory.add_message(session_key, "user", msg.content)
+    if _defer_memory_writes(loop):
+        _schedule_memory_write(
+            loop,
+            loop.memory.add_message(session_key, "user", msg.content),
+            label="user-message",
+        )
+    else:
+        await loop.memory.add_message(session_key, "user", msg.content)
 
     for tool_name in ["message", "spawn", "cron"]:
         tool = loop.tools.get(tool_name)
@@ -45,7 +78,7 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
             logger.debug(f"Setting context for {tool_name}: {msg.channel}:{msg.chat_id}")
             tool.set_context(msg.channel, msg.chat_id)
 
-    for tool_name in ["save_memory", "get_memory", "list_reminders"]:
+    for tool_name in ["save_memory", "get_memory", "graph_memory", "list_reminders"]:
         tool = loop.tools.get(tool_name)
         if hasattr(tool, "set_context"):
             tool.set_context(session_key)
@@ -90,7 +123,14 @@ async def finalize_session(
 ) -> OutboundMessage:
     """Persist final session state and produce outbound response."""
     if final_content and not final_content.startswith("I've completed"):
-        await loop.memory.add_message(msg.session_key, "assistant", final_content)
+        if _defer_memory_writes(loop):
+            _schedule_memory_write(
+                loop,
+                loop.memory.add_message(msg.session_key, "assistant", final_content),
+                label="assistant-message",
+            )
+        else:
+            await loop.memory.add_message(msg.session_key, "assistant", final_content)
 
     if not msg.session_key.startswith("background:"):
         session.add_message("user", msg.content)

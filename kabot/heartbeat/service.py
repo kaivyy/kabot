@@ -36,6 +36,12 @@ def is_within_active_hours(start: str, end: str, *, test_hour: int | None = None
 
 
 class HeartbeatService:
+    DEFAULT_AUTOPILOT_PROMPT = (
+        "Autopilot patrol: review recent context, pending schedules, and recent failures. "
+        "Identify one highest bottleneck that blocks user outcomes. "
+        "Execute at most one safe action to reduce it; otherwise respond with 'no_action'."
+    )
+
     def __init__(
         self,
         workspace: Any = None,
@@ -46,6 +52,8 @@ class HeartbeatService:
         active_hours_end: str = "",
         max_tasks_per_beat: int = 5,
         startup_delay_s: int = 30,
+        autopilot_enabled: bool = True,
+        autopilot_prompt: str = "",
     ):
         self.workspace = workspace
         self.interval_ms = interval_s * 1000
@@ -55,6 +63,8 @@ class HeartbeatService:
         self.active_hours_end = active_hours_end
         self.max_tasks_per_beat = max(1, int(max_tasks_per_beat))
         self._startup_delay_s = startup_delay_s
+        self.autopilot_enabled = bool(autopilot_enabled)
+        self.autopilot_prompt = (autopilot_prompt or self.DEFAULT_AUTOPILOT_PROMPT).strip()
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -95,12 +105,12 @@ class HeartbeatService:
         if not self.workspace:
             return []
         path = Path(self.workspace) / "HEARTBEAT.md"
-        if not path.exists():
-            return []
-        try:
-            content = path.read_text(encoding="utf-8")
-        except Exception:
-            return []
+        content = ""
+        if path.exists():
+            try:
+                content = path.read_text(encoding="utf-8")
+            except Exception:
+                content = ""
         in_active = False
         tasks: list[str] = []
         for line in content.splitlines():
@@ -118,6 +128,8 @@ class HeartbeatService:
                 task = match.group(1).strip()
                 if task:
                     tasks.append(task)
+        if not tasks and self.autopilot_enabled and self.autopilot_prompt:
+            tasks.append(self.autopilot_prompt)
         return tasks
 
     async def _dispatch_heartbeat(self, payload: str) -> None:

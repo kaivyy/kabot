@@ -67,12 +67,17 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
     *   **Hybrid (Recommended):** The most powerful engine using ChromaDB + SQLite + BM25 for semantic search with vector embeddings.
     *   **SQLite Only:** A lightweight mode utilizing keyword searches without embeddings (perfect for Termux or Raspberry Pi).
     *   **Disabled:** Turns off the memory system entirely for a stateless chat experience.
+*   **Native Graph Memory:** Kabot also maintains a lightweight entity-relation graph (who-uses-what / what-depends-on-what / user preferences) and can inject compact graph context into prompts.
 *   **See Section 8a** below for comprehensive memory system documentation.
 
 ### d) Tools & Sandbox (Search, Docker, Shell)
 *   **What it does:** Gives physical superpowers to your agent. Without tools, Kabot is just a chatbot. With tools, Kabot becomes a proactive assistant.
 *   **How to use it:** Here, you toggle access to Kabot's abilities. You can grant it permission to type Terminal commands, read files on your hard drive, or use web search and fetch tools. Docker sandboxing can be enabled for safer command execution.
 *   **Web search providers:** `web_search` supports Brave, Perplexity, Grok, and Kimi. In setup wizard tools menu, you can input each API key and choose default search provider automatically.
+*   **Security preset (recommended):** In **Tools & Sandbox -> Execution Policy**, choose `strict`, `balanced`, or `compat`:
+    *   `strict` (default): safest baseline for new installs.
+    *   `balanced`: ask-oriented behavior for common local usage.
+    *   `compat`: permissive legacy-like mode (use only for trusted environments).
 
 ### d1) Gateway (Port, Host, Bindings)
 *   **What it does:** Controls how Kabot exposes webhook/gateway endpoints on your machine/server.
@@ -1001,10 +1006,15 @@ Wizard behavior:
 ### **Command Firewall (Security)**
 Kabot includes a sophisticated security layer for shell command execution:
 
-**Policy Modes:**
-- **deny** - Block all commands (safest)
-- **ask** - Require approval for each command
-- **allowlist** - Only allow whitelisted commands
+**Security Presets (Wizard + Config):**
+- **strict** - hardened defaults, safest for most users
+- **balanced** - ask-first behavior with practical defaults
+- **compat** - permissive compatibility mode for legacy setups
+
+**Low-level Policy Modes (firewall engine):**
+- **deny** - block all commands
+- **ask** - require approval for each command
+- **allowlist** - only allow whitelisted commands
 
 **Configuration:**
 ```yaml
@@ -1024,6 +1034,17 @@ When policy is "ask", Kabot will prompt:
 ```
 Command requires approval: git commit -m "fix bug"
 Reply with /approve <id> to run once, or /deny <id> to reject.
+```
+
+**Config Example (`tools.exec.policyPreset`):**
+```json
+{
+  "tools": {
+    "exec": {
+      "policyPreset": "strict"
+    }
+  }
+}
 ```
 
 ### **Hook System (Lifecycle Events)**
@@ -1116,6 +1137,69 @@ fallback_models:
 - Primary model fails â†’ try gpt-4o
 - gpt-4o fails â†’ try gemini-pro
 - All fail â†’ return error to user
+
+### **Runtime Resilience (0.5.7)**
+Kabot now includes typed runtime controls for deterministic retries and tool safety:
+
+```json
+{
+  "runtime": {
+    "resilience": {
+      "enabled": true,
+      "dedupe_tool_calls": true,
+      "max_model_attempts_per_turn": 4,
+      "max_tool_retry_per_turn": 1,
+      "strict_error_classification": true,
+      "prevent_model_chain_mutation": true,
+      "idempotency_ttl_seconds": 600
+    }
+  }
+}
+```
+
+What this gives you:
+- Prevents duplicate side effects from repeated retries (for example duplicate cron scheduling).
+- Makes fallback attempts bounded and deterministic per turn.
+- Keeps model chain immutable during a single turn to avoid looping behavior.
+
+### **Runtime Performance (0.5.7)**
+Kabot also adds fast-first-response controls for cold start behavior:
+
+```json
+{
+  "runtime": {
+    "performance": {
+      "fast_first_response": true,
+      "defer_memory_warmup": true,
+      "embed_warmup_timeout_ms": 1200,
+      "max_context_build_ms": 500,
+      "max_first_response_ms_soft": 4000
+    }
+  }
+}
+```
+
+Practical behavior:
+- If embedding warmup is not ready yet, Kabot can answer from recent context first.
+- Memory warmup continues in the background.
+- Logs include runtime markers such as `cold_start_ms`, `context_build_ms`, and `first_response_ms`.
+
+### **Runtime Autopilot (0.5.7)**
+Kabot can run a default proactive patrol loop (bottleneck elimination) on heartbeat:
+
+```json
+{
+  "runtime": {
+    "autopilot": {
+      "enabled": true,
+      "prompt": "Autopilot patrol: review recent context and remove one highest bottleneck safely.",
+      "maxActionsPerBeat": 1
+    }
+  }
+}
+```
+
+If `HEARTBEAT.md` has no active tasks, Kabot can still run this patrol prompt automatically.
 
 ### **Context Window Guard**
 Prevents crashes from context overflow:

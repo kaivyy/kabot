@@ -107,11 +107,18 @@ def _bool_label(enabled: bool) -> str:
     return "ON" if enabled else "OFF"
 
 
-def _set_install_settings(skills_cfg: dict, **kwargs: Any) -> dict:
+def _set_install_settings(skills_cfg: Any, **kwargs: Any) -> Any:
     normalized = normalize_skills_settings(skills_cfg)
     install = normalized.setdefault("install", {})
     for key, value in kwargs.items():
         install[key] = value
+    if hasattr(skills_cfg, "model_dump"):
+        try:
+            from kabot.config.schema import SkillsConfig
+
+            return SkillsConfig.from_raw(normalized)
+        except Exception:
+            return normalized
     return normalized
 
 
@@ -240,6 +247,10 @@ def _configure_tools_execution(self) -> None:
             "Execution Policy",
             choices=[
                 questionary.Choice(
+                    f"Security preset ({self.config.tools.exec.policy_preset})",
+                    value="policy_preset",
+                ),
+                questionary.Choice(
                     f"Enable Kabot freedom mode [Trusted environment only] ({_bool_label(self.config.tools.exec.auto_approve)})",
                     value="freedom",
                 ),
@@ -253,6 +264,25 @@ def _configure_tools_execution(self) -> None:
         )
         if choice in {None, "back"}:
             return
+
+        if choice == "policy_preset":
+            preset = ClackUI.clack_select(
+                "Select security preset",
+                choices=[
+                    questionary.Choice("strict (recommended)", value="strict"),
+                    questionary.Choice("balanced", value="balanced"),
+                    questionary.Choice("compat", value="compat"),
+                    questionary.Choice("Back", value="back"),
+                ],
+                default=self.config.tools.exec.policy_preset
+                if self.config.tools.exec.policy_preset in {"strict", "balanced", "compat"}
+                else "strict",
+            )
+            if preset in {None, "back"}:
+                continue
+            self.config.tools.exec.policy_preset = preset
+            console.print(f"|  [green]OK Security preset set to {preset}[/green]")
+            continue
 
         if choice == "freedom":
             freedom_mode = Confirm.ask(
@@ -427,6 +457,7 @@ def _set_kabot_freedom_mode(self, enabled: bool) -> None:
     """Apply trusted-mode defaults for maximum tool flexibility."""
     if enabled:
         self.config.tools.exec.auto_approve = True
+        self.config.tools.exec.policy_preset = "compat"
         self.config.tools.restrict_to_workspace = False
         self.config.integrations.http_guard.enabled = False
         self.config.integrations.http_guard.block_private_networks = False
@@ -435,6 +466,8 @@ def _set_kabot_freedom_mode(self, enabled: bool) -> None:
         return
 
     self.config.tools.exec.auto_approve = False
+    if self.config.tools.exec.policy_preset == "compat":
+        self.config.tools.exec.policy_preset = "strict"
     self.config.integrations.http_guard.enabled = True
     self.config.integrations.http_guard.block_private_networks = True
     self.config.integrations.http_guard.allow_hosts = []

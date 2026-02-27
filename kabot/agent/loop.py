@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ from kabot.agent.tools.google_suite import (
     GoogleDocsTool,
     GoogleDriveTool,
 )
+from kabot.agent.tools.graph_memory import GraphMemoryTool
 from kabot.agent.tools.knowledge import KnowledgeLearnTool
 from kabot.agent.tools.memory import GetMemoryTool, ListRemindersTool, SaveMemoryTool
 from kabot.agent.tools.memory_search import MemorySearchTool
@@ -114,6 +116,16 @@ class AgentLoop:
         from kabot.config.schema import Config, ExecToolConfig
 
         self.config = config or Config()
+        self.runtime_resilience = getattr(getattr(self.config, "runtime", None), "resilience", None)
+        self.runtime_performance = getattr(getattr(self.config, "runtime", None), "performance", None)
+        self._boot_started_at = time.perf_counter()
+        self._cold_start_reported = False
+        self._memory_warmup_task: asyncio.Task | None = None
+        self._memory_warmup_started_at: float | None = None
+        self._memory_warmup_completed_at: float | None = None
+        self._pending_memory_tasks: set[asyncio.Task] = set()
+        self._tool_payload_cache: dict[str, tuple[float, str]] = {}
+        self._tool_call_id_cache: dict[str, tuple[float, str]] = {}
 
         # Initialize mode manager and coordinator
         self.mode_manager = mode_manager or ModeManager(
@@ -142,7 +154,11 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace, skills_config=self.config.skills)
+        self.context = ContextBuilder(
+            workspace,
+            skills_config=self.config.skills,
+            memory_config=self.config.memory,
+        )
         self.sessions = session_manager or SessionManager(workspace)
         from kabot.memory.memory_factory import MemoryFactory
         from kabot.config.loader import load_config
@@ -399,6 +415,7 @@ class AgentLoop:
             timeout=self.exec_config.timeout,
             restrict_to_workspace=self.restrict_to_workspace,
             auto_approve=self.exec_auto_approve,
+            policy_preset=str(getattr(self.exec_config, "policy_preset", "strict")),
         ))
 
         # Google Suite Native Tools
@@ -455,6 +472,7 @@ class AgentLoop:
 
         self.tools.register(SaveMemoryTool(memory_manager=self.memory))
         self.tools.register(GetMemoryTool(memory_manager=self.memory))
+        self.tools.register(GraphMemoryTool(memory_manager=self.memory))
 
         # Vector memory search tool (Phase 7)
         self.tools.register(MemorySearchTool(store=lambda: self.vector_store))
@@ -524,6 +542,8 @@ class AgentLoop:
                 return "Retrieving memory"
             elif tool_name == "list_reminders":
                 return "Checking reminders"
+            elif tool_name == "graph_memory":
+                return "Querying graph memory"
             elif tool_name == "weather":
                 location = args.get("location")
                 return f"Checking weather in {location}"
@@ -549,15 +569,34 @@ class AgentLoop:
 
     async def _warmup_memory(self):
         """Background warmup of embedding model so first message is fast."""
+        self._memory_warmup_started_at = time.perf_counter()
         try:
-            await self.memory.warmup()
+            timeout_ms = int(getattr(self.runtime_performance, "embed_warmup_timeout_ms", 1200))
+            if timeout_ms > 0:
+                await asyncio.wait_for(self.memory.warmup(), timeout=timeout_ms / 1000.0)
+            else:
+                await self.memory.warmup()
+            self._memory_warmup_completed_at = time.perf_counter()
+            warmup_ms = int((self._memory_warmup_completed_at - self._memory_warmup_started_at) * 1000)
+            logger.info(f"memory_warmup_ms={warmup_ms}")
+        except asyncio.TimeoutError:
+            logger.warning("Memory warmup timeout reached; continuing with lazy loading")
         except Exception as e:
             logger.warning(f"Memory warmup failed (will lazy-load later): {e}")
 
+    def _ensure_memory_warmup_task(self) -> None:
+        """Start memory warmup task once (non-blocking)."""
+        if self._memory_warmup_task and not self._memory_warmup_task.done():
+            return
+        self._memory_warmup_task = asyncio.create_task(self._warmup_memory())
+
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
-        # Pre-warm embedding model in background IMMEDIATELY (non-blocking)
-        asyncio.create_task(self._warmup_memory())
+        defer_warmup = bool(getattr(self.runtime_performance, "defer_memory_warmup", True))
+        if not defer_warmup:
+            self._ensure_memory_warmup_task()
+        else:
+            logger.info("Memory warmup deferred (fast-first-response mode)")
 
         self._running = True
         logger.info("Agent loop started")
@@ -625,6 +664,12 @@ class AgentLoop:
 
     def stop(self) -> None:
         self._running = False
+
+        # Best-effort cancel pending async memory writes.
+        for task in list(self._pending_memory_tasks):
+            if not task.done():
+                task.cancel()
+        self._pending_memory_tasks.clear()
 
         # Phase 14: Emit lifecycle stop event
         from kabot.bus.events import SystemEvent

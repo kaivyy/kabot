@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from .chroma_memory import ChromaMemoryManager, HybridMemoryManager
     from .episodic_extractor import EpisodicExtractor, ExtractedFact
     from .memory_pruner import MemoryPruner
+    from .graph_memory import GraphMemory
     from .ollama_embeddings import OllamaEmbeddingProvider
     from .reranker import Reranker
     from .sentence_embeddings import SentenceEmbeddingProvider
@@ -25,6 +26,7 @@ _MODULE_LOCKS = {
     "EpisodicExtractor": ".episodic_extractor",
     "ExtractedFact": ".episodic_extractor",
     "MemoryPruner": ".memory_pruner",
+    "GraphMemory": ".graph_memory",
     "SentenceEmbeddingProvider": ".sentence_embeddings",
     "OllamaEmbeddingProvider": ".ollama_embeddings",
     "SQLiteMetadataStore": ".sqlite_store",

@@ -81,3 +81,32 @@ def test_load_config_persists_migrated_skills_and_creates_timestamped_backup(tmp
     assert "entries" in persisted["skills"]
     backup_files = list((tmp_path / "backups").glob("config.*.pre-migration.json"))
     assert len(backup_files) == 1
+
+
+def test_migrate_injects_runtime_resilience_and_performance_defaults():
+    migrated = _migrate_config({})
+
+    runtime_cfg = migrated.get("runtime", {})
+    resilience = runtime_cfg.get("resilience", {})
+    performance = runtime_cfg.get("performance", {})
+    autopilot = runtime_cfg.get("autopilot", {})
+
+    assert resilience["dedupeToolCalls"] is True
+    assert resilience["maxModelAttemptsPerTurn"] == 4
+    assert performance["fastFirstResponse"] is True
+    assert performance["embedWarmupTimeoutMs"] == 1200
+    assert autopilot["enabled"] is True
+    assert autopilot["maxActionsPerBeat"] == 1
+
+
+def test_migrate_tools_exec_policy_preset_for_legacy_config():
+    raw = {
+        "tools": {
+            "exec": {
+                "autoApprove": True,
+            }
+        }
+    }
+    migrated = _migrate_config(raw)
+
+    assert migrated["tools"]["exec"]["policyPreset"] == "compat"

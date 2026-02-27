@@ -18,6 +18,23 @@ from typing import Any, Dict, List, Optional
 import yaml
 from loguru import logger
 
+_PRESET_POLICY_MODE = {
+    "strict": "ask",
+    "balanced": "ask",
+    "compat": "allowlist",
+}
+
+_PRESET_EXTRA_DENYLIST = {
+    "strict": [
+        {"pattern": "*curl*|*bash*", "description": "Block curl-pipe-shell execution"},
+        {"pattern": "*wget*|*bash*", "description": "Block wget-pipe-shell execution"},
+        {"pattern": "*powershell*iex*", "description": "Block PowerShell IEX execution"},
+        {"pattern": "*Invoke-Expression*", "description": "Block PowerShell Invoke-Expression"},
+        {"pattern": "*rm -rf / *", "description": "Block root recursive deletion"},
+    ],
+    "balanced": [],
+    "compat": [],
+}
 
 class ApprovalDecision(Enum):
     """Command approval decision."""
@@ -105,7 +122,7 @@ class CommandFirewall:
     - Clear remediation messages for denied commands
     """
 
-    def __init__(self, config_path: Path):
+    def __init__(self, config_path: Path, preset: str = "balanced"):
         """
         Initialize command firewall.
 
@@ -115,15 +132,26 @@ class CommandFirewall:
         self.config_path = Path(config_path)
         self.hash_path = self.config_path.with_suffix('.hash')
         self.audit_log_path = self.config_path.with_suffix('.audit.jsonl')
+        self.preset = preset if preset in _PRESET_POLICY_MODE else "balanced"
         self.policy: Dict[str, Any] = {}
         self.allowlist: List[CommandPattern] = []
         self.denylist: List[CommandPattern] = []
         self.scoped_policies: List[ScopedPolicy] = []
         self.config_hash: str = ""
+        self._load_failed: bool = False
 
         # Load and verify configuration
         self._load_policy()
+        self._apply_policy_preset()
         self._verify_integrity()
+
+    @staticmethod
+    def _normalize_policy_mode(value: Any) -> str:
+        """Normalize policy mode string to one of deny/ask/allowlist (or empty)."""
+        mode = str(value or "").strip().lower()
+        if mode in {"deny", "ask", "allowlist"}:
+            return mode
+        return ""
 
     def check_command(self, command: str, context: Optional[Dict[str, Any]] = None) -> ApprovalDecision:
         """
@@ -236,6 +264,7 @@ class CommandFirewall:
     def _load_policy(self) -> None:
         """Load policy from config file."""
         try:
+            self._load_failed = False
             if not self.config_path.exists():
                 # Create default config
                 self._create_default_config()
@@ -269,16 +298,38 @@ class CommandFirewall:
             logger.info(
                 f"Loaded command firewall policy: {self.policy.get('policy', 'ask')} "
                 f"({len(self.allowlist)} allowed, {len(self.denylist)} denied, "
-                f"{len(self.scoped_policies)} scoped)"
+                f"{len(self.scoped_policies)} scoped, preset={self.preset})"
             )
 
         except Exception as e:
             logger.error(f"Error loading command firewall policy: {e}")
             # Fail-safe: deny all commands
+            self._load_failed = True
             self.policy = {'policy': 'deny'}
             self.allowlist = []
             self.denylist = []
             self.scoped_policies = []
+
+    def _apply_policy_preset(self) -> None:
+        """Apply in-memory preset overlays without breaking explicit config policy."""
+        if self._load_failed:
+            # Never relax fail-safe deny mode when config could not be loaded.
+            self.policy["policy"] = "deny"
+            return
+
+        configured_mode = self._normalize_policy_mode(self.policy.get("policy"))
+        if configured_mode:
+            effective_mode = configured_mode
+            # Compat mode should remain permissive when policy is ask.
+            if self.preset == "compat" and effective_mode == "ask":
+                effective_mode = "allowlist"
+        else:
+            effective_mode = _PRESET_POLICY_MODE.get(self.preset, "ask")
+
+        self.policy["policy"] = effective_mode
+        extra_deny = _PRESET_EXTRA_DENYLIST.get(self.preset, [])
+        if extra_deny:
+            self.denylist.extend(self._parse_patterns(extra_deny))
 
     def _create_default_config(self) -> None:
         """Create default configuration file."""
@@ -387,6 +438,7 @@ class CommandFirewall:
             "decision": decision.value,
             "reason": reason,
             "policy": policy_name or "global",
+            "preset": self.preset,
             "context": context or {},
         }
         if matched_pattern:
@@ -462,6 +514,7 @@ class CommandFirewall:
     def reload_config(self) -> None:
         """Reload configuration from disk."""
         self._load_policy()
+        self._apply_policy_preset()
         if not self._verify_integrity():
             logger.critical("Config reload failed integrity check")
 
@@ -477,6 +530,7 @@ class CommandFirewall:
             'allowlist_count': len(self.allowlist),
             'denylist_count': len(self.denylist),
             'scoped_policy_count': len(self.scoped_policies),
+            'preset': self.preset,
             'config_path': str(self.config_path),
             'audit_log_path': str(self.audit_log_path),
             'integrity_verified': self._verify_integrity()

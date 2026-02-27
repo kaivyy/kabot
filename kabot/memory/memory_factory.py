@@ -56,7 +56,10 @@ class MemoryFactory:
         if backend == "sqlite_only":
             from kabot.memory.sqlite_memory import SQLiteMemory
             logger.info("Memory backend: sqlite_only")
-            return SQLiteMemory(workspace=workspace / "memory_db")
+            return SQLiteMemory(
+                workspace=workspace / "memory_db",
+                enable_graph_memory=bool(memory_config.get("enable_graph_memory", True)),
+            )
 
         # Default: hybrid
         from kabot.memory.chroma_memory import HybridMemoryManager
@@ -71,6 +74,8 @@ class MemoryFactory:
 
         embedding_model = memory_config.get("embedding_model", None)
         enable_hybrid = memory_config.get("enable_hybrid_search", True)
+        enable_graph = bool(memory_config.get("enable_graph_memory", True))
+        graph_injection_limit = int(memory_config.get("graph_injection_limit", 8) or 8)
 
         # Get auto-unload timeout with validation
         auto_unload_seconds = memory_config.get("auto_unload_timeout", DEFAULT_AUTO_UNLOAD_SECONDS)
@@ -94,5 +99,7 @@ class MemoryFactory:
             embedding_provider=embedding_provider,
             embedding_model=embedding_model,
             enable_hybrid_memory=enable_hybrid,
+            enable_graph_memory=enable_graph,
+            graph_injection_limit=max(1, graph_injection_limit),
             auto_unload_seconds=auto_unload_seconds,
         )

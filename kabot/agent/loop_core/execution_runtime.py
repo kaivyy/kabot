@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import time
 from typing import Any
 
 from loguru import logger
 
 from kabot.bus.events import InboundMessage, OutboundMessage
+from kabot.core.failover_error import resolve_failover_reason
 from kabot.utils.text_safety import ensure_utf8_text
 
 
@@ -22,6 +26,106 @@ def _sanitize_error(error_str: str) -> str:
     if len(sanitized) > 200:
         sanitized = sanitized[:200] + "..."
     return ensure_utf8_text(sanitized)
+
+
+def _runtime_resilience_cfg(loop: Any) -> Any:
+    return getattr(loop, "runtime_resilience", None)
+
+
+def _runtime_performance_cfg(loop: Any) -> Any:
+    return getattr(loop, "runtime_performance", None)
+
+
+def _extract_status_code(exc: Exception) -> int | None:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+
+    text = str(exc)
+    for token in (" 400 ", " 401 ", " 402 ", " 403 ", " 404 ", " 408 ", " 409 ", " 429 ", " 500 ", " 502 ", " 503 ", " 504 "):
+        if token in text:
+            try:
+                return int(token.strip())
+            except Exception:
+                return None
+    return None
+
+
+def _classify_runtime_error(loop: Any, exc: Exception, status_code: int | None = None) -> str:
+    """Classify errors for deterministic fallback decisions."""
+    msg = str(exc or "")
+    msg_lower = msg.lower()
+    status = status_code if isinstance(status_code, int) else _extract_status_code(exc)
+
+    if "no tool call found for function call output" in msg_lower:
+        return "tool_protocol"
+
+    strict = bool(getattr(_runtime_resilience_cfg(loop), "strict_error_classification", True))
+    if not strict:
+        if status == 401:
+            return "auth"
+        if status == 429 or "rate" in msg_lower:
+            return "rate_limit"
+        if status in {500, 502, 503, 504}:
+            return "transient"
+        if status == 400:
+            return "tool_protocol"
+        return "fatal"
+
+    reason = resolve_failover_reason(status=status, message=msg)
+    if reason == "auth":
+        return "auth"
+    if reason == "rate_limit":
+        return "rate_limit"
+    if reason in {"timeout", "unknown"}:
+        return "transient"
+    if reason == "format":
+        return "tool_protocol"
+    # billing/model_not_found are fatal for current model but fallback can still continue.
+    return "fatal"
+
+
+def _prune_expiring_cache(cache: dict[str, tuple[float, str]]) -> None:
+    now = time.time()
+    expired = [key for key, (expires_at, _) in cache.items() if expires_at <= now]
+    for key in expired:
+        cache.pop(key, None)
+
+
+def _stable_tool_payload_hash(
+    session_key: str,
+    turn_id: str,
+    tool_name: str,
+    tool_args: dict[str, Any],
+) -> str:
+    normalized_args = json.dumps(tool_args, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    raw = f"{session_key}|{turn_id}|{tool_name}|{normalized_args}"
+    return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _should_defer_memory_write(loop: Any) -> bool:
+    perf_cfg = _runtime_performance_cfg(loop)
+    if not perf_cfg:
+        return False
+    return bool(getattr(perf_cfg, "fast_first_response", True))
+
+
+def _schedule_memory_write(loop: Any, coro: Any, *, label: str) -> None:
+    task = asyncio.create_task(coro)
+    pending = getattr(loop, "_pending_memory_tasks", None)
+    if not isinstance(pending, set):
+        pending = set()
+        setattr(loop, "_pending_memory_tasks", pending)
+    pending.add(task)
+
+    def _done_callback(done_task: asyncio.Task) -> None:
+        pending.discard(done_task)
+        try:
+            done_task.result()
+        except Exception as exc:
+            logger.warning(f"Background memory write failed ({label}): {exc}")
+
+    task.add_done_callback(_done_callback)
 
 
 async def run_simple_response(loop: Any, msg: InboundMessage, messages: list) -> str | None:
@@ -67,7 +171,9 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
 
     self_eval_retried = False
     critic_retried = 0
-    tool_enforcement_retried = False
+    max_tool_retry = max(0, int(getattr(_runtime_resilience_cfg(loop), "max_tool_retry_per_turn", 1)))
+    tool_enforcement_retries = 0
+    status_updates_sent: set[str] = set()
     required_tool = loop._required_tool_for_query(msg.content)
     # Synthetic/system callbacks (cron completion, heartbeat, etc.) should not
     # trigger hard tool-enforcement loops from reminder/weather keywords inside
@@ -144,11 +250,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         if required_tool and response.has_tool_calls:
             if any(tc.name == required_tool for tc in response.tool_calls):
                 required_tool = None
-                tool_enforcement_retried = False
+                tool_enforcement_retries = 0
             else:
                 wrong_tools = ", ".join(tc.name for tc in response.tool_calls)
-                if not tool_enforcement_retried:
-                    tool_enforcement_retried = True
+                if tool_enforcement_retries < max_tool_retry:
+                    tool_enforcement_retries += 1
                     logger.warning(
                         f"Tool enforcement: expected '{required_tool}' but got other tools ({wrong_tools}) (iter {iteration})"
                     )
@@ -178,8 +284,8 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             tools_executed = True
 
         if required_tool and not response.has_tool_calls:
-            if not tool_enforcement_retried:
-                tool_enforcement_retried = True
+            if tool_enforcement_retries < max_tool_retry:
+                tool_enforcement_retries += 1
                 logger.warning(
                     f"Tool enforcement: expected '{required_tool}' but got text-only response (iter {iteration})"
                 )
@@ -247,9 +353,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 # If the AI generated tool calls but forgot to say anything,
                 # send a progressive status update to the user automatically.
                 display_content = response.content or "Processing your request, please wait..."
-                await loop.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id, content=display_content
-                ))
+                if display_content not in status_updates_sent:
+                    status_updates_sent.add(display_content)
+                    await loop.bus.publish_outbound(OutboundMessage(
+                        channel=msg.channel, chat_id=msg.chat_id, content=display_content
+                    ))
 
             messages = loop.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
             if not response.has_tool_calls:
@@ -263,83 +371,159 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
 
 
 async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tuple[Any | None, Exception | None]:
-    """Call provider with model fallback and auth rotation handling."""
-    last_error = None
-    for current_model in models:
-        try:
-            original_key = None
-            if loop.auth_rotation:
-                current_key = loop.auth_rotation.current_key()
-                if hasattr(loop.provider, "api_key"):
-                    original_key = loop.provider.api_key
-                    loop.provider.api_key = current_key
+    """Call provider with deterministic, bounded fallback state machine."""
+    if not models:
+        return None, RuntimeError("No models configured")
 
+    resilience_cfg = _runtime_resilience_cfg(loop)
+    max_attempts_cfg = int(getattr(resilience_cfg, "max_model_attempts_per_turn", 4))
+    max_attempts = max(1, min(len(models), max_attempts_cfg))
+
+    chain_snapshot = tuple(models)
+    turn_id = str(getattr(loop, "_active_turn_id", "turn-unknown"))
+    last_error: Exception | None = None
+
+    for attempt_idx, current_model in enumerate(chain_snapshot[:max_attempts], start=1):
+        state = "primary" if attempt_idx == 1 else "model_fallback"
+        original_key = None
+
+        if loop.auth_rotation and hasattr(loop.provider, "api_key"):
+            current_key = loop.auth_rotation.current_key()
+            original_key = loop.provider.api_key
+            loop.provider.api_key = current_key
+
+        try:
             response = await loop.provider.chat(
                 messages=messages,
                 tools=loop.tools.get_definitions(),
                 model=current_model,
             )
-
-            if loop.auth_rotation and original_key is not None:
+            if original_key is not None:
                 loop.provider.api_key = original_key
 
             loop.last_model_used = current_model
-            loop.last_fallback_used = bool(models and current_model != models[0])
-            loop.last_model_chain = list(models)
-            loop.resilience.on_success()
+            loop.last_fallback_used = bool(current_model != chain_snapshot[0])
+            loop.last_model_chain = list(chain_snapshot)
+            if hasattr(loop, "resilience"):
+                loop.resilience.on_success()
+            logger.info(
+                f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} state={state} "
+                f"model={current_model} result=success"
+            )
             return response, None
-        except Exception as e:
-            error_str = str(e)
-            # Auto-retry without tools if model doesn't support tool calls (400 Bad Request)
-            if "400" in error_str:
+        except Exception as exc:
+            if original_key is not None:
+                loop.provider.api_key = original_key
+
+            status_code = _extract_status_code(exc)
+            error_class = _classify_runtime_error(loop, exc, status_code=status_code)
+            last_error = exc
+            logger.warning(
+                f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} state={state} "
+                f"model={current_model} class={error_class} error={exc}"
+            )
+
+            # State: auth_rotate (one attempt on same model with rotated key)
+            if (
+                loop.auth_rotation
+                and hasattr(loop.provider, "api_key")
+                and error_class in {"auth", "rate_limit"}
+            ):
+                current_key = loop.auth_rotation.current_key()
+                reason = "rate_limit" if error_class == "rate_limit" else "auth_error"
+                loop.auth_rotation.mark_failed(current_key, reason)
+                next_key = loop.auth_rotation.rotate()
+                if next_key and next_key != current_key:
+                    try:
+                        state = "auth_rotate"
+                        original_key = loop.provider.api_key
+                        loop.provider.api_key = next_key
+                        logger.info(
+                            f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} "
+                            f"state={state} model={current_model} reason={reason}"
+                        )
+                        response = await loop.provider.chat(
+                            messages=messages,
+                            tools=loop.tools.get_definitions(),
+                            model=current_model,
+                        )
+                        loop.provider.api_key = original_key
+                        loop.last_model_used = current_model
+                        loop.last_fallback_used = bool(current_model != chain_snapshot[0])
+                        loop.last_model_chain = list(chain_snapshot)
+                        if hasattr(loop, "resilience"):
+                            loop.resilience.on_success()
+                        return response, None
+                    except Exception as rotate_exc:
+                        if original_key is not None:
+                            loop.provider.api_key = original_key
+                        last_error = rotate_exc
+                        status_code = _extract_status_code(rotate_exc)
+                        error_class = _classify_runtime_error(loop, rotate_exc, status_code=status_code)
+                        logger.warning(
+                            f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} state=auth_rotate "
+                            f"model={current_model} class={error_class} error={rotate_exc}"
+                        )
+
+            # State: text_only_retry (tool protocol mismatch only).
+            if error_class == "tool_protocol":
                 try:
                     logger.warning(
-                        f"Model {current_model} rejected tools (400), retrying as text-only..."
+                        f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} "
+                        f"state=text_only_retry model={current_model}"
                     )
-                    logger.info("Note: response may lack tool capabilities in text-only mode")
                     response = await loop.provider.chat(
                         messages=messages,
                         model=current_model,
                     )
-                    if loop.auth_rotation and original_key is not None:
-                        loop.provider.api_key = original_key
                     loop.last_model_used = current_model
-                    loop.resilience.on_success()
+                    loop.last_fallback_used = bool(current_model != chain_snapshot[0])
+                    loop.last_model_chain = list(chain_snapshot)
+                    if hasattr(loop, "resilience"):
+                        loop.resilience.on_success()
                     return response, None
-                except Exception as e2:
-                    logger.warning(f"Text-only retry also failed for {current_model}: {e2}")
-                    last_error = e2
-                    continue
+                except Exception as text_only_exc:
+                    last_error = text_only_exc
+                    logger.warning(
+                        f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} state=text_only_retry "
+                        f"model={current_model} class={_classify_runtime_error(loop, text_only_exc)} "
+                        f"error={text_only_exc}"
+                    )
 
-            error_lower = error_str.lower()
+            if hasattr(loop, "resilience"):
+                try:
+                    await loop.resilience.handle_error(exc, status_code=status_code)
+                except Exception:
+                    pass
 
-            if loop.auth_rotation and hasattr(loop.provider, "api_key"):
-                if "401" in error_lower or "429" in error_lower or "rate" in error_lower:
-                    reason = "rate_limit" if "429" in error_lower or "rate" in error_lower else "auth_error"
-                    current_key = loop.auth_rotation.current_key()
-                    loop.auth_rotation.mark_failed(current_key, reason)
+            # Continue to next model in immutable snapshot.
+            continue
 
-                    next_key = loop.auth_rotation.rotate()
-                    if next_key != current_key:
-                        logger.info(f"Retrying with rotated key due to {reason}")
-                        if original_key is not None:
-                            loop.provider.api_key = original_key
-                        continue
-
-            if loop.auth_rotation and original_key is not None:
-                loop.provider.api_key = original_key
-
-            logger.warning(f"Model {current_model} failed: {e}")
-            last_error = e
-            status_code = getattr(e, "status_code", None)
-            recovery = await loop.resilience.handle_error(e, status_code=status_code)
-            if recovery["action"] == "model_fallback" and recovery["new_model"]:
-                models.append(recovery["new_model"])
+    loop.last_model_chain = list(chain_snapshot)
     return None, last_error
 
 
 async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, response: Any, session: Any) -> list:
     """Execute tool calls and append results to conversation context."""
+    resilience_cfg = _runtime_resilience_cfg(loop)
+    dedupe_enabled = bool(getattr(resilience_cfg, "dedupe_tool_calls", True))
+    ttl_seconds = max(30, int(getattr(resilience_cfg, "idempotency_ttl_seconds", 600)))
+    turn_id = str(getattr(loop, "_active_turn_id", f"{msg.session_key}:{int(msg.timestamp.timestamp() * 1000)}"))
+
+    payload_cache = getattr(loop, "_tool_payload_cache", None)
+    if not isinstance(payload_cache, dict):
+        payload_cache = {}
+        setattr(loop, "_tool_payload_cache", payload_cache)
+
+    call_id_cache = getattr(loop, "_tool_call_id_cache", None)
+    if not isinstance(call_id_cache, dict):
+        call_id_cache = {}
+        setattr(loop, "_tool_call_id_cache", call_id_cache)
+
+    if dedupe_enabled:
+        _prune_expiring_cache(payload_cache)
+        _prune_expiring_cache(call_id_cache)
+
     tool_call_dicts = [
         {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
         for tc in response.tool_calls
@@ -351,7 +535,20 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
         attached_to_last = False
         if messages and isinstance(messages[-1], dict):
             last = messages[-1]
+            last_tool_ids = {
+                str(tc.get("id"))
+                for tc in (last.get("tool_calls") or [])
+                if isinstance(tc, dict) and tc.get("id")
+            }
+            current_ids = {str(tc.get("id")) for tc in tool_call_dicts if tc.get("id")}
             if (
+                last.get("role") == "assistant"
+                and str(last.get("content", "")) == str(response.content or "")
+                and current_ids
+                and current_ids.issubset(last_tool_ids)
+            ):
+                attached_to_last = True
+            elif (
                 last.get("role") == "assistant"
                 and "tool_calls" not in last
                 and str(last.get("content", "")) == str(response.content or "")
@@ -374,7 +571,14 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
         )
 
     tc_data = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in response.tool_calls]
-    await loop.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data)
+    if _should_defer_memory_write(loop):
+        _schedule_memory_write(
+            loop,
+            loop.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data),
+            label="tool-assistant-envelope",
+        )
+    else:
+        await loop.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data)
 
     permissions = loop._get_tool_permissions(session)
     if permissions.get("auto_approve") or loop.exec_auto_approve:
@@ -386,9 +590,35 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
             loop.exec_auto_approve or permissions.get("auto_approve", False)
         )
 
+    sent_status_updates: set[str] = set()
     for tc in response.tool_calls:
         args_raw = tc.arguments
         tool_params = args_raw if isinstance(args_raw, dict) else {}
+
+        payload_key = _stable_tool_payload_hash(
+            session_key=msg.session_key,
+            turn_id=turn_id,
+            tool_name=tc.name,
+            tool_args=tool_params,
+        )
+        if dedupe_enabled and tc.id in call_id_cache:
+            _, cached_result = call_id_cache[tc.id]
+            logger.warning(
+                f"tool_idempotency_hit=1 reason=tool_call_id_replay tool={tc.name} "
+                f"tool_call_id={tc.id} turn_id={turn_id}"
+            )
+            messages = loop.context.add_tool_result(messages, tc.id, tc.name, cached_result)
+            continue
+        if dedupe_enabled and payload_key in payload_cache:
+            _, cached_result = payload_cache[payload_key]
+            expires_at = time.time() + ttl_seconds
+            call_id_cache[tc.id] = (expires_at, cached_result)
+            logger.warning(
+                f"tool_idempotency_hit=1 reason=payload_duplicate tool={tc.name} "
+                f"tool_call_id={tc.id} turn_id={turn_id}"
+            )
+            messages = loop.context.add_tool_result(messages, tc.id, tc.name, cached_result)
+            continue
 
         # Check for tool loops before execution
         loop_result = loop.loop_detector.check(tc.name, tool_params)
@@ -398,17 +628,30 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
                 error_msg = f"WARNING: Tool loop detected: {loop_result.message}"
                 logger.warning(f"Tool loop blocked: {tc.name} - {loop_result.message}")
                 messages = loop.context.add_tool_result(messages, tc.id, tc.name, error_msg)
-                await loop.memory.add_message(
-                    msg.session_key, "tool", error_msg,
-                    tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": error_msg}],
-                )
+                if _should_defer_memory_write(loop):
+                    _schedule_memory_write(
+                        loop,
+                        loop.memory.add_message(
+                            msg.session_key,
+                            "tool",
+                            error_msg,
+                            tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": error_msg}],
+                        ),
+                        label="tool-loop-block",
+                    )
+                else:
+                    await loop.memory.add_message(
+                        msg.session_key, "tool", error_msg,
+                        tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": error_msg}],
+                    )
                 continue
             else:
                 # Warning level - log but allow execution
                 logger.warning(f"Tool loop warning: {tc.name} - {loop_result.message}")
 
         status = loop._get_tool_status_message(tc.name, tool_params)
-        if status:
+        if status and status not in sent_status_updates:
+            sent_status_updates.add(status)
             await loop.bus.publish_outbound(OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id, content=f"_{status}_", metadata={"type": "status_update"}
             ))
@@ -441,10 +684,25 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
 
         result_for_llm = loop._format_tool_result(truncated_result)
         messages = loop.context.add_tool_result(messages, tc.id, tc.name, result_for_llm)
-        await loop.memory.add_message(
-            msg.session_key, "tool", str(result),
-            tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": str(result)[:1000]}],
-        )
+        if dedupe_enabled:
+            expires_at = time.time() + ttl_seconds
+            payload_cache[payload_key] = (expires_at, result_for_llm)
+            call_id_cache[tc.id] = (expires_at, result_for_llm)
+
+        if _should_defer_memory_write(loop):
+            _schedule_memory_write(
+                loop,
+                loop.memory.add_message(
+                    msg.session_key, "tool", str(result),
+                    tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": str(result)[:1000]}],
+                ),
+                label="tool-result",
+            )
+        else:
+            await loop.memory.add_message(
+                msg.session_key, "tool", str(result),
+                tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": str(result)[:1000]}],
+            )
     return messages
 
 

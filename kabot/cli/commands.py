@@ -824,11 +824,18 @@ def gateway(
         """Execute heartbeat through the agent."""
         return await agent.process_direct(prompt, session_key="heartbeat")
 
+    hb_defaults = config.agents.defaults.heartbeat
+    runtime_autopilot = getattr(config.runtime, "autopilot", None)
     heartbeat = HeartbeatService(
         workspace=config.workspace_path,
         on_heartbeat=on_heartbeat,
-        interval_s=30 * 60,  # 30 minutes
-        enabled=True
+        interval_s=max(60, int(getattr(hb_defaults, "interval_minutes", 30) or 30) * 60),
+        enabled=bool(getattr(hb_defaults, "enabled", True)),
+        active_hours_start=str(getattr(hb_defaults, "active_hours_start", "") or ""),
+        active_hours_end=str(getattr(hb_defaults, "active_hours_end", "") or ""),
+        max_tasks_per_beat=max(1, int(getattr(runtime_autopilot, "max_actions_per_beat", 1) or 1)),
+        autopilot_enabled=bool(getattr(runtime_autopilot, "enabled", True)),
+        autopilot_prompt=str(getattr(runtime_autopilot, "prompt", "") or ""),
     )
 
     # Create webhook server

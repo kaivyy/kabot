@@ -10,7 +10,7 @@ TOOL_GROUPS = {
     "runtime": ["exec", "spawn"],
     "sessions": ["session_status", "message"],
     "web": ["web_search", "web_fetch", "browser"],
-    "memory": ["save_memory", "get_memory", "memory_search", "knowledge_learn"],
+    "memory": ["save_memory", "get_memory", "graph_memory", "memory_search", "knowledge_learn"],
     "automation": ["cron"],
     "google": ["gmail", "google_calendar", "google_docs", "google_drive"],
     "analysis": ["stock", "crypto", "stock_analysis", "weather", "speedtest"],

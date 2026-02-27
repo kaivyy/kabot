@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from kabot.bus.queue import MessageBus
+from kabot.channels.adapters import AdapterRegistry
 from kabot.channels.base import BaseChannel
 from kabot.config.schema import Config
 
@@ -29,6 +30,7 @@ class ChannelManager:
         self.config = config
         self.bus = bus
         self.session_manager = session_manager
+        self.adapter_registry = AdapterRegistry()
         self.channels: dict[str, BaseChannel] = {}
         self._instance_keys_by_type: dict[str, list[str]] = {}
         self._dispatch_task: asyncio.Task | None = None
@@ -44,164 +46,32 @@ class ChannelManager:
                 continue
 
             channel_key = f"{instance.type}:{instance.id}"
-
-            try:
-                if instance.type == "telegram":
-                    from kabot.channels.telegram import TelegramChannel
-                    from kabot.config.schema import TelegramConfig
-
-                    # Convert dict config to TelegramConfig
-                    tele_config = TelegramConfig(**instance.config)
-                    channel = TelegramChannel(
-                        tele_config,
-                        self.bus,
-                        groq_api_key=self.config.providers.groq.api_key,
-                        session_manager=self.session_manager,
-                    )
-                    self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
-                    self.channels[channel_key] = channel
-                    logger.info(f"Telegram instance '{instance.id}' enabled")
-
-                elif instance.type == "discord":
-                    from kabot.channels.discord import DiscordChannel
-                    from kabot.config.schema import DiscordConfig
-
-                    discord_config = DiscordConfig(**instance.config)
-                    channel = DiscordChannel(
-                        discord_config,
-                        self.bus
-                    )
-                    self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
-                    self.channels[channel_key] = channel
-                    logger.info(f"Discord instance '{instance.id}' enabled")
-
-                elif instance.type == "whatsapp":
-                    from kabot.channels.whatsapp import WhatsAppChannel
-                    from kabot.config.schema import WhatsAppConfig
-
-                    whatsapp_config = WhatsAppConfig(**instance.config)
-                    channel = WhatsAppChannel(
-                        whatsapp_config,
-                        self.bus
-                    )
-                    self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
-                    self.channels[channel_key] = channel
-                    logger.info(f"WhatsApp instance '{instance.id}' enabled")
-
-                elif instance.type == "slack":
-                    from kabot.channels.slack import SlackChannel
-                    from kabot.config.schema import SlackConfig
-
-                    slack_config = SlackConfig(**instance.config)
-                    channel = SlackChannel(
-                        slack_config,
-                        self.bus
-                    )
-                    self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
-                    self.channels[channel_key] = channel
-                    logger.info(f"Slack instance '{instance.id}' enabled")
-
-                else:
-                    logger.warning(f"Unknown channel type: {instance.type}")
-
-            except ImportError as e:
-                logger.warning(f"{instance.type} channel not available: {e}")
-            except Exception as e:
-                logger.error(f"Failed to initialize {instance.type}:{instance.id}: {e}")
+            channel = self.adapter_registry.create_instance_channel(
+                instance=instance,
+                config=self.config,
+                bus=self.bus,
+                session_manager=self.session_manager,
+            )
+            if not channel:
+                continue
+            self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
+            self.channels[channel_key] = channel
+            logger.info(f"{instance.type} instance '{instance.id}' enabled")
 
         # Then process legacy single-instance configs (backward compatibility)
-
-        # Telegram channel
-        if self.config.channels.telegram.enabled:
-            try:
-                from kabot.channels.telegram import TelegramChannel
-                self.channels["telegram"] = TelegramChannel(
-                    self.config.channels.telegram,
-                    self.bus,
-                    groq_api_key=self.config.providers.groq.api_key,
-                    session_manager=self.session_manager,
-                )
-                logger.info("Telegram channel enabled")
-            except ImportError as e:
-                logger.warning(f"Telegram channel not available: {e}")
-
-        # WhatsApp channel
-        if self.config.channels.whatsapp.enabled:
-            try:
-                from kabot.channels.whatsapp import WhatsAppChannel
-                self.channels["whatsapp"] = WhatsAppChannel(
-                    self.config.channels.whatsapp, self.bus
-                )
-                logger.info("WhatsApp channel enabled")
-            except ImportError as e:
-                logger.warning(f"WhatsApp channel not available: {e}")
-
-        # Discord channel
-        if self.config.channels.discord.enabled:
-            try:
-                from kabot.channels.discord import DiscordChannel
-                self.channels["discord"] = DiscordChannel(
-                    self.config.channels.discord, self.bus
-                )
-                logger.info("Discord channel enabled")
-            except ImportError as e:
-                logger.warning(f"Discord channel not available: {e}")
-
-        # Feishu channel
-        if self.config.channels.feishu.enabled:
-            try:
-                from kabot.channels.feishu import FeishuChannel
-                self.channels["feishu"] = FeishuChannel(
-                    self.config.channels.feishu, self.bus
-                )
-                logger.info("Feishu channel enabled")
-            except ImportError as e:
-                logger.warning(f"Feishu channel not available: {e}")
-
-        # DingTalk channel
-        if self.config.channels.dingtalk.enabled:
-            try:
-                from kabot.channels.dingtalk import DingTalkChannel
-                self.channels["dingtalk"] = DingTalkChannel(
-                    self.config.channels.dingtalk, self.bus
-                )
-                logger.info("DingTalk channel enabled")
-            except ImportError as e:
-                logger.warning(f"DingTalk channel not available: {e}")
-
-        # Email channel
-        if self.config.channels.email.enabled:
-            try:
-                from kabot.channels.email import EmailChannel
-                self.channels["email"] = EmailChannel(
-                    self.config.channels.email, self.bus
-                )
-                logger.info("Email channel enabled")
-            except ImportError as e:
-                logger.warning(f"Email channel not available: {e}")
-
-        # Slack channel
-        if self.config.channels.slack.enabled:
-            try:
-                from kabot.channels.slack import SlackChannel
-                self.channels["slack"] = SlackChannel(
-                    self.config.channels.slack, self.bus
-                )
-                logger.info("Slack channel enabled")
-            except ImportError as e:
-                logger.warning(f"Slack channel not available: {e}")
-
-        # QQ channel
-        if self.config.channels.qq.enabled:
-            try:
-                from kabot.channels.qq import QQChannel
-                self.channels["qq"] = QQChannel(
-                    self.config.channels.qq,
-                    self.bus,
-                )
-                logger.info("QQ channel enabled")
-            except ImportError as e:
-                logger.warning(f"QQ channel not available: {e}")
+        for status in self.adapter_registry.list_status():
+            if not status.supports_legacy:
+                continue
+            channel = self.adapter_registry.create_legacy_channel(
+                status.key,
+                config=self.config,
+                bus=self.bus,
+                session_manager=self.session_manager,
+            )
+            if not channel:
+                continue
+            self.channels[status.key] = channel
+            logger.info(f"{status.key} channel enabled")
 
     async def _start_channel(self, name: str, channel: BaseChannel) -> None:
         """Start a channel and log any exceptions."""

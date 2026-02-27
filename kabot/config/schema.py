@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -372,6 +372,7 @@ class ExecToolConfig(BaseModel):
     """Shell exec tool configuration."""
     timeout: int = 60
     auto_approve: bool = False
+    policy_preset: str = "strict"  # "strict" | "balanced" | "compat"
     docker: DockerConfig = Field(default_factory=DockerConfig)
 
 
@@ -389,7 +390,165 @@ class MemoryConfig(BaseModel):
     embedding_provider: str = "sentence"  # "sentence" | "ollama"
     embedding_model: str | None = None
     enable_hybrid_search: bool = True
+    enable_graph_memory: bool = True
+    graph_injection_limit: int = 8
     auto_unload_timeout: int = 300
+
+
+class RuntimeResilienceConfig(BaseModel):
+    """Runtime safety controls for fallback and tool retry behavior."""
+
+    enabled: bool = True
+    dedupe_tool_calls: bool = True
+    max_model_attempts_per_turn: int = 4
+    max_tool_retry_per_turn: int = 1
+    strict_error_classification: bool = True
+    prevent_model_chain_mutation: bool = True
+    idempotency_ttl_seconds: int = 600
+
+
+class RuntimePerformanceConfig(BaseModel):
+    """Runtime performance controls for first-response latency."""
+
+    fast_first_response: bool = True
+    defer_memory_warmup: bool = True
+    embed_warmup_timeout_ms: int = 1200
+    max_context_build_ms: int = 500
+    max_first_response_ms_soft: int = 4000
+
+
+class RuntimeAutopilotConfig(BaseModel):
+    """Default proactive patrol loop for bottleneck elimination."""
+
+    enabled: bool = True
+    prompt: str = (
+        "Autopilot patrol: review recent context, pending schedules, and recent failures. "
+        "Identify one highest bottleneck that blocks user outcomes. "
+        "Execute at most one safe action to reduce it; otherwise respond with 'no_action'."
+    )
+    max_actions_per_beat: int = 1
+
+
+class RuntimeConfig(BaseModel):
+    """Runtime feature flags for resilience and performance behavior."""
+
+    resilience: RuntimeResilienceConfig = Field(default_factory=RuntimeResilienceConfig)
+    performance: RuntimePerformanceConfig = Field(default_factory=RuntimePerformanceConfig)
+    autopilot: RuntimeAutopilotConfig = Field(default_factory=RuntimeAutopilotConfig)
+
+
+class SkillEntryConfig(BaseModel):
+    """Per-skill override settings."""
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    api_key: str | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        setattr(self, key, value)
+
+
+class SkillsLoadConfig(BaseModel):
+    """Skill source directory settings."""
+
+    managed_dir: str = "~/.kabot/skills"
+    extra_dirs: list[str] = Field(default_factory=list)
+
+
+class SkillsInstallConfig(BaseModel):
+    """Skill dependency planning/install preferences."""
+
+    mode: str = "manual"  # "manual" | "auto"
+    node_manager: str = "npm"  # "npm" | "pnpm" | "yarn" | "bun"
+    prefer_brew: bool = True
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(key)
+
+
+class SkillsConfig(BaseModel):
+    """Canonical typed skills config with dict-like compatibility helpers."""
+
+    model_config = ConfigDict(extra="allow")
+
+    entries: dict[str, SkillEntryConfig] = Field(default_factory=dict)
+    allow_bundled: list[str] = Field(default_factory=list)
+    load: SkillsLoadConfig = Field(default_factory=SkillsLoadConfig)
+    install: SkillsInstallConfig = Field(default_factory=SkillsInstallConfig)
+    limits: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_skills_payload(cls, value: Any) -> Any:
+        from kabot.config.skills_settings import normalize_skills_settings
+
+        if isinstance(value, SkillsConfig):
+            return value.to_dict()
+        return normalize_skills_settings(value if isinstance(value, dict) else {})
+
+    @classmethod
+    def from_raw(cls, raw: Any) -> "SkillsConfig":
+        from kabot.config.skills_settings import normalize_skills_settings
+
+        if isinstance(raw, SkillsConfig):
+            return raw
+        normalized = normalize_skills_settings(raw)
+        return cls.model_validate(normalized)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = self.model_dump(mode="python", exclude_none=True)
+        extra = getattr(self, "__pydantic_extra__", None) or {}
+        if isinstance(extra, dict):
+            data.update(extra)
+        return data
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in type(self).model_fields:
+            return getattr(self, key)
+        extra = getattr(self, "__pydantic_extra__", None) or {}
+        return extra.get(key, default)
+
+    def __contains__(self, key: str) -> bool:
+        if key in type(self).model_fields:
+            return True
+        extra = getattr(self, "__pydantic_extra__", None) or {}
+        return key in extra
+
+    def __getitem__(self, key: str) -> Any:
+        if key in type(self).model_fields:
+            return getattr(self, key)
+        extra = getattr(self, "__pydantic_extra__", None) or {}
+        if key in extra:
+            return extra[key]
+        raise KeyError(key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if key in type(self).model_fields:
+            setattr(self, key, value)
+            return
+        if getattr(self, "__pydantic_extra__", None) is None:
+            self.__pydantic_extra__ = {}
+        assert isinstance(self.__pydantic_extra__, dict)
+        self.__pydantic_extra__[key] = value
+
+    def items(self):
+        return self.to_dict().items()
 
 
 class BootstrapParityConfig(BaseModel):
@@ -465,9 +624,10 @@ class Config(BaseSettings):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     bootstrap: BootstrapParityConfig = Field(default_factory=BootstrapParityConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
-    skills: dict[str, Any] = Field(default_factory=dict)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
     @property
     def workspace_path(self) -> Path:

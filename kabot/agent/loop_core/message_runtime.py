@@ -17,6 +17,11 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     if msg.channel == "system":
         return await process_system_message(loop, msg)
 
+    turn_started = time.perf_counter()
+    turn_id = f"{msg.channel}:{msg.chat_id}:{int(msg.timestamp.timestamp() * 1000)}"
+    setattr(loop, "_active_turn_id", turn_id)
+    perf_cfg = getattr(loop, "runtime_performance", None)
+
     approval_action = loop._parse_approval_command(msg.content)
     if approval_action:
         action, approval_id = approval_action
@@ -47,6 +52,12 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             )
 
     session = await loop._init_session(msg)
+    if not bool(getattr(loop, "_cold_start_reported", False)):
+        boot_started = getattr(loop, "_boot_started_at", None)
+        if isinstance(boot_started, (int, float)):
+            cold_start_ms = int((time.perf_counter() - boot_started) * 1000)
+            logger.info(f"cold_start_ms={cold_start_ms}")
+        loop._cold_start_reported = True
 
     # Phase 9: Parse directives from message body
     clean_body, directives = loop.directive_parser.parse(msg.content)
@@ -82,7 +93,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             effective_content += hint
             logger.info(f"Document hint injected: {len(document_paths)} files")
 
-    conversation_history = loop.memory.get_conversation_context(msg.session_key, max_messages=30)
+    history_limit = 30
+    if perf_cfg and bool(getattr(perf_cfg, "fast_first_response", True)):
+        warmup_task = getattr(loop, "_memory_warmup_task", None)
+        if warmup_task is not None and not warmup_task.done():
+            history_limit = 12
+
+    conversation_history = loop.memory.get_conversation_context(msg.session_key, max_messages=history_limit)
     if conversation_history:
         conversation_history = [m for m in conversation_history if isinstance(m, dict)]
 
@@ -90,6 +107,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     decision = await loop.router.route(effective_content)
     logger.info(f"Route: profile={decision.profile}, complex={decision.is_complex}")
 
+    context_started = time.perf_counter()
     messages = loop.context.build_messages(
         history=conversation_history,
         current_message=effective_content,
@@ -99,6 +117,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         profile=decision.profile,
         tool_names=loop.tools.tool_names,
     )
+    context_build_ms = int((time.perf_counter() - context_started) * 1000)
+    max_context_build_ms = int(getattr(perf_cfg, "max_context_build_ms", 500)) if perf_cfg else 500
+    logger.info(f"turn_id={turn_id} context_build_ms={context_build_ms}")
+    if context_build_ms > max_context_build_ms:
+        logger.warning(
+            f"turn_id={turn_id} context_build_ms={context_build_ms} exceeded budget={max_context_build_ms}"
+        )
 
     # Check if this query REQUIRES a specific tool (cleanup, sysinfo, weather, cron)
     required_tool = loop._required_tool_for_query(effective_content)
@@ -128,6 +153,20 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         final_content = await loop._run_agent_loop(msg, messages, session)
     else:
         final_content = await loop._run_simple_response(msg, messages)
+
+    first_response_ms = int((time.perf_counter() - turn_started) * 1000)
+    logger.info(f"turn_id={turn_id} first_response_ms={first_response_ms}")
+    max_first_response_soft = int(getattr(perf_cfg, "max_first_response_ms_soft", 4000)) if perf_cfg else 4000
+    if first_response_ms > max_first_response_soft:
+        logger.warning(
+            f"turn_id={turn_id} first_response_ms={first_response_ms} exceeded soft_target={max_first_response_soft}"
+        )
+
+    # Start memory warmup after first response path when defer mode is active.
+    if perf_cfg and bool(getattr(perf_cfg, "defer_memory_warmup", True)):
+        ensure_warmup = getattr(loop, "_ensure_memory_warmup_task", None)
+        if callable(ensure_warmup):
+            ensure_warmup()
 
     return await loop._finalize_session(msg, session, final_content)
 

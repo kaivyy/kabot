@@ -36,10 +36,14 @@ class HybridMemoryManager(MemoryBackend):
 
     def __init__(self, workspace: Path, embedding_provider: str = "sentence",
                  embedding_model: str | None = None, enable_hybrid_memory: bool = True,
+                 enable_graph_memory: bool = True,
+                 graph_injection_limit: int = 8,
                  auto_unload_seconds: int = 300):
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.enable_hybrid_memory = enable_hybrid_memory
+        self.enable_graph_memory = bool(enable_graph_memory)
+        self.graph_injection_limit = max(1, int(graph_injection_limit))
 
         self.router = SmartRouter()
         self.reranker = Reranker(threshold=0.6, top_k=3, max_tokens=500)
@@ -61,6 +65,15 @@ class HybridMemoryManager(MemoryBackend):
 
         db_path = self.workspace / "metadata.db"
         self.metadata = SQLiteMetadataStore(db_path)
+
+        self.graph = None
+        if self.enable_graph_memory:
+            try:
+                from kabot.memory.graph_memory import GraphMemory
+                self.graph = GraphMemory(self.workspace / "graph_memory.db", enabled=True)
+            except Exception as e:
+                logger.warning(f"Graph memory disabled due init error: {e}")
+                self.graph = None
 
         # Initialize BM25 index components lazily
         self.bm25 = None
@@ -207,6 +220,13 @@ class HybridMemoryManager(MemoryBackend):
 
             if not success:
                 return False
+
+            if self.graph:
+                self.graph.ingest_text(
+                    session_id=session_id,
+                    role=role,
+                    content=content,
+                )
 
             # 2. Generate embedding and store in ChromaDB
             await self._index_message(session_id, message_id, content, metadata)
@@ -753,6 +773,13 @@ class HybridMemoryManager(MemoryBackend):
             )
 
             if success:
+                if self.graph:
+                    self.graph.ingest_text(
+                        session_id=session_id or "global",
+                        role="fact",
+                        content=fact,
+                        category=category,
+                    )
                 # Also index in ChromaDB for semantic search
                 await self._index_message(
                     session_id or "global",
@@ -785,6 +812,19 @@ class HybridMemoryManager(MemoryBackend):
         except Exception as e:
             logger.error(f"Error getting facts: {e}")
             return []
+
+    def search_graph(self, entity: str, limit: int = 10) -> list[dict]:
+        """Search graph-memory relations for an entity."""
+        if not self.graph:
+            return []
+        return self.graph.query_related(entity, limit=limit)
+
+    def get_graph_context(self, query: str | None = None, limit: int | None = None) -> str:
+        """Get graph-memory summary suitable for prompt injection."""
+        if not self.graph:
+            return ""
+        use_limit = self.graph_injection_limit if limit is None else max(1, int(limit))
+        return self.graph.summarize(query=query, limit=use_limit)
 
     def create_session(self, session_id: str, channel: str, chat_id: str,
                       user_id: str | None = None) -> bool:
@@ -846,6 +886,9 @@ class HybridMemoryManager(MemoryBackend):
             except Exception:
                 stats["chroma_documents"] = 0
 
+        if self.graph:
+            stats["graph"] = self.graph.get_stats()
+
         return stats
 
     def health_check(self) -> dict:
@@ -861,6 +904,9 @@ class HybridMemoryManager(MemoryBackend):
         # Add provider-specific info
         if hasattr(self.embeddings, 'get_model_info'):
             provider_info.update(self.embeddings.get_model_info())
+
+        if self.graph:
+            provider_info["graph_memory"] = self.graph.health_check()
 
         return provider_info
 

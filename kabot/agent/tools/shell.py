@@ -31,6 +31,7 @@ class ExecTool(Tool):
         docker_config: Any | None = None,
         firewall_config_path: Path | None = None,
         auto_approve: bool = False,
+        policy_preset: str = "balanced",
         approval_callback: ApprovalCallback | None = None,
     ):
         self.timeout = timeout
@@ -39,6 +40,7 @@ class ExecTool(Tool):
         self.docker_config = docker_config
         self.restrict_to_workspace = restrict_to_workspace
         self.auto_approve = auto_approve
+        self.policy_preset = policy_preset if policy_preset in {"strict", "balanced", "compat"} else "balanced"
         self.approval_callback = approval_callback
 
         # Legacy pattern support (deprecated, use CommandFirewall instead)
@@ -53,7 +55,7 @@ class ExecTool(Tool):
             firewall_config_path = Path.home() / ".kabot" / "command_approvals.yaml"
 
         try:
-            self.firewall = CommandFirewall(firewall_config_path)
+            self.firewall = CommandFirewall(firewall_config_path, preset=self.policy_preset)
             logger.info(f"CommandFirewall initialized: {self.firewall.get_policy_info()}")
         except Exception as e:
             logger.error(f"Failed to initialize CommandFirewall: {e}")
