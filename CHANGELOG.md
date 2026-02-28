@@ -78,6 +78,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Gateway heartbeat wiring now reads heartbeat/autopilot config instead of fixed hardcoded interval.
 
 ### Changed
+- **Strict Channel Access Guard (Fail-Closed allowFrom)**:
+  - `BaseChannel` now enforces fail-closed sender access when `tools.exec.policyPreset = strict` and `allowFrom` is empty.
+  - Channel manager now decorates runtime channels with active security preset so access checks are consistent for legacy and multi-instance channels.
+  - Wizard `allowFrom` prompt now warns explicitly when strict preset is active and list is empty (deny-all behavior).
+- **Command Firewall Strict Preset Hardening**:
+  - Strict preset now treats `policy: ask` as deny-by-default via `allowlist` mode instead of leaving permissive ask behavior.
+  - Keeps explicit `deny`/`allowlist` policy values authoritative when already set in config.
+- **Gemini 3.1 Catalog Expansion**:
+  - Added `google/gemini-3.1-pro` and `google-gemini-cli/gemini-3.1-pro` to model catalog.
+  - Added `openrouter/google/gemini-3.1-pro` parity reference.
+  - Added aliases: `gemini31` and `gemini-3.1-pro`.
+- **Documentation UTF-8 Cleanup**:
+  - Normalized mojibake/corrupted characters in `README.md` and `HOW_TO_USE.MD` to proper UTF-8 text.
+  - README title icon fixed to wolf emoji (`Kabot 🐺`).
 - **Workspace Auto-Bootstrap for Persona Files**:
   - Workspace setup now auto-initializes baseline persona files (`AGENTS.md`, `SOUL.md`, `USER.md`) plus `memory/MEMORY.md` without extra manual commands.
   - Channel wizard auto-created agents now initialize their workspace templates automatically.

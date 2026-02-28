@@ -18,15 +18,15 @@
 
 **Kabot** is a _personal AI assistant_ engineered for **resilience**, **complex task execution**, and **long-term memory**. It isn't just a chatbot; it's an autonomous agent that runs on your own hardware, remembering context across restarts and methodically planning its actions.
 
-It bridges the gap between simple chatbots and autonomous software engineers. While typical agents operate blindly, Kabot implements a **Methodical Engineering Workflow** (Brainstorm â†’ Plan â†’ Execute) and relies on a proprietary **Hybrid Memory Architecture** (Smart Routing + LLM Episodic Extraction + Vector) to handle long-running projects with hyper-efficient token usage and zero "amnesia".
+It bridges the gap between simple chatbots and autonomous software engineers. While typical agents operate blindly, Kabot implements a **Methodical Engineering Workflow** (Brainstorm → Plan → Execute) and relies on a proprietary **Hybrid Memory Architecture** (Smart Routing + LLM Episodic Extraction + Vector) to handle long-running projects with hyper-efficient token usage and zero "amnesia".
 
 If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
 
-[Website](https://kabot.ai) Â· [Docs](docs/) Â· [How-To-Use](HOW_TO_USE.MD) Â· [Getting Started](#quick-start) Â· [Telegram](https://t.me/kabot_support) Â· [FAQ](#faq)
+[Website](https://kabot.ai) · [Docs](docs/) · [How-To-Use](HOW_TO_USE.MD) · [Getting Started](#quick-start) · [Telegram](https://t.me/kabot_support) · [FAQ](#faq)
 
 ---
 
-## ðŸš€ Quick Start
+## 🚀 Quick Start
 
 **Runtime**: Python 3.11+
 Tested on Windows (WSL2), macOS, and Linux (Ubuntu/Debian).
@@ -88,14 +88,14 @@ Once the gateway is running, you can talk to Kabot via:
 
 *   **Persistent Subagents**: Delegate tasks like "Research this library" to background agents. These subagents persist their state to disk (`.json` registry), so they survive system reboots and can be queried days later.
 
-### ðŸ’¾ **Hybrid Memory Architecture**
+### 💾 **Hybrid Memory Architecture**
 Unlike typical stateless agents, Kabot is completely **stateful** and amnesia-proof, employing a military-grade memory system that exceeds standard solutions like Mem0.
 *   **Two-Tier Persistence**: Blends a relational SQLite database for episodic memory (maintaining exact parent-child conversation trees, auto-extracted facts, and metacognitive lessons) with a ChromaDB vector store for semantic knowledge.
 *   **Smart Routing & Retrieval**: Uses a query-intent classifier to route to the correct memory store (episodic/knowledge/hybrid) and fuses vector search with BM25 keyword-matching.
-*   **Reranker & Token Guard**: Employs a rigorous three-stage filtering pipeline (Threshold â‰¥0.6, Top-K, and Hard Token Limit) to reduce context window bloat by up to 72% and eliminate hallucinations.
+*   **Reranker & Token Guard**: Employs a rigorous three-stage filtering pipeline (Threshold ≥0.6, Top-K, and Hard Token Limit) to reduce context window bloat by up to 72% and eliminate hallucinations.
 *   **Self-Maintenance**: Asynchronous `EpisodicExtractor` automatically mines preferences and facts post-chat, while a scheduled `MemoryPruner` performs garbage collection on stale data (>30 days).
 
-### ðŸ”Œ **Universal Connectivity**
+### 🔌 **Universal Connectivity**
 One brain, many bodies. Kabot acts as a central control plane.
 
 | Platform | Features | Setup Guide |
@@ -108,7 +108,7 @@ One brain, many bodies. Kabot acts as a central control plane.
 
 ---
 
-## ðŸ¤– Multi-Agent Orchestration
+## 🤖 Multi-Agent Orchestration
 
 Kabot supports two advanced multi-agent systems that can work independently or together, enabling sophisticated task execution and context separation.
 
@@ -242,7 +242,7 @@ Multiple agents with specialized roles work together on a single task, combining
 
 **Use Cases:**
 - Complex coding tasks requiring multiple perspectives
-- Brainstorming â†’ Implementation â†’ Review workflows
+- Brainstorming → Implementation → Review workflows
 - Tasks benefiting from different model strengths
 - Quality-critical projects needing verification
 
@@ -261,18 +261,18 @@ kabot mode set single
 **Example Workflow:**
 ```
 User: "Implement user authentication with JWT"
-  â†“
+  ↓
 Master Agent: Analyzes request, breaks down task
-  â†“
+  ↓
 Brainstorming Agent: Proposes 3 implementation approaches
-  â†“
+  ↓
 Master Agent: Selects best approach (JWT with refresh tokens)
-  â†“
+  ↓
 Executor Agent: Implements code, writes tests
-  â†“
+  ↓
 Verifier Agent: Reviews code, checks security
-  â†“
-Master Agent: Aggregates results â†’ Returns to user
+  ↓
+Master Agent: Aggregates results → Returns to user
 ```
 
 ### System 3: Autonomous Sub-agents (Background Delegation)
@@ -338,7 +338,7 @@ kabot mode set single --user-id user:telegram:research_chat
 
 ---
 
-## ðŸ”Œ Multi-Channel Instances
+## 🔌 Multi-Channel Instances
 
 Run multiple bot instances per platform with different configurations and agent bindings.
 
@@ -355,7 +355,7 @@ Kabot supports running multiple bots per platform simultaneously (e.g., 4 Telegr
 **Via Setup Wizard:**
 ```bash
 kabot config
-# Navigate to: Channels â†’ Manage Channel Instances
+# Navigate to: Channels → Manage Channel Instances
 # Use Add/Edit/Delete or Quick Add Multiple for batch setup
 ```
 
@@ -456,7 +456,7 @@ For fast setup of many bots:
 
 ```bash
 kabot config
-# Channels â†’ Manage Channel Instances â†’ Quick Add Multiple
+# Channels → Manage Channel Instances → Quick Add Multiple
 ```
 
 You can:
@@ -470,9 +470,9 @@ You can:
 Messages are routed using the format: `type:id`
 
 Example:
-- `telegram:work_bot` â†’ Work Telegram bot instance
-- `telegram:personal_bot` â†’ Personal Telegram bot instance
-- `discord:team_discord` â†’ Team Discord bot instance
+- `telegram:work_bot` → Work Telegram bot instance
+- `telegram:personal_bot` → Personal Telegram bot instance
+- `discord:team_discord` → Team Discord bot instance
 
 Routing notes:
 - Base binding `channel: telegram` matches `telegram:<instance_id>`
@@ -498,7 +498,7 @@ Legacy single-instance configs continue to work:
 
 ---
 
-## ðŸ› ï¸ Operations & Plugin Lifecycle
+## 🛠️ Operations & Plugin Lifecycle
 
 ### Environment Check
 
@@ -601,34 +601,34 @@ This mode:
 
 ---
 
-## ðŸ—ï¸ Architecture
+## 🏗️ Architecture
 
 Kabot operates on a **Gateway-Agent** model, decoupling the "brain" from the "body".
 
 ```
 Telegram / Discord / Slack / WhatsApp / CLI
-               â”‚
-               â–¼
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚            Gateway            â”‚
-â”‚       (Control Plane)         â”‚
-â”‚     localhost:18790           â”‚
-â”‚   (Event Bus + Adapters)      â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-               â”‚
-               â”œâ”€ Agent Loop (Reasoning Engine)
-               â”‚   â”œâ”€ Planner
-               â”‚   â”œâ”€ Tool Executor
-               â”‚   â””â”€ Critic
-               â”‚
-               â”œâ”€ Hybrid Memory (SQLite + Vector)
-               â”‚   â”œâ”€ Short Term (Context Window)
-               â”‚   â””â”€ Long Term (ChromaDB)
-               â”‚
-               â”œâ”€ Cron Service (Scheduling)
-               â”‚   â””â”€ Persistent Job Queue
-               â”‚
-               â””â”€ Subagent Registry (Background Tasks)
+               │
+               ▼
+┌───────────────────────────────┐
+│            Gateway            │
+│       (Control Plane)         │
+│     localhost:18790           │
+│   (Event Bus + Adapters)      │
+└──────────────┬────────────────┘
+               │
+               ├─ Agent Loop (Reasoning Engine)
+               │   ├─ Planner
+               │   ├─ Tool Executor
+               │   └─ Critic
+               │
+               ├─ Hybrid Memory (SQLite + Vector)
+               │   ├─ Short Term (Context Window)
+               │   └─ Long Term (ChromaDB)
+               │
+               ├─ Cron Service (Scheduling)
+               │   └─ Persistent Job Queue
+               │
+               └─ Subagent Registry (Background Tasks)
 ```
 
 ### Key Subsystems
@@ -659,18 +659,18 @@ Located in `kabot/core/doctor.py`. A diagnostic engine that runs on startup.
 
 ---
 
-## ðŸ¤– Supported Models
+## 🤖 Supported Models
 
 Kabot's **ModelRegistry** abstracts away the differences between providers. You can switch models instantly via the `/switch` command without restarting.
 
 ### Commercial Models (Cloud)
 | Provider | Models | Best For | Pricing |
 | :--- | :--- | :--- | :--- |
-| **Anthropic** | `claude-3-5-sonnet`, `claude-3-opus`, `haiku` | ðŸ¥‡ **Coding & Reasoning** | $$$ |
-| **OpenAI** | `gpt-4o`, `gpt-4-turbo`, `o1-preview`, `o1-mini` | ðŸ¥ˆ **General Logic** | $$$ |
-| **Google** | `gemini-1.5-pro`, `gemini-1.5-flash` | ðŸ¥‰ **Huge Context (2M)** | $ |
-| **DeepSeek** | `deepseek-chat`, `deepseek-coder` | ðŸ’¸ **Cost Performance** | Â¢ |
-| **Groq** | `llama3-70b`, `mixtral-8x7b` | âš¡ **Instant Speed (500t/s)** | ðŸ†“ |
+| **Anthropic** | `claude-3-5-sonnet`, `claude-3-opus`, `haiku` | 🥇 **Coding & Reasoning** | $$$ |
+| **OpenAI** | `gpt-4o`, `gpt-4-turbo`, `o1-preview`, `o1-mini` | 🥈 **General Logic** | $$$ |
+| **Google** | `gemini-1.5-pro`, `gemini-1.5-flash` | 🥉 **Huge Context (2M)** | $ |
+| **DeepSeek** | `deepseek-chat`, `deepseek-coder` | 💸 **Cost Performance** | ¢ |
+| **Groq** | `llama3-70b`, `mixtral-8x7b` | ⚡ **Instant Speed (500t/s)** | 🆓 |
 
 ### Local Models (Offline)
 Kabot supports **Ollama** and **LM Studio** out of the box.
@@ -679,7 +679,7 @@ Kabot supports **Ollama** and **LM Studio** out of the box.
 
 ---
 
-## âš™ï¸ Configuration Reference
+## ⚙️ Configuration Reference
 
 Configuration is stored in `config.json` in your workspace root.
 You can edit this manually or use `kabot config`.
@@ -728,7 +728,7 @@ You can edit this manually or use `kabot config`.
 
 ---
 
-## âš¡ Slash Commands & Directives
+## ⚡ Slash Commands & Directives
 
 Control Kabot's behavior directly from the chat.
 
@@ -752,7 +752,7 @@ Unlock hidden capabilities by adding these tags to your message.
 
 ---
 
-## ðŸŽ›ï¸ Model Management Tutorial
+## 🎛️ Model Management Tutorial
 
 Complete guide for switching models, setting up OAuth, and managing multiple AI providers.
 
@@ -785,10 +785,10 @@ kabot config
 
 **Step 2: Navigate to OAuth Setup**
 ```
-â†’ Model / Auth (Providers, Keys, OAuth)
-â†’ Provider Login (Setup API Keys/OAuth)
-â†’ OpenAI - GPT-4o, o1-preview, etc.
-â†’ Browser Login (OAuth) - ChatGPT subscription login
+→ Model / Auth (Providers, Keys, OAuth)
+→ Provider Login (Setup API Keys/OAuth)
+→ OpenAI - GPT-4o, o1-preview, etc.
+→ Browser Login (OAuth) - ChatGPT subscription login
 ```
 
 **Step 3: Complete Browser Authentication**
@@ -799,16 +799,16 @@ kabot config
 
 **Step 4: Set Default Model**
 ```
-â†’ Select Default Model (Browse Registry)
-â†’ Filter models by provider: openai
-â†’ Select: gpt-4o (Recommended)
+→ Select Default Model (Browse Registry)
+→ Filter models by provider: openai
+→ Select: gpt-4o (Recommended)
 ```
 
 **Troubleshooting OAuth:**
 ```bash
 # If OAuth fails, try manual setup
 kabot config
-â†’ Model / Auth â†’ Provider Login â†’ OpenAI â†’ Manual Setup
+→ Model / Auth → Provider Login → OpenAI → Manual Setup
 
 # Check OAuth token status
 kabot doctor  # Validates all credentials
@@ -858,8 +858,8 @@ kabot doctor  # Validates all credentials
 |----------|--------------|----------|------|
 | **OpenAI** | OAuth/API Key | General purpose, coding | $$$ |
 | **Anthropic** | API Key | Complex reasoning, analysis | $$$ |
-| **Groq** | API Key | Fast responses (500+ tok/s) | ðŸ†“ |
-| **DeepSeek** | API Key | Code generation, math | Â¢ |
+| **Groq** | API Key | Fast responses (500+ tok/s) | 🆓 |
+| **DeepSeek** | API Key | Code generation, math | ¢ |
 | **Google** | API Key | Large context (2M tokens) | $ |
 | **OpenRouter** | API Key | 100+ models via gateway | $ |
 
@@ -893,19 +893,19 @@ kabot doctor  # Validates all credentials
 
 **Task-Specific Model Selection:**
 ```bash
-# Coding tasks â†’ DeepSeek Coder
+# Coding tasks → DeepSeek Coder
 /switch deepseek/deepseek-coder
 # "Write a Python web scraper"
 
-# Fast responses â†’ Groq
+# Fast responses → Groq
 /switch groq/llama-3.1-8b
 # "What's 2+2?"
 
-# Complex analysis â†’ Claude
+# Complex analysis → Claude
 /switch anthropic/claude-opus-4-5
 # "Analyze this business strategy document"
 
-# Creative writing â†’ GPT-4o
+# Creative writing → GPT-4o
 /switch openai/gpt-4o
 # "Write a short story about AI"
 ```
@@ -1013,7 +1013,7 @@ kabot doctor
 
 # Verify OAuth token
 kabot config
-â†’ Model / Auth â†’ Provider Login â†’ OpenAI â†’ Check Status
+→ Model / Auth → Provider Login → OpenAI → Check Status
 
 # Manual API key setup
 export OPENAI_API_KEY="sk-..."
@@ -1035,7 +1035,7 @@ kabot models list --provider openai
 ```bash
 # Re-authenticate
 kabot config
-â†’ Model / Auth â†’ Provider Login â†’ OpenAI â†’ Browser Login
+→ Model / Auth → Provider Login → OpenAI → Browser Login
 
 # Check token status
 kabot auth status openai
@@ -1059,7 +1059,7 @@ kabot models list --current
 
 # Clear conflicting API keys
 kabot config
-â†’ Model / Auth â†’ Remove unused providers
+→ Model / Auth → Remove unused providers
 ```
 
 ### Best Practices
@@ -1087,7 +1087,7 @@ kabot config
 
 ---
 
-## ðŸ”’ Security
+## 🔒 Security
 
 Kabot is effectively a **remote shell** wrapped in an LLM. Security is paramount.
 
@@ -1115,7 +1115,7 @@ Because Kabot is "stateful" (SQLite DB), mapping the `/data` volume is critical.
 
 ---
 
-## ðŸ¤ Development & Contributing
+## 🤝 Development & Contributing
 
 We welcome contributions! Kabot is open-source and community-driven.
 
@@ -1133,13 +1133,13 @@ Please adhere to the coding style (Black/Ruff) and include tests for new feature
 
 ---
 
-## ðŸ“œ Star History
+## 📜 Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=kaivyy/kabot&type=date)](https://star-history.com/#kaivyy/kabot&Date)
 
 ---
 
-## ðŸ™Œ Community
+## 🙌 Community
 
 Join the discussion, get support, or show off your subagents.
 
@@ -1152,7 +1152,7 @@ Special thanks to the open-source community and projects like **Kabot** that ins
 ---
 
 <p align="center">
-  Built with â¤ï¸ by <a href="https://github.com/kaivyy">@kaivyy</a>
+  Built with ❤️ by <a href="https://github.com/kaivyy">@kaivyy</a>
 </p>
 
 

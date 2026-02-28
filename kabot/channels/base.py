@@ -70,8 +70,11 @@ class BaseChannel(ABC):
         """
         allow_list = getattr(self.config, "allow_from", [])
 
-        # If no allow list, allow everyone
+        # In strict preset, empty allow_from becomes fail-closed.
         if not allow_list:
+            preset = str(getattr(self, "_security_policy_preset", "")).strip().lower()
+            if preset == "strict":
+                return False
             return True
 
         sender_str = str(sender_id)
@@ -104,10 +107,18 @@ class BaseChannel(ABC):
             metadata: Optional channel-specific metadata.
         """
         if not self.is_allowed(sender_id):
-            logger.warning(
-                f"Access denied for sender {sender_id} on channel {self.name}. "
-                f"Add them to allowFrom list in config to grant access."
-            )
+            allow_list = getattr(self.config, "allow_from", [])
+            preset = str(getattr(self, "_security_policy_preset", "")).strip().lower()
+            if preset == "strict" and not allow_list:
+                logger.warning(
+                    f"Access denied for sender {sender_id} on channel {self.name}. "
+                    "Strict preset is active and allowFrom is empty (fail-closed)."
+                )
+            else:
+                logger.warning(
+                    f"Access denied for sender {sender_id} on channel {self.name}. "
+                    f"Add them to allowFrom list in config to grant access."
+                )
             return
 
         merged_metadata = dict(metadata or {})

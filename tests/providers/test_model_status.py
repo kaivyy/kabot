@@ -69,6 +69,10 @@ def test_get_model_status_openrouter_catalog():
     assert get_model_status("openrouter/auto") in {"catalog", "working"}
 
 
+def test_get_model_status_gemini_31_catalog():
+    assert get_model_status("google/gemini-3.1-pro") in {"catalog", "working"}
+
+
 # Extended parity coverage
 def test_get_model_status_venice_extended_catalog():
     assert get_model_status("venice/qwen3-coder-480b-a35b-instruct") in {"catalog", "working"}

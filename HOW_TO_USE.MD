@@ -1,8 +1,8 @@
-﻿# The Ultimate Beginner's Guide to Kabot
+# The Ultimate Beginner's Guide to Kabot
 
 Welcome to **Kabot**, your personal, locally-hosted AI assistant framework designed to become your ultimate "Second Brain." Kabot allows you to build highly intelligent AI agents that work for you 24/7 on your local machine (like a Mac Mini, PC, or VPS). You can even create distributed teams of specialized agents tailored to different roles.
 
-This tutorial is written specifically for beginners. It will guide you step-by-step on how to run, configure, and maximize all of Kabot's featuresâ€”no coding experience required!
+This tutorial is written specifically for beginners. It will guide you step-by-step on how to run, configure, and maximize all of Kabot's features—no coding experience required!
 
 ---
 
@@ -96,6 +96,7 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 ### g) Channels (Telegram, WhatsApp, Slack)
 *   **What it does:** Connects Kabot's brain to your mobile phone so you don't have to stay glued to your computer terminal.
 *   **How to use it:** You can insert your Telegram Bot Token or WhatsApp configuration here. Once connected, your family or business partners can simply text the bot on Telegram, and Kabot will process the requests on your local server and reply directly to their phones! 
+*   **Important (strict preset):** If `Tools & Sandbox -> Execution Policy` is set to `strict`, empty `allowFrom` acts as **deny-all** (fail-closed). Add at least one allowed user/chat ID to receive messages.
 
 ### h) Auto-start (Enable boot-up service)
 *   **What it does:** Ensures Kabot automatically starts running in the background whenever you turn on or restart your computer/server (systemd on Linux, launchd on macOS, Task Scheduler on Windows, Termux on Android).
@@ -150,7 +151,7 @@ Kabot now includes sophisticated backend systems that prevent common AI agent fa
 - Automatically detects when AI gets stuck calling the same tool repeatedly
 - **Warning threshold**: 10 identical calls - logs warning but allows execution
 - **Critical threshold**: 20 identical calls - blocks execution and returns error
-- **Ping-pong detection**: Identifies alternating tool patterns (e.g., read_file â†” write_file)
+- **Ping-pong detection**: Identifies alternating tool patterns (e.g., read_file ↔ write_file)
 - **Example**: If AI calls `exec ls` 20 times with same params, Kabot blocks it and explains the loop
 
 **Tool Policy Profiles**
@@ -169,7 +170,7 @@ Kabot now includes sophisticated backend systems that prevent common AI agent fa
 - **Categories**: billing, rate_limit, auth, timeout, format, model_not_found, unknown
 - **Auto-retry**: Rate limits and timeouts trigger automatic retry
 - **Auto-fallback**: Billing, auth, and model errors trigger model fallback
-- **Example**: 429 rate limit â†’ rotate API key â†’ retry; 401 auth â†’ fallback to secondary model
+- **Example**: 429 rate limit → rotate API key → retry; 401 auth → fallback to secondary model
 
 **Context Management** (Already Active)
 - **Context Window Guard**: Prevents crashes from small context windows (blocks < 16K tokens, warns < 32K)
@@ -327,7 +328,7 @@ When you first start Kabot with hybrid memory, you'll see this warning:
 ```
 Loading sentence-transformers model: all-MiniLM-L6-v2
 Warning: You are sending unauthenticated requests to the HF Hub.
-Loading weights: 100%|â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ| 103/103 [00:00<00:00, 1843.23it/s]
+Loading weights: 100%|████████████████████| 103/103 [00:00<00:00, 1843.23it/s]
 ```
 
 **This warning is normal and can be ignored!** The model downloads successfully without authentication.
@@ -508,8 +509,8 @@ For hybrid mode, you can specify a custom embedding model:
 
 | Feature | Hybrid | SQLite Only | Disabled |
 |---------|--------|-------------|----------|
-| Semantic search | âœ… Yes | âŒ No | âŒ No |
-| Keyword search | âœ… Yes | âœ… Yes | âŒ No |
+| Semantic search | ✅ Yes | ❌ No | ❌ No |
+| Keyword search | ✅ Yes | ✅ Yes | ❌ No |
 | Memory footprint | ~500MB | ~50MB | 0MB |
 | Startup time | ~5s | <1s | <1s |
 | Dependencies | ChromaDB, sentence-transformers | None | None |
@@ -559,18 +560,18 @@ While the Setup Wizard (`kabot setup` / `kabot config`) covers 99% of your needs
 Inside the chat (CLI, Telegram, WhatsApp, etc.) you can control Kabot using slash commands.
 
 **Core commands:**
-*   `/help` â€” list available commands.
-*   `/status` â€” system snapshot (CPU/RAM, provider, model, uptime).
-*   `/switch <model>` â€” switch active LLM model (example: `/switch openai/gpt-4o`).
-*   `/doctor` â€” run diagnostics from chat (same as CLI doctor).
-*   `/benchmark` â€” quick model performance benchmark.
-*   `/sysinfo` â€” detailed system info.
-*   `/uptime` â€” show how long Kabot has been running.
-*   `/clip <text>` â€” copy text to system clipboard (where supported).
+*   `/help` — list available commands.
+*   `/status` — system snapshot (CPU/RAM, provider, model, uptime).
+*   `/switch <model>` — switch active LLM model (example: `/switch openai/gpt-4o`).
+*   `/doctor` — run diagnostics from chat (same as CLI doctor).
+*   `/benchmark` — quick model performance benchmark.
+*   `/sysinfo` — detailed system info.
+*   `/uptime` — show how long Kabot has been running.
+*   `/clip <text>` — copy text to system clipboard (where supported).
 
 **Admin commands (restricted):**
-*   `/update` â€” pull updates and restart (admin only).
-*   `/restart` â€” restart Kabot process (admin only).
+*   `/update` — pull updates and restart (admin only).
+*   `/restart` — restart Kabot process (admin only).
 
 **Example:**
 ```
@@ -827,10 +828,10 @@ Skills are markdown-based SOPs (Standard Operating Procedures) that teach Kabot 
 
 ### **Workflow Chains**
 Skills can chain together for complex tasks:
-- **brainstorming** â†’ writing-plans â†’ executing-plans
-- **systematic-debugging** â†’ test-driven-development
-- **executing-plans** â†’ finishing-a-development-branch
-- **requesting-code-review** â†’ finishing-a-development-branch
+- **brainstorming** → writing-plans → executing-plans
+- **systematic-debugging** → test-driven-development
+- **executing-plans** → finishing-a-development-branch
+- **requesting-code-review** → finishing-a-development-branch
 
 ### **Core Development Skills**
 - **brainstorming** - Design & requirements exploration before coding
@@ -843,7 +844,7 @@ Skills can chain together for complex tasks:
   - Auto-triggers: After executing-plans completes
 - **systematic-debugging** - Deep debugging with execution flow analysis
   - Auto-triggers: "debug", "fix bug", "error", "not working"
-- **test-driven-development** - TDD workflow (test â†’ implement â†’ verify)
+- **test-driven-development** - TDD workflow (test → implement → verify)
   - Auto-triggers: "write tests", "TDD", "test first"
 - **requesting-code-review** - Request code review with context
   - Auto-triggers: "review my code", "code review"
@@ -1101,7 +1102,7 @@ Kabot supports spawning background subagents for parallel task execution:
 ```
 User: "Spawn a subagent to monitor logs while I work on the code"
 Kabot: [Uses spawn tool]
-Kabot: "âœ… Subagent spawned (ID: sub_abc123). It will monitor logs and report back."
+Kabot: "✅ Subagent spawned (ID: sub_abc123). It will monitor logs and report back."
 ```
 
 ### **Auth Rotation (Zero-Downtime)**
@@ -1118,8 +1119,8 @@ api_keys:
 ```
 
 **Behavior:**
-- On 429 rate limit â†’ rotate to next key
-- On 401 auth error â†’ rotate to next key
+- On 429 rate limit → rotate to next key
+- On 401 auth error → rotate to next key
 - 60-second cooldown per failed key
 
 ### **Model Fallback Cascade**
@@ -1134,9 +1135,9 @@ fallback_models:
 ```
 
 **Behavior:**
-- Primary model fails â†’ try gpt-4o
-- gpt-4o fails â†’ try gemini-pro
-- All fail â†’ return error to user
+- Primary model fails → try gpt-4o
+- gpt-4o fails → try gemini-pro
+- All fail → return error to user
 
 ### **Runtime Resilience (0.5.7)**
 Kabot now includes typed runtime controls for deterministic retries and tool safety:

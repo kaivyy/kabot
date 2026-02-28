@@ -284,14 +284,24 @@ def _prompt_secret_value(self, label: str, current: str | None = None) -> str:
 def _prompt_allow_from_list(self, label: str, current: Optional[list[str]] = None) -> list[str]:
     """Prompt allowFrom list for channel security."""
     existing = [str(item).strip() for item in (current or []) if str(item).strip()]
+    strict_preset = str(getattr(self.config.tools.exec, "policy_preset", "balanced") or "balanced").strip().lower() == "strict"
     console.print(f"|  [dim]{label} (comma separated, empty = allow all)[/dim]")
     if existing:
         console.print(f"|  [dim]Current allowFrom entries: {len(existing)}[/dim]")
         console.print("|  [dim]Leave empty to keep current allowFrom[/dim]")
     raw = Prompt.ask("|  allowFrom", default="").strip()
     if not raw:
+        if strict_preset and not existing:
+            console.print(
+                "|  [yellow]Strict preset active: empty allowFrom means deny-all until you add at least one user.[/yellow]"
+            )
         return existing
-    return _parse_allow_from_values(raw)
+    parsed = _parse_allow_from_values(raw)
+    if strict_preset and not parsed:
+        console.print(
+            "|  [yellow]Strict preset active: empty allowFrom means deny-all until you add at least one user.[/yellow]"
+        )
+    return parsed
 
 def _pick_agent_model_override(self) -> str | None:
     """Optional per-agent model picker without changing global default model."""

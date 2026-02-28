@@ -19,4 +19,5 @@ def test_resolve_alias():
     from kabot.cli.model_validator import resolve_alias
     assert resolve_alias("codex") == "openai/gpt-5.1-codex"
     assert resolve_alias("sonnet") == "anthropic/claude-3-5-sonnet-20241022"
+    assert resolve_alias("gemini31") == "google/gemini-3.1-pro"
     assert resolve_alias("invalid") is None

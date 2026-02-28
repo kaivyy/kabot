@@ -165,12 +165,30 @@ STATIC_MODEL_CATALOG = [
         is_premium=True
     ),
     ModelMetadata(
+        id="google/gemini-3.1-pro",
+        name="Gemini 3.1 Pro",
+        provider="google",
+        context_window=2000000,
+        pricing=ModelPricing(input_1m=0.0, output_1m=0.0),
+        capabilities=["vision", "tools", "json", "reasoning"],
+        is_premium=True
+    ),
+    ModelMetadata(
         id="google-gemini-cli/gemini-3-pro-preview",
         name="Gemini 3 Pro Preview",
         provider="google-gemini-cli",
         context_window=2000000,
         pricing=ModelPricing(input_1m=0.0, output_1m=0.0),
         capabilities=["vision", "tools", "json"],
+        is_premium=True
+    ),
+    ModelMetadata(
+        id="google-gemini-cli/gemini-3.1-pro",
+        name="Gemini 3.1 Pro (CLI)",
+        provider="google-gemini-cli",
+        context_window=2000000,
+        pricing=ModelPricing(input_1m=0.0, output_1m=0.0),
+        capabilities=["vision", "tools", "json", "reasoning"],
         is_premium=True
     ),
 
@@ -591,6 +609,12 @@ KABOT_PARITY_MODELS = [
         1048576,
         ["vision", "chat"],
     ),
+    _parity_model(
+        "openrouter/google/gemini-3.1-pro",
+        "OpenRouter Gemini 3.1 Pro",
+        2000000,
+        ["vision", "reasoning", "chat"],
+    ),
     _parity_model("openrouter/minimax/minimax-m2.5", "OpenRouter MiniMax M2.5", 200000, ["reasoning", "chat"]),
     _parity_model("openrouter/moonshotai/kimi-k2", "OpenRouter Kimi K2", 262144, ["chat"]),
     _parity_model("openrouter/moonshotai/kimi-k2.5", "OpenRouter Kimi K2.5", 262144, ["reasoning", "chat"]),
@@ -831,6 +855,8 @@ def populate_registry(registry):
     registry.register_alias("gemini", "google/gemini-1.5-pro")
     registry.register_alias("flash", "google/gemini-1.5-flash")
     registry.register_alias("gemini-pro", "google-gemini-cli/gemini-3-pro-preview")
+    registry.register_alias("gemini31", "google/gemini-3.1-pro")
+    registry.register_alias("gemini-3.1-pro", "google/gemini-3.1-pro")
     registry.register_alias("mistral", "mistral/mistral-large-latest")
 
     # Moonshot

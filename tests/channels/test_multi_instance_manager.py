@@ -187,7 +187,7 @@ async def test_channel_instance_inbound_uses_instance_channel_key_and_binding_me
                 id="work_bot",
                 type="telegram",
                 enabled=True,
-                config={"token": "123:ABC", "allow_from": []},
+                config={"token": "123:ABC", "allow_from": ["42"]},
                 agent_binding="work",
             )
         ]
@@ -213,3 +213,18 @@ async def test_channel_instance_inbound_uses_instance_channel_key_and_binding_me
         "type": "telegram",
         "agent_binding": "work",
     }
+
+
+@pytest.mark.asyncio
+async def test_channel_manager_decorates_channels_with_security_preset():
+    config = Config()
+    config.tools.exec.policy_preset = "strict"
+    config.channels.telegram.enabled = True
+    config.channels.telegram.token = "legacy:TOKEN"
+    bus = MessageBus()
+
+    with patch("kabot.channels.telegram.TelegramChannel", _FakeTelegramChannel):
+        manager = ChannelManager(config, bus)
+
+    channel = manager.channels["telegram"]
+    assert getattr(channel, "_security_policy_preset", None) == "strict"

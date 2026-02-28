@@ -19,7 +19,7 @@ import yaml
 from loguru import logger
 
 _PRESET_POLICY_MODE = {
-    "strict": "ask",
+    "strict": "allowlist",
     "balanced": "ask",
     "compat": "allowlist",
 }
@@ -320,8 +320,8 @@ class CommandFirewall:
         configured_mode = self._normalize_policy_mode(self.policy.get("policy"))
         if configured_mode:
             effective_mode = configured_mode
-            # Compat mode should remain permissive when policy is ask.
-            if self.preset == "compat" and effective_mode == "ask":
+            # Strict/compat should remain deny-by-default when policy is ask.
+            if self.preset in {"strict", "compat"} and effective_mode == "ask":
                 effective_mode = "allowlist"
         else:
             effective_mode = _PRESET_POLICY_MODE.get(self.preset, "ask")

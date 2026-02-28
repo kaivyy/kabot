@@ -54,6 +54,7 @@ class ChannelManager:
             )
             if not channel:
                 continue
+            self._decorate_channel_security(channel)
             self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
             self.channels[channel_key] = channel
             logger.info(f"{instance.type} instance '{instance.id}' enabled")
@@ -70,8 +71,14 @@ class ChannelManager:
             )
             if not channel:
                 continue
+            self._decorate_channel_security(channel)
             self.channels[status.key] = channel
             logger.info(f"{status.key} channel enabled")
+
+    def _decorate_channel_security(self, channel: BaseChannel) -> None:
+        """Attach global security preset so channels can enforce strict access policy."""
+        preset = str(getattr(self.config.tools.exec, "policy_preset", "balanced") or "balanced").strip().lower()
+        setattr(channel, "_security_policy_preset", preset)
 
     async def _start_channel(self, name: str, channel: BaseChannel) -> None:
         """Start a channel and log any exceptions."""

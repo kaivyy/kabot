@@ -701,7 +701,7 @@ def _manual_model_entry(
     console.print("|    - openrouter/qwen/qwen-2.5-vl-72b-instruct:free")
     console.print("|    - codex (alias for openai/gpt-5.1-codex)")
     console.print("|")
-    console.print("|  Available aliases: codex, sonnet, gemini, gpt4o, o1, kimi, venice, hf-r1, openrouter")
+    console.print("|  Available aliases: codex, sonnet, gemini, gemini31, gpt4o, o1, kimi, venice, hf-r1, openrouter")
     console.print("|  Type 'help' to see all aliases")
     console.print("|")
 
