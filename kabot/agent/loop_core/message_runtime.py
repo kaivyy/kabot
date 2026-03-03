@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import random
 import time
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,28 @@ from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.core.command_router import CommandContext
 
 
+def _runtime_observability_cfg(loop: Any) -> Any:
+    return getattr(loop, "runtime_observability", None)
+
+
+def _emit_runtime_event(loop: Any, event_name: str, **fields: Any) -> None:
+    cfg = _runtime_observability_cfg(loop)
+    if not cfg or not bool(getattr(cfg, "enabled", True)):
+        return
+    if not bool(getattr(cfg, "emit_structured_events", True)):
+        return
+    sample_rate = float(getattr(cfg, "sample_rate", 1.0))
+    if sample_rate <= 0:
+        return
+    if sample_rate < 1.0 and random.random() > sample_rate:
+        return
+    payload = {"event": event_name, **fields}
+    try:
+        logger.info(f"runtime_event={json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}")
+    except Exception:
+        logger.info(f"runtime_event={payload}")
+
+
 async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | None:
     """Process a regular inbound message."""
     if msg.channel == "system":
@@ -20,6 +44,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     turn_started = time.perf_counter()
     turn_id = f"{msg.channel}:{msg.chat_id}:{int(msg.timestamp.timestamp() * 1000)}"
     setattr(loop, "_active_turn_id", turn_id)
+    _emit_runtime_event(
+        loop,
+        "turn_start",
+        turn_id=turn_id,
+        channel=msg.channel,
+        chat_id=msg.chat_id,
+    )
     perf_cfg = getattr(loop, "runtime_performance", None)
 
     approval_action = loop._parse_approval_command(msg.content)
@@ -107,8 +138,18 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     decision = await loop.router.route(effective_content)
     logger.info(f"Route: profile={decision.profile}, complex={decision.is_complex}")
 
+    context_builder = loop.context
+    resolve_context = getattr(loop, "_resolve_context_for_message", None)
+    if callable(resolve_context):
+        try:
+            resolved_context = resolve_context(msg)
+            if resolved_context is not None:
+                context_builder = resolved_context
+        except Exception as exc:
+            logger.warning(f"Failed to resolve routed context builder: {exc}")
+
     context_started = time.perf_counter()
-    messages = loop.context.build_messages(
+    messages = context_builder.build_messages(
         history=conversation_history,
         current_message=effective_content,
         media=msg.media if hasattr(msg, "media") else None,
@@ -120,6 +161,12 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     context_build_ms = int((time.perf_counter() - context_started) * 1000)
     max_context_build_ms = int(getattr(perf_cfg, "max_context_build_ms", 500)) if perf_cfg else 500
     logger.info(f"turn_id={turn_id} context_build_ms={context_build_ms}")
+    _emit_runtime_event(
+        loop,
+        "context_built",
+        turn_id=turn_id,
+        context_build_ms=context_build_ms,
+    )
     if context_build_ms > max_context_build_ms:
         logger.warning(
             f"turn_id={turn_id} context_build_ms={context_build_ms} exceeded budget={max_context_build_ms}"
@@ -156,6 +203,18 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
 
     first_response_ms = int((time.perf_counter() - turn_started) * 1000)
     logger.info(f"turn_id={turn_id} first_response_ms={first_response_ms}")
+    warmup_ms: int | None = None
+    started_at = getattr(loop, "_memory_warmup_started_at", None)
+    completed_at = getattr(loop, "_memory_warmup_completed_at", None)
+    if isinstance(started_at, (int, float)) and isinstance(completed_at, (int, float)) and completed_at >= started_at:
+        warmup_ms = int((completed_at - started_at) * 1000)
+    _emit_runtime_event(
+        loop,
+        "turn_end",
+        turn_id=turn_id,
+        first_response_ms=first_response_ms,
+        memory_warmup_ms=warmup_ms if warmup_ms is not None else -1,
+    )
     max_first_response_soft = int(getattr(perf_cfg, "max_first_response_ms_soft", 4000)) if perf_cfg else 4000
     if first_response_ms > max_first_response_soft:
         logger.warning(
@@ -244,7 +303,17 @@ async def process_system_message(loop: Any, msg: InboundMessage) -> OutboundMess
         if hasattr(tool, "set_context"):
             tool.set_context(origin_channel, origin_chat_id)
 
-    messages = loop.context.build_messages(
+    context_builder = loop.context
+    resolve_context = getattr(loop, "_resolve_context_for_channel_chat", None)
+    if callable(resolve_context):
+        try:
+            resolved_context = resolve_context(origin_channel, origin_chat_id)
+            if resolved_context is not None:
+                context_builder = resolved_context
+        except Exception as exc:
+            logger.warning(f"Failed to resolve system routed context builder: {exc}")
+
+    messages = context_builder.build_messages(
         history=session.get_history(),
         current_message=msg.content,
         channel=origin_channel,
@@ -290,7 +359,17 @@ async def process_isolated(
             tool.set_context(channel, chat_id)
 
     # Build messages without history: fresh context
-    messages = loop.context.build_messages(
+    context_builder = loop.context
+    resolve_context = getattr(loop, "_resolve_context_for_channel_chat", None)
+    if callable(resolve_context):
+        try:
+            resolved_context = resolve_context(channel, chat_id)
+            if resolved_context is not None:
+                context_builder = resolved_context
+        except Exception as exc:
+            logger.warning(f"Failed to resolve isolated routed context builder: {exc}")
+
+    messages = context_builder.build_messages(
         history=[],
         current_message=content,
         channel=channel,

@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +69,7 @@ def _naive_stem(word: str) -> str:
 
 def _extract_keywords(text: str) -> set[str]:
     """Extract meaningful keywords from text, filtering stop words + stemming."""
-    words = re.findall(r'[a-zA-Z\u00C0-\u024F\u0400-\u04FF\u3000-\u9FFF\uAC00-\uD7AF]{2,}', text.lower())
+    words = re.findall(r'[a-zA-Z\u00C0-\u024F\u0400-\u04FF\u0E00-\u0E7F\u3000-\u9FFF\uAC00-\uD7AF]{2,}', text.lower())
     stemmed = {_naive_stem(w) for w in words if w not in _STOP_WORDS}
     # Also keep original words (so "debug" matches "debug" directly)
     originals = {w for w in words if w not in _STOP_WORDS}
@@ -103,7 +104,7 @@ class SkillsLoader:
             self.managed_skills: Path | None = Path(managed_dir).expanduser()
         else:
             # Global shared skills source (default).
-            self.managed_skills = Path("~/.kabot/skills").expanduser()
+            self.managed_skills = Path.home() / ".kabot" / "skills"
 
         extra_dirs = load_settings.get("extra_dirs", [])
         self.extra_skill_dirs: list[Path] = []
@@ -118,6 +119,9 @@ class SkillsLoader:
         self._skill_index: dict[str, set[str]] | None = None  # lazy cache
         self._body_index: dict[str, set[str]] | None = None   # lazy cache
         self._index_snapshot: tuple[tuple[str, int, int], ...] | None = None
+        self._list_cache_ttl_seconds = 60.0
+        self._list_skills_cache: dict[bool, tuple[float, tuple[tuple[str, int, int, int], ...], list[dict[str, Any]]]] = {}
+        self._summary_cache: tuple[float, tuple[tuple[str, int, int, int], ...], str] | None = None
 
     def _build_skill_index(self) -> dict[str, set[str]]:
         """Build keyword index from all skill descriptions (cached)."""
@@ -182,7 +186,25 @@ class SkillsLoader:
                 stat = skill_file.stat()
             except OSError:
                 continue
-            snapshot.append((str(skill_file.resolve()), int(stat.st_mtime_ns), int(stat.st_size)))
+            snapshot.append((str(skill_file), int(stat.st_mtime_ns), int(stat.st_size)))
+        snapshot.sort(key=lambda item: item[0])
+        return tuple(snapshot)
+
+    def _compute_roots_snapshot(self) -> tuple[tuple[str, int, int, int], ...]:
+        """Cheap snapshot for list/summary cache invalidation based on root directories."""
+        snapshot: list[tuple[str, int, int, int]] = []
+        for root in self._iter_skill_roots():
+            exists = root.exists()
+            if not exists:
+                snapshot.append((str(root), 0, 0, 0))
+                continue
+            try:
+                stat = root.stat()
+                # include child dir count so cache invalidates when skills are added/removed
+                child_count = sum(1 for p in root.iterdir() if p.is_dir())
+                snapshot.append((str(root), 1, int(stat.st_mtime_ns), int(child_count)))
+            except OSError:
+                snapshot.append((str(root), 1, 0, 0))
         snapshot.sort(key=lambda item: item[0])
         return tuple(snapshot)
 
@@ -207,13 +229,14 @@ class SkillsLoader:
 
         index = self._build_skill_index()
         msg_keywords = _extract_keywords(message)
+        message_lower = message.lower()
 
         if not msg_keywords:
             return []
 
         # Score each skill
         body_idx = self._body_index or {}
-        scored: list[tuple[str, float]] = []
+        scored: list[tuple[str, bool, float]] = []
         for skill_name, skill_keywords in index.items():
             if not skill_keywords:
                 continue
@@ -221,13 +244,26 @@ class SkillsLoader:
             # Primary overlap: description + name keywords (high signal)
             overlap = msg_keywords & skill_keywords
             # Secondary overlap: body keywords (low signal)
-            body_overlap = msg_keywords & body_idx.get(skill_name, set())
+            body_keywords = body_idx.get(skill_name, set())
+            body_overlap = msg_keywords & body_keywords
 
-            if not overlap and not body_overlap:
+            # Extra multilingual signal: allow non-ASCII keyword containment
+            # (helps languages where user text may omit spaces, e.g. Thai).
+            contain_overlap = {
+                kw for kw in skill_keywords
+                if len(kw) >= 2 and any(ord(ch) > 127 for ch in kw) and kw in message_lower
+            }
+            contain_body_overlap = {
+                kw for kw in body_keywords
+                if len(kw) >= 2 and any(ord(ch) > 127 for ch in kw) and kw in message_lower
+            }
+
+            if not overlap and not body_overlap and not contain_overlap and not contain_body_overlap:
                 continue
 
             # Primary keywords score 1.0 each, body keywords 0.2 each
             score = len(overlap) + 0.2 * len(body_overlap)
+            score += 0.8 * len(contain_overlap) + 0.2 * len(contain_body_overlap)
 
             # Strong bonus: exact skill name match (e.g., user says "spotify" or "discord")
             name_words = set(skill_name.replace("-", " ").split())
@@ -238,28 +274,36 @@ class SkillsLoader:
             if name_overlap:
                 score += 2.0 * len(name_overlap)
 
+            # Strongest signal: user explicitly references full skill name.
+            explicit_full_name_match = bool(
+                re.search(rf"(?<![\w-]){re.escape(skill_name.lower())}(?![\w-])", message_lower)
+            )
+            if explicit_full_name_match:
+                score += 5.0
+
             # Bonus for action/domain word overlap (verbs that indicate intent)
             action_words = {"debug", "fix", "error", "bug", "test", "create", "build",
                             "search", "find", "send", "play", "download", "upload",
                             "read", "write", "edit", "delete", "check", "control",
                             "summarize", "transcribe", "generate", "manage", "schedule",
                             "deploy", "install", "configure", "monitor", "order", "capture"}
-            all_overlap = overlap | body_overlap
+            all_overlap = overlap | body_overlap | contain_overlap | contain_body_overlap
             action_overlap = all_overlap & action_words
             if action_overlap:
                 score += 0.3 * len(action_overlap)
 
             # Skip weak matches: require 2+ overlaps unless name matches
-            if not name_overlap and len(overlap) + len(body_overlap) < 2:
+            total_overlap = len(overlap) + len(body_overlap) + len(contain_overlap) + len(contain_body_overlap)
+            if not explicit_full_name_match and not name_overlap and total_overlap < 2:
                 continue
 
-            scored.append((skill_name, score))
+            scored.append((skill_name, explicit_full_name_match, score))
 
-        # Sort by score descending
-        scored.sort(key=lambda x: x[1], reverse=True)
+        # Sort by explicit full-name match first, then score descending.
+        scored.sort(key=lambda x: (x[1], x[2]), reverse=True)
 
         # Take top N
-        selected = [name for name, _ in scored[:max_results]]
+        selected = [name for name, _, _ in scored[:max_results]]
 
         # Expand workflow chains
         expanded: list[str] = []
@@ -464,6 +508,15 @@ class SkillsLoader:
             List of skill info dicts with 'name', 'path', 'source', 'valid',
             'eligible', 'missing' (bins, env), 'install', 'description'.
         """
+        roots_snapshot = self._compute_roots_snapshot()
+        now = time.time()
+        cached = self._list_skills_cache.get(bool(filter_unavailable))
+        if cached:
+            cached_at, cached_snapshot, cached_items = cached
+            if cached_snapshot == roots_snapshot and (now - cached_at) <= self._list_cache_ttl_seconds:
+                # Return shallow copies so callers cannot mutate cache in place.
+                return [dict(item) for item in cached_items]
+
         skills = []
         seen_names = set()
 
@@ -610,8 +663,16 @@ class SkillsLoader:
 
         # Filter by requirements
         if filter_unavailable:
-            return [s for s in skills if s["eligible"]]
-        return skills
+            result = [s for s in skills if s["eligible"]]
+        else:
+            result = skills
+
+        self._list_skills_cache[bool(filter_unavailable)] = (
+            now,
+            roots_snapshot,
+            [dict(item) for item in result],
+        )
+        return result
 
     def load_skill(self, name: str) -> str | None:
         """
@@ -687,6 +748,13 @@ class SkillsLoader:
         Returns:
             XML-formatted skills summary.
         """
+        roots_snapshot = self._compute_roots_snapshot()
+        now = time.time()
+        if self._summary_cache:
+            cached_at, cached_snapshot, cached_summary = self._summary_cache
+            if cached_snapshot == roots_snapshot and (now - cached_at) <= self._list_cache_ttl_seconds:
+                return cached_summary
+
         all_skills = self.list_skills(filter_unavailable=False)
         if not all_skills:
             return ""
@@ -698,7 +766,7 @@ class SkillsLoader:
         for s in all_skills:
             name = escape_xml(s["name"])
             path = s["path"]
-            desc = escape_xml(self._get_skill_description(s["name"]))
+            desc = escape_xml(str(s.get("description") or self._get_skill_description(s["name"])))
             available = bool(s.get("eligible"))
 
             lines.append(f"  <skill available=\"{str(available).lower()}\">")
@@ -715,7 +783,9 @@ class SkillsLoader:
             lines.append("  </skill>")
         lines.append("</skills>")
 
-        return "\n".join(lines)
+        summary = "\n".join(lines)
+        self._summary_cache = (now, roots_snapshot, summary)
+        return summary
 
     def _get_missing_requirements(self, skill_meta: dict) -> str:
         """Get a description of missing requirements."""

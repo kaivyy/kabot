@@ -165,6 +165,27 @@ CLEANUP_KEYWORDS = (
     "cleanup pc", "cleanup ssd", "cleanup hdd",
     "bersihin ssd", "bersihin hdd", "bersihin disk",
     "kosongkan", "free up",
+    # Thai
+    "ล้าง", "ล้างแคช", "เคลียร์แคช", "ทำความสะอาดดิสก์", "ลบไฟล์ชั่วคราว",
+    # Chinese
+    "清理", "清理缓存", "清除缓存", "清理磁盘", "磁盘清理", "释放空间",
+)
+
+# Avoid routing conflicts with system-info queries (e.g. "cek free space").
+# Cleanup should require an explicit cleanup/action intent.
+CLEANUP_ACTION_KEYWORDS = (
+    "cleanup", "clean up", "bersihin", "bersihkan", "pembersihan",
+    "hapus cache", "hapus temp", "clear cache", "clear temp",
+    "disk cleanup", "disk clean",
+    "recycle bin", "tempat sampah",
+    "optimasi", "optimize", "optimise",
+    "cleanup pc", "cleanup ssd", "cleanup hdd",
+    "bersihin ssd", "bersihin hdd", "bersihin disk",
+    "kosongkan", "free up",
+    # Thai
+    "ล้าง", "ล้างแคช", "เคลียร์แคช", "ทำความสะอาดดิสก์", "ลบไฟล์ชั่วคราว",
+    # Chinese
+    "清理", "清理缓存", "清除缓存", "清理磁盘", "磁盘清理", "释放空间",
 )
 
 SPEEDTEST_KEYWORDS = (
@@ -279,11 +300,16 @@ def required_tool_for_query(
     if has_speedtest_tool and any(k in q_lower for k in SPEEDTEST_KEYWORDS):
         return "speedtest"
 
+    cleanup_requested = (
+        has_cleanup_tool
+        and any(k in q_lower for k in CLEANUP_KEYWORDS)
+        and any(k in q_lower for k in CLEANUP_ACTION_KEYWORDS)
+    )
+    if cleanup_requested:
+        return "cleanup_system"
+
     if has_system_info_tool and any(k in q_lower for k in SYSTEM_INFO_KEYWORDS):
         return "get_system_info"
-
-    if has_cleanup_tool and any(k in q_lower for k in CLEANUP_KEYWORDS):
-        return "cleanup_system"
 
     return None
 

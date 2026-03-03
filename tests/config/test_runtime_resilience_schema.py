@@ -13,6 +13,20 @@ def test_runtime_resilience_and_performance_defaults_present():
     assert cfg.runtime.performance.max_first_response_ms_soft == 4000
     assert cfg.runtime.autopilot.enabled is True
     assert cfg.runtime.autopilot.max_actions_per_beat == 1
+    assert cfg.runtime.observability.enabled is True
+    assert cfg.runtime.observability.emit_structured_events is True
+    assert cfg.runtime.observability.sample_rate == 1.0
+    assert cfg.runtime.observability.redact_secrets is True
+    assert cfg.runtime.quotas.enabled is False
+    assert cfg.runtime.quotas.max_cost_per_day_usd == 0.0
+    assert cfg.runtime.quotas.max_tokens_per_hour == 0
+    assert cfg.runtime.quotas.enforcement_mode == "warn"
+    assert cfg.security.trust_mode.enabled is False
+    assert cfg.security.trust_mode.verify_skill_manifest is False
+    assert cfg.security.trust_mode.allowed_signers == []
+    assert cfg.skills.onboarding.auto_prompt_env is True
+    assert cfg.skills.onboarding.auto_enable_after_install is True
+    assert cfg.skills.onboarding.soul_injection_mode == "prompt"
 
 
 def test_skills_payload_is_normalized_into_typed_schema():

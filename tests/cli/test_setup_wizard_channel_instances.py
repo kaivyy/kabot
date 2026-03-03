@@ -156,6 +156,111 @@ def test_prompt_instance_config_telegram_includes_allow_from(monkeypatch, tmp_pa
     assert config == {"token": "123:token", "allow_from": ["111", "222"]}
 
 
+def test_prompt_instance_config_signal_includes_bridge_and_allow_from(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+
+    prompts = iter(["ws://localhost:3011", "111,222"])
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Prompt.ask",
+        lambda *args, **kwargs: next(prompts),
+    )
+
+    config = wizard._prompt_instance_config("signal")
+
+    assert config == {"bridge_url": "ws://localhost:3011", "allow_from": ["111", "222"]}
+
+
+def test_prompt_instance_config_matrix_includes_bridge_and_allow_from(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+
+    prompts = iter(["ws://localhost:3012", "333,444"])
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Prompt.ask",
+        lambda *args, **kwargs: next(prompts),
+    )
+
+    config = wizard._prompt_instance_config("matrix")
+
+    assert config == {"bridge_url": "ws://localhost:3012", "allow_from": ["333", "444"]}
+
+
+def test_prompt_instance_config_teams_includes_bridge_and_allow_from(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+
+    prompts = iter(["ws://localhost:3013", "team-a,team-b"])
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Prompt.ask",
+        lambda *args, **kwargs: next(prompts),
+    )
+
+    config = wizard._prompt_instance_config("teams")
+
+    assert config == {"bridge_url": "ws://localhost:3013", "allow_from": ["team-a", "team-b"]}
+
+
+def test_prompt_instance_config_google_chat_includes_bridge_and_allow_from(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+
+    prompts = iter(["ws://localhost:3014", "chat-a,chat-b"])
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Prompt.ask",
+        lambda *args, **kwargs: next(prompts),
+    )
+
+    config = wizard._prompt_instance_config("google_chat")
+
+    assert config == {"bridge_url": "ws://localhost:3014", "allow_from": ["chat-a", "chat-b"]}
+
+
+def test_prompt_instance_config_mattermost_includes_bridge_and_allow_from(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+
+    prompts = iter(["ws://localhost:3015", "mm-a,mm-b"])
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Prompt.ask",
+        lambda *args, **kwargs: next(prompts),
+    )
+
+    config = wizard._prompt_instance_config("mattermost")
+
+    assert config == {"bridge_url": "ws://localhost:3015", "allow_from": ["mm-a", "mm-b"]}
+
+
+def test_prompt_instance_config_webex_includes_bridge_and_allow_from(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+
+    prompts = iter(["ws://localhost:3016", "wx-a,wx-b"])
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Prompt.ask",
+        lambda *args, **kwargs: next(prompts),
+    )
+
+    config = wizard._prompt_instance_config("webex")
+
+    assert config == {"bridge_url": "ws://localhost:3016", "allow_from": ["wx-a", "wx-b"]}
+
+
+def test_prompt_instance_config_line_includes_bridge_and_allow_from(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+
+    prompts = iter(["ws://localhost:3017", "ln-a,ln-b"])
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Prompt.ask",
+        lambda *args, **kwargs: next(prompts),
+    )
+
+    config = wizard._prompt_instance_config("line")
+
+    assert config == {"bridge_url": "ws://localhost:3017", "allow_from": ["ln-a", "ln-b"]}
+
+
 def test_pick_agent_model_override_browse_returns_selected_model(monkeypatch, tmp_path):
     monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
     wizard = SetupWizard()
@@ -260,7 +365,7 @@ def test_edit_channel_instance_updates_fields(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr("kabot.cli.setup_wizard.ClackUI.clack_select", lambda *args, **kwargs: 0)
-    confirms = iter([False, False, True])  # enabled, change binding, edit allowFrom
+    confirms = iter([False, False, False, True])  # enabled, change binding, edit token, edit allowFrom
     monkeypatch.setattr(
         "kabot.cli.setup_wizard.Confirm.ask",
         lambda *args, **kwargs: next(confirms),
@@ -277,6 +382,62 @@ def test_edit_channel_instance_updates_fields(monkeypatch, tmp_path):
     assert edited.enabled is False
     assert edited.agent_binding == "agent_a"
     assert edited.config["allow_from"] == ["2002", "3003"]
+
+
+def test_edit_channel_instance_keeps_existing_token_when_blank(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+    wizard.config.channels.instances.append(
+        ChannelInstance(
+            id="telegram_main",
+            type="telegram",
+            enabled=True,
+            config={"token": "123", "allow_from": ["1001"]},
+            agent_binding="agent_a",
+        )
+    )
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.ClackUI.clack_select", lambda *args, **kwargs: 0)
+    confirms = iter([True, False, False, False])  # enabled, change binding, edit token, edit allowFrom
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Confirm.ask",
+        lambda *args, **kwargs: next(confirms),
+    )
+    monkeypatch.setattr(wizard, "_prompt_secret_value", lambda _label, _current: "123")
+
+    wizard._edit_channel_instance()
+
+    edited = wizard.config.channels.instances[0]
+    assert edited.enabled is True
+    assert edited.config["token"] == "123"
+    assert edited.config["allow_from"] == ["1001"]
+
+
+def test_edit_channel_instance_updates_token_when_changed(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    wizard = SetupWizard()
+    wizard.config.channels.instances.append(
+        ChannelInstance(
+            id="telegram_main",
+            type="telegram",
+            enabled=True,
+            config={"token": "123", "allow_from": ["1001"]},
+            agent_binding="agent_a",
+        )
+    )
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.ClackUI.clack_select", lambda *args, **kwargs: 0)
+    confirms = iter([True, False, True, False])  # enabled, change binding, edit token, edit allowFrom
+    monkeypatch.setattr(
+        "kabot.cli.setup_wizard.Confirm.ask",
+        lambda *args, **kwargs: next(confirms),
+    )
+    monkeypatch.setattr(wizard, "_prompt_secret_value", lambda _label, _current: "999")
+
+    wizard._edit_channel_instance()
+
+    edited = wizard.config.channels.instances[0]
+    assert edited.config["token"] == "999"
 
 
 def test_delete_channel_instance_removes_selected_instance(monkeypatch, tmp_path):

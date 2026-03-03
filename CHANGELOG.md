@@ -5,6 +5,252 @@ All notable changes to Kabot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2026-03-03
+
+### Added
+- **Parity Diagnostics Command**:
+  - Added `kabot doctor --parity-report` for ops-focused parity visibility.
+  - Added `--parity-json` output mode for automation pipelines:
+    - write parity payload to file path, or
+    - stream raw JSON to stdout via `--parity-json -`.
+  - Report now includes:
+    - runtime resilience snapshot,
+    - fallback state machine presence checks,
+    - adapter registry summary,
+    - migration status summary,
+    - WhatsApp bridge health probe,
+    - effective skills source precedence roots.
+- **Runtime Observability Config (Typed)**:
+  - Added `runtime.observability`:
+    - `enabled`
+    - `emitStructuredEvents`
+    - `sampleRate`
+    - `redactSecrets`
+- **Runtime Quota Config (Typed)**:
+  - Added `runtime.quotas`:
+    - `enabled`
+    - `maxCostPerDayUsd`
+    - `maxTokensPerHour`
+    - `enforcementMode` (`warn|hard`)
+- **Security Trust Mode Config (Typed)**:
+  - Added `security.trustMode`:
+    - `enabled`
+    - `verifySkillManifest`
+    - `allowedSigners`
+- **Skills Onboarding Config (Typed)**:
+  - Added `skills.onboarding`:
+    - `autoPromptEnv`
+    - `autoEnableAfterInstall`
+    - `soulInjectionMode` (`disabled|prompt|auto`)
+- **Wizard One-Shot External Skill Onboarding**:
+  - Skills setup wizard can now install an external skill directly from git in one flow:
+    - repo install,
+    - onboarding auto-enable,
+    - required env key prompts,
+    - optional SOUL persona injection.
+  - Implemented in `kabot config -> Skills` interactive flow for TTY sessions.
+  - Added persona preview + dual-target injection in prompt mode:
+    - preview snippets before apply,
+    - optional inject to `SOUL.md`,
+    - optional inject to `AGENTS.md`.
+  - Added multi-skill repo UX fallback:
+    - when repo contains multiple `SKILL.md` candidates, wizard now prompts candidate subdir selection and retries install automatically.
+  - Added pre-clone candidate discovery:
+    - wizard inspects repo candidates before install,
+    - allows choosing subdir upfront to avoid first-attempt failure/retry on multi-skill repositories.
+  - Candidate discovery now includes metadata-aware ranking:
+    - extracts skill name/description from `SKILL.md`,
+    - prioritizes conventional folders (`skill/`, `skills/*`, shallower paths),
+    - displays richer candidate labels in wizard chooser.
+  - Added AGENTS persona template assistant in onboarding prompt-mode:
+    - optional helper shown when injecting to `AGENTS.md`,
+    - supports template styles:
+      - `skill` (use skill-provided snippet),
+      - `minimal`,
+      - `strict`,
+      - `tools`,
+      - `custom` one-line routing policy,
+    - auto-derives capability summary from skill metadata (`SKILL.md` frontmatter/body) when building templates,
+    - preserves safe fallback to original skill snippet when canceled/back.
+- **Channel Adapter Feature Flags (Config Surface)**:
+  - Added `channels.adapters` map for adapter feature-flag overrides from config.
+  - Channel manager now initializes adapter registry with these flags for runtime parity checks.
+- **Soak Gate Foundation (Alpha)**:
+  - Added soak gate evaluator utility: `kabot/utils/soak_gate.py`.
+  - `kabot doctor --parity-report` now includes `soak_gate` status by reading `~/.kabot/logs/soak_latest.json`.
+  - Gate checks include:
+    - runtime duration threshold,
+    - duplicate side-effect count,
+    - tool protocol break count,
+    - `p95_first_response_ms` soft limit.
+- **Wave 2 Adapter Promotion (Stage 1)**:
+  - Promoted `signal`, `matrix`, and `teams` from planned placeholders to runtime-loadable production adapters.
+  - Added typed config models:
+    - `channels.signal`
+    - `channels.matrix`
+    - `channels.teams`
+  - Added bridge channel implementations:
+    - `kabot/channels/signal.py`
+    - `kabot/channels/matrix.py`
+    - `kabot/channels/teams.py`
+  - Added shared websocket bridge runtime for these adapters:
+    - `kabot/channels/bridge_ws.py`
+- **Wave 2 Adapter Promotion (Stage 2)**:
+  - Promoted additional production adapters:
+    - `google_chat`
+    - `mattermost`
+    - `webex`
+    - `line`
+  - Added typed config models:
+    - `channels.google_chat`
+    - `channels.mattermost`
+    - `channels.webex`
+    - `channels.line`
+  - Added bridge channel implementations:
+    - `kabot/channels/google_chat.py`
+    - `kabot/channels/mattermost.py`
+    - `kabot/channels/webex.py`
+    - `kabot/channels/line.py`
+- **Wave 1 Implementation Notes**:
+  - Added `docs/plans/2026-03-02-kabot-0.5.8-wave1-implementation.md`.
+
+### Changed
+- **Runtime Telemetry Emission**:
+  - Added structured runtime events for:
+    - turn lifecycle (`turn_start`, `turn_end`),
+    - context build timing,
+    - LLM attempt/result,
+    - tool idempotency hits.
+- **Per-Agent Workspace Context Resolution (Routing-Scoped)**:
+  - Message runtime no longer hardcodes global `loop.context` for prompt assembly.
+  - Context is now resolved per routed agent workspace on:
+    - normal inbound messages,
+    - system-origin callbacks (cron/system channel),
+    - isolated execution paths.
+  - Daily notes append now follows routed context resolver first, then falls back safely.
+  - Result: `SOUL.md` / `AGENTS.md` / `USER.md` injection follows each agent workspace route, not global-only workspace.
+- **Quota Enforcement in Fallback Runtime**:
+  - `warn` mode logs quota warnings and continues.
+  - `hard` mode blocks request before provider call when projected quota exceeds limit.
+- **Config Migration Defaults**:
+  - Loader now injects defaults for `runtime.observability`, `runtime.quotas`, `security.trustMode`, and `skills.onboarding`.
+  - Skills section is canonicalized through migration path consistently (with atomic write + backup behavior retained).
+- **External Skill Install Flow**:
+  - `kabot skills install --git ...` now honors:
+    - trust-mode validation (when enabled),
+    - onboarding auto-enable toggle (`skills.onboarding.autoEnableAfterInstall`),
+    - onboarding env prompts (`skills.onboarding.autoPromptEnv`) for required skill env keys,
+    - optional SOUL persona injection (`skills.onboarding.soulInjectionMode`).
+  - Installer now normalizes `skills` payload to canonical shape before save, including stable `skills.entries` presence.
+  - In non-interactive terminals, persona injection prompt mode is skipped safely (no blocking prompt loop).
+- **Wizard Persona Injection Flow (Prompt Mode)**:
+  - AGENTS injection path now supports optional template-assisted generation without replacing existing default behavior.
+  - Template assistant is opt-in (`default=false`) to keep current UX and test behavior stable.
+  - Generated AGENTS templates include explicit routing semantics and skill identity (`skill_name`, `skill_key`).
+  - Capability summary extraction now checks:
+    - `SKILL.md` frontmatter `description`,
+    - first meaningful content line,
+    - fallback summary if metadata unavailable.
+- **Adapter Feature Flag Semantics**:
+  - `channels.adapters` now supports explicit override for any adapter key, including production adapters.
+  - Example: setting `channels.adapters.telegram=false` now disables Telegram adapter initialization by policy.
+- **Wizard Channel Instance Edit Flow (CRUD Hardening)**:
+  - `Edit Instance` now supports per-channel credential updates while preserving existing secrets by default:
+    - Telegram/Discord: edit bot token (optional),
+    - WhatsApp: edit bridge URL (optional),
+    - Slack: edit bot/app token independently (optional).
+  - Existing values are retained unless the operator explicitly chooses to edit them.
+- **Wizard Multi-Instance Channel Types Expanded**:
+  - `Add Instance`, `Quick Add Multiple`, and `Apply Fleet Template` now include:
+    - `Signal`
+    - `Matrix`
+    - `Teams`
+    - `Google Chat`
+    - `Mattermost`
+    - `Webex`
+    - `LINE`
+  - Instance config prompts now support bridge URL + `allowFrom` for all bridge-based adapters above.
+- **Bridge Adapter Payload Contract Hardening**:
+  - Bridge websocket adapters now enforce stricter payload sanity checks:
+    - outbound messages with missing `chat_id` are dropped,
+    - outbound messages with empty text + empty media are dropped,
+    - inbound non-object JSON payloads are ignored safely,
+    - inbound empty message payloads (no text and no media) are ignored.
+  - Reduces noise, accidental empty sends, and malformed bridge message side effects.
+- **Parity Report Adapter Detail Expansion**:
+  - `kabot doctor --parity-report` now includes instance-level adapter health details:
+    - configured instance count,
+    - per-instance channel key (`type:id`),
+    - adapter enabled status (after feature flags),
+    - runtime constructability probe (adapter can be instantiated with current config/dependencies),
+    - bridge URL presence and TCP reachability check result,
+    - operator-facing readiness state (`ready|not_ready`) with concrete reason tags (e.g. `adapter_disabled_by_flag`, `adapter_init_failed`, `bridge_unreachable`, `missing_bridge_url`).
+  - Added adapter readiness summary counters in parity report:
+    - `ready_instances` / `not_ready_instances`,
+    - `ready_legacy` / `not_ready_legacy`,
+    - reason occurrence counters for fast triage.
+  - Added legacy adapter probe summary (`legacy_channels`) for enabled single-instance channels.
+
+### Fixed
+- **Trust-Mode Enforcement Gap on Skill Install**:
+  - Fixed missing trust gate in external skill installer path by adding signer-manifest validation hook and fail-closed block behavior.
+- **Doctor Surface Gap**:
+  - Fixed CLI doctor surface by exposing explicit parity-report command path required by parity program ops flow.
+- **Regression Coverage**:
+  - Added tests for:
+    - runtime schema defaults (`observability/quotas`, `security.trust_mode`, `skills.onboarding`),
+    - migration defaults for the same sections,
+    - doctor parity command surface + renderer dispatch,
+    - quota warn/hard runtime behavior,
+    - trust-mode rejection in `skills install`,
+    - parity report mandatory section contract,
+    - AGENTS template assistant generation path and capability-summary resolution.
+  - Expanded targeted integration regression suite to `98 passed` for wave-1/wave-2 continuity:
+    - skills wizard/onboarding,
+    - skill repo installer,
+    - doctor parity,
+    - adapter registry + bridge runtime,
+    - channel instance management,
+    - config migration/helpers.
+- **Runtime Fallback Ambiguity (Double-Fallback)**:
+  - Fixed duplicate fallback layers between runtime state machine and provider-level fallbacks.
+  - Runtime now executes one explicit model per attempt, so logs/telemetry reflect the real serving model.
+  - Runtime now treats provider synthetic error payloads (`finish_reason=error` / `All models failed...`) as real failures and continues to next configured model instead of falsely logging `result=success`.
+- **Heartbeat Tool-Forcing False Positive**:
+  - Heartbeat autopilot payloads no longer trigger `required_tool=cron` enforcement from keyword matching (`schedule`/`reminder`).
+- **Channel Warning Noise**:
+  - Suppressed `Unknown channel: cli` warning for non-network internal channels (`cli`, `system`) in outbound dispatcher.
+- **Embedding Worker Protocol Robustness**:
+  - Hardened sentence-embedding subprocess protocol to ignore non-JSON stdout noise and wait for matching JSON response IDs.
+  - Added timeout-based guarded reads for init/request response loops to avoid parse crashes under noisy dependencies.
+  - Serialized subprocess stdin/stdout request handling with an IO lock to prevent concurrent read/write interleaving that caused intermittent JSON parse errors (`char 0`, `char 8192`) under parallel embedding requests.
+- **High `context_build_ms` Mitigation (Chat Latency)**:
+  - Added caching for skills listing/summary generation in `SkillsLoader` with lightweight root-snapshot invalidation to avoid re-validating all skills every turn.
+  - Reduced system-prompt overhead by skipping full “Available Skills” summary on routine `GENERAL`/`CHAT` turns (still shown for `CODING`/`RESEARCH` or explicit skill-related requests).
+  - Heartbeat turns now skip skills-summary injection to keep background patrol prompts lean.
+- **Cleanup UX Responsiveness**:
+  - Direct `cleanup_system` execution now emits an immediate progress message before running long cleanup operations so users receive instant feedback instead of waiting on first completion output.
+- **Tool-First Response Integrity (Anti-Hallucination Guard)**:
+  - Prevented premature completion-like status messages before tool outputs are available.
+  - Runtime now emits a neutral pre-tool progress message (`Processing your request, please wait...`) whenever a response contains tool calls.
+  - Added regression coverage for both:
+    - tool calls with completion-like assistant text, and
+    - tool calls with empty assistant text.
+- **Mutating Direct-Tool Output Safety**:
+  - Updated direct-tool fast path so `cleanup_system` returns raw tool output immediately.
+  - Removed LLM re-summary step for mutating cleanup execution to avoid optimistic/imagined post-cleanup phrasing.
+  - Added regression tests to verify:
+    - cleanup direct path skips `provider.chat`, and
+    - read-only direct tools still use summary behavior.
+- **Multilingual Skill-Matching Obedience**:
+  - Improved skill matcher token extraction for Thai script (`\u0E00-\u0E7F`) and non-ASCII containment signals.
+  - Added explicit full skill-name prioritization in ranking.
+  - Added regression test for explicit digit-heavy skill names (e.g., `1password`) to ensure explicit mention remains rank #1 under competition.
+- **Deterministic Skills Test Isolation**:
+  - Hardened skills test suite against host-environment contamination from `~/.kabot/skills`.
+  - Added HOME isolation fixtures and managed-skill temp-dir overrides in skills matching/precedence/semantics/OS tests.
+  - Result: skills suite is deterministic across environments and no longer depends on local globally-installed sample skills.
+
 ## [0.5.7] - 2026-02-26
 
 ### Added
@@ -1290,5 +1536,3 @@ After deep verification analysis, discovered that Phase 13 initial implementatio
 
 ### Phase 12 and Earlier
 See git history for previous changes.
-
-

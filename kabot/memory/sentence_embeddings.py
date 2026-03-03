@@ -52,6 +52,9 @@ class SentenceEmbeddingProvider:
         self._last_used: float | None = None
         self._unload_timer: threading.Timer | None = None
         self._lock = threading.RLock()
+        # Serialize stdin/stdout request-response exchange; concurrent callers can
+        # otherwise interleave reads and cause malformed JSON framing on Windows.
+        self._io_lock = threading.Lock()
         self._req_counter = 0
 
     def _is_subprocess_alive(self) -> bool:
@@ -90,11 +93,27 @@ class SentenceEmbeddingProvider:
 
             # Wait for "init" ready signal (model loading takes time)
             try:
-                ready_line = self._process.stdout.readline()
-                if not ready_line:
-                    raise RuntimeError("Subprocess exited without ready signal (model load may have failed)")
+                deadline = time.time() + 120
+                ready = None
+                while time.time() < deadline:
+                    ready_line = self._process.stdout.readline()
+                    if not ready_line:
+                        raise RuntimeError("Subprocess exited without ready signal (model load may have failed)")
+                    ready_line = ready_line.strip()
+                    if not ready_line:
+                        continue
+                    try:
+                        candidate = json.loads(ready_line)
+                    except json.JSONDecodeError:
+                        # Worker/process dependencies may emit non-JSON noise.
+                        logger.debug(f"Ignoring non-JSON embedding init output: {ready_line[:200]}")
+                        continue
+                    if isinstance(candidate, dict) and candidate.get("id") == "init":
+                        ready = candidate
+                        break
 
-                ready = json.loads(ready_line)
+                if not isinstance(ready, dict):
+                    raise RuntimeError("Embedding subprocess init timeout")
                 if ready.get("status") != "ok":
                     raise RuntimeError(f"Subprocess init failed: {ready}")
 
@@ -140,30 +159,52 @@ class SentenceEmbeddingProvider:
 
     def _send_request(self, req_type: str, data) -> any:
         """Send a request to the subprocess and wait for JSON response."""
-        self._start_subprocess()
-        self._req_counter += 1
-        req_id = f"req_{self._req_counter}"
+        with self._io_lock:
+            self._start_subprocess()
+            self._req_counter += 1
+            req_id = f"req_{self._req_counter}"
 
-        request = json.dumps({"id": req_id, "type": req_type, "data": data})
+            request = json.dumps({"id": req_id, "type": req_type, "data": data})
 
-        try:
-            self._process.stdin.write(request + "\n")
-            self._process.stdin.flush()
+            try:
+                self._process.stdin.write(request + "\n")
+                self._process.stdin.flush()
 
-            response_line = self._process.stdout.readline()
-            if not response_line:
-                raise RuntimeError("Subprocess closed stdout unexpectedly")
+                deadline = time.time() + 30
+                while time.time() < deadline:
+                    response_line = self._process.stdout.readline()
+                    if not response_line:
+                        raise RuntimeError("Subprocess closed stdout unexpectedly")
+                    response_line = response_line.strip()
+                    if not response_line:
+                        continue
 
-            response = json.loads(response_line)
-            if response.get("status") == "error":
-                raise RuntimeError(f"Embedding error: {response.get('result')}")
+                    try:
+                        response = json.loads(response_line)
+                    except json.JSONDecodeError:
+                        # Ignore external progress/warning output if any appears on stdout.
+                        logger.debug(f"Ignoring non-JSON embedding worker output: {response_line[:200]}")
+                        continue
 
-            return response.get("result")
+                    if not isinstance(response, dict):
+                        continue
 
-        except (BrokenPipeError, OSError) as e:
-            logger.error(f"Subprocess pipe broken: {e}")
-            self._kill_subprocess()
-            raise RuntimeError("Embedding subprocess crashed") from e
+                    response_id = response.get("id")
+                    if response_id and response_id != req_id:
+                        # Ignore out-of-band events / stale lines from previous requests.
+                        continue
+
+                    if response.get("status") == "error":
+                        raise RuntimeError(f"Embedding error: {response.get('result')}")
+
+                    return response.get("result")
+
+                raise RuntimeError("Embedding worker request timeout")
+
+            except (BrokenPipeError, OSError) as e:
+                logger.error(f"Subprocess pipe broken: {e}")
+                self._kill_subprocess()
+                raise RuntimeError("Embedding subprocess crashed") from e
 
     async def warmup(self):
         """Pre-load the embedding model subprocess in background (non-blocking)."""

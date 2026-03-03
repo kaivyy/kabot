@@ -118,6 +118,8 @@ class AgentLoop:
         self.config = config or Config()
         self.runtime_resilience = getattr(getattr(self.config, "runtime", None), "resilience", None)
         self.runtime_performance = getattr(getattr(self.config, "runtime", None), "performance", None)
+        self.runtime_observability = getattr(getattr(self.config, "runtime", None), "observability", None)
+        self.runtime_quotas = getattr(getattr(self.config, "runtime", None), "quotas", None)
         self._boot_started_at = time.perf_counter()
         self._cold_start_reported = False
         self._memory_warmup_task: asyncio.Task | None = None
@@ -159,6 +161,9 @@ class AgentLoop:
             skills_config=self.config.skills,
             memory_config=self.config.memory,
         )
+        self._context_builders: dict[str, ContextBuilder] = {
+            str(workspace.expanduser().resolve()): self.context
+        }
         self.sessions = session_manager or SessionManager(workspace)
         from kabot.memory.memory_factory import MemoryFactory
         from kabot.config.loader import load_config
@@ -400,7 +405,48 @@ class AgentLoop:
             loaded_dynamic = load_dynamic_plugins(builtin_plugins, self.plugin_registry, self.hooks)
             logger.info(f"Loaded {len(loaded_dynamic)} dynamic builtin plugins")
 
+    def _resolve_workspace_for_agent(self, agent_id: str | None) -> Path:
+        """Resolve workspace path for a routed agent, with safe fallback to root workspace."""
+        if not agent_id:
+            return self.workspace
+        try:
+            from kabot.agent.agent_scope import resolve_agent_workspace
 
+            resolved = resolve_agent_workspace(self.config, agent_id)
+            return resolved or self.workspace
+        except Exception as exc:
+            logger.warning(f"Failed to resolve workspace for agent '{agent_id}': {exc}")
+            return self.workspace
+
+    def _context_for_workspace(self, workspace: Path) -> ContextBuilder:
+        """Return cached ContextBuilder for workspace or create one lazily."""
+        key = str(workspace.expanduser().resolve())
+        context = self._context_builders.get(key)
+        if context is not None:
+            return context
+        context = ContextBuilder(
+            workspace,
+            skills_config=self.config.skills,
+            memory_config=self.config.memory,
+        )
+        self._context_builders[key] = context
+        return context
+
+    def _resolve_context_for_message(self, msg: InboundMessage) -> ContextBuilder:
+        """Resolve context builder bound to routed agent workspace for this message."""
+        agent_id = self._resolve_agent_id_for_message(msg)
+        workspace = self._resolve_workspace_for_agent(agent_id)
+        return self._context_for_workspace(workspace)
+
+    def _resolve_context_for_channel_chat(self, channel: str, chat_id: str) -> ContextBuilder:
+        """Resolve context builder for synthetic/system flows using channel/chat route."""
+        probe = InboundMessage(
+            channel=channel,
+            sender_id="system",
+            chat_id=chat_id,
+            content="",
+        )
+        return self._resolve_context_for_message(probe)
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""

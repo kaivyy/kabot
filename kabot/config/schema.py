@@ -109,6 +109,55 @@ class QQConfig(BaseModel):
     allow_from: list[str] = Field(default_factory=list)  # Allowed user openids (empty = public access)
 
 
+class SignalConfig(BaseModel):
+    """Signal channel configuration via bridge websocket."""
+    enabled: bool = False
+    bridge_url: str = "ws://localhost:3011"
+    allow_from: list[str] = Field(default_factory=list)
+
+
+class MatrixConfig(BaseModel):
+    """Matrix channel configuration via bridge websocket."""
+    enabled: bool = False
+    bridge_url: str = "ws://localhost:3012"
+    allow_from: list[str] = Field(default_factory=list)
+
+
+class TeamsConfig(BaseModel):
+    """Microsoft Teams channel configuration via bridge websocket."""
+    enabled: bool = False
+    bridge_url: str = "ws://localhost:3013"
+    allow_from: list[str] = Field(default_factory=list)
+
+
+class GoogleChatConfig(BaseModel):
+    """Google Chat channel configuration via bridge websocket."""
+    enabled: bool = False
+    bridge_url: str = "ws://localhost:3014"
+    allow_from: list[str] = Field(default_factory=list)
+
+
+class MattermostConfig(BaseModel):
+    """Mattermost channel configuration via bridge websocket."""
+    enabled: bool = False
+    bridge_url: str = "ws://localhost:3015"
+    allow_from: list[str] = Field(default_factory=list)
+
+
+class WebexConfig(BaseModel):
+    """Webex channel configuration via bridge websocket."""
+    enabled: bool = False
+    bridge_url: str = "ws://localhost:3016"
+    allow_from: list[str] = Field(default_factory=list)
+
+
+class LineConfig(BaseModel):
+    """LINE channel configuration via bridge websocket."""
+    enabled: bool = False
+    bridge_url: str = "ws://localhost:3017"
+    allow_from: list[str] = Field(default_factory=list)
+
+
 class ChannelInstance(BaseModel):
     """A single channel instance configuration.
 
@@ -133,9 +182,17 @@ class ChannelsConfig(BaseModel):
     email: EmailConfig = Field(default_factory=EmailConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     qq: QQConfig = Field(default_factory=QQConfig)
+    signal: SignalConfig = Field(default_factory=SignalConfig)
+    matrix: MatrixConfig = Field(default_factory=MatrixConfig)
+    teams: TeamsConfig = Field(default_factory=TeamsConfig)
+    google_chat: GoogleChatConfig = Field(default_factory=GoogleChatConfig)
+    mattermost: MattermostConfig = Field(default_factory=MattermostConfig)
+    webex: WebexConfig = Field(default_factory=WebexConfig)
+    line: LineConfig = Field(default_factory=LineConfig)
 
     # Multi-instance support
     instances: list[ChannelInstance] = Field(default_factory=list)
+    adapters: dict[str, bool] = Field(default_factory=dict)
 
 
 class SubagentDefaults(BaseModel):
@@ -429,12 +486,32 @@ class RuntimeAutopilotConfig(BaseModel):
     max_actions_per_beat: int = 1
 
 
+class RuntimeObservabilityConfig(BaseModel):
+    """Structured runtime observability controls."""
+
+    enabled: bool = True
+    emit_structured_events: bool = True
+    sample_rate: float = 1.0
+    redact_secrets: bool = True
+
+
+class RuntimeQuotaConfig(BaseModel):
+    """Soft/hard runtime request quota guardrails."""
+
+    enabled: bool = False
+    max_cost_per_day_usd: float = 0.0
+    max_tokens_per_hour: int = 0
+    enforcement_mode: str = "warn"  # "warn" | "hard"
+
+
 class RuntimeConfig(BaseModel):
     """Runtime feature flags for resilience and performance behavior."""
 
     resilience: RuntimeResilienceConfig = Field(default_factory=RuntimeResilienceConfig)
     performance: RuntimePerformanceConfig = Field(default_factory=RuntimePerformanceConfig)
     autopilot: RuntimeAutopilotConfig = Field(default_factory=RuntimeAutopilotConfig)
+    observability: RuntimeObservabilityConfig = Field(default_factory=RuntimeObservabilityConfig)
+    quotas: RuntimeQuotaConfig = Field(default_factory=RuntimeQuotaConfig)
 
 
 class SkillEntryConfig(BaseModel):
@@ -482,6 +559,14 @@ class SkillsInstallConfig(BaseModel):
         raise KeyError(key)
 
 
+class SkillsOnboardingConfig(BaseModel):
+    """One-shot skill onboarding preferences."""
+
+    auto_prompt_env: bool = True
+    auto_enable_after_install: bool = True
+    soul_injection_mode: str = "prompt"  # "disabled" | "prompt" | "auto"
+
+
 class SkillsConfig(BaseModel):
     """Canonical typed skills config with dict-like compatibility helpers."""
 
@@ -491,6 +576,7 @@ class SkillsConfig(BaseModel):
     allow_bundled: list[str] = Field(default_factory=list)
     load: SkillsLoadConfig = Field(default_factory=SkillsLoadConfig)
     install: SkillsInstallConfig = Field(default_factory=SkillsInstallConfig)
+    onboarding: SkillsOnboardingConfig = Field(default_factory=SkillsOnboardingConfig)
     limits: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -601,6 +687,20 @@ class IntegrationsConfig(BaseModel):
     meta: MetaIntegrationConfig = Field(default_factory=MetaIntegrationConfig)
 
 
+class SecurityTrustModeConfig(BaseModel):
+    """Skill trust-mode controls."""
+
+    enabled: bool = False
+    verify_skill_manifest: bool = False
+    allowed_signers: list[str] = Field(default_factory=list)
+
+
+class SecurityConfig(BaseModel):
+    """Top-level security policies."""
+
+    trust_mode: SecurityTrustModeConfig = Field(default_factory=SecurityTrustModeConfig)
+
+
 class LoggingConfig(BaseModel):
     """Logging configuration."""
     enabled: bool = True
@@ -625,6 +725,7 @@ class Config(BaseSettings):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
     bootstrap: BootstrapParityConfig = Field(default_factory=BootstrapParityConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)

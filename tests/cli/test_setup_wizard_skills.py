@@ -374,3 +374,394 @@ def test_configure_skills_same_env_key_prompted_once_for_multiple_selected_skill
     assert len(prompt_calls) == 1
     assert wizard.config.skills["entries"]["goplaces"]["env"]["GOOGLE_PLACES_API_KEY"] == "shared-gplaces-key"
     assert wizard.config.skills["entries"]["local-places"]["env"]["GOOGLE_PLACES_API_KEY"] == "shared-gplaces-key"
+
+
+def test_configure_skills_one_shot_git_install_onboarding(monkeypatch, tmp_path):
+    from kabot.cli.skill_repo_installer import InstalledSkill
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    monkeypatch.setattr("kabot.agent.skills.SkillsLoader", _FakeSkillsLoader)
+    monkeypatch.setattr("kabot.cli.wizard.sections.tools_gateway_skills._is_interactive_tty", lambda: True)
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.tools_gateway_skills._collect_skill_env_requirements",
+        lambda _config, _skill_key: ["FAL_KEY"],
+    )
+    monkeypatch.setattr("kabot.cli.skill_repo_installer.list_skill_candidate_details_from_git", lambda repo_url, ref: [])
+
+    installed_dir = tmp_path / "repo-install" / "clawra-selfie"
+    installed_dir.mkdir(parents=True, exist_ok=True)
+    (installed_dir / "SKILL.md").write_text("# Clawra\n", encoding="utf-8")
+    (installed_dir / "soul-injection.md").write_text(
+        "## Clawra Selfie Capability\n\nUse clawra-selfie when user asks for selfies.",
+        encoding="utf-8",
+    )
+
+    def _fake_install_skill_from_git(*, repo_url, target_dir, ref, subdir, skill_name, overwrite):
+        _ = target_dir, ref, subdir, skill_name, overwrite
+        return InstalledSkill(
+            repo_url=repo_url,
+            selected_dir=Path("skill"),
+            installed_dir=installed_dir,
+            skill_name="clawra-selfie",
+            skill_key="clawra-selfie",
+        )
+
+    monkeypatch.setattr("kabot.cli.skill_repo_installer.install_skill_from_git", _fake_install_skill_from_git)
+
+    wizard = SetupWizard()
+    monkeypatch.setattr(wizard, "_install_builtin_skills_with_progress", lambda: False)
+
+    monkeypatch.setattr(
+        "kabot.cli.wizard.skills_prompts.skills_checkbox",
+        lambda *args, **kwargs: ["skip"],
+    )
+
+    def _fake_confirm(message, *args, **kwargs):
+        if "Configure skills now" in message:
+            return True
+        if "Install external skill from git now" in message:
+            return True
+        if "Install another external skill from git" in message:
+            return False
+        if "Set FAL_KEY for clawra-selfie" in message:
+            return True
+        if "Inject persona snippet into SOUL.md" in message:
+            return True
+        return False
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.Confirm.ask", _fake_confirm)
+
+    prompt_values = iter(
+        [
+            "https://example.com/clawra.git",  # repo
+            "",  # ref
+            "",  # subdir
+            "",  # name override
+            "workspace",  # target
+            "fal_live_key",  # FAL_KEY
+        ]
+    )
+    monkeypatch.setattr("kabot.cli.setup_wizard.Prompt.ask", lambda *args, **kwargs: next(prompt_values))
+
+    wizard._configure_skills()
+
+    entries = wizard.config.skills["entries"]["clawra-selfie"]
+    assert entries["enabled"] is True
+    assert entries["env"]["FAL_KEY"] == "fal_live_key"
+
+    soul_path = wizard.config.workspace_path / "SOUL.md"
+    assert soul_path.exists()
+    soul_text = soul_path.read_text(encoding="utf-8")
+    assert "Clawra Selfie Capability" in soul_text
+
+
+def test_configure_skills_one_shot_git_install_injects_agents_with_preview(monkeypatch, tmp_path):
+    from kabot.cli.skill_repo_installer import InstalledSkill
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    monkeypatch.setattr("kabot.agent.skills.SkillsLoader", _FakeSkillsLoader)
+    monkeypatch.setattr("kabot.cli.wizard.sections.tools_gateway_skills._is_interactive_tty", lambda: True)
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.tools_gateway_skills._collect_skill_env_requirements",
+        lambda _config, _skill_key: [],
+    )
+    monkeypatch.setattr("kabot.cli.skill_repo_installer.list_skill_candidate_details_from_git", lambda repo_url, ref: [])
+
+    installed_dir = tmp_path / "repo-install" / "ops-skill"
+    installed_dir.mkdir(parents=True, exist_ok=True)
+    (installed_dir / "SKILL.md").write_text("# Ops Skill\n", encoding="utf-8")
+    (installed_dir / "agents-injection.md").write_text(
+        "## Ops Capability\n\nWhen user asks for ops workflows, prioritize ops-skill.",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "kabot.cli.skill_repo_installer.install_skill_from_git",
+        lambda **kwargs: InstalledSkill(
+            repo_url=str(kwargs.get("repo_url") or ""),
+            selected_dir=Path("skill"),
+            installed_dir=installed_dir,
+            skill_name="ops-skill",
+            skill_key="ops-skill",
+        ),
+    )
+
+    wizard = SetupWizard()
+    monkeypatch.setattr(wizard, "_install_builtin_skills_with_progress", lambda: False)
+    monkeypatch.setattr(
+        "kabot.cli.wizard.skills_prompts.skills_checkbox",
+        lambda *args, **kwargs: ["skip"],
+    )
+
+    def _fake_confirm(message, *args, **kwargs):
+        if "Configure skills now" in message:
+            return True
+        if "Install external skill from git now" in message:
+            return True
+        if "Install another external skill from git" in message:
+            return False
+        if "Preview persona snippets before apply" in message:
+            return True
+        if "Inject persona snippet into SOUL.md" in message:
+            return False
+        if "Inject persona snippet into AGENTS.md" in message:
+            return True
+        return False
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.Confirm.ask", _fake_confirm)
+    prompt_values = iter(
+        [
+            "https://example.com/ops-skill.git",  # repo
+            "",  # ref
+            "",  # subdir
+            "",  # name
+            "workspace",  # target
+        ]
+    )
+    monkeypatch.setattr("kabot.cli.setup_wizard.Prompt.ask", lambda *args, **kwargs: next(prompt_values))
+
+    wizard._configure_skills()
+
+    agents_path = wizard.config.workspace_path / "AGENTS.md"
+    assert agents_path.exists()
+    agents_text = agents_path.read_text(encoding="utf-8")
+    assert "Ops Capability" in agents_text
+
+
+def test_configure_skills_one_shot_git_install_handles_multi_skill_candidates(monkeypatch, tmp_path):
+    from kabot.cli.skill_repo_installer import InstalledSkill
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    monkeypatch.setattr("kabot.agent.skills.SkillsLoader", _FakeSkillsLoader)
+    monkeypatch.setattr("kabot.cli.wizard.sections.tools_gateway_skills._is_interactive_tty", lambda: True)
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.tools_gateway_skills._collect_skill_env_requirements",
+        lambda _config, _skill_key: [],
+    )
+    monkeypatch.setattr("kabot.cli.skill_repo_installer.list_skill_candidate_details_from_git", lambda repo_url, ref: [])
+
+    installed_dir = tmp_path / "repo-install" / "skill-b"
+    installed_dir.mkdir(parents=True, exist_ok=True)
+    (installed_dir / "SKILL.md").write_text("# Skill B\n", encoding="utf-8")
+
+    calls: list[dict] = []
+
+    def _fake_install_skill_from_git(**kwargs):
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            raise ValueError(
+                "Multiple skill folders found in repo. Use --subdir to choose one. "
+                "Candidates: skill-a, skill-b"
+            )
+        return InstalledSkill(
+            repo_url=str(kwargs.get("repo_url") or ""),
+            selected_dir=Path(str(kwargs.get("subdir") or "skill-b")),
+            installed_dir=installed_dir,
+            skill_name="skill-b",
+            skill_key="skill-b",
+        )
+
+    monkeypatch.setattr("kabot.cli.skill_repo_installer.install_skill_from_git", _fake_install_skill_from_git)
+
+    def _fake_select(message, choices, default=None):
+        _ = choices, default
+        if "Multiple skills found in repo" in message:
+            return "skill-b"
+        return "back"
+
+    monkeypatch.setattr("kabot.cli.wizard.sections.tools_gateway_skills.ClackUI.clack_select", _fake_select)
+
+    wizard = SetupWizard()
+    monkeypatch.setattr(wizard, "_install_builtin_skills_with_progress", lambda: False)
+    monkeypatch.setattr(
+        "kabot.cli.wizard.skills_prompts.skills_checkbox",
+        lambda *args, **kwargs: ["skip"],
+    )
+
+    def _fake_confirm(message, *args, **kwargs):
+        if "Configure skills now" in message:
+            return True
+        if "Install external skill from git now" in message:
+            return True
+        if "Install another external skill from git" in message:
+            return False
+        if "Inject persona snippet into SOUL.md" in message:
+            return False
+        return False
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.Confirm.ask", _fake_confirm)
+    prompt_values = iter(
+        [
+            "https://example.com/multi.git",  # repo
+            "",  # ref
+            "",  # subdir
+            "",  # name
+            "workspace",  # target
+        ]
+    )
+    monkeypatch.setattr("kabot.cli.setup_wizard.Prompt.ask", lambda *args, **kwargs: next(prompt_values))
+
+    wizard._configure_skills()
+
+    assert len(calls) == 2
+    assert calls[0].get("subdir") in {None, ""}
+    assert calls[1].get("subdir") == "skill-b"
+
+
+def test_configure_skills_one_shot_git_install_uses_preclone_discovery(monkeypatch, tmp_path):
+    from kabot.cli.skill_repo_installer import InstalledSkill
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    monkeypatch.setattr("kabot.agent.skills.SkillsLoader", _FakeSkillsLoader)
+    monkeypatch.setattr("kabot.cli.wizard.sections.tools_gateway_skills._is_interactive_tty", lambda: True)
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.tools_gateway_skills._collect_skill_env_requirements",
+        lambda _config, _skill_key: [],
+    )
+
+    installed_dir = tmp_path / "repo-install" / "skill-b"
+    installed_dir.mkdir(parents=True, exist_ok=True)
+    (installed_dir / "SKILL.md").write_text("# Skill B\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "kabot.cli.skill_repo_installer.list_skill_candidate_details_from_git",
+        lambda repo_url, ref: [
+            {"subdir": "skill-a", "name": "Skill A", "description": "First", "score": 10},
+            {"subdir": "skill-b", "name": "Skill B", "description": "Second", "score": 99},
+        ],
+    )
+
+    calls: list[dict] = []
+
+    def _fake_install_skill_from_git(**kwargs):
+        calls.append(dict(kwargs))
+        return InstalledSkill(
+            repo_url=str(kwargs.get("repo_url") or ""),
+            selected_dir=Path(str(kwargs.get("subdir") or "skill-b")),
+            installed_dir=installed_dir,
+            skill_name="skill-b",
+            skill_key="skill-b",
+        )
+
+    monkeypatch.setattr("kabot.cli.skill_repo_installer.install_skill_from_git", _fake_install_skill_from_git)
+
+    def _fake_select(message, choices, default=None):
+        _ = choices, default
+        if "Multiple skills found in repo" in message:
+            return "skill-b"
+        return "back"
+
+    monkeypatch.setattr("kabot.cli.wizard.sections.tools_gateway_skills.ClackUI.clack_select", _fake_select)
+
+    wizard = SetupWizard()
+    monkeypatch.setattr(wizard, "_install_builtin_skills_with_progress", lambda: False)
+    monkeypatch.setattr(
+        "kabot.cli.wizard.skills_prompts.skills_checkbox",
+        lambda *args, **kwargs: ["skip"],
+    )
+
+    def _fake_confirm(message, *args, **kwargs):
+        if "Configure skills now" in message:
+            return True
+        if "Install external skill from git now" in message:
+            return True
+        if "Install another external skill from git" in message:
+            return False
+        if "Inject persona snippet into SOUL.md" in message:
+            return False
+        return False
+
+    monkeypatch.setattr("kabot.cli.setup_wizard.Confirm.ask", _fake_confirm)
+    prompt_values = iter(
+        [
+            "https://example.com/multi.git",  # repo
+            "",  # ref
+            "",  # subdir
+            "",  # name
+            "workspace",  # target
+        ]
+    )
+    monkeypatch.setattr("kabot.cli.setup_wizard.Prompt.ask", lambda *args, **kwargs: next(prompt_values))
+
+    wizard._configure_skills()
+
+    assert len(calls) == 1
+    assert calls[0].get("subdir") == "skill-b"
+
+
+def test_prompt_skill_candidate_subdir_uses_metadata_default(monkeypatch):
+    from kabot.cli.wizard.sections import tools_gateway_skills as section_mod
+
+    captured = {"default": None, "choices": None}
+
+    def _fake_select(message, choices, default=None):
+        _ = message
+        captured["default"] = default
+        captured["choices"] = choices
+        return "skills/alpha"
+
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.tools_gateway_skills.ClackUI.clack_select",
+        _fake_select,
+    )
+
+    selected = section_mod._prompt_skill_candidate_subdir(
+        [
+            {"subdir": "skills/alpha", "name": "Alpha", "description": "Primary", "score": 100},
+            {"subdir": "nested/beta", "name": "Beta", "description": "Secondary", "score": 10},
+        ],
+        None,
+    )
+
+    assert selected == "skills/alpha"
+    assert captured["default"] == "skills/alpha"
+    first_choice = captured["choices"][0]
+    title = getattr(first_choice, "title", str(first_choice))
+    assert "Alpha" in str(title)
+
+
+def test_build_agents_persona_template_includes_skill_identity():
+    from kabot.cli.wizard.sections import tools_gateway_skills as section_mod
+
+    snippet = section_mod._build_agents_persona_template(
+        skill_name="clawra-selfie",
+        skill_key="clawra-selfie",
+        mode="strict",
+        capability_summary="Selfie generation and media replies",
+    )
+
+    assert "Strict Routing Guardrails" in snippet
+    assert "`clawra-selfie`" in snippet
+    assert "Selfie generation and media replies" in snippet
+
+
+def test_choose_agents_persona_snippet_supports_template_assistant(monkeypatch, tmp_path):
+    from kabot.cli.wizard.sections import tools_gateway_skills as section_mod
+
+    installed_dir = tmp_path / "skill"
+    installed_dir.mkdir(parents=True, exist_ok=True)
+    (installed_dir / "SKILL.md").write_text(
+        "---\nname: ops-skill\ndescription: Automate ops workflows quickly\n---\n",
+        encoding="utf-8",
+    )
+
+    def _fake_confirm(message, *args, **kwargs):
+        _ = args, kwargs
+        return "Use AGENTS template assistant" in message
+
+    monkeypatch.setattr("kabot.cli.wizard.sections.tools_gateway_skills.Confirm.ask", _fake_confirm)
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.tools_gateway_skills.ClackUI.clack_select",
+        lambda *args, **kwargs: "strict",
+    )
+
+    snippet = section_mod._choose_agents_persona_snippet(
+        installed_dir=installed_dir,
+        skill_name="ops-skill",
+        skill_key="ops-skill",
+        default_snippet="fallback",
+    )
+
+    assert "Strict Routing Guardrails" in snippet
+    assert "Automate ops workflows quickly" in snippet
+    assert "`ops-skill`" in snippet

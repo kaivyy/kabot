@@ -97,6 +97,32 @@ def test_migrate_injects_runtime_resilience_and_performance_defaults():
     assert performance["embedWarmupTimeoutMs"] == 1200
     assert autopilot["enabled"] is True
     assert autopilot["maxActionsPerBeat"] == 1
+    observability = runtime_cfg.get("observability", {})
+    quotas = runtime_cfg.get("quotas", {})
+    assert observability["enabled"] is True
+    assert observability["emitStructuredEvents"] is True
+    assert observability["sampleRate"] == 1.0
+    assert observability["redactSecrets"] is True
+    assert quotas["enabled"] is False
+    assert quotas["maxCostPerDayUsd"] == 0.0
+    assert quotas["maxTokensPerHour"] == 0
+    assert quotas["enforcementMode"] == "warn"
+
+
+def test_migrate_injects_security_trust_mode_and_skills_onboarding_defaults():
+    migrated = _migrate_config({})
+
+    security = migrated.get("security", {})
+    trust_mode = security.get("trustMode", {})
+    assert trust_mode["enabled"] is False
+    assert trust_mode["verifySkillManifest"] is False
+    assert trust_mode["allowedSigners"] == []
+
+    skills = migrated.get("skills", {})
+    onboarding = skills.get("onboarding", {})
+    assert onboarding["autoPromptEnv"] is True
+    assert onboarding["autoEnableAfterInstall"] is True
+    assert onboarding["soulInjectionMode"] == "prompt"
 
 
 def test_migrate_tools_exec_policy_preset_for_legacy_config():

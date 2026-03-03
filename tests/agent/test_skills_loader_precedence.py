@@ -1,6 +1,15 @@
 from pathlib import Path
 
+import pytest
+
 from kabot.agent.skills import SkillsLoader
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home(monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
 
 
 def _write_skill(skill_root: Path, skill_name: str, body: str, metadata_json: str | None = None) -> None:
@@ -162,10 +171,16 @@ def test_match_skills_hot_reload_after_skill_file_update(tmp_path):
     workspace.mkdir(parents=True)
     builtin = tmp_path / "builtin"
     builtin.mkdir(parents=True)
+    managed = tmp_path / "managed"
+    managed.mkdir(parents=True)
 
     _write_skill(workspace / "skills", "rotation-helper", "oldstorm oldcloud")
 
-    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    loader = SkillsLoader(
+        workspace=workspace,
+        builtin_skills_dir=builtin,
+        skills_config={"load": {"managed_dir": str(managed)}},
+    )
 
     initial_matches = loader.match_skills("please oldstorm oldcloud now", profile="GENERAL")
     assert any(match.startswith("rotation-helper") for match in initial_matches)
@@ -181,10 +196,16 @@ def test_match_skills_hot_reload_after_new_skill_added(tmp_path):
     workspace.mkdir(parents=True)
     builtin = tmp_path / "builtin"
     builtin.mkdir(parents=True)
+    managed = tmp_path / "managed"
+    managed.mkdir(parents=True)
 
     _write_skill(workspace / "skills", "base-skill", "alphaone alphatwo")
 
-    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    loader = SkillsLoader(
+        workspace=workspace,
+        builtin_skills_dir=builtin,
+        skills_config={"load": {"managed_dir": str(managed)}},
+    )
     _ = loader.match_skills("alphaone alphatwo", profile="GENERAL")
 
     _write_skill(workspace / "skills", "added-skill", "betastorm betacloud")
@@ -198,10 +219,16 @@ def test_match_skills_hot_reload_after_skill_removed(tmp_path):
     workspace.mkdir(parents=True)
     builtin = tmp_path / "builtin"
     builtin.mkdir(parents=True)
+    managed = tmp_path / "managed"
+    managed.mkdir(parents=True)
 
     _write_skill(workspace / "skills", "temporary-skill", "removeme tokenized")
 
-    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    loader = SkillsLoader(
+        workspace=workspace,
+        builtin_skills_dir=builtin,
+        skills_config={"load": {"managed_dir": str(managed)}},
+    )
 
     initial_matches = loader.match_skills("removeme tokenized", profile="GENERAL")
     assert any(match.startswith("temporary-skill") for match in initial_matches)

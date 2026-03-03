@@ -501,6 +501,30 @@ def _prompt_instance_config(self, channel_type: str) -> dict[str, Any] | None:
             return None
         return {"bot_token": bot_token, "app_token": app_token}
 
+    if channel_type in {
+        "signal",
+        "matrix",
+        "teams",
+        "google_chat",
+        "mattermost",
+        "webex",
+        "line",
+    }:
+        default_url = {
+            "signal": "ws://localhost:3011",
+            "matrix": "ws://localhost:3012",
+            "teams": "ws://localhost:3013",
+            "google_chat": "ws://localhost:3014",
+            "mattermost": "ws://localhost:3015",
+            "webex": "ws://localhost:3016",
+            "line": "ws://localhost:3017",
+        }[channel_type]
+        bridge_url = Prompt.ask("|  Bridge URL", default=default_url).strip() or default_url
+        allow_from = self._prompt_allow_from_list(
+            f"Allowed users for this {channel_type} bot"
+        )
+        return {"bridge_url": bridge_url, "allow_from": allow_from}
+
     return None
 
 def _prompt_agent_binding(self, default_agent_id: str) -> tuple[str | None, bool, str | None]:
@@ -584,6 +608,13 @@ def _add_channel_instance(self):
             questionary.Choice("Discord", value="discord"),
             questionary.Choice("WhatsApp", value="whatsapp"),
             questionary.Choice("Slack", value="slack"),
+            questionary.Choice("Signal", value="signal"),
+            questionary.Choice("Matrix", value="matrix"),
+            questionary.Choice("Teams", value="teams"),
+            questionary.Choice("Google Chat", value="google_chat"),
+            questionary.Choice("Mattermost", value="mattermost"),
+            questionary.Choice("Webex", value="webex"),
+            questionary.Choice("LINE", value="line"),
         ],
     )
     if not channel_type:
@@ -614,6 +645,13 @@ def _bulk_add_channel_instances(self):
             questionary.Choice("Discord", value="discord"),
             questionary.Choice("WhatsApp", value="whatsapp"),
             questionary.Choice("Slack", value="slack"),
+            questionary.Choice("Signal", value="signal"),
+            questionary.Choice("Matrix", value="matrix"),
+            questionary.Choice("Teams", value="teams"),
+            questionary.Choice("Google Chat", value="google_chat"),
+            questionary.Choice("Mattermost", value="mattermost"),
+            questionary.Choice("Webex", value="webex"),
+            questionary.Choice("LINE", value="line"),
         ],
     )
     if not channel_type:
@@ -679,6 +717,17 @@ def _build_template_channel_config(self, channel_type: str, token: str) -> dict[
         else:
             bot_token, app_token = clean, ""
         return {"bot_token": bot_token, "app_token": app_token}
+    bridge_defaults = {
+        "signal": "ws://localhost:3011",
+        "matrix": "ws://localhost:3012",
+        "teams": "ws://localhost:3013",
+        "google_chat": "ws://localhost:3014",
+        "mattermost": "ws://localhost:3015",
+        "webex": "ws://localhost:3016",
+        "line": "ws://localhost:3017",
+    }
+    if channel_type in bridge_defaults:
+        return {"bridge_url": clean or bridge_defaults[channel_type], "allow_from": []}
     raise ValueError(f"Unsupported channel type for fleet template: {channel_type}")
 
 def _apply_fleet_template(
@@ -741,6 +790,13 @@ def _apply_fleet_template_interactive(self) -> None:
             questionary.Choice("Discord", value="discord"),
             questionary.Choice("WhatsApp", value="whatsapp"),
             questionary.Choice("Slack", value="slack"),
+            questionary.Choice("Signal", value="signal"),
+            questionary.Choice("Matrix", value="matrix"),
+            questionary.Choice("Teams", value="teams"),
+            questionary.Choice("Google Chat", value="google_chat"),
+            questionary.Choice("Mattermost", value="mattermost"),
+            questionary.Choice("Webex", value="webex"),
+            questionary.Choice("LINE", value="line"),
         ],
     )
     if not channel_type:
@@ -752,7 +808,16 @@ def _apply_fleet_template_interactive(self) -> None:
     token_hint = "Bot Token"
     if channel_type == "slack":
         token_hint = "Bot token|App token"
-    elif channel_type == "whatsapp":
+    elif channel_type in {
+        "whatsapp",
+        "signal",
+        "matrix",
+        "teams",
+        "google_chat",
+        "mattermost",
+        "webex",
+        "line",
+    }:
         token_hint = "Bridge URL"
 
     bot_tokens: list[str] = []
@@ -801,17 +866,84 @@ def _edit_channel_instance(self):
         else:
             instance.agent_binding = binding
 
-    if instance.type in {"telegram", "discord", "whatsapp"}:
+    self._edit_instance_channel_config(instance)
+
+    if instance.type in {
+        "telegram",
+        "discord",
+        "whatsapp",
+        "signal",
+        "matrix",
+        "teams",
+        "google_chat",
+        "mattermost",
+        "webex",
+        "line",
+    }:
         if Confirm.ask("|  Edit allowFrom list", default=False):
             current_allow = instance.config.get("allow_from", [])
             label = {
                 "telegram": "Allowed users for this Telegram bot",
                 "discord": "Allowed users for this Discord bot",
                 "whatsapp": "Allowed WhatsApp numbers for this bot",
+                "signal": "Allowed users for this Signal bot",
+                "matrix": "Allowed users for this Matrix bot",
+                "teams": "Allowed users for this Teams bot",
+                "google_chat": "Allowed users for this Google Chat bot",
+                "mattermost": "Allowed users for this Mattermost bot",
+                "webex": "Allowed users for this Webex bot",
+                "line": "Allowed users for this LINE bot",
             }.get(instance.type, "Allowed users")
             instance.config["allow_from"] = self._prompt_allow_from_list(label, current_allow)
 
     console.print(f"|  [green]OK[/green] Updated {instance.id}")
+
+
+def _edit_instance_channel_config(self, instance: ChannelInstance) -> None:
+    """Edit per-channel instance credentials while preserving secrets by default."""
+    if instance.type == "telegram":
+        if Confirm.ask("|  Edit bot token", default=False):
+            current_token = str(instance.config.get("token") or "")
+            instance.config["token"] = self._prompt_secret_value("|  Bot Token", current_token)
+        return
+
+    if instance.type == "discord":
+        if Confirm.ask("|  Edit bot token", default=False):
+            current_token = str(instance.config.get("token") or "")
+            instance.config["token"] = self._prompt_secret_value("|  Bot Token", current_token)
+        return
+
+    if instance.type in {
+        "whatsapp",
+        "signal",
+        "matrix",
+        "teams",
+        "google_chat",
+        "mattermost",
+        "webex",
+        "line",
+    }:
+        if Confirm.ask("|  Edit bridge URL", default=False):
+            current_url = str(instance.config.get("bridge_url") or "ws://localhost:3001")
+            next_url = Prompt.ask("|  Bridge URL", default=current_url).strip()
+            if next_url:
+                instance.config["bridge_url"] = next_url
+        return
+
+    if instance.type == "slack":
+        if Confirm.ask("|  Edit bot token", default=False):
+            current_bot = str(instance.config.get("bot_token") or "")
+            instance.config["bot_token"] = self._prompt_secret_value(
+                "|  Bot Token (xoxb-...)",
+                current_bot,
+            )
+        if Confirm.ask("|  Edit app token", default=False):
+            current_app = str(instance.config.get("app_token") or "")
+            instance.config["app_token"] = self._prompt_secret_value(
+                "|  App Token (xapp-...)",
+                current_app,
+            )
+        return
 
 def _delete_channel_instance(self):
     """Delete a channel instance."""
@@ -946,6 +1078,7 @@ def bind_channels_sections(cls):
     cls._apply_fleet_template = _apply_fleet_template
     cls._apply_fleet_template_interactive = _apply_fleet_template_interactive
     cls._edit_channel_instance = _edit_channel_instance
+    cls._edit_instance_channel_config = _edit_instance_channel_config
     cls._delete_channel_instance = _delete_channel_instance
     cls._configure_whatsapp = _configure_whatsapp
     return cls

@@ -1,9 +1,11 @@
 """Test multi-instance channel manager."""
+import asyncio
 from unittest.mock import patch
 
 import pytest
 
 from kabot.bus.queue import MessageBus
+from kabot.bus.events import OutboundMessage
 from kabot.channels.base import BaseChannel
 from kabot.channels.manager import ChannelManager
 from kabot.config.schema import ChannelInstance, ChannelsConfig, Config
@@ -228,3 +230,23 @@ async def test_channel_manager_decorates_channels_with_security_preset():
 
     channel = manager.channels["telegram"]
     assert getattr(channel, "_security_policy_preset", None) == "strict"
+
+
+@pytest.mark.asyncio
+async def test_channel_manager_suppresses_unknown_cli_channel_warning():
+    config = Config()
+    bus = MessageBus()
+    manager = ChannelManager(config, bus)
+
+    with patch("kabot.channels.manager.logger.warning") as warn_mock:
+        dispatch_task = asyncio.create_task(manager._dispatch_outbound())
+        await bus.publish_outbound(OutboundMessage(channel="cli", chat_id="direct", content="ping"))
+        await asyncio.sleep(0.1)
+        dispatch_task.cancel()
+        try:
+            await dispatch_task
+        except asyncio.CancelledError:
+            pass
+
+    warning_messages = [str(call.args[0]) for call in warn_mock.call_args_list if call.args]
+    assert not any("Unknown channel: cli" in msg for msg in warning_messages)

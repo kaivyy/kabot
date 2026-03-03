@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import random
 import time
 from typing import Any
 
@@ -34,6 +35,163 @@ def _runtime_resilience_cfg(loop: Any) -> Any:
 
 def _runtime_performance_cfg(loop: Any) -> Any:
     return getattr(loop, "runtime_performance", None)
+
+
+def _runtime_observability_cfg(loop: Any) -> Any:
+    return getattr(loop, "runtime_observability", None)
+
+
+def _runtime_quotas_cfg(loop: Any) -> Any:
+    return getattr(loop, "runtime_quotas", None)
+
+
+def _redact_observability_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    redacted: dict[str, Any] = {}
+    for key, value in payload.items():
+        key_l = str(key).lower()
+        if any(token in key_l for token in ("token", "secret", "api_key", "apikey", "password")):
+            redacted[key] = "[redacted]"
+            continue
+        redacted[key] = value
+    return redacted
+
+
+def _emit_runtime_event(loop: Any, event_name: str, **fields: Any) -> None:
+    cfg = _runtime_observability_cfg(loop)
+    if not cfg or not bool(getattr(cfg, "enabled", True)):
+        return
+    if not bool(getattr(cfg, "emit_structured_events", True)):
+        return
+    sample_rate = float(getattr(cfg, "sample_rate", 1.0))
+    if sample_rate <= 0:
+        return
+    if sample_rate < 1.0 and random.random() > sample_rate:
+        return
+
+    payload: dict[str, Any] = {"event": event_name, **fields}
+    if bool(getattr(cfg, "redact_secrets", True)):
+        payload = _redact_observability_payload(payload)
+    try:
+        logger.info(f"runtime_event={json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}")
+    except Exception:
+        logger.info(f"runtime_event={payload}")
+
+
+def _estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
+    """Cheap token estimate for quota guardrail checks (char/4 heuristic)."""
+    try:
+        serialized = json.dumps(messages, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        serialized = str(messages)
+    return max(1, len(serialized) // 4)
+
+
+def _quota_bucket(loop: Any) -> dict[str, Any]:
+    usage = getattr(loop, "_quota_usage", None)
+    if not isinstance(usage, dict):
+        usage = {}
+        setattr(loop, "_quota_usage", usage)
+    now = time.time()
+    current_hour = int(now // 3600)
+    current_day = int(now // 86400)
+    if usage.get("hour_bucket") != current_hour:
+        usage["hour_bucket"] = current_hour
+        usage["tokens_this_hour"] = 0
+    if usage.get("day_bucket") != current_day:
+        usage["day_bucket"] = current_day
+        usage["cost_today_usd"] = 0.0
+    usage.setdefault("tokens_this_hour", 0)
+    usage.setdefault("cost_today_usd", 0.0)
+    return usage
+
+
+def _check_quota_guard(
+    loop: Any,
+    messages: list[dict[str, Any]],
+    model: str,
+    *,
+    turn_id: str,
+    attempt_index: int,
+) -> tuple[bool, str | None]:
+    quotas = _runtime_quotas_cfg(loop)
+    if not quotas or not bool(getattr(quotas, "enabled", False)):
+        return True, None
+
+    mode = str(getattr(quotas, "enforcement_mode", "warn") or "warn").strip().lower()
+    if mode not in {"warn", "hard"}:
+        mode = "warn"
+    max_tokens_per_hour = int(getattr(quotas, "max_tokens_per_hour", 0) or 0)
+    max_cost_per_day = float(getattr(quotas, "max_cost_per_day_usd", 0.0) or 0.0)
+    estimated_tokens = _estimate_message_tokens(messages)
+    usage = _quota_bucket(loop)
+
+    if max_tokens_per_hour > 0:
+        projected = int(usage.get("tokens_this_hour", 0)) + estimated_tokens
+        if projected > max_tokens_per_hour:
+            message = (
+                f"quota {mode}: max_tokens_per_hour exceeded "
+                f"(projected={projected}, limit={max_tokens_per_hour}, model={model})"
+            )
+            _emit_runtime_event(
+                loop,
+                "quota_guard",
+                turn_id=turn_id,
+                attempt_index=attempt_index,
+                model=model,
+                scope="tokens_per_hour",
+                mode=mode,
+                projected=projected,
+                limit=max_tokens_per_hour,
+                blocked=(mode == "hard"),
+            )
+            if mode == "hard":
+                return False, message
+            return True, message
+
+    if max_cost_per_day > 0:
+        current_cost = float(usage.get("cost_today_usd", 0.0))
+        if current_cost >= max_cost_per_day:
+            message = (
+                f"quota {mode}: max_cost_per_day_usd exceeded "
+                f"(used={current_cost:.6f}, limit={max_cost_per_day:.6f}, model={model})"
+            )
+            _emit_runtime_event(
+                loop,
+                "quota_guard",
+                turn_id=turn_id,
+                attempt_index=attempt_index,
+                model=model,
+                scope="cost_per_day",
+                mode=mode,
+                used=current_cost,
+                limit=max_cost_per_day,
+                blocked=(mode == "hard"),
+            )
+            if mode == "hard":
+                return False, message
+            return True, message
+
+    usage["tokens_this_hour"] = int(usage.get("tokens_this_hour", 0)) + estimated_tokens
+    return True, None
+
+
+def _apply_response_quota_usage(loop: Any, response: Any) -> None:
+    quotas = _runtime_quotas_cfg(loop)
+    if not quotas or not bool(getattr(quotas, "enabled", False)):
+        return
+    usage = _quota_bucket(loop)
+    usage_data = getattr(response, "usage", None) if response is not None else None
+    if isinstance(usage_data, dict):
+        total_tokens = int(usage_data.get("total_tokens", 0) or 0)
+        if total_tokens > 0:
+            usage["tokens_this_hour"] = int(usage.get("tokens_this_hour", 0)) + total_tokens
+        estimated_cost = usage_data.get("estimated_cost_usd")
+        try:
+            estimated_cost_val = float(estimated_cost)
+        except Exception:
+            estimated_cost_val = 0.0
+        if estimated_cost_val > 0:
+            usage["cost_today_usd"] = float(usage.get("cost_today_usd", 0.0)) + estimated_cost_val
 
 
 def _extract_status_code(exc: Exception) -> int | None:
@@ -180,6 +338,10 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     # system-generated text.
     if (msg.channel or "").lower() == "system" or (msg.sender_id or "").lower() == "system":
         required_tool = None
+    # Heartbeat autopilot prompts are operational patrol messages, not user tool
+    # requests; disable keyword-based tool enforcement to avoid false "cron required".
+    if isinstance(msg.content, str) and msg.content.strip().lower().startswith("heartbeat task:"):
+        required_tool = None
     tools_executed = False
 
     is_weak_model = loop._is_weak_model(model)
@@ -199,10 +361,26 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     # but still uses the LLM to produce a nice natural-language summary of the result.
     _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "weather", "speedtest", "stock", "crypto", "server_monitor"}
     if required_tool and required_tool in _DIRECT_TOOLS:
+        if required_tool == "cleanup_system":
+            # Long-running maintenance operations should acknowledge immediately
+            # so users don't feel the bot is frozen while cleanup is in progress.
+            try:
+                await loop.bus.publish_outbound(
+                    OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content="Sedang membersihkan cache dan file sementara. Mohon tunggu sebentar...",
+                    )
+                )
+            except Exception:
+                pass
         direct_result = await loop._execute_required_tool_fallback(required_tool, msg)
         if direct_result is not None:
             logger.info(f"Direct tool execution (bypassed LLM tool-call): {required_tool}")
-            # Now ask the LLM to format the result naturally
+            # Mutating direct tools should return raw output immediately.
+            if required_tool in {"cleanup_system"}:
+                return direct_result
+            # Read-only direct tools still get an LLM-formatted summary.
             summary_messages = messages + [
                 {
                     "role": "user",
@@ -309,6 +487,16 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 logger.warning(f"Tool enforcement fallback executed for '{required_tool}'")
                 return fallback_result
 
+        if response.has_tool_calls:
+            # Before tool output exists, always emit neutral progress text.
+            # Never forward model completion-like content at this stage.
+            display_content = "Processing your request, please wait..."
+            if display_content not in status_updates_sent:
+                status_updates_sent.add(display_content)
+                await loop.bus.publish_outbound(OutboundMessage(
+                    channel=msg.channel, chat_id=msg.chat_id, content=display_content
+                ))
+
         if response.content:
             if not response.has_tool_calls and not self_eval_retried:
                 passed, nudge = loop._self_evaluate(msg.content, response.content)
@@ -349,16 +537,6 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                             score_after=score,
                         )
 
-            if response.has_tool_calls:
-                # If the AI generated tool calls but forgot to say anything,
-                # send a progressive status update to the user automatically.
-                display_content = response.content or "Processing your request, please wait..."
-                if display_content not in status_updates_sent:
-                    status_updates_sent.add(display_content)
-                    await loop.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel, chat_id=msg.chat_id, content=display_content
-                    ))
-
             messages = loop.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
             if not response.has_tool_calls:
                 return response.content
@@ -383,9 +561,64 @@ async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tup
     turn_id = str(getattr(loop, "_active_turn_id", "turn-unknown"))
     last_error: Exception | None = None
 
+    def _provider_response_is_error(response: Any) -> bool:
+        """Detect provider-level synthetic error payloads that should trigger model fallback."""
+        finish_reason = str(getattr(response, "finish_reason", "") or "").lower()
+        if finish_reason == "error":
+            return True
+        content = str(getattr(response, "content", "") or "")
+        return content.startswith("All models failed. Last error:")
+
+    async def _chat_single_model(model_name: str, *, include_tools: bool) -> Any:
+        """
+        Execute provider call for one explicit model only.
+
+        Runtime already owns model fallback order; provider-level fallback chain
+        is temporarily disabled to avoid double-fallback ambiguity and misleading
+        observability (e.g., primary logs "success" while fallback actually answered).
+        """
+        provider = loop.provider
+        restore_fallbacks: list[str] | None = None
+        current_fallbacks = getattr(provider, "fallbacks", None)
+        if isinstance(current_fallbacks, list):
+            restore_fallbacks = list(current_fallbacks)
+            provider.fallbacks = []
+        try:
+            kwargs: dict[str, Any] = {
+                "messages": messages,
+                "model": model_name,
+            }
+            if include_tools:
+                kwargs["tools"] = loop.tools.get_definitions()
+            return await provider.chat(**kwargs)
+        finally:
+            if restore_fallbacks is not None:
+                provider.fallbacks = restore_fallbacks
+
     for attempt_idx, current_model in enumerate(chain_snapshot[:max_attempts], start=1):
         state = "primary" if attempt_idx == 1 else "model_fallback"
         original_key = None
+        _emit_runtime_event(
+            loop,
+            "llm_attempt",
+            turn_id=turn_id,
+            model_chain=list(chain_snapshot),
+            attempt_index=attempt_idx,
+            model=current_model,
+            state=state,
+        )
+
+        allowed_by_quota, quota_message = _check_quota_guard(
+            loop,
+            messages,
+            current_model,
+            turn_id=turn_id,
+            attempt_index=attempt_idx,
+        )
+        if quota_message:
+            logger.warning(quota_message)
+        if not allowed_by_quota:
+            return None, RuntimeError(f"Quota exceeded: {quota_message}")
 
         if loop.auth_rotation and hasattr(loop.provider, "api_key"):
             current_key = loop.auth_rotation.current_key()
@@ -393,22 +626,32 @@ async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tup
             loop.provider.api_key = current_key
 
         try:
-            response = await loop.provider.chat(
-                messages=messages,
-                tools=loop.tools.get_definitions(),
-                model=current_model,
-            )
+            response = await _chat_single_model(current_model, include_tools=True)
+            if _provider_response_is_error(response):
+                raise RuntimeError(str(getattr(response, "content", "Provider returned error response")))
             if original_key is not None:
                 loop.provider.api_key = original_key
 
             loop.last_model_used = current_model
             loop.last_fallback_used = bool(current_model != chain_snapshot[0])
             loop.last_model_chain = list(chain_snapshot)
+            _apply_response_quota_usage(loop, response)
             if hasattr(loop, "resilience"):
                 loop.resilience.on_success()
             logger.info(
                 f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} state={state} "
                 f"model={current_model} result=success"
+            )
+            _emit_runtime_event(
+                loop,
+                "llm_attempt_result",
+                turn_id=turn_id,
+                model_chain=list(chain_snapshot),
+                attempt_index=attempt_idx,
+                model=current_model,
+                state=state,
+                result="success",
+                error_class="",
             )
             return response, None
         except Exception as exc:
@@ -421,6 +664,17 @@ async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tup
             logger.warning(
                 f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} state={state} "
                 f"model={current_model} class={error_class} error={exc}"
+            )
+            _emit_runtime_event(
+                loop,
+                "llm_attempt_result",
+                turn_id=turn_id,
+                model_chain=list(chain_snapshot),
+                attempt_index=attempt_idx,
+                model=current_model,
+                state=state,
+                result="error",
+                error_class=error_class,
             )
 
             # State: auth_rotate (one attempt on same model with rotated key)
@@ -442,11 +696,9 @@ async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tup
                             f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} "
                             f"state={state} model={current_model} reason={reason}"
                         )
-                        response = await loop.provider.chat(
-                            messages=messages,
-                            tools=loop.tools.get_definitions(),
-                            model=current_model,
-                        )
+                        response = await _chat_single_model(current_model, include_tools=True)
+                        if _provider_response_is_error(response):
+                            raise RuntimeError(str(getattr(response, "content", "Provider returned error response")))
                         loop.provider.api_key = original_key
                         loop.last_model_used = current_model
                         loop.last_fallback_used = bool(current_model != chain_snapshot[0])
@@ -472,10 +724,9 @@ async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tup
                         f"turn_id={turn_id} attempt={attempt_idx}/{max_attempts} "
                         f"state=text_only_retry model={current_model}"
                     )
-                    response = await loop.provider.chat(
-                        messages=messages,
-                        model=current_model,
-                    )
+                    response = await _chat_single_model(current_model, include_tools=False)
+                    if _provider_response_is_error(response):
+                        raise RuntimeError(str(getattr(response, "content", "Provider returned error response")))
                     loop.last_model_used = current_model
                     loop.last_fallback_used = bool(current_model != chain_snapshot[0])
                     loop.last_model_chain = list(chain_snapshot)
@@ -607,6 +858,15 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
                 f"tool_idempotency_hit=1 reason=tool_call_id_replay tool={tc.name} "
                 f"tool_call_id={tc.id} turn_id={turn_id}"
             )
+            _emit_runtime_event(
+                loop,
+                "tool_idempotency_hit",
+                turn_id=turn_id,
+                tool_name=tc.name,
+                tool_call_id=tc.id,
+                reason="tool_call_id_replay",
+                tool_idempotency_hit=1,
+            )
             messages = loop.context.add_tool_result(messages, tc.id, tc.name, cached_result)
             continue
         if dedupe_enabled and payload_key in payload_cache:
@@ -616,6 +876,15 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
             logger.warning(
                 f"tool_idempotency_hit=1 reason=payload_duplicate tool={tc.name} "
                 f"tool_call_id={tc.id} turn_id={turn_id}"
+            )
+            _emit_runtime_event(
+                loop,
+                "tool_idempotency_hit",
+                turn_id=turn_id,
+                tool_name=tc.name,
+                tool_call_id=tc.id,
+                reason="payload_duplicate",
+                tool_idempotency_hit=1,
             )
             messages = loop.context.add_tool_result(messages, tc.id, tc.name, cached_result)
             continue
@@ -709,4 +978,3 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
 def format_tool_result(loop: Any, result: Any) -> str:
     """Format tool result for LLM context."""
     return str(result)
-

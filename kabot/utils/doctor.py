@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import socket
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from rich import box
@@ -22,8 +25,20 @@ from kabot.utils.bootstrap_parity import (
     policy_from_config,
 )
 from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
+from kabot.utils.soak_gate import evaluate_alpha_soak_gate, load_soak_metrics
 
 console = Console()
+_INSTANCE_BRIDGE_REQUIRED_TYPES = {
+    "whatsapp",
+    "signal",
+    "matrix",
+    "teams",
+    "google_chat",
+    "mattermost",
+    "webex",
+    "line",
+}
+_LEGACY_BRIDGE_REQUIRED_TYPES = {"whatsapp"}
 
 
 class KabotDoctor:
@@ -71,6 +86,19 @@ class KabotDoctor:
             "dependencies": self.check_dependencies(),
             "connectivity": asyncio.run(self.check_connectivity()),
             "skills": self.check_skills(),
+        }
+
+    def run_parity_diagnostic(self) -> dict[str, Any]:
+        """Run parity-focused diagnostics required for 0.5.8 ops gate."""
+        return {
+            "runtime_resilience": self._runtime_resilience_status(),
+            "fallback_state_machine": self._fallback_state_machine_status(),
+            "adapter_registry": self._adapter_registry_status(),
+            "migration_status": self._migration_status(),
+            "bridge_health": self._check_bridge_health(),
+            "skills_precedence": self._skills_precedence_status(),
+            "soak_gate": self._soak_gate_status(),
+            "generated_at": datetime.now().isoformat(),
         }
 
     def _managed_directories(self) -> list[tuple[str, Path]]:
@@ -245,6 +273,265 @@ class KabotDoctor:
                 missing.append({"name": name, "error": err})
         return {"eligible": eligible, "missing": missing}
 
+    def _runtime_resilience_status(self) -> dict[str, Any]:
+        runtime_cfg = getattr(self.config, "runtime", None)
+        resilience = getattr(runtime_cfg, "resilience", None)
+        observability = getattr(runtime_cfg, "observability", None)
+        quotas = getattr(runtime_cfg, "quotas", None)
+        return {
+            "enabled": bool(getattr(resilience, "enabled", True)),
+            "dedupe_tool_calls": bool(getattr(resilience, "dedupe_tool_calls", True)),
+            "max_model_attempts_per_turn": int(getattr(resilience, "max_model_attempts_per_turn", 4)),
+            "max_tool_retry_per_turn": int(getattr(resilience, "max_tool_retry_per_turn", 1)),
+            "observability_enabled": bool(getattr(observability, "enabled", True)),
+            "quotas_enabled": bool(getattr(quotas, "enabled", False)),
+        }
+
+    def _fallback_state_machine_status(self) -> dict[str, Any]:
+        from kabot.agent.loop_core import execution_runtime
+
+        return {
+            "call_llm_with_fallback_present": callable(getattr(execution_runtime, "call_llm_with_fallback", None)),
+            "process_tool_calls_present": callable(getattr(execution_runtime, "process_tool_calls", None)),
+            "error_classifier_present": callable(getattr(execution_runtime, "_classify_runtime_error", None)),
+        }
+
+    def _adapter_registry_status(self) -> dict[str, Any]:
+        from kabot.channels.adapters import AdapterRegistry
+        from kabot.bus.queue import MessageBus
+
+        feature_flags = {}
+        if self.config is not None:
+            feature_flags = dict(getattr(getattr(self.config, "channels", None), "adapters", {}) or {})
+        registry = AdapterRegistry(feature_flags=feature_flags)
+        statuses = registry.list_status()
+        status_by_key = {s.key: s for s in statuses}
+        total = len(statuses)
+        enabled = sum(1 for s in statuses if s.enabled)
+        production = sum(1 for s in statuses if s.production)
+        experimental = sum(1 for s in statuses if s.experimental)
+        placeholder_like = [s.key for s in statuses if "(planned)" in s.description or "(experimental)" in s.description]
+        instance_channels: list[dict[str, Any]] = []
+        instance_reasons: dict[str, int] = {}
+        configured_instances = 0
+        if self.config is not None:
+            for instance in getattr(self.config.channels, "instances", []) or []:
+                configured_instances += 1
+                instance_type = str(getattr(instance, "type", "") or "").strip()
+                instance_id = str(getattr(instance, "id", "") or "").strip()
+                adapter_status = status_by_key.get(instance_type)
+                adapter_enabled = bool(adapter_status.enabled) if adapter_status else False
+                constructable = False
+                if adapter_enabled:
+                    try:
+                        constructable = (
+                            registry.create_instance_channel(
+                                instance=instance,
+                                config=self.config,
+                                bus=MessageBus(),
+                                session_manager=None,
+                            )
+                            is not None
+                        )
+                    except Exception:
+                        constructable = False
+                cfg = getattr(instance, "config", {}) or {}
+                bridge_url = str(cfg.get("bridge_url", "")).strip() if isinstance(cfg, dict) else ""
+                reachable = self._bridge_url_reachable(bridge_url) if bridge_url else None
+                reasons: list[str] = []
+                if adapter_status is None:
+                    reasons.append("adapter_not_registered")
+                elif not adapter_enabled:
+                    reasons.append("adapter_disabled_by_flag")
+                elif not constructable:
+                    reasons.append("adapter_init_failed")
+                if instance_type in _INSTANCE_BRIDGE_REQUIRED_TYPES:
+                    if not bridge_url:
+                        reasons.append("missing_bridge_url")
+                    elif reachable is False:
+                        reasons.append("bridge_unreachable")
+                status = "ready" if not reasons else "not_ready"
+                for reason in reasons:
+                    instance_reasons[reason] = instance_reasons.get(reason, 0) + 1
+                instance_channels.append(
+                    {
+                        "key": f"{instance_type}:{instance_id}" if instance_type and instance_id else instance_id or instance_type,
+                        "type": instance_type,
+                        "id": instance_id,
+                        "adapter_enabled": adapter_enabled,
+                        "constructable": constructable,
+                        "bridge_url": bridge_url or None,
+                        "reachable": reachable,
+                        "status": status,
+                        "reasons": reasons,
+                    }
+                )
+        legacy_channels: list[dict[str, Any]] = []
+        legacy_reasons: dict[str, int] = {}
+        if self.config is not None:
+            for status in statuses:
+                if not status.supports_legacy:
+                    continue
+                legacy_cfg = getattr(self.config.channels, status.key, None)
+                legacy_enabled = bool(getattr(legacy_cfg, "enabled", False)) if legacy_cfg else False
+                if not legacy_enabled:
+                    continue
+                constructable = False
+                if status.enabled:
+                    try:
+                        constructable = (
+                            registry.create_legacy_channel(
+                                key=status.key,
+                                config=self.config,
+                                bus=MessageBus(),
+                                session_manager=None,
+                            )
+                            is not None
+                        )
+                    except Exception:
+                        constructable = False
+                bridge_url: str | None = None
+                reachable: bool | None = None
+                if status.key in _LEGACY_BRIDGE_REQUIRED_TYPES and legacy_cfg is not None:
+                    bridge_url = str(getattr(legacy_cfg, "bridge_url", "") or "").strip() or None
+                    if bridge_url:
+                        reachable = self._bridge_url_reachable(bridge_url)
+                reasons: list[str] = []
+                if not status.enabled:
+                    reasons.append("adapter_disabled_by_flag")
+                elif not constructable:
+                    reasons.append("adapter_init_failed")
+                if status.key in _LEGACY_BRIDGE_REQUIRED_TYPES:
+                    if not bridge_url:
+                        reasons.append("missing_bridge_url")
+                    elif reachable is False:
+                        reasons.append("bridge_unreachable")
+                health = "ready" if not reasons else "not_ready"
+                for reason in reasons:
+                    legacy_reasons[reason] = legacy_reasons.get(reason, 0) + 1
+                legacy_channels.append(
+                    {
+                        "key": status.key,
+                        "adapter_enabled": bool(status.enabled),
+                        "constructable": constructable,
+                        "bridge_url": bridge_url,
+                        "reachable": reachable,
+                        "status": health,
+                        "reasons": reasons,
+                    }
+                )
+        ready_instances = sum(1 for item in instance_channels if item.get("status") == "ready")
+        ready_legacy = sum(1 for item in legacy_channels if item.get("status") == "ready")
+        return {
+            "total": total,
+            "enabled": enabled,
+            "production": production,
+            "experimental": experimental,
+            "placeholder_like": placeholder_like,
+            "configured_instances": configured_instances,
+            "ready_instances": ready_instances,
+            "not_ready_instances": max(0, configured_instances - ready_instances),
+            "ready_legacy": ready_legacy,
+            "not_ready_legacy": max(0, len(legacy_channels) - ready_legacy),
+            "instance_reason_counts": instance_reasons,
+            "legacy_reason_counts": legacy_reasons,
+            "instance_channels": instance_channels,
+            "legacy_channels": legacy_channels,
+        }
+
+    def _bridge_url_reachable(self, bridge_url: str) -> bool:
+        """Check whether a ws/wss URL endpoint is reachable by TCP connect."""
+        try:
+            parsed = urlparse(bridge_url)
+            host = (parsed.hostname or "").strip()
+            if not host:
+                return False
+            if parsed.port is not None:
+                port = int(parsed.port)
+            elif parsed.scheme == "wss":
+                port = 443
+            else:
+                port = 80
+        except Exception:
+            return False
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.5)
+        try:
+            return sock.connect_ex((host, port)) == 0
+        except Exception:
+            return False
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def _migration_status(self) -> dict[str, Any]:
+        cfg = self.config
+        if cfg is None:
+            return {"loaded": False, "canonical_runtime": False, "canonical_skills": False}
+        runtime = getattr(cfg, "runtime", None)
+        skills = getattr(cfg, "skills", None)
+        security = getattr(cfg, "security", None)
+        return {
+            "loaded": True,
+            "canonical_runtime": bool(runtime and getattr(runtime, "resilience", None) and getattr(runtime, "performance", None)),
+            "canonical_observability": bool(runtime and getattr(runtime, "observability", None)),
+            "canonical_quotas": bool(runtime and getattr(runtime, "quotas", None)),
+            "canonical_skills": bool(skills and hasattr(skills, "entries") and hasattr(skills, "install")),
+            "canonical_security": bool(security and getattr(security, "trust_mode", None)),
+        }
+
+    def _check_bridge_health(self) -> dict[str, Any]:
+        bridge_url = "ws://localhost:3001"
+        host = "127.0.0.1"
+        port = 3001
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.5)
+        try:
+            rc = sock.connect_ex((host, port))
+            if rc == 0:
+                return {"status": "up", "detail": f"Bridge reachable at {bridge_url}"}
+            return {"status": "down", "detail": f"Bridge not listening at {bridge_url}"}
+        except Exception as exc:
+            return {"status": "down", "detail": f"Bridge health check failed: {exc}"}
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def _skills_precedence_status(self) -> dict[str, Any]:
+        from kabot.agent.skills import SkillsLoader
+
+        loader = SkillsLoader(self.workspace, skills_config=getattr(self.config, "skills", {}))
+        roots = loader._iter_skill_roots()  # parity-report wants explicit precedence visibility
+        existing = [str(path) for path in roots if path.exists()]
+        return {
+            "roots": [str(path) for path in roots],
+            "existing_roots": existing,
+            "order_note": "higher precedence appears earlier in this list",
+        }
+
+    def _soak_gate_status(self) -> dict[str, Any]:
+        default_path = self.global_dir / "logs" / "soak_latest.json"
+        metrics = load_soak_metrics(default_path)
+        if metrics is None:
+            return {
+                "available": False,
+                "path": str(default_path),
+                "detail": "No valid soak metrics file found; run soak and write metrics to enable gate summary.",
+            }
+        gate = evaluate_alpha_soak_gate(metrics)
+        return {
+            "available": True,
+            "path": str(default_path),
+            "passed": bool(gate.get("passed")),
+            "failures": list(gate.get("failures", [])),
+            "checks": list(gate.get("checks", [])),
+        }
+
     def render_report(self, fix: bool = False, sync_bootstrap: bool = False) -> None:
         """Render diagnostic report."""
         report = self.run_full_diagnostic(fix=fix, sync_bootstrap=sync_bootstrap)
@@ -285,3 +572,79 @@ class KabotDoctor:
                 "[yellow]Tip: Configure bootstrap baseline and run 'kabot doctor --fix --bootstrap-sync' "
                 "to enforce dev/prod prompt parity.[/yellow]\n"
             )
+
+    def render_parity_report(self) -> None:
+        """Render a concise parity-focused operations report."""
+        report = self.run_parity_diagnostic()
+
+        console.print("\n[bold cyan]+ Kabot parity report[/bold cyan]")
+
+        runtime = report["runtime_resilience"]
+        runtime_text = (
+            f"- resilience.enabled: {runtime['enabled']}\n"
+            f"- dedupe_tool_calls: {runtime['dedupe_tool_calls']}\n"
+            f"- max_model_attempts_per_turn: {runtime['max_model_attempts_per_turn']}\n"
+            f"- max_tool_retry_per_turn: {runtime['max_tool_retry_per_turn']}\n"
+            f"- observability.enabled: {runtime['observability_enabled']}\n"
+            f"- quotas.enabled: {runtime['quotas_enabled']}"
+        )
+        console.print(Panel(runtime_text, title=" Runtime Resilience ", border_style="dim", box=box.ROUNDED))
+
+        fallback = report["fallback_state_machine"]
+        fallback_text = "\n".join([f"- {k}: {v}" for k, v in fallback.items()])
+        console.print(Panel(fallback_text, title=" Fallback State Machine ", border_style="dim", box=box.ROUNDED))
+
+        adapter = report["adapter_registry"]
+        adapter_text = (
+            f"- total: {adapter['total']}\n"
+            f"- enabled: {adapter['enabled']}\n"
+            f"- production: {adapter['production']}\n"
+            f"- experimental: {adapter['experimental']}\n"
+            f"- placeholder_like: {len(adapter['placeholder_like'])}\n"
+            f"- configured_instances: {adapter.get('configured_instances', 0)}\n"
+            f"- ready_instances: {adapter.get('ready_instances', 0)}\n"
+            f"- not_ready_instances: {adapter.get('not_ready_instances', 0)}\n"
+            f"- ready_legacy: {adapter.get('ready_legacy', 0)}\n"
+            f"- not_ready_legacy: {adapter.get('not_ready_legacy', 0)}"
+        )
+        not_ready_items: list[str] = []
+        for row in adapter.get("instance_channels", []):
+            if row.get("status") != "not_ready":
+                continue
+            reasons = ", ".join(row.get("reasons", [])) or "unknown"
+            not_ready_items.append(f"- {row.get('key')}: {reasons}")
+        for row in adapter.get("legacy_channels", []):
+            if row.get("status") != "not_ready":
+                continue
+            reasons = ", ".join(row.get("reasons", [])) or "unknown"
+            not_ready_items.append(f"- legacy:{row.get('key')}: {reasons}")
+        if not_ready_items:
+            adapter_text += "\n- not_ready_details:\n" + "\n".join(not_ready_items)
+        console.print(Panel(adapter_text, title=" Adapter Registry ", border_style="dim", box=box.ROUNDED))
+
+        migration = report["migration_status"]
+        migration_text = "\n".join([f"- {k}: {v}" for k, v in migration.items()])
+        console.print(Panel(migration_text, title=" Migration Status ", border_style="dim", box=box.ROUNDED))
+
+        bridge = report["bridge_health"]
+        bridge_text = f"- status: {bridge['status']}\n- detail: {bridge['detail']}"
+        console.print(Panel(bridge_text, title=" Bridge Health ", border_style="dim", box=box.ROUNDED))
+
+        skills = report["skills_precedence"]
+        roots = "\n".join([f"- {v}" for v in skills.get("roots", [])]) or "- (none)"
+        console.print(Panel(roots, title=" Skills Precedence ", border_style="dim", box=box.ROUNDED))
+
+        soak = report["soak_gate"]
+        if soak.get("available"):
+            soak_text = (
+                f"- passed: {soak.get('passed')}\n"
+                f"- failures: {', '.join(soak.get('failures', [])) or '(none)'}\n"
+                f"- path: {soak.get('path')}"
+            )
+        else:
+            soak_text = (
+                f"- available: False\n"
+                f"- path: {soak.get('path')}\n"
+                f"- detail: {soak.get('detail')}"
+            )
+        console.print(Panel(soak_text, title=" Soak Gate (Alpha) ", border_style="dim", box=box.ROUNDED))

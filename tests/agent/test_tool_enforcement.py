@@ -45,6 +45,27 @@ def test_required_tool_for_query_detects_multilingual_weather_and_reminder(agent
     assert agent_loop._required_tool_for_query("北京今天天气怎么样") == "weather"
 
 
+def test_required_tool_for_query_prefers_cleanup_when_cleanup_intent_and_disk_terms_overlap(agent_loop):
+    assert agent_loop._required_tool_for_query("bersihkan cache ssd pc sekarang") == "cleanup_system"
+    assert agent_loop._required_tool_for_query("ya bersihkan cache agar free space lebih banyak") == "cleanup_system"
+    assert agent_loop._required_tool_for_query("bersihkan space") == "cleanup_system"
+
+
+def test_required_tool_for_query_keeps_sysinfo_for_non_cleanup_disk_query(agent_loop):
+    assert agent_loop._required_tool_for_query("cek free space ssd sekarang") == "get_system_info"
+
+
+def test_required_tool_for_query_supports_multilingual_cleanup_intent(agent_loop):
+    assert agent_loop._required_tool_for_query("please clean up disk cache now") == "cleanup_system"
+    assert agent_loop._required_tool_for_query("ล้างแคช พื้นที่ดิสก์ ตอนนี้") == "cleanup_system"
+    assert agent_loop._required_tool_for_query("请清理磁盘空间并清除缓存") == "cleanup_system"
+
+
+def test_required_tool_for_query_keeps_multilingual_sysinfo_without_cleanup_action(agent_loop):
+    assert agent_loop._required_tool_for_query("พื้นที่ดิสก์คงเหลือเท่าไหร่") == "get_system_info"
+    assert agent_loop._required_tool_for_query("磁盘空间剩余多少") == "get_system_info"
+
+
 @pytest.mark.asyncio
 async def test_execute_required_tool_fallback_weather_calls_weather_tool(agent_loop):
     execute_mock = AsyncMock(return_value="Cilacap: 27C, cerah")

@@ -62,6 +62,65 @@ def _relative(repo_root: Path, path: Path) -> str:
         return str(path)
 
 
+def _extract_frontmatter_meta(skill_md: Path) -> tuple[str, str]:
+    """Extract best-effort skill metadata (name, description) from frontmatter/body."""
+    fallback_name = skill_md.parent.name
+    fallback_desc = ""
+    try:
+        content = skill_md.read_text(encoding="utf-8")
+    except OSError:
+        return fallback_name, fallback_desc
+
+    text = content.strip()
+    if not text:
+        return fallback_name, fallback_desc
+
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = parts[1]
+            body = parts[2].strip()
+            name = fallback_name
+            description = ""
+            for line in frontmatter.splitlines():
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                clean_key = key.strip().lower()
+                clean_val = value.strip().strip('"').strip("'")
+                if clean_key == "name" and clean_val:
+                    name = clean_val
+                if clean_key == "description" and clean_val:
+                    description = clean_val
+            if not description:
+                description = body.splitlines()[0].strip() if body else ""
+            return name, description
+
+    first_line = text.splitlines()[0].strip()
+    return fallback_name, first_line
+
+
+def _candidate_score(repo_root: Path, candidate_dir: Path) -> int:
+    """Heuristic score for UX ordering of multi-skill candidates."""
+    try:
+        rel = candidate_dir.resolve().relative_to(repo_root.resolve())
+        rel_str = str(rel).replace("\\", "/").lower()
+    except ValueError:
+        rel_str = candidate_dir.name.lower()
+
+    depth = len([part for part in rel_str.split("/") if part])
+    score = 100 - (depth * 5)
+    if rel_str == "skill":
+        score += 120
+    elif rel_str.startswith("skill/"):
+        score += 90
+    if rel_str.startswith("skills/"):
+        score += 80
+    if "/skill" in rel_str:
+        score += 20
+    return score
+
+
 def resolve_skill_source_dir(repo_root: Path, candidates: list[Path], subdir: str | None) -> Path:
     """Resolve which candidate should be installed from this repository."""
     if subdir:
@@ -181,3 +240,41 @@ def install_skill_from_git(
         skill_name=skill_slug,
         skill_key=skill_key,
     )
+
+
+def list_skill_candidates_from_git(repo_url: str, ref: str | None = None) -> list[str]:
+    """Clone repo to temp dir and return discovered SKILL.md candidate subdirs."""
+    details = list_skill_candidate_details_from_git(repo_url, ref)
+    return [str(item.get("subdir") or "").strip() for item in details if str(item.get("subdir") or "").strip()]
+
+
+def list_skill_candidate_details_from_git(repo_url: str, ref: str | None = None) -> list[dict[str, object]]:
+    """Clone repo to temp dir and return discovered candidate subdirs with metadata/ranking."""
+    repo_value = str(repo_url).strip()
+    if not repo_value:
+        raise ValueError("Repository URL/path is required.")
+
+    with tempfile.TemporaryDirectory(prefix="kabot-skill-candidates-") as tmp:
+        clone_root = Path(tmp) / "repo"
+        repo_root = clone_skill_repo(repo_value, ref, clone_root)
+        candidates = discover_skill_dirs(repo_root)
+        detailed: list[dict[str, object]] = []
+        for candidate in candidates:
+            skill_md = candidate / "SKILL.md"
+            name, description = _extract_frontmatter_meta(skill_md)
+            subdir = _relative(repo_root, candidate)
+            detailed.append(
+                {
+                    "subdir": subdir,
+                    "name": name or candidate.name,
+                    "description": description or "",
+                    "score": _candidate_score(repo_root, candidate),
+                }
+            )
+        detailed.sort(
+            key=lambda item: (
+                -int(item.get("score") or 0),
+                str(item.get("subdir") or "").lower(),
+            )
+        )
+        return detailed

@@ -1,6 +1,15 @@
 import sys
 
+import pytest
+
 from kabot.agent.skills import SkillsLoader
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home(monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
 
 
 def _write_skill(skill_root, skill_name: str, metadata_json: str) -> None:
@@ -27,6 +36,8 @@ def test_list_skills_marks_top_level_os_as_unsupported(tmp_path):
     workspace.mkdir()
     builtin = tmp_path / "builtin"
     builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
 
     unsupported = "darwin" if sys.platform == "win32" else "win32"
     _write_skill(
@@ -35,7 +46,11 @@ def test_list_skills_marks_top_level_os_as_unsupported(tmp_path):
         f'{{"kabot":{{"os":["{unsupported}"],"requires":{{"bins":[],"env":[]}}}}}}',
     )
 
-    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    loader = SkillsLoader(
+        workspace,
+        builtin_skills_dir=builtin,
+        skills_config={"load": {"managed_dir": str(managed)}},
+    )
     all_skills = loader.list_skills(filter_unavailable=False)
     skill = next(s for s in all_skills if s["name"] == "sample_os_blocked")
 
@@ -49,6 +64,8 @@ def test_list_skills_accepts_common_os_aliases(tmp_path):
     workspace.mkdir()
     builtin = tmp_path / "builtin"
     builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
 
     if sys.platform == "win32":
         required = "windows"
@@ -63,7 +80,11 @@ def test_list_skills_accepts_common_os_aliases(tmp_path):
         f'{{"kabot":{{"os":["{required}"],"requires":{{"bins":[],"env":[]}}}}}}',
     )
 
-    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    loader = SkillsLoader(
+        workspace,
+        builtin_skills_dir=builtin,
+        skills_config={"load": {"managed_dir": str(managed)}},
+    )
     all_skills = loader.list_skills(filter_unavailable=False)
     skill = next(s for s in all_skills if s["name"] == "sample_os_allowed")
 

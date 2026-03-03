@@ -18,11 +18,13 @@ _RESERVED_KEYS = {
     "allowBundled",
     "load",
     "install",
+    "onboarding",
     "limits",
 }
 
 _INSTALL_MODES = {"manual", "auto"}
 _NODE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
+_SOUL_INJECTION_MODES = {"disabled", "prompt", "auto"}
 
 
 def _coalesce(mapping: dict[str, Any], *keys: str) -> Any:
@@ -123,6 +125,36 @@ def _normalize_install_settings(raw_install: Any) -> dict[str, Any]:
     return install
 
 
+def _normalize_onboarding_settings(raw_onboarding: Any) -> dict[str, Any]:
+    onboarding: dict[str, Any] = {
+        "auto_prompt_env": True,
+        "auto_enable_after_install": True,
+        "soul_injection_mode": "prompt",
+    }
+    if not isinstance(raw_onboarding, dict):
+        return onboarding
+
+    auto_prompt_env = _coalesce(raw_onboarding, "auto_prompt_env", "autoPromptEnv")
+    if isinstance(auto_prompt_env, bool):
+        onboarding["auto_prompt_env"] = auto_prompt_env
+
+    auto_enable_after_install = _coalesce(
+        raw_onboarding,
+        "auto_enable_after_install",
+        "autoEnableAfterInstall",
+    )
+    if isinstance(auto_enable_after_install, bool):
+        onboarding["auto_enable_after_install"] = auto_enable_after_install
+
+    soul_injection_mode = str(
+        _coalesce(raw_onboarding, "soul_injection_mode", "soulInjectionMode") or ""
+    ).strip().lower()
+    if soul_injection_mode in _SOUL_INJECTION_MODES:
+        onboarding["soul_injection_mode"] = soul_injection_mode
+
+    return onboarding
+
+
 def normalize_skills_settings(raw_skills: Any) -> dict[str, Any]:
     """Normalize raw skills config into canonical dict.
 
@@ -196,6 +228,8 @@ def normalize_skills_settings(raw_skills: Any) -> dict[str, Any]:
 
     install_cfg = _coalesce(raw_map, "install")
     result["install"] = _normalize_install_settings(install_cfg)
+    onboarding_cfg = _coalesce(raw_map, "onboarding")
+    result["onboarding"] = _normalize_onboarding_settings(onboarding_cfg)
 
     limits_cfg = _coalesce(raw_map, "limits")
     if isinstance(limits_cfg, dict) and limits_cfg:
@@ -238,6 +272,14 @@ def resolve_install_settings(raw_skills: Any) -> dict[str, Any]:
     if isinstance(install, dict):
         return deepcopy(install)
     return _normalize_install_settings({})
+
+
+def resolve_onboarding_settings(raw_skills: Any) -> dict[str, Any]:
+    normalized = normalize_skills_settings(raw_skills)
+    onboarding = normalized.get("onboarding")
+    if isinstance(onboarding, dict):
+        return deepcopy(onboarding)
+    return _normalize_onboarding_settings({})
 
 
 def iter_skill_env_pairs(raw_skills: Any) -> list[tuple[str, str, str]]:

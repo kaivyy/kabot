@@ -55,3 +55,39 @@ def test_context_builder_includes_graph_memory_when_available(tmp_path: Path):
     prompt = builder.build_system_prompt(profile="GENERAL", current_message="what does kabot use?")
     assert "# Graph Memory" in prompt
     assert "kabot uses chromadb" in prompt.lower()
+
+
+def test_context_builder_skips_auto_skill_match_for_heartbeat(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    calls = {"count": 0}
+
+    def _match_skills(_msg: str, _profile: str):
+        calls["count"] += 1
+        return ["healthcheck"]
+
+    builder.skills.match_skills = _match_skills  # type: ignore[assignment]
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="Heartbeat task: Autopilot patrol: review recent context",
+    )
+
+    assert calls["count"] == 0
+    assert "Auto-Selected Skills" not in prompt
+
+
+def test_context_builder_skips_skills_summary_for_heartbeat(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    called = {"summary": 0}
+
+    def _summary() -> str:
+        called["summary"] += 1
+        return "<skills><skill /></skills>"
+
+    builder.skills.build_skills_summary = _summary  # type: ignore[assignment]
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="Heartbeat task: Autopilot patrol: review pending schedules",
+    )
+
+    assert called["summary"] == 0
+    assert "Available Skills (Reference Documents)" not in prompt

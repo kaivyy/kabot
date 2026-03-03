@@ -60,6 +60,8 @@ class AdapterRegistry:
         return self._specs.get(key)
 
     def _is_enabled(self, spec: ChannelAdapterSpec) -> bool:
+        if spec.key in self.feature_flags:
+            return bool(self.feature_flags.get(spec.key))
         if not spec.capabilities.experimental:
             return True
         return bool(self.feature_flags.get(spec.key, False))
@@ -228,25 +230,76 @@ class AdapterRegistry:
         )
 
         # Target top-15 production keys scaffolded for future implementation.
-        for key in [
-            "signal",
-            "matrix",
-            "google_chat",
-            "teams",
-            "mattermost",
-            "webex",
-            "line",
-        ]:
-            self.register(
-                ChannelAdapterSpec(
-                    key=key,
-                    legacy_field=None,
-                    config_model_path=None,
-                    factory=_placeholder_factory,
-                    capabilities=production,
-                    description=f"{key} adapter (planned)",
-                )
+        self.register(
+            ChannelAdapterSpec(
+                key="signal",
+                legacy_field=None,
+                config_model_path="kabot.config.schema.SignalConfig",
+                factory=_factory_from_path("kabot.channels.signal", "SignalChannel"),
+                capabilities=production,
+                description="Signal bridge adapter",
             )
+        )
+        self.register(
+            ChannelAdapterSpec(
+                key="matrix",
+                legacy_field=None,
+                config_model_path="kabot.config.schema.MatrixConfig",
+                factory=_factory_from_path("kabot.channels.matrix", "MatrixChannel"),
+                capabilities=production,
+                description="Matrix bridge adapter",
+            )
+        )
+        self.register(
+            ChannelAdapterSpec(
+                key="teams",
+                legacy_field=None,
+                config_model_path="kabot.config.schema.TeamsConfig",
+                factory=_factory_from_path("kabot.channels.teams", "TeamsChannel"),
+                capabilities=production,
+                description="Teams bridge adapter",
+            )
+        )
+        self.register(
+            ChannelAdapterSpec(
+                key="google_chat",
+                legacy_field=None,
+                config_model_path="kabot.config.schema.GoogleChatConfig",
+                factory=_factory_from_path("kabot.channels.google_chat", "GoogleChatChannel"),
+                capabilities=production,
+                description="Google Chat bridge adapter",
+            )
+        )
+        self.register(
+            ChannelAdapterSpec(
+                key="mattermost",
+                legacy_field=None,
+                config_model_path="kabot.config.schema.MattermostConfig",
+                factory=_factory_from_path("kabot.channels.mattermost", "MattermostChannel"),
+                capabilities=production,
+                description="Mattermost bridge adapter",
+            )
+        )
+        self.register(
+            ChannelAdapterSpec(
+                key="webex",
+                legacy_field=None,
+                config_model_path="kabot.config.schema.WebexConfig",
+                factory=_factory_from_path("kabot.channels.webex", "WebexChannel"),
+                capabilities=production,
+                description="Webex bridge adapter",
+            )
+        )
+        self.register(
+            ChannelAdapterSpec(
+                key="line",
+                legacy_field=None,
+                config_model_path="kabot.config.schema.LineConfig",
+                factory=_factory_from_path("kabot.channels.line", "LineChannel"),
+                capabilities=production,
+                description="LINE bridge adapter",
+            )
+        )
 
         # Experimental adapters (disabled unless explicitly feature-flagged).
         for key in [
@@ -286,4 +339,3 @@ class AdapterRegistry:
                     description=f"{key} adapter (experimental)",
                 )
             )
-

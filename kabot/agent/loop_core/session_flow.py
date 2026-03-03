@@ -92,7 +92,15 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
 
 def _append_daily_notes_summary(loop: Any, msg: InboundMessage, final_content: str | None) -> None:
     """Best-effort periodic memory dump for each completed conversation turn."""
-    context = getattr(loop, "context", None)
+    context = None
+    resolve_context = getattr(loop, "_resolve_context_for_message", None)
+    if callable(resolve_context):
+        try:
+            context = resolve_context(msg)
+        except Exception as exc:
+            logger.warning(f"Failed to resolve routed context for daily notes: {exc}")
+    if context is None:
+        context = getattr(loop, "context", None)
     daily_memory = getattr(context, "memory", None) if context else None
     append_today = getattr(daily_memory, "append_today", None)
     if not callable(append_today):

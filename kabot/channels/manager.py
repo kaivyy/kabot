@@ -30,7 +30,8 @@ class ChannelManager:
         self.config = config
         self.bus = bus
         self.session_manager = session_manager
-        self.adapter_registry = AdapterRegistry()
+        feature_flags = getattr(self.config.channels, "adapters", {}) or {}
+        self.adapter_registry = AdapterRegistry(feature_flags=dict(feature_flags))
         self.channels: dict[str, BaseChannel] = {}
         self._instance_keys_by_type: dict[str, list[str]] = {}
         self._dispatch_task: asyncio.Task | None = None
@@ -152,6 +153,9 @@ class ChannelManager:
                     except Exception as e:
                         logger.error(f"Error sending to {msg.channel}: {e}")
                 else:
+                    if msg.channel in {"cli", "system"}:
+                        logger.debug(f"Dropping outbound for non-network channel: {msg.channel}")
+                        continue
                     logger.warning(f"Unknown channel: {msg.channel}")
 
             except asyncio.TimeoutError:

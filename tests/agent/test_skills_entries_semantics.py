@@ -1,7 +1,16 @@
 from pathlib import Path
 import sys
 
+import pytest
+
 from kabot.agent.skills import SkillsLoader
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home(monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
 
 
 def _write_skill(skill_root: Path, skill_name: str, metadata_json: str) -> None:
@@ -28,6 +37,8 @@ def test_entries_env_satisfies_required_env(tmp_path):
     workspace.mkdir()
     builtin = tmp_path / "builtin"
     builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
 
     _write_skill(
         builtin,
@@ -39,6 +50,7 @@ def test_entries_env_satisfies_required_env(tmp_path):
         workspace=workspace,
         builtin_skills_dir=builtin,
         skills_config={
+            "load": {"managed_dir": str(managed)},
             "entries": {
                 "needs_env": {
                     "env": {
@@ -61,6 +73,8 @@ def test_disabled_entry_marks_skill_ineligible(tmp_path):
     workspace.mkdir()
     builtin = tmp_path / "builtin"
     builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
 
     _write_skill(
         builtin,
@@ -72,11 +86,12 @@ def test_disabled_entry_marks_skill_ineligible(tmp_path):
         workspace=workspace,
         builtin_skills_dir=builtin,
         skills_config={
+            "load": {"managed_dir": str(managed)},
             "entries": {
                 "disabled_skill": {
                     "enabled": False,
                 }
-            }
+            },
         },
     )
 
@@ -93,6 +108,8 @@ def test_allow_bundled_blocks_bundled_skill(tmp_path):
     workspace.mkdir()
     builtin = tmp_path / "builtin"
     builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
 
     _write_skill(
         builtin,
@@ -104,6 +121,7 @@ def test_allow_bundled_blocks_bundled_skill(tmp_path):
         workspace=workspace,
         builtin_skills_dir=builtin,
         skills_config={
+            "load": {"managed_dir": str(managed)},
             "allow_bundled": ["allowed_skill"],
         },
     )
@@ -121,6 +139,8 @@ def test_skill_key_entry_env_is_used_for_requirements(tmp_path):
     workspace.mkdir()
     builtin = tmp_path / "builtin"
     builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
 
     _write_skill(
         builtin,
@@ -132,6 +152,7 @@ def test_skill_key_entry_env_is_used_for_requirements(tmp_path):
         workspace=workspace,
         builtin_skills_dir=builtin,
         skills_config={
+            "load": {"managed_dir": str(managed)},
             "entries": {
                 "alias-key": {
                     "env": {
@@ -155,6 +176,8 @@ def test_install_metadata_legacy_cmd_normalized_to_list(tmp_path):
     workspace.mkdir()
     builtin = tmp_path / "builtin"
     builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
 
     _write_skill(
         builtin,
@@ -162,7 +185,11 @@ def test_install_metadata_legacy_cmd_normalized_to_list(tmp_path):
         '{"kabot":{"requires":{"bins":["demo-cli"],"env":[]},"install":{"cmd":"pip install demo-cli","label":"Install demo-cli"}}}',
     )
 
-    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    loader = SkillsLoader(
+        workspace=workspace,
+        builtin_skills_dir=builtin,
+        skills_config={"load": {"managed_dir": str(managed)}},
+    )
     all_skills = loader.list_skills(filter_unavailable=False)
     info = next(s for s in all_skills if s["name"] == "legacy_install_skill")
 
@@ -178,6 +205,8 @@ def test_install_metadata_list_is_filtered_by_installer_os(tmp_path):
     workspace.mkdir()
     builtin = tmp_path / "builtin"
     builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
 
     current_os = sys.platform
     _write_skill(
@@ -193,7 +222,11 @@ def test_install_metadata_list_is_filtered_by_installer_os(tmp_path):
         ),
     )
 
-    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    loader = SkillsLoader(
+        workspace=workspace,
+        builtin_skills_dir=builtin,
+        skills_config={"load": {"managed_dir": str(managed)}},
+    )
     all_skills = loader.list_skills(filter_unavailable=False)
     info = next(s for s in all_skills if s["name"] == "os_filtered_install_skill")
 

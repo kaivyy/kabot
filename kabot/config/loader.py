@@ -202,11 +202,10 @@ def _migrate_config(data: dict) -> dict:
 
     # Canonicalize skills structure (entries/load/install).
     skills_cfg = data.get("skills")
-    if isinstance(skills_cfg, dict):
-        from kabot.config.skills_settings import normalize_skills_settings
+    from kabot.config.skills_settings import normalize_skills_settings
 
-        normalized_skills = normalize_skills_settings(skills_cfg)
-        data["skills"] = convert_to_camel(normalized_skills)
+    normalized_skills = normalize_skills_settings(skills_cfg if isinstance(skills_cfg, dict) else {})
+    data["skills"] = convert_to_camel(normalized_skills)
 
     # Ensure tools.exec.policyPreset exists with compatibility-aware defaults.
     tools_cfg = data.get("tools")
@@ -257,6 +256,18 @@ def _migrate_config(data: dict) -> dict:
         ),
         "maxActionsPerBeat": 1,
     }
+    observability_defaults = {
+        "enabled": True,
+        "emitStructuredEvents": True,
+        "sampleRate": 1.0,
+        "redactSecrets": True,
+    }
+    quota_defaults = {
+        "enabled": False,
+        "maxCostPerDayUsd": 0.0,
+        "maxTokensPerHour": 0,
+        "enforcementMode": "warn",
+    }
 
     resilience_cfg = runtime_cfg.get("resilience")
     if not isinstance(resilience_cfg, dict):
@@ -281,6 +292,38 @@ def _migrate_config(data: dict) -> dict:
         if key not in autopilot_cfg:
             autopilot_cfg[key] = default_val
     runtime_cfg["autopilot"] = autopilot_cfg
+
+    observability_cfg = runtime_cfg.get("observability")
+    if not isinstance(observability_cfg, dict):
+        observability_cfg = {}
+    for key, default_val in observability_defaults.items():
+        if key not in observability_cfg:
+            observability_cfg[key] = default_val
+    runtime_cfg["observability"] = observability_cfg
+
+    quota_cfg = runtime_cfg.get("quotas")
+    if not isinstance(quota_cfg, dict):
+        quota_cfg = {}
+    for key, default_val in quota_defaults.items():
+        if key not in quota_cfg:
+            quota_cfg[key] = default_val
+    runtime_cfg["quotas"] = quota_cfg
+
+    # Security trust-mode defaults.
+    security_cfg = data.get("security")
+    if not isinstance(security_cfg, dict):
+        security_cfg = {}
+        data["security"] = security_cfg
+    trust_mode_cfg = security_cfg.get("trustMode")
+    if not isinstance(trust_mode_cfg, dict):
+        trust_mode_cfg = {}
+    if "enabled" not in trust_mode_cfg:
+        trust_mode_cfg["enabled"] = False
+    if "verifySkillManifest" not in trust_mode_cfg:
+        trust_mode_cfg["verifySkillManifest"] = False
+    if "allowedSigners" not in trust_mode_cfg:
+        trust_mode_cfg["allowedSigners"] = []
+    security_cfg["trustMode"] = trust_mode_cfg
     return data
 
 

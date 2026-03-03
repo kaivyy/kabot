@@ -3,6 +3,7 @@
 import base64
 import mimetypes
 import platform
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -326,6 +327,11 @@ Follow these guardrails to avoid repeating past mistakes.""")
         except Exception:
             pass  # Silently skip if lessons table doesn't exist yet
 
+        is_heartbeat_task = (
+            isinstance(current_message, str)
+            and current_message.strip().lower().startswith("heartbeat task:")
+        )
+
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
         always_skills = self.skills.get_always_skills()
@@ -340,7 +346,7 @@ Follow these guardrails to avoid repeating past mistakes.""")
             loaded_skills.update(skill_names)
 
         if current_message:
-            matched = self.skills.match_skills(current_message, profile)
+            matched = [] if is_heartbeat_task else self.skills.match_skills(current_message, profile)
             # Filter out already-loaded skills
             new_matches = [s for s in matched if s not in loaded_skills]
             if new_matches:
@@ -353,8 +359,19 @@ Follow these guardrails to avoid repeating past mistakes.""")
                     loaded_skills.update(new_matches)
                     logger.info(f"Auto-loaded skills: {new_matches}")
 
-        # 3. Available skills: only show summary (agent uses read_file to load)
-        skills_summary = self.skills.build_skills_summary()
+        # 3. Available skills: only show summary when likely needed.
+        # For routine CHAT/GENERAL turns this summary is large and expensive to
+        # build/tokenize, so keep prompt lean unless user is in coding/research
+        # mode or explicitly asking about skills.
+        wants_skill_help = bool(
+            isinstance(current_message, str)
+            and re.search(r"\bskill(s)?\b", current_message.lower())
+        )
+        include_skills_summary = (
+            not is_heartbeat_task
+            and (profile in {"CODING", "RESEARCH"} or wants_skill_help)
+        )
+        skills_summary = self.skills.build_skills_summary() if include_skills_summary else ""
         if skills_summary:
             parts.append(f"""# Available Skills (Reference Documents)
 

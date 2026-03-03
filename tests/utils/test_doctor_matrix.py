@@ -78,3 +78,139 @@ def test_doctor_reports_bootstrap_parity_and_fixes_missing_files(tmp_path):
 
     report_after = doctor.check_bootstrap_parity()
     assert report_after[0]["status"] == "OK"
+
+
+def test_doctor_parity_report_contains_mandatory_sections(monkeypatch, tmp_path):
+    from kabot.utils.doctor import KabotDoctor
+
+    doctor = KabotDoctor(agent_id="main")
+    doctor.global_dir = tmp_path / "global"
+    doctor.agent_dir = doctor.global_dir / "agents" / "main"
+    doctor.workspace = doctor.agent_dir / "workspace"
+    doctor.workspace.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(doctor, "_check_bridge_health", lambda: {"status": "down", "detail": "bridge not running"})
+    report = doctor.run_parity_diagnostic()
+
+    assert "runtime_resilience" in report
+    assert "fallback_state_machine" in report
+    assert "adapter_registry" in report
+    assert "migration_status" in report
+    assert "bridge_health" in report
+    assert "skills_precedence" in report
+    assert "soak_gate" in report
+
+
+def test_doctor_parity_report_reads_soak_gate_file(tmp_path):
+    from kabot.utils.doctor import KabotDoctor
+
+    doctor = KabotDoctor(agent_id="main")
+    doctor.global_dir = tmp_path / "global"
+    doctor.agent_dir = doctor.global_dir / "agents" / "main"
+    doctor.workspace = doctor.agent_dir / "workspace"
+    doctor.workspace.mkdir(parents=True, exist_ok=True)
+    logs_dir = doctor.global_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "soak_latest.json").write_text(
+        """
+{
+  "runtime_hours": 24,
+  "duplicate_side_effects": 0,
+  "tool_protocol_breaks": 0,
+  "p95_first_response_ms": 3500
+}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = doctor.run_parity_diagnostic()
+    assert report["soak_gate"]["available"] is True
+    assert report["soak_gate"]["passed"] is True
+
+
+def test_doctor_parity_report_adapter_registry_includes_instance_health(monkeypatch, tmp_path):
+    from kabot.config.schema import ChannelInstance, Config
+    from kabot.utils.doctor import KabotDoctor
+
+    doctor = KabotDoctor(agent_id="main")
+    doctor.global_dir = tmp_path / "global"
+    doctor.agent_dir = doctor.global_dir / "agents" / "main"
+    doctor.workspace = doctor.agent_dir / "workspace"
+    doctor.workspace.mkdir(parents=True, exist_ok=True)
+    doctor.config = Config()
+    doctor.config.channels.instances = [
+        ChannelInstance(
+            id="signal_ops",
+            type="signal",
+            enabled=True,
+            config={"bridge_url": "ws://localhost:3011", "allow_from": []},
+        )
+    ]
+    monkeypatch.setattr(doctor, "_bridge_url_reachable", lambda _url: True)
+
+    report = doctor.run_parity_diagnostic()
+    adapter = report["adapter_registry"]
+
+    assert adapter["configured_instances"] == 1
+    assert adapter["instance_channels"][0]["key"] == "signal:signal_ops"
+    assert adapter["instance_channels"][0]["reachable"] is True
+    assert adapter["instance_channels"][0]["constructable"] is True
+    assert adapter["instance_channels"][0]["status"] == "ready"
+    assert adapter["ready_instances"] == 1
+    assert adapter["not_ready_instances"] == 0
+    assert "legacy_channels" in adapter
+
+
+def test_doctor_parity_report_adapter_registry_marks_unreachable_bridge(monkeypatch, tmp_path):
+    from kabot.config.schema import ChannelInstance, Config
+    from kabot.utils.doctor import KabotDoctor
+
+    doctor = KabotDoctor(agent_id="main")
+    doctor.global_dir = tmp_path / "global"
+    doctor.agent_dir = doctor.global_dir / "agents" / "main"
+    doctor.workspace = doctor.agent_dir / "workspace"
+    doctor.workspace.mkdir(parents=True, exist_ok=True)
+    doctor.config = Config()
+    doctor.config.channels.instances = [
+        ChannelInstance(
+            id="signal_ops",
+            type="signal",
+            enabled=True,
+            config={"bridge_url": "ws://localhost:3011", "allow_from": []},
+        )
+    ]
+    monkeypatch.setattr(doctor, "_bridge_url_reachable", lambda _url: False)
+
+    report = doctor.run_parity_diagnostic()
+    adapter = report["adapter_registry"]
+    row = adapter["instance_channels"][0]
+
+    assert row["status"] == "not_ready"
+    assert "bridge_unreachable" in row["reasons"]
+    assert adapter["not_ready_instances"] == 1
+    assert adapter["instance_reason_counts"]["bridge_unreachable"] == 1
+
+
+def test_doctor_parity_report_adapter_registry_marks_disabled_legacy(monkeypatch, tmp_path):
+    from kabot.config.schema import Config
+    from kabot.utils.doctor import KabotDoctor
+
+    doctor = KabotDoctor(agent_id="main")
+    doctor.global_dir = tmp_path / "global"
+    doctor.agent_dir = doctor.global_dir / "agents" / "main"
+    doctor.workspace = doctor.agent_dir / "workspace"
+    doctor.workspace.mkdir(parents=True, exist_ok=True)
+    doctor.config = Config()
+    doctor.config.channels.adapters = {"telegram": False}
+    doctor.config.channels.telegram.enabled = True
+    doctor.config.channels.telegram.token = "dummy"
+
+    report = doctor.run_parity_diagnostic()
+    adapter = report["adapter_registry"]
+    rows = [row for row in adapter["legacy_channels"] if row["key"] == "telegram"]
+    assert rows
+    row = rows[0]
+
+    assert row["status"] == "not_ready"
+    assert "adapter_disabled_by_flag" in row["reasons"]
+    assert adapter["not_ready_legacy"] >= 1

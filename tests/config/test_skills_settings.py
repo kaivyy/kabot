@@ -6,6 +6,7 @@ from kabot.config.skills_settings import (
     resolve_allow_bundled,
     resolve_install_settings,
     resolve_load_settings,
+    resolve_onboarding_settings,
     set_skill_entry_env,
 )
 
@@ -128,3 +129,23 @@ def test_resolve_install_settings_supports_camel_and_snake_case():
     assert resolved["mode"] == "auto"
     assert resolved["node_manager"] == "pnpm"
     assert resolved["prefer_brew"] is False
+
+
+def test_resolve_onboarding_settings_supports_defaults_and_camel_case():
+    defaults = resolve_onboarding_settings({})
+    assert defaults["auto_prompt_env"] is True
+    assert defaults["auto_enable_after_install"] is True
+    assert defaults["soul_injection_mode"] == "prompt"
+
+    configured = resolve_onboarding_settings(
+        {
+            "onboarding": {
+                "autoPromptEnv": False,
+                "autoEnableAfterInstall": False,
+                "soulInjectionMode": "auto",
+            }
+        }
+    )
+    assert configured["auto_prompt_env"] is False
+    assert configured["auto_enable_after_install"] is False
+    assert configured["soul_injection_mode"] == "auto"

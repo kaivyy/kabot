@@ -210,7 +210,12 @@ Kabot ships with self-diagnostics so you can quickly verify if your setup is hea
     ```bash
     kabot doctor --fix --bootstrap-sync
     ```
+*   **Parity report (ops-focused):**
+    ```bash
+    kabot doctor --parity-report
+    ```
 *   **What happens?** Kabot checks config integrity, workspace setup, and runtime dependencies, then prints a clear health report. With `--fix`, it auto-repairs critical issues.
+*   **What parity-report adds:** Runtime resilience status, fallback state machine health, adapter registry status, migration status, bridge health, and current skills source precedence.
 
 ---
 
@@ -916,6 +921,11 @@ Kabot now supports per-skill config using canonical structure:
       "nodeManager": "npm",
       "preferBrew": true
     },
+    "onboarding": {
+      "autoPromptEnv": true,
+      "autoEnableAfterInstall": true,
+      "soulInjectionMode": "prompt"
+    },
     "entries": {
       "notion": {
         "enabled": true,
@@ -937,7 +947,37 @@ Notes:
 - `install.mode` defaults to `manual`: setup wizard only generates install commands (it does not run them automatically).
 - `install.nodeManager` is used when a selected skill has node-based installer metadata.
 - `install.preferBrew` affects installer recommendation order.
+- `onboarding.autoPromptEnv`: when true, onboarding flow can ask required env keys right after install.
+- `onboarding.autoEnableAfterInstall`: when true, installed skill is enabled automatically in `skills.entries`.
+- `onboarding.soulInjectionMode`: `disabled|prompt|auto` controls persona injection behavior.
+- Setup Wizard one-shot onboarding (`kabot config -> Skills`) now supports:
+  - installing external skill directly from git,
+  - pre-clone candidate discovery for multi-skill repositories (pick subdir before install),
+  - metadata-aware candidate ranking (skill frontmatter + folder heuristics),
+  - persona preview and optional injection to both `SOUL.md` and `AGENTS.md`,
+  - AGENTS persona template assistant (optional) when injecting `AGENTS.md`:
+    - `Use skill-provided snippet (recommended)`,
+    - `Minimal routing template`,
+    - `Strict guardrails template`,
+    - `Tool-first routing template`,
+    - `Custom one-line routing policy`.
 - Legacy flat config (e.g. `skills.notion.env`) is still supported for backward compatibility.
+
+### **One-Shot Onboarding Flow (Wizard, Detailed)**
+When you run `kabot config -> Skills` and choose external git install, the runtime flow is:
+
+1. Input repo URL/ref/subdir/name/target.
+2. Pre-clone candidate discovery checks all `SKILL.md` folders first.
+3. If multiple skill folders are found, wizard shows ranked chooser with metadata labels.
+4. Skill installs into selected target (`managed` or `workspace`).
+5. `skills.entries.<skill>.enabled=true` is set automatically when onboarding auto-enable is active.
+6. Required env keys are prompted and stored in `skills.entries.<skill>.env` (dedupe-safe).
+7. Persona injection flow:
+   - SOUL snippet selection (skill snippet/fallback),
+   - AGENTS snippet selection with optional template assistant mode,
+   - optional preview before apply,
+   - idempotent append (same snippet is not duplicated).
+8. Wizard refreshes skill inventory and returns to skills setup flow.
 
 ### **Install Skill Otomatis dari Repo Git**
 Kabot now supports direct install from external git repo:
@@ -962,6 +1002,25 @@ kabot skills install --git https://github.com/SumeLabs/clawra.git --subdir skill
 After install:
 1. Run `kabot config` -> **Skills** to configure env keys and dependency plan.
 2. Run `kabot doctor` to verify runtime requirements.
+
+### **Skill Trust Mode (optional hardening)**
+If you want signer-based trust policy for external skills, enable:
+
+```json
+{
+  "security": {
+    "trustMode": {
+      "enabled": true,
+      "verifySkillManifest": true,
+      "allowedSigners": ["trusted-signer-id"]
+    }
+  }
+}
+```
+
+Behavior:
+- When trust mode is enabled, `kabot skills install --git ...` validates skill manifest signer.
+- If signer is missing/not trusted, install is blocked with clear message.
 
 ### **Installer Metadata (`metadata.kabot.install`)**
 Skill installer metadata supports both legacy and canonical formats:
@@ -1184,6 +1243,34 @@ Practical behavior:
 - If embedding warmup is not ready yet, Kabot can answer from recent context first.
 - Memory warmup continues in the background.
 - Logs include runtime markers such as `cold_start_ms`, `context_build_ms`, and `first_response_ms`.
+
+### **Runtime Observability + Quotas (0.5.8-alpha)**
+Add structured runtime telemetry and optional guardrails:
+
+```json
+{
+  "runtime": {
+    "observability": {
+      "enabled": true,
+      "emitStructuredEvents": true,
+      "sampleRate": 1.0,
+      "redactSecrets": true
+    },
+    "quotas": {
+      "enabled": false,
+      "maxCostPerDayUsd": 0.0,
+      "maxTokensPerHour": 0,
+      "enforcementMode": "warn"
+    }
+  }
+}
+```
+
+Behavior:
+- Observability emits structured runtime events (attempt/result/idempotency/latency markers).
+- Quotas:
+  - `warn`: request still runs, warning is emitted.
+  - `hard`: request is blocked when quota is exceeded.
 
 ### **Runtime Autopilot (0.5.7)**
 Kabot can run a default proactive patrol loop (bottleneck elimination) on heartbeat:
