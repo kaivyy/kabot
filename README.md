@@ -28,27 +28,66 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ## 🚀 Quick Start
 
-**Runtime**: Python 3.11+
-Tested on Windows (WSL2), macOS, and Linux (Ubuntu/Debian).
+**Runtime**: Python 3.11+  
+Tested on Windows, macOS, Linux (Ubuntu/Debian), and Termux.
 
-### Option 1: Automatic Install (Recommended)
+### Beginner Quick Path (Recommended)
 
-This path installs from **PyPI** and is runtime-focused (you do not need repo `docs/` or `tests/` files on target host).
+If you are new, follow this exact flow:
 
-**Linux / macOS / WSL2:**
+1. **Install Kabot**
+2. **Run setup wizard** (`kabot config`)
+3. **Start Kabot** (`kabot gateway`)
+4. **Test chat** (`kabot agent -m "Hello"`)
+
+No need to clone repo for normal usage.
+
+### 1) Install Kabot
+
+**Linux / macOS / WSL2**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kaivyy/kabot/main/install.sh | bash
-# Follow the on-screen wizard to set API keys
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell)**
 ```powershell
 iwr -useb https://raw.githubusercontent.com/kaivyy/kabot/main/install.ps1 | iex
 ```
 
-### Core-Only (Manual, Minimal Footprint)
+### 2) First Setup (Required Once)
 
-If you only want essential runtime components:
+```bash
+kabot config
+```
+
+In wizard:
+- choose your AI provider,
+- paste API key/token,
+- save config.
+
+### 3) Start Kabot
+
+```bash
+kabot gateway
+```
+
+### 4) Test Quickly
+
+```bash
+kabot agent -m "Hello Kabot"
+```
+
+### 3 Commands You Should Remember
+
+```bash
+kabot config       # open setup wizard
+kabot gateway      # run the bot gateway
+kabot doctor --fix # auto-diagnose and repair common issues
+```
+
+### Core-Only Manual Install (Minimal Footprint)
+
+If you only want essential runtime components from PyPI:
 
 ```bash
 python3 -m venv ~/.kabot/venv
@@ -61,40 +100,32 @@ kabot gateway
 
 Notes:
 - `kabot` from PyPI is enough for runtime operation.
-- WhatsApp bridge and node-based skill installers still require **Node.js + npm** on host.
-- Bridge source is bundled in package data and gets prepared under `~/.kabot/bridge` on first local bridge setup.
+- WhatsApp bridge and node-based skill installers still require **Node.js + npm**.
+- Bridge source is bundled and prepared under `~/.kabot/bridge` on first local bridge setup.
 
 ### Termux (Android)
-Turn your phone into an AI server.
-1.  **Install Dependencies**:
-    ```bash
-    pkg update && pkg upgrade
-    pkg install python git clang make libjpeg-turbo freetype rust
-    termux-setup-storage
-    ```
-2.  **Install Kabot**:
-    ```bash
-    git clone https://github.com/kaivyy/kabot.git
-    cd kabot
-    pip install -e .
-    ```
-3.  **Run**: `kabot gateway`
 
-### Option 2: Manual Developer Install
+```bash
+pkg update && pkg upgrade
+pkg install python git clang make libjpeg-turbo freetype rust
+termux-setup-storage
+pip install -U pip
+pip install kabot
+kabot config
+kabot gateway
+```
 
-Prefer `uv` or `poetry` for dependency management, but `pip` works fine.
+### Developer Install (Optional)
+
+Use this only if you want to modify source code:
 
 ```bash
 git clone https://github.com/kaivyy/kabot.git
 cd kabot
 python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e .
-
-# Run the interactive setup wizard
 kabot config
-
-# Start the Gateway
 kabot gateway
 ```
 
