@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import Conflict, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -202,6 +203,9 @@ class TelegramChannel(BaseChannel):
         self._app: Application | None = None
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
         self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
+        # Keep one mutable status message per chat for phase updates.
+        self._status_message_ids: dict[str, int] = {}
+        self._polling_conflict_handled: bool = False
 
     def get_bot_commands_from_router(self, router: Any) -> list[BotCommand]:
         """Generate BotCommand list from CommandRouter.
@@ -239,6 +243,7 @@ class TelegramChannel(BaseChannel):
             return
 
         self._running = True
+        self._polling_conflict_handled = False
 
         # Build the application with increased timeouts to prevent httpx.ReadError
         from telegram.request import HTTPXRequest
@@ -290,7 +295,8 @@ class TelegramChannel(BaseChannel):
         # Start polling (this runs until stopped)
         await self._app.updater.start_polling(
             allowed_updates=["message", "callback_query"],
-            drop_pending_updates=True  # Ignore old messages on startup
+            drop_pending_updates=True,  # Ignore old messages on startup
+            error_callback=self._on_polling_error,
         )
 
         # Keep running until stopped
@@ -304,13 +310,74 @@ class TelegramChannel(BaseChannel):
         # Cancel all typing indicators
         for chat_id in list(self._typing_tasks):
             self._stop_typing(chat_id)
+        self._status_message_ids.clear()
 
         if self._app:
             logger.info("Stopping Telegram bot...")
-            await self._app.updater.stop()
-            await self._app.stop()
-            await self._app.shutdown()
+            try:
+                await self._app.updater.stop()
+            except Exception as e:
+                logger.debug(f"Telegram updater stop skipped: {e}")
+            try:
+                await self._app.stop()
+            except Exception as e:
+                logger.debug(f"Telegram app stop skipped: {e}")
+            try:
+                await self._app.shutdown()
+            except Exception as e:
+                logger.debug(f"Telegram app shutdown skipped: {e}")
             self._app = None
+
+    def _on_polling_error(self, exc: TelegramError) -> None:
+        """Handle polling transport errors without uncontrolled traceback spam."""
+        if isinstance(exc, Conflict):
+            if self._polling_conflict_handled:
+                return
+            self._polling_conflict_handled = True
+            self._running = False
+            logger.error(
+                "Telegram polling conflict detected: another bot instance is using the same token. "
+                "Stopping this channel."
+            )
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.stop())
+            except RuntimeError:
+                # No running loop: channel manager will stop this channel on shutdown.
+                pass
+            return
+
+        logger.warning(f"Telegram polling transient error: {exc}")
+
+    @staticmethod
+    def _exc_text(exc: Exception) -> str:
+        return str(exc or "").strip().lower()
+
+    @staticmethod
+    def _is_message_not_modified_error(exc: Exception) -> bool:
+        text = TelegramChannel._exc_text(exc)
+        return "message is not modified" in text or "message not modified" in text
+
+    @staticmethod
+    def _is_message_not_found_error(exc: Exception) -> bool:
+        text = TelegramChannel._exc_text(exc)
+        return "message to edit not found" in text or "message to delete not found" in text or "message not found" in text
+
+    @staticmethod
+    def _is_transient_message_error(exc: Exception) -> bool:
+        text = TelegramChannel._exc_text(exc)
+        transient_markers = (
+            "timed out",
+            "timeout",
+            "temporarily",
+            "network error",
+            "connection reset",
+            "connection aborted",
+            "too many requests",
+            "retry after",
+            "flood control",
+        )
+        return any(marker in text for marker in transient_markers)
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Telegram."""
@@ -318,12 +385,59 @@ class TelegramChannel(BaseChannel):
             logger.warning("Telegram bot not running")
             return
 
-        # Stop typing indicator for this chat
-        self._stop_typing(msg.chat_id)
+        is_progress_update, _phase, _status_text = self._status_update_payload(msg)
+        if is_progress_update and self._should_skip_status_update(msg):
+            return
+        if not is_progress_update:
+            self._clear_status_state(msg.chat_id)
+        # Keep typing indicator alive across interim status updates.
+        if not is_progress_update:
+            self._stop_typing(msg.chat_id)
 
         try:
             # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
+            chat_id_str = str(msg.chat_id)
+            if is_progress_update:
+                self._ensure_typing(chat_id_str)
+
+            if is_progress_update:
+                status_text = ensure_utf8_text(msg.content or "").strip()
+                if not status_text:
+                    return
+                existing_status_id = self._status_message_ids.get(chat_id_str)
+                if existing_status_id:
+                    try:
+                        await self._app.bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=existing_status_id,
+                            text=status_text,
+                        )
+                        return
+                    except Exception as exc:
+                        if self._is_message_not_modified_error(exc):
+                            # Keep existing mutable status bubble and avoid creating duplicates.
+                            return
+                        if self._is_transient_message_error(exc):
+                            # Keep current status bubble and retry on next keepalive/status pulse.
+                            return
+                        self._status_message_ids.pop(chat_id_str, None)
+                sent_status = await self._app.bot.send_message(chat_id=chat_id, text=status_text)
+                if getattr(sent_status, "message_id", None):
+                    self._status_message_ids[chat_id_str] = int(sent_status.message_id)
+                return
+
+            # Clear stale status indicator when sending the final/non-progress response.
+            existing_status_id = self._status_message_ids.get(chat_id_str)
+            if existing_status_id:
+                try:
+                    await self._app.bot.delete_message(chat_id=chat_id, message_id=existing_status_id)
+                    self._status_message_ids.pop(chat_id_str, None)
+                except Exception as exc:
+                    if self._is_message_not_found_error(exc):
+                        self._status_message_ids.pop(chat_id_str, None)
+                    else:
+                        logger.warning(f"Telegram status delete deferred for chat={chat_id_str}: {exc}")
             reply_markup = None
             if isinstance(msg.metadata, dict):
                 inline_rows = msg.metadata.get("inline_keyboard")
@@ -609,6 +723,13 @@ class TelegramChannel(BaseChannel):
         self._stop_typing(chat_id)
         self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
 
+    def _ensure_typing(self, chat_id: str) -> None:
+        """Start typing loop only when one isn't already active."""
+        task = self._typing_tasks.get(chat_id)
+        if task and not task.done():
+            return
+        self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
+
     def _stop_typing(self, chat_id: str) -> None:
         """Stop the typing indicator for a chat."""
         task = self._typing_tasks.pop(chat_id, None)
@@ -619,7 +740,15 @@ class TelegramChannel(BaseChannel):
         """Repeatedly send 'typing' action until cancelled."""
         try:
             while self._app:
-                await self._app.bot.send_chat_action(chat_id=int(chat_id), action="typing")
+                try:
+                    await self._app.bot.send_chat_action(chat_id=int(chat_id), action="typing")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    # Keepalive must survive transient transport errors.
+                    logger.debug(f"Typing indicator transient failure for {chat_id}: {e}")
+                    await asyncio.sleep(2)
+                    continue
                 await asyncio.sleep(4)
         except asyncio.CancelledError:
             pass

@@ -5,7 +5,7 @@
     <b>Resilient Memory. Methodical Execution. Native Reasoning.</b>
   </p>
   <p>
-    <a href="https://pypi.org/project/kabot-ai/"><img src="https://img.shields.io/pypi/v/kabot-ai?style=flat-square" alt="PyPI"></a>
+    <a href="https://pypi.org/project/kabot/"><img src="https://img.shields.io/pypi/v/kabot?style=flat-square" alt="PyPI"></a>
     <img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square" alt="Python">
     <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
     <a href="#"><img src="https://img.shields.io/badge/Telegram-Bot-blue?style=flat-square&logo=telegram&logoColor=white" alt="Telegram"></a>
@@ -33,6 +33,8 @@ Tested on Windows (WSL2), macOS, and Linux (Ubuntu/Debian).
 
 ### Option 1: Automatic Install (Recommended)
 
+This path installs from **PyPI** and is runtime-focused (you do not need repo `docs/` or `tests/` files on target host).
+
 **Linux / macOS / WSL2:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kaivyy/kabot/main/install.sh | bash
@@ -43,6 +45,24 @@ curl -fsSL https://raw.githubusercontent.com/kaivyy/kabot/main/install.sh | bash
 ```powershell
 iwr -useb https://raw.githubusercontent.com/kaivyy/kabot/main/install.ps1 | iex
 ```
+
+### Core-Only (Manual, Minimal Footprint)
+
+If you only want essential runtime components:
+
+```bash
+python3 -m venv ~/.kabot/venv
+source ~/.kabot/venv/bin/activate
+pip install -U pip
+pip install kabot
+kabot config
+kabot gateway
+```
+
+Notes:
+- `kabot` from PyPI is enough for runtime operation.
+- WhatsApp bridge and node-based skill installers still require **Node.js + npm** on host.
+- Bridge source is bundled in package data and gets prepared under `~/.kabot/bridge` on first local bridge setup.
 
 ### Termux (Android)
 Turn your phone into an AI server.
@@ -77,6 +97,18 @@ kabot config
 # Start the Gateway
 kabot gateway
 ```
+
+Gateway runtime notes:
+- `kabot gateway` now defaults to `config.gateway.port` from setup/config.
+- Use `kabot gateway --port <N>` to override for one run.
+- If gateway bind mode is set to `tailscale`, Kabot activates Tailscale Serve at startup and keeps gateway bind on loopback for safer exposure.
+- If `gateway.tailscale=true` (with non-tailscale bind mode), Kabot activates Tailscale Funnel at startup.
+- Lightweight dashboard is available at `/dashboard` (SSR + HTMX, low-RAM friendly).
+- `gateway.auth_token` supports scoped mode:
+  - Plain: `my-token` (legacy full access)
+  - Scoped: `my-token|operator.read,ingress.write`
+  - `operator.read` is required for dashboard/status routes.
+  - `ingress.write` is required for webhook ingress routes.
 
 ### Chatting
 Once the gateway is running, you can talk to Kabot via:
@@ -531,6 +563,31 @@ kabot remote-bootstrap --platform windows --service windows --apply
 kabot remote-bootstrap --platform termux --service auto --dry-run
 ```
 
+Service behavior:
+- `kabot gateway` in terminal is a foreground process (closing terminal stops it).
+- For persistent background operation, enable service via wizard (`kabot config` → `Auto-start`) or `kabot remote-bootstrap --apply`.
+- After service is installed and started, Kabot keeps running even if your SSH/terminal session closes.
+
+### Service Stop/Disable (Quick Reference)
+
+```bash
+# Linux (systemd user)
+systemctl --user stop kabot
+systemctl --user disable kabot
+
+# macOS (launchd)
+launchctl stop com.kabot.agent
+launchctl unload -w ~/Library/LaunchAgents/com.kabot.agent.plist
+
+# Windows (Task Scheduler, CMD/PowerShell)
+schtasks /End /TN kabot
+schtasks /Change /TN kabot /Disable
+
+# Termux
+sv down kabot
+sv-disable kabot
+```
+
 ### Plugin Lifecycle Commands
 
 Kabot now supports full plugin lifecycle operations:
@@ -612,7 +669,7 @@ Telegram / Discord / Slack / WhatsApp / CLI
 ┌───────────────────────────────┐
 │            Gateway            │
 │       (Control Plane)         │
-│     localhost:18790           │
+│   localhost:<gateway.port>    │
 │   (Event Bus + Adapters)      │
 └──────────────┬────────────────┘
                │

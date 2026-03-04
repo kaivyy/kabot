@@ -249,15 +249,17 @@ RETURNS: JSON with success, updated_from, updated_to, restart_required"""
     def _pip_update(self) -> tuple[bool, str]:
         """Update via pip."""
         try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--upgrade", "kabot-ai"],
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-            if result.returncode != 0:
-                return False, f"Pip upgrade failed: {result.stderr}"
-            return True, "Pip update successful"
+            # Preferred package name is "kabot"; fall back to legacy "kabot-ai" when needed.
+            for package_name in ("kabot", "kabot-ai"):
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--upgrade", package_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if result.returncode == 0:
+                    return True, f"Pip update successful ({package_name})"
+            return False, f"Pip upgrade failed: {result.stderr}"
         except Exception as e:
             return False, str(e)
 

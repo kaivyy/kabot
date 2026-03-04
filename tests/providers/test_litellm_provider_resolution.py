@@ -18,6 +18,15 @@ def test_qwen_portal_model_resolves_to_dashscope_model_name():
     assert resolved == "dashscope/coder-model"
 
 
+def test_litellm_runtime_setup_is_deferred_until_first_model_call():
+    provider = LiteLLMProvider(
+        api_key="test-key",
+        default_model="openai-codex/gpt-5.3-codex",
+    )
+
+    assert provider._litellm_runtime_ready is False
+
+
 @pytest.mark.asyncio
 async def test_chat_falls_back_on_auth_invalid_request_error(monkeypatch):
     provider = LiteLLMProvider(

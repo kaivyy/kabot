@@ -116,4 +116,3 @@ CRYPTO_TERMS = (
     "crypto", "cryptocurrency", "kripto", "bitcoin", "ethereum", "btc", "eth",
     "token", "coin", "blockchain", "wallet", "staking", "mining",
 )
-

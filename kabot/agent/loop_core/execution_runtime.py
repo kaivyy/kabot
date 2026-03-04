@@ -6,11 +6,13 @@ import asyncio
 import hashlib
 import json
 import random
+import re
 import time
 from typing import Any
 
 from loguru import logger
 
+from kabot.agent.fallback_i18n import t
 from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.core.failover_error import resolve_failover_reason
 from kabot.utils.text_safety import ensure_utf8_text
@@ -43,6 +45,111 @@ def _runtime_observability_cfg(loop: Any) -> Any:
 
 def _runtime_quotas_cfg(loop: Any) -> Any:
     return getattr(loop, "runtime_quotas", None)
+
+
+_SHORT_CONFIRMATION_TOKENS = {
+    "ya",
+    "yes",
+    "y",
+    "iya",
+    "ok",
+    "oke",
+    "sip",
+    "sure",
+    "go ahead",
+    "do it",
+    "proceed",
+    "continue",
+    "lanjut",
+    "lanjutkan",
+    "jalankan",
+    "jalankan sekarang",
+    "lakukan",
+    "lakukan sekarang",
+    "ya lakukan",
+    "ambil sekarang",
+    "gas",
+    "gaskeun",
+    "terusin",
+    "teruskan",
+    "si",
+    "oui",
+    "ja",
+    "baik",
+}
+_SHORT_CONFIRMATION_PREFIXES = (
+    "ya ",
+    "yes ",
+    "ok ",
+    "oke ",
+    "lanjut ",
+    "jalankan ",
+    "lakukan ",
+    "ambil ",
+    "gas ",
+    "terusin ",
+    "teruskan ",
+)
+
+
+def _normalize_text(text: str) -> str:
+    return " ".join(str(text or "").strip().lower().split())
+
+
+def _looks_like_short_confirmation(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    if normalized in _SHORT_CONFIRMATION_TOKENS:
+        return True
+    if len(normalized) <= 64 and any(
+        normalized.startswith(prefix) for prefix in _SHORT_CONFIRMATION_PREFIXES
+    ):
+        return True
+    return False
+
+
+def _looks_like_live_research_query(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+
+    live_markers = (
+        "latest",
+        "today",
+        "now",
+        "current",
+        "breaking",
+        "headline",
+        "headlines",
+        "news",
+        "berita",
+        "terbaru",
+        "terkini",
+        "sekarang",
+    )
+    if any(marker in normalized for marker in live_markers):
+        return True
+    if re.search(r"\b(news|berita)\s+update(s)?\b", normalized):
+        return True
+    if re.search(r"\b(19|20)\d{2}\b", normalized):
+        news_context_markers = (
+            "news",
+            "berita",
+            "headline",
+            "headlines",
+            "war",
+            "conflict",
+            "election",
+            "market",
+            "price",
+            "update",
+        )
+        if any(marker in normalized for marker in news_context_markers):
+            return True
+    return False
 
 
 def _redact_observability_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -324,6 +431,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     """Full planner-executor-critic loop for complex tasks."""
     iteration = 0
 
+    message_metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
     models_to_try = loop._resolve_models_for_message(msg)
     model = models_to_try[0]
 
@@ -332,15 +440,64 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     max_tool_retry = max(0, int(getattr(_runtime_resilience_cfg(loop), "max_tool_retry_per_turn", 1)))
     tool_enforcement_retries = 0
     status_updates_sent: set[str] = set()
+    draft_updates_sent: set[str] = set()
+    reasoning_updates_sent: set[str] = set()
     required_tool = loop._required_tool_for_query(msg.content)
+    raw_user_text = str(msg.content or "").strip()
+    raw_user_word_count = len([part for part in raw_user_text.split() if part])
+    effective_content = str(message_metadata.get("effective_content") or "").strip()
+    question_text = effective_content or raw_user_text
+    question_word_count = len([part for part in question_text.split() if part])
+    route_profile = str(message_metadata.get("route_profile", "")).strip().upper()
+    tools_registry = getattr(loop, "tools", None)
+    has_tool = getattr(tools_registry, "has", None)
+    resolved_required_tool = str(message_metadata.get("required_tool") or "").strip()
+    if resolved_required_tool:
+        if callable(has_tool):
+            try:
+                if has_tool(resolved_required_tool):
+                    required_tool = resolved_required_tool
+            except Exception:
+                required_tool = resolved_required_tool
+        else:
+            required_tool = resolved_required_tool
+    has_web_search_tool = False
+    if callable(has_tool):
+        try:
+            has_web_search_tool = bool(has_tool("web_search"))
+        except Exception:
+            has_web_search_tool = False
+    if not required_tool and has_web_search_tool and _looks_like_live_research_query(raw_user_text):
+        required_tool = "web_search"
+        logger.info("Live-research safety latch: forcing required_tool=web_search")
+    if not required_tool and route_profile == "RESEARCH" and has_web_search_tool:
+        required_tool = "web_search"
+        logger.info("Research route safety latch: forcing required_tool=web_search")
+    # OpenClaw-like responsiveness: skip expensive critic retries for short/chat/required-tool turns.
+    skip_critic_for_speed = (
+        bool(message_metadata.get("skip_critic_for_speed", False))
+        or
+        bool(required_tool)
+        or raw_user_word_count <= 12
+        or question_word_count <= 10
+        or _looks_like_short_confirmation(raw_user_text)
+        or _looks_like_short_confirmation(question_text)
+        or _looks_like_live_research_query(raw_user_text)
+        or "[follow-up context]" in question_text.lower()
+        or route_profile in {"CHAT", "RESEARCH"}
+    )
+    is_background_task = (
+        (msg.channel or "").lower() == "system"
+        or (msg.sender_id or "").lower() == "system"
+        or (
+            isinstance(msg.content, str)
+            and msg.content.strip().lower().startswith("heartbeat task:")
+        )
+    )
     # Synthetic/system callbacks (cron completion, heartbeat, etc.) should not
     # trigger hard tool-enforcement loops from reminder/weather keywords inside
     # system-generated text.
-    if (msg.channel or "").lower() == "system" or (msg.sender_id or "").lower() == "system":
-        required_tool = None
-    # Heartbeat autopilot prompts are operational patrol messages, not user tool
-    # requests; disable keyword-based tool enforcement to avoid false "cron required".
-    if isinstance(msg.content, str) and msg.content.strip().lower().startswith("heartbeat task:"):
+    if is_background_task:
         required_tool = None
     tools_executed = False
 
@@ -350,36 +507,112 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
 
     first_score = None
 
-    plan = await loop._plan_task(msg.content)
-    if plan:
-        messages.append({"role": "user", "content": f"[SYSTEM PLAN]\n{plan}\n\nNow execute this plan step by step."})
+    def _phase_text(phase: str) -> str:
+        key = f"runtime.status.{phase}"
+        fallback = "runtime.status.thinking" if phase == "thinking" else key
+        translated = t(key, text=question_text)
+        if translated == key and fallback != key:
+            return t(fallback, text=question_text)
+        return translated
 
-    messages = loop._apply_think_mode(messages, session)
+    async def _publish_phase(phase: str) -> None:
+        if is_background_task:
+            return
+        bus = getattr(loop, "bus", None)
+        publish = getattr(bus, "publish_outbound", None)
+        if not callable(publish):
+            return
+        text = _phase_text(phase)
+        dedupe_key = f"{phase}:{text}"
+        if dedupe_key in status_updates_sent:
+            return
+        status_updates_sent.add(dedupe_key)
+        try:
+            await publish(
+                OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=text,
+                    metadata={"type": "status_update", "phase": phase, "lane": "status"},
+                )
+            )
+        except Exception:
+            return
+
+    async def _publish_draft(text: str, *, phase: str = "thinking") -> None:
+        if is_background_task:
+            return
+        bus = getattr(loop, "bus", None)
+        publish = getattr(bus, "publish_outbound", None)
+        if not callable(publish):
+            return
+        normalized = ensure_utf8_text(text or "").strip()
+        if not normalized:
+            return
+        # Keep draft previews short to avoid progress-message flooding.
+        if len(normalized) > 600:
+            normalized = normalized[:597].rstrip() + "..."
+        dedupe_key = f"{phase}:{normalized}"
+        if dedupe_key in draft_updates_sent:
+            return
+        draft_updates_sent.add(dedupe_key)
+        try:
+            await publish(
+                OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=normalized,
+                    metadata={"type": "draft_update", "phase": phase, "lane": "partial"},
+                )
+            )
+        except Exception:
+            return
+
+    async def _publish_reasoning(reasoning_text: str) -> None:
+        if is_background_task:
+            return
+        bus = getattr(loop, "bus", None)
+        publish = getattr(bus, "publish_outbound", None)
+        if not callable(publish):
+            return
+        normalized = ensure_utf8_text(reasoning_text or "").strip()
+        if not normalized:
+            return
+        if len(normalized) > 600:
+            normalized = normalized[:597].rstrip() + "..."
+        dedupe_key = normalized
+        if dedupe_key in reasoning_updates_sent:
+            return
+        reasoning_updates_sent.add(dedupe_key)
+        try:
+            await publish(
+                OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=normalized,
+                    metadata={"type": "reasoning_update", "phase": "thinking", "lane": "reasoning"},
+                )
+            )
+        except Exception:
+            return
+
+    async def _return_with_phase(content: str, *, phase: str = "done") -> str:
+        await _publish_phase(phase)
+        return content
+
+    await _publish_phase("thinking")
 
     # === FAST PATH: Execute deterministic tools directly, skip LLM tool-call step ===
-    # This bypasses the broken tool-calling API (e.g. codex models returning 400),
-    # but still uses the LLM to produce a nice natural-language summary of the result.
-    _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "weather", "speedtest", "stock", "crypto", "server_monitor"}
+    # This bypasses fragile tool-call protocols for deterministic intents.
+    _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "web_search", "weather", "speedtest", "stock", "crypto", "server_monitor"}
+    _RAW_DIRECT_TOOLS = {"cleanup_system", "get_process_memory", "web_search"}
     if required_tool and required_tool in _DIRECT_TOOLS:
-        if required_tool == "cleanup_system":
-            # Long-running maintenance operations should acknowledge immediately
-            # so users don't feel the bot is frozen while cleanup is in progress.
-            try:
-                await loop.bus.publish_outbound(
-                    OutboundMessage(
-                        channel=msg.channel,
-                        chat_id=msg.chat_id,
-                        content="Sedang membersihkan cache dan file sementara. Mohon tunggu sebentar...",
-                    )
-                )
-            except Exception:
-                pass
+        await _publish_phase("tool")
         direct_result = await loop._execute_required_tool_fallback(required_tool, msg)
         if direct_result is not None:
             logger.info(f"Direct tool execution (bypassed LLM tool-call): {required_tool}")
-            # Mutating direct tools should return raw output immediately.
-            if required_tool in {"cleanup_system"}:
-                return direct_result
+            if required_tool in _RAW_DIRECT_TOOLS:
+                return await _return_with_phase(direct_result)
             # Read-only direct tools still get an LLM-formatted summary.
             summary_messages = messages + [
                 {
@@ -397,12 +630,34 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                     model=model,
                 )
                 if summary_response and summary_response.content:
-                    return summary_response.content
+                    return await _return_with_phase(summary_response.content)
             except Exception as e:
                 logger.warning(f"LLM summary failed for {required_tool}, returning raw result: {e}")
             # Fallback: return raw result if LLM still fails
-            return direct_result
+            return await _return_with_phase(direct_result)
     # === END FAST PATH ===
+
+    skip_plan_for_speed = (
+        not is_background_task
+        and (
+        bool(required_tool)
+        or raw_user_word_count <= 12
+        or _looks_like_short_confirmation(raw_user_text)
+        or route_profile in {"CHAT", "RESEARCH"}
+        )
+    )
+    plan = None
+    if not required_tool and not skip_plan_for_speed:
+        plan = await loop._plan_task(question_text)
+        if plan:
+            messages.append({"role": "user", "content": f"[SYSTEM PLAN]\n{plan}\n\nNow execute this plan step by step."})
+    else:
+        if required_tool:
+            logger.info(f"Skipping plan for immediate-action task: required_tool={required_tool}")
+        else:
+            logger.info("Skipping plan for speed: short/follow-up/research route")
+
+    messages = loop._apply_think_mode(messages, session)
 
     while iteration < loop.max_iterations:
         iteration += 1
@@ -419,10 +674,12 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         if not response:
             # User-friendly error: never expose raw exception / internal URLs
             error_hint = _sanitize_error(str(error)) if error else "unknown error"
-            return (
+            return await _return_with_phase(
                 f"WARNING: All available AI models failed to respond.\n"
                 f"Error: {error_hint}\n\n"
                 f"Tip: Try /switch <model> to change model, or try again in a moment."
+                ,
+                phase="error",
             )
 
         if required_tool and response.has_tool_calls:
@@ -457,7 +714,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                     logger.warning(
                         f"Tool enforcement fallback executed for '{required_tool}' after wrong tool calls"
                     )
-                    return fallback_result
+                    return await _return_with_phase(fallback_result)
         if response.has_tool_calls:
             tools_executed = True
 
@@ -485,24 +742,20 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             fallback_result = await loop._execute_required_tool_fallback(required_tool, msg)
             if fallback_result is not None:
                 logger.warning(f"Tool enforcement fallback executed for '{required_tool}'")
-                return fallback_result
+                return await _return_with_phase(fallback_result)
 
         if response.has_tool_calls:
-            # Before tool output exists, always emit neutral progress text.
-            # Never forward model completion-like content at this stage.
-            display_content = "Processing your request, please wait..."
-            if display_content not in status_updates_sent:
-                status_updates_sent.add(display_content)
-                await loop.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id, content=display_content
-                ))
+            await _publish_phase("tool")
 
         if response.content:
-            if not response.has_tool_calls and not self_eval_retried:
-                passed, nudge = loop._self_evaluate(msg.content, response.content)
+            if response.reasoning_content:
+                await _publish_reasoning(response.reasoning_content)
+            if not response.has_tool_calls and not self_eval_retried and not is_background_task:
+                passed, nudge = loop._self_evaluate(question_text, response.content)
                 if not passed and nudge:
                     self_eval_retried = True
                     logger.warning(f"Self-eval: refusal detected, retrying (iter {iteration})")
+                    await _publish_draft(response.content, phase="thinking")
                     messages = loop.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
                     messages.append({"role": "user", "content": nudge})
                     continue
@@ -512,8 +765,10 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 and critic_retried < max_critic_retries
                 and not is_weak_model
                 and not tools_executed
+                and not is_background_task
+                and not skip_critic_for_speed
             ):
-                score, feedback = await loop._critic_evaluate(msg.content, response.content, model)
+                score, feedback = await loop._critic_evaluate(question_text, response.content, model)
                 if first_score is None:
                     first_score = score
 
@@ -522,6 +777,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                     logger.warning(
                         f"Critic: score {score}/10 (threshold: {critic_threshold}), retrying ({critic_retried}/{max_critic_retries})"
                     )
+                    await _publish_draft(response.content, phase="thinking")
                     messages = loop.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
                     messages.append({"role": "user", "content": (
                         f"[CRITIC FEEDBACK - Score: {score}/10]\n{feedback}\n\n"
@@ -531,7 +787,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 else:
                     if critic_retried > 0:
                         await loop._log_lesson(
-                            question=msg.content,
+                            question=question_text,
                             feedback=feedback,
                             score_before=first_score or 0,
                             score_after=score,
@@ -539,13 +795,13 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
 
             messages = loop.context.add_assistant_message(messages, response.content, reasoning_content=response.reasoning_content)
             if not response.has_tool_calls:
-                return response.content
+                return await _return_with_phase(response.content)
 
         if response.has_tool_calls:
             messages = await loop._process_tool_calls(msg, messages, response, session)
         else:
-            return response.content
-    return "I've completed processing but have no response to give."
+            return await _return_with_phase(response.content)
+    return await _return_with_phase("I've completed processing but have no response to give.")
 
 
 async def call_llm_with_fallback(loop: Any, messages: list, models: list) -> tuple[Any | None, Exception | None]:
@@ -867,7 +1123,17 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
                 reason="tool_call_id_replay",
                 tool_idempotency_hit=1,
             )
-            messages = loop.context.add_tool_result(messages, tc.id, tc.name, cached_result)
+            # Prevent duplicate function_call_output entries for the same call_id.
+            # Duplicate outputs can trigger backend validation errors in strict
+            # tool-call protocols ("No tool call found ..." for replayed output).
+            has_existing_output = any(
+                isinstance(existing, dict)
+                and existing.get("role") == "tool"
+                and str(existing.get("tool_call_id", "")) == str(tc.id)
+                for existing in messages
+            )
+            if not has_existing_output:
+                messages = loop.context.add_tool_result(messages, tc.id, tc.name, cached_result)
             continue
         if dedupe_enabled and payload_key in payload_cache:
             _, cached_result = payload_cache[payload_key]

@@ -6,9 +6,12 @@ import json
 import os
 import select
 import signal
+import subprocess
 import sys
+import shutil
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import typer
 from rich.console import Console
@@ -749,6 +752,192 @@ def _resolve_model_runtime(config) -> tuple[str, list[str]]:
     return str(model_config), []
 
 
+def _resolve_gateway_runtime_port(config, cli_port: int | None) -> int:
+    """Resolve gateway port: CLI override > config.gateway.port > default."""
+    if isinstance(cli_port, int) and 0 < cli_port < 65536:
+        return cli_port
+
+    configured = getattr(getattr(config, "gateway", None), "port", None)
+    try:
+        configured_port = int(configured)
+    except (TypeError, ValueError):
+        configured_port = 0
+
+    if 0 < configured_port < 65536:
+        return configured_port
+    return 18790
+
+
+def _resolve_tailscale_mode(config) -> str:
+    """Map Kabot gateway config into runtime tailscale mode."""
+    gateway_cfg = getattr(config, "gateway", None)
+    bind_mode = str(getattr(gateway_cfg, "bind_mode", "") or "").strip().lower()
+    funnel_enabled = bool(getattr(gateway_cfg, "tailscale", False))
+
+    # Keep backward compatibility with existing wizard fields:
+    # - bind_mode=tailscale means private tailnet exposure (serve)
+    # - tailscale=true means funnel exposure (public) when not in tailscale bind mode
+    if bind_mode == "tailscale":
+        return "serve"
+    if funnel_enabled:
+        return "funnel"
+    return "off"
+
+
+def _is_port_in_use_error(exc: BaseException) -> bool:
+    """Return True when exception indicates gateway port bind conflict."""
+    if not isinstance(exc, OSError):
+        return False
+    errno_value = getattr(exc, "errno", None)
+    winerror_value = getattr(exc, "winerror", None)
+    if errno_value in {48, 98, 10048, 10013}:
+        return True
+    if winerror_value in {48, 10048, 10013}:
+        return True
+    message = str(exc).lower()
+    if "address already in use" in message:
+        return True
+    if "forbidden by its access permissions" in message:
+        return True
+    if "attempting to bind on address" in message and "10048" in message:
+        return True
+    return False
+
+
+def _preflight_gateway_port(host: str, port: int) -> None:
+    """
+    Fail fast if gateway bind target is already occupied.
+
+    This runs before heavy runtime initialization so watchdog startup feedback
+    is immediate when another instance already holds the port.
+    """
+    import socket
+
+    bind_host = str(host or "0.0.0.0").strip() or "0.0.0.0"
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((bind_host, int(port)))
+        except OSError as exc:
+            if _is_port_in_use_error(exc):
+                console.print(
+                    f"[yellow]Gateway port {port} is already in use.[/yellow]"
+                )
+                console.print(
+                    "[yellow]Another Kabot instance may already be running. "
+                    "Stop existing process first or change `gateway.port` in config.[/yellow]"
+                )
+                raise typer.Exit(code=78)
+            raise
+
+
+def _run_tailscale_cli(args: list[str], timeout_s: int = 10) -> tuple[int, str, str]:
+    """Run tailscale CLI command and return (code, stdout, stderr)."""
+    tailscale_bin = shutil.which("tailscale") or "tailscale"
+    try:
+        result = subprocess.run(
+            [tailscale_bin, *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+        return result.returncode, (result.stdout or "").strip(), (result.stderr or "").strip()
+    except FileNotFoundError:
+        return 127, "", "tailscale binary not found in PATH"
+    except subprocess.TimeoutExpired:
+        return 124, "", f"tailscale command timed out: {' '.join(args)}"
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        return 1, "", str(exc)
+
+
+def _parse_tailscale_status(stdout: str) -> dict[str, Any]:
+    """Parse tailscale status JSON, tolerating noisy prefixes/suffixes."""
+    text = (stdout or "").strip()
+    if not text:
+        return {}
+    start = text.find("{")
+    end = text.rfind("}")
+    candidate = text[start : end + 1] if start >= 0 and end > start else text
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _extract_tailnet_host(status_payload: dict[str, Any]) -> str:
+    """Extract DNSName (preferred) or first Tailscale IP from status JSON."""
+    self_payload = status_payload.get("Self")
+    if isinstance(self_payload, dict):
+        dns_name = self_payload.get("DNSName")
+        if isinstance(dns_name, str) and dns_name.strip():
+            return dns_name.strip().rstrip(".")
+        ips = self_payload.get("TailscaleIPs")
+        if isinstance(ips, list):
+            for value in ips:
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return ""
+
+
+def _configure_tailscale_runtime(
+    mode: str,
+    port: int,
+    runner: Callable[[list[str], int], tuple[int, str, str]] | None = None,
+) -> dict[str, Any]:
+    """Enable tailscale serve/funnel for gateway runtime and report status."""
+    normalized = str(mode or "").strip().lower()
+    if normalized not in {"serve", "funnel"}:
+        return {"enabled": False, "ok": True, "mode": "off", "error": "", "https_url": ""}
+
+    execute = runner or _run_tailscale_cli
+    status_code, status_stdout, status_stderr = execute(["status", "--json"], 8)
+    if status_code != 0:
+        detail = status_stderr or status_stdout or "tailscale status command failed"
+        return {
+            "enabled": True,
+            "ok": False,
+            "mode": normalized,
+            "error": detail,
+            "https_url": "",
+        }
+
+    status_payload = _parse_tailscale_status(status_stdout)
+    backend_state = str(status_payload.get("BackendState", "") or "").strip().lower()
+    if backend_state and backend_state != "running":
+        return {
+            "enabled": True,
+            "ok": False,
+            "mode": normalized,
+            "error": f"tailscale backend is '{backend_state}', expected 'running'",
+            "https_url": "",
+        }
+
+    action_args = [normalized, "--bg", "--yes", str(port)]
+    action_code, action_stdout, action_stderr = execute(action_args, 15)
+    if action_code != 0:
+        detail = action_stderr or action_stdout or f"tailscale {normalized} failed"
+        return {
+            "enabled": True,
+            "ok": False,
+            "mode": normalized,
+            "error": detail,
+            "https_url": "",
+        }
+
+    host = _extract_tailnet_host(status_payload)
+    https_url = f"https://{host}/" if host else ""
+    return {
+        "enabled": True,
+        "ok": True,
+        "mode": normalized,
+        "error": "",
+        "https_url": https_url,
+    }
+
+
 def _resolve_api_key_with_refresh(config, model: str) -> str | None:
     """Resolve API/OAuth token with async refresh when no loop is running."""
     try:
@@ -928,27 +1117,62 @@ def _next_cli_reminder_delay_seconds(
 
 @app.command()
 def gateway(
-    port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
+    port: int | None = typer.Option(None, "--port", "-p", help="Gateway port (default: config.gateway.port)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the kabot gateway."""
-
-    from kabot.agent.loop import AgentLoop
-    from kabot.bus.queue import MessageBus
-    from kabot.channels.manager import ChannelManager
     from kabot.config.loader import get_data_dir, load_config
-    from kabot.cron.service import CronService
-    from kabot.gateway.webhook_server import WebhookServer
-    from kabot.heartbeat.service import HeartbeatService
-    from kabot.session.manager import SessionManager
+
+    boot_started = time.perf_counter()
+    console.print(f"{__logo__} Booting kabot gateway...")
 
     if verbose:
         import logging
         logging.basicConfig(level=logging.DEBUG)
 
-    console.print(f"{__logo__} Starting kabot gateway on port {port}...")
-
     config = load_config()
+    runtime_port = _resolve_gateway_runtime_port(config, port)
+    runtime_host = config.gateway.host
+    tailscale_mode = _resolve_tailscale_mode(config)
+
+    console.print(f"{__logo__} Starting kabot gateway on port {runtime_port}...")
+
+    if tailscale_mode in {"serve", "funnel"}:
+        runtime_host = "127.0.0.1"
+        tailscale_status = _configure_tailscale_runtime(tailscale_mode, runtime_port)
+        if tailscale_status.get("ok"):
+            https_url = str(tailscale_status.get("https_url") or "").strip()
+            if https_url:
+                console.print(
+                    f"[green]*[/green] Tailscale {tailscale_mode} active: {https_url}"
+                )
+            else:
+                console.print(
+                    f"[green]*[/green] Tailscale {tailscale_mode} active"
+                )
+        else:
+            reason = str(tailscale_status.get("error") or "unknown tailscale error")
+            console.print(
+                f"[yellow]Warning:[/yellow] Tailscale {tailscale_mode} setup failed: {reason}"
+            )
+            # bind_mode=tailscale implies tailscale is required for expected access path.
+            if str(getattr(config.gateway, "bind_mode", "")).strip().lower() == "tailscale":
+                raise typer.Exit(1)
+
+    _preflight_gateway_port(runtime_host, runtime_port)
+
+    import_started = time.perf_counter()
+    from kabot.agent.loop import AgentLoop
+    from kabot.bus.queue import MessageBus
+    from kabot.channels.manager import ChannelManager
+    from kabot.cron.service import CronService
+    from kabot.heartbeat.service import HeartbeatService
+    from kabot.session.manager import SessionManager
+    imports_ms = int((time.perf_counter() - import_started) * 1000)
+    console.print(f"[dim]* Runtime modules loaded in {imports_ms}ms[/dim]")
+    bootstrap_ms = int((time.perf_counter() - boot_started) * 1000)
+    console.print(f"[dim]* Bootstrap ready in {bootstrap_ms}ms[/dim]")
+
     _inject_skill_env(config)
 
     # Configure logger
@@ -1019,6 +1243,7 @@ def gateway(
         workspace=config.workspace_path,
         on_heartbeat=on_heartbeat,
         interval_s=max(60, int(getattr(hb_defaults, "interval_minutes", 30) or 30) * 60),
+        startup_delay_s=max(0, int(getattr(hb_defaults, "startup_delay_seconds", 120) or 120)),
         enabled=bool(getattr(hb_defaults, "enabled", True)),
         active_hours_start=str(getattr(hb_defaults, "active_hours_start", "") or ""),
         active_hours_end=str(getattr(hb_defaults, "active_hours_end", "") or ""),
@@ -1027,27 +1252,47 @@ def gateway(
         autopilot_prompt=str(getattr(runtime_autopilot, "prompt", "") or ""),
     )
 
-    # Create webhook server
-    gateway_security_headers = getattr(getattr(config.gateway, "http", None), "security_headers", None)
-    webhook_server = WebhookServer(
-        bus,
-        auth_token=config.gateway.auth_token or None,
-        meta_verify_token=getattr(getattr(config.integrations, "meta", None), "verify_token", None),
-        meta_app_secret=getattr(getattr(config.integrations, "meta", None), "app_secret", None),
-        strict_transport_security=bool(
-            getattr(gateway_security_headers, "strict_transport_security", False)
-        ),
-        strict_transport_security_value=str(
-            getattr(
-                gateway_security_headers,
-                "strict_transport_security_value",
-                "max-age=31536000; includeSubDomains",
-            )
-        ),
-    )
-
     # Create channel manager
     channels = ChannelManager(config, bus, session_manager=session_manager)
+
+    gateway_started_at = time.time()
+
+    def _gateway_status_provider() -> dict[str, Any]:
+        cron_status = cron.status() if hasattr(cron, "status") else {}
+        return {
+            "status": "running",
+            "uptime_seconds": max(0, int(time.time() - gateway_started_at)),
+            "model": runtime_model,
+            "channels_enabled": list(getattr(channels, "enabled_channels", [])),
+            "cron_jobs": int(cron_status.get("jobs", 0) or 0),
+            "host": runtime_host,
+            "port": runtime_port,
+            "tailscale_mode": tailscale_mode,
+        }
+
+    gateway_security_headers = getattr(getattr(config.gateway, "http", None), "security_headers", None)
+
+    def _build_webhook_server():
+        # Lazy import keeps startup-critical module import path shorter.
+        from kabot.gateway.webhook_server import WebhookServer
+
+        return WebhookServer(
+            bus,
+            auth_token=config.gateway.auth_token or None,
+            meta_verify_token=getattr(getattr(config.integrations, "meta", None), "verify_token", None),
+            meta_app_secret=getattr(getattr(config.integrations, "meta", None), "app_secret", None),
+            strict_transport_security=bool(
+                getattr(gateway_security_headers, "strict_transport_security", False)
+            ),
+            strict_transport_security_value=str(
+                getattr(
+                    gateway_security_headers,
+                    "strict_transport_security_value",
+                    "max-age=31536000; includeSubDomains",
+                )
+            ),
+            status_provider=_gateway_status_provider,
+        )
 
     # Check for restart recovery
     from kabot.utils.restart import RestartManager
@@ -1064,26 +1309,28 @@ def gateway(
         console.print(f"[green]*[/green] Cron: {cron_status['jobs']} scheduled jobs")
 
     console.print("[green]*[/green] Heartbeat: every 30m")
-    console.print(f"[green]*[/green] Webhooks: listening on port {port}")
+    console.print(f"[green]*[/green] Webhooks: listening on port {runtime_port}")
 
     async def run():
+        webhook_runner = None
         try:
             await cron.start()
             await heartbeat.start()
 
+            tasks = [
+                asyncio.create_task(agent.run()),
+                asyncio.create_task(channels.start_all()),
+                asyncio.create_task(bus.dispatch_system_events()),
+            ]
+
             # Start webhook server (using same port as gateway for simplicity in this phase)
             # In a real production setup, we might want separate ports or a reverse proxy
             # But here we are integrating into the main event loop
+            webhook_server = _build_webhook_server()
             webhook_runner = await webhook_server.start(
-                host=config.gateway.host,
-                port=port,
+                host=runtime_host,
+                port=runtime_port,
             )
-
-            tasks = [
-                agent.run(),
-                channels.start_all(),
-                bus.dispatch_system_events(),
-            ]
 
             if recovery_data:
                 async def _recover():
@@ -1095,7 +1342,7 @@ def gateway(
                         content=recovery_data["message"]
                     ))
                     console.print("[green]✓[/green] Restored pending conversation")
-                tasks.append(_recover())
+                tasks.append(asyncio.create_task(_recover()))
 
             await asyncio.gather(*tasks)
         except KeyboardInterrupt:
@@ -1104,10 +1351,22 @@ def gateway(
             cron.stop()
             agent.stop()
             await channels.stop_all()
-            if 'webhook_runner' in locals():
+            if webhook_runner is not None:
                 await webhook_runner.cleanup()
 
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except OSError as exc:
+        if _is_port_in_use_error(exc):
+            console.print(
+                f"[yellow]Gateway port {runtime_port} is already in use.[/yellow]"
+            )
+            console.print(
+                "[yellow]Another Kabot instance may already be running. "
+                "Stop existing process first or change `gateway.port` in config.[/yellow]"
+            )
+            raise typer.Exit(code=78)
+        raise
 
 
 

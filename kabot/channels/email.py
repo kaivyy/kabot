@@ -104,6 +104,13 @@ class EmailChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send email via SMTP."""
+        is_status_update, _phase, _status_text = self._status_update_payload(msg)
+        if is_status_update:
+            # Avoid progress spam over email transport.
+            self._should_skip_status_update(msg)
+            return
+        self._clear_status_state(msg.chat_id)
+
         if not self.config.consent_granted:
             logger.warning("Skip email send: consent_granted is false")
             return

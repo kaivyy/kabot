@@ -168,7 +168,7 @@ EOF
         pip install -e .
     else
         log_info "Installing from PyPI..."
-        pip install kabot-ai
+        pip install kabot
     fi
 
     # Create wrapper script

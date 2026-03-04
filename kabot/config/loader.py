@@ -62,11 +62,17 @@ def load_config(config_path: Path | None = None) -> Config:
             original_data = deepcopy(data)
             migrated_data = _migrate_config(data)
             if migrated_data != original_data:
-                backup_path = _persist_migrated_config(path, migrated_data)
-                print(
-                    "Info: Migrated legacy config keys to canonical format "
-                    f"(backup: {backup_path})."
-                )
+                try:
+                    backup_path = _persist_migrated_config(path, migrated_data)
+                    print(
+                        "Info: Migrated legacy config keys to canonical format "
+                        f"(backup: {backup_path})."
+                    )
+                except OSError as exc:
+                    print(
+                        "Warning: Config migration detected but could not persist migrated file "
+                        f"at {path}: {exc}. Continuing with in-memory migrated config."
+                    )
             return Config.model_validate(convert_keys(migrated_data))
         except (json.JSONDecodeError, ValueError) as e:
             print(f"Warning: Failed to load config from {path}: {e}")
@@ -268,6 +274,14 @@ def _migrate_config(data: dict) -> dict:
         "maxTokensPerHour": 0,
         "enforcementMode": "warn",
     }
+    queue_defaults = {
+        "enabled": True,
+        "mode": "debounce",
+        "debounceWindowMs": 1200,
+        "maxPendingPerSession": 4,
+        "dropPolicy": "drop_oldest",
+        "summarizeDropped": True,
+    }
 
     resilience_cfg = runtime_cfg.get("resilience")
     if not isinstance(resilience_cfg, dict):
@@ -308,6 +322,14 @@ def _migrate_config(data: dict) -> dict:
         if key not in quota_cfg:
             quota_cfg[key] = default_val
     runtime_cfg["quotas"] = quota_cfg
+
+    queue_cfg = runtime_cfg.get("queue")
+    if not isinstance(queue_cfg, dict):
+        queue_cfg = {}
+    for key, default_val in queue_defaults.items():
+        if key not in queue_cfg:
+            queue_cfg[key] = default_val
+    runtime_cfg["queue"] = queue_cfg
 
     # Security trust-mode defaults.
     security_cfg = data.get("security")

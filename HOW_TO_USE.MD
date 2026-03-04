@@ -81,7 +81,24 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 
 ### d1) Gateway (Port, Host, Bindings)
 *   **What it does:** Controls how Kabot exposes webhook/gateway endpoints on your machine/server.
-*   **How to use it:** In Gateway setup, choose bind mode, port, auth token, and optional Tailscale funnel.
+*   **How to use it:** In Gateway setup, choose bind mode, port, auth token, and optional Tailscale exposure.
+*   **Runtime behavior (important):**
+    *   `kabot gateway` now uses `config.gateway.port` by default (from wizard/config file).
+    *   `kabot gateway --port <N>` overrides config for that run only.
+    *   `bind_mode = tailscale` now activates **Tailscale Serve** at startup (`tailscale serve --bg --yes <port>`) and forces loopback bind for safety.
+    *   If `bind_mode != tailscale` but `gateway.tailscale = true`, Kabot activates **Tailscale Funnel** (`tailscale funnel --bg --yes <port>`).
+    *   If Tailscale setup fails while `bind_mode=tailscale`, Kabot exits with clear error (fail-fast, not silent mock).
+    *   Gateway now ships a lightweight SSR+HTMX dashboard at:
+        *   `http://<host>:<port>/dashboard`
+        *   optimized for low-RAM environments (no React SPA dependency).
+*   **Method-scope auth token (recommended for ops):**
+    *   Plain token (legacy, full access):
+        *   `gateway.auth_token = "my-secret-token"`
+    *   Scoped token (least privilege):
+        *   `gateway.auth_token = "my-secret-token|operator.read,ingress.write"`
+    *   Scope mapping:
+        *   `operator.read` -> dashboard/status endpoints,
+        *   `ingress.write` -> webhook ingress endpoints.
 *   **HSTS option:** For HTTPS deployments (or HTTPS reverse proxy), you can enable `Strict-Transport-Security` header and set custom value from Gateway setup.
 
 ### e) Skills (Install & Configure)
@@ -100,6 +117,28 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
 
 ### h) Auto-start (Enable boot-up service)
 *   **What it does:** Ensures Kabot automatically starts running in the background whenever you turn on or restart your computer/server (systemd on Linux, launchd on macOS, Task Scheduler on Windows, Termux on Android).
+*   **Important behavior:** `kabot gateway` in terminal is still a foreground process. If you close terminal, that foreground process stops. Auto-start service is a separate background process.
+*   **After enabling auto-start:** You don't need to keep terminal open; Kabot will continue as service and return after reboot/login.
+
+#### Stop / Disable Service (when needed)
+
+```bash
+# Linux
+systemctl --user stop kabot
+systemctl --user disable kabot
+
+# macOS
+launchctl stop com.kabot.agent
+launchctl unload -w ~/Library/LaunchAgents/com.kabot.agent.plist
+
+# Windows
+schtasks /End /TN kabot
+schtasks /Change /TN kabot /Disable
+
+# Termux
+sv down kabot
+sv-disable kabot
+```
 
 ### i) Doctor (Health Check)
 *   **What it does:** Runs an automatic system diagnostic. If Kabot isn't responding or throws an error, click this menu to instantly check if an API connection is broken or if a local database file is corrupted.
@@ -265,7 +304,7 @@ Kabot will:
 - Requires clean working tree (no uncommitted changes)
 
 **For pip installations:**
-- Runs `pip install --upgrade kabot-ai`
+- Runs `pip install --upgrade kabot`
 
 **Restart process:**
 - Kabot creates a platform-specific restart script

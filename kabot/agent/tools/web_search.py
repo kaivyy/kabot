@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+from html import unescape
 from typing import Any
+from urllib.parse import quote_plus
+from xml.etree import ElementTree as ET
 
 import httpx
 from loguru import logger
@@ -18,6 +21,7 @@ BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 PERPLEXITY_ENDPOINT = "https://api.perplexity.ai/chat/completions"
 XAI_ENDPOINT = "https://api.x.ai/v1/responses"
 KIMI_ENDPOINT = "https://api.moonshot.ai/v1/chat/completions"
+GOOGLE_NEWS_RSS_ENDPOINT = "https://news.google.com/rss/search"
 
 
 class WebSearchTool(Tool):
@@ -107,6 +111,8 @@ class WebSearchTool(Tool):
             candidates.append("kimi")
         if self.brave_api_key:
             candidates.append("brave")
+        # No-key fallback for news/search queries.
+        candidates.append("google_news_rss")
 
         return [name for name in candidates if name != exclude]
 
@@ -117,6 +123,8 @@ class WebSearchTool(Tool):
             return await self._search_grok(query)
         if provider == "kimi":
             return await self._search_kimi(query)
+        if provider == "google_news_rss":
+            return await self._search_google_news_rss(query, count)
         return await self._search_brave(query, count)
 
     async def execute(self, query: str, count: int | None = None, **kwargs: Any) -> str:
@@ -129,6 +137,8 @@ class WebSearchTool(Tool):
 
         try:
             result = await self._run_provider(self.provider, query, n)
+            if isinstance(result, str) and result.strip().lower().startswith("error:"):
+                raise RuntimeError(result)
             _SEARCH_CACHE.set(cache_key, result, self.cache_ttl)
             return result
         except Exception as e:
@@ -138,6 +148,8 @@ class WebSearchTool(Tool):
                 try:
                     logger.info(f"Trying web_search fallback provider: {fallback_provider}")
                     result = await self._run_provider(fallback_provider, query, n)
+                    if isinstance(result, str) and result.strip().lower().startswith("error:"):
+                        raise RuntimeError(result)
                     _SEARCH_CACHE.set(cache_key, result, self.cache_ttl)
                     return result
                 except Exception as fallback_error:
@@ -321,3 +333,32 @@ class WebSearchTool(Tool):
             seen.add(url)
             deduped.append(url)
         return deduped
+
+    async def _search_google_news_rss(self, query: str, count: int) -> str:
+        """Fallback search provider that works without API keys."""
+        encoded_query = quote_plus(query)
+        url = (
+            f"{GOOGLE_NEWS_RSS_ENDPOINT}?q={encoded_query}"
+            "&hl=en-US&gl=US&ceid=US:en"
+        )
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, timeout=10.0)
+            r.raise_for_status()
+
+        root = ET.fromstring(r.text)
+        items = root.findall(".//item")
+        if not items:
+            return f"No results for: {query}"
+
+        lines = [f"Results for: {query}\n"]
+        for index, item in enumerate(items[:count], 1):
+            title = unescape((item.findtext("title") or "").strip())
+            link = (item.findtext("link") or "").strip()
+            pub_date = (item.findtext("pubDate") or "").strip()
+            if title:
+                lines.append(f"{index}. {title}")
+            if link:
+                lines.append(f"   {link}")
+            if pub_date:
+                lines.append(f"   Published: {pub_date}")
+        return "\n".join(lines)

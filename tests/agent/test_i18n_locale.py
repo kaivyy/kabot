@@ -10,6 +10,10 @@ def test_detect_locale_for_malay_markers():
     assert detect_locale("tolong set peringatan esok") == "ms"
 
 
+def test_detect_locale_for_indonesian_colloquial_markers():
+    assert detect_locale("lumayan panas ya ternyata") == "id"
+
+
 def test_catalog_falls_back_to_english_when_locale_missing():
     message = tr("weather.need_location", locale="de")
     assert "location" in message.lower()

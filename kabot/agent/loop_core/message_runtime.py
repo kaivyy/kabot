@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import random
+import re
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from kabot.agent.fallback_i18n import t
 from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.core.command_router import CommandContext
+from kabot.i18n.locale import detect_locale
 
 
 def _runtime_observability_cfg(loop: Any) -> Any:
@@ -34,6 +39,366 @@ def _emit_runtime_event(loop: Any, event_name: str, **fields: Any) -> None:
         logger.info(f"runtime_event={json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}")
     except Exception:
         logger.info(f"runtime_event={payload}")
+
+
+_PENDING_FOLLOWUP_TOOL_KEY = "pending_followup_tool"
+_PENDING_FOLLOWUP_INTENT_KEY = "pending_followup_intent"
+_PENDING_FOLLOWUP_TTL_SECONDS = 15 * 60
+_KEEPALIVE_INITIAL_DELAY_SECONDS = 2.5
+_KEEPALIVE_INTERVAL_SECONDS = 5.0
+_SHORT_CONFIRMATION_TOKENS = {
+    "ya",
+    "yes",
+    "y",
+    "iya",
+    "ok",
+    "oke",
+    "sip",
+    "sure",
+    "go ahead",
+    "do it",
+    "proceed",
+    "continue",
+    "lanjut",
+    "lanjutkan",
+    "jalankan",
+    "jalankan sekarang",
+    "lakukan",
+    "lakukan sekarang",
+    "ya lakukan",
+    "ambil sekarang",
+    "gas",
+    "gaskeun",
+    "terusin",
+    "teruskan",
+    "si",
+    "oui",
+    "ja",
+    "baik",
+}
+_SHORT_CONFIRMATION_PREFIXES = (
+    "ya ",
+    "yes ",
+    "ok ",
+    "oke ",
+    "lanjut ",
+    "jalankan ",
+    "lakukan ",
+    "ambil ",
+    "gas ",
+    "terusin ",
+    "teruskan ",
+)
+
+
+def _normalize_text(text: str) -> str:
+    return " ".join(str(text or "").strip().lower().split())
+
+
+def _normalize_locale_tag(value: Any) -> str | None:
+    raw = str(value or "").strip().lower().replace("_", "-")
+    if not raw:
+        return None
+    base = raw.split("-", 1)[0].strip()
+    return base or None
+
+
+def _resolve_runtime_locale(session: Any, msg: InboundMessage, text: str) -> str:
+    """Resolve stable runtime locale for per-turn status messaging."""
+    session_meta = getattr(session, "metadata", None)
+    if not isinstance(session_meta, dict):
+        session_meta = {}
+        try:
+            setattr(session, "metadata", session_meta)
+        except Exception:
+            pass
+
+    msg_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
+    explicit = _normalize_locale_tag(
+        msg_meta.get("locale") or msg_meta.get("language") or msg_meta.get("lang")
+    )
+    if explicit:
+        session_meta["runtime_locale"] = explicit
+        return explicit
+
+    detected = _normalize_locale_tag(detect_locale(text))
+    cached = _normalize_locale_tag(session_meta.get("runtime_locale"))
+    if detected and detected != "en":
+        session_meta["runtime_locale"] = detected
+        return detected
+    if cached:
+        return cached
+    return detected or "en"
+
+
+def _tool_registry_has(loop: Any, tool_name: str) -> bool:
+    tools = getattr(loop, "tools", None)
+    if tools is None:
+        return False
+    has_fn = getattr(tools, "has", None)
+    if callable(has_fn):
+        try:
+            return bool(has_fn(tool_name))
+        except Exception:
+            return False
+    names = getattr(tools, "tool_names", None)
+    if isinstance(names, list):
+        return tool_name in names
+    return False
+
+
+def _looks_like_action_intent(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+
+    tokens = normalized.split()
+    lead = tokens[0]
+    action_starters = {
+        "buat", "bikin", "buatkan", "create", "build", "write", "generate",
+        "cek", "check", "cari", "carikan", "search", "find", "look", "ambil",
+        "run", "jalankan", "lakukan", "perbaiki", "fix", "install", "setup", "configure",
+        "ringkas", "summarize", "terjemahkan", "translate",
+    }
+    if lead in action_starters:
+        return True
+
+    # Intent phrase for skill workflow even when user phrasing is short.
+    if "skill" in normalized and any(k in normalized for k in ("baru", "new", "creator", "create", "buat", "bikin")):
+        return True
+
+    return False
+
+
+def _looks_like_live_research_query(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+
+    # Time-sensitive or "latest" wording should always force live search.
+    live_markers = (
+        "latest",
+        "today",
+        "now",
+        "current",
+        "breaking",
+        "headline",
+        "headlines",
+        "news",
+        "berita",
+        "terbaru",
+        "terkini",
+        "sekarang",
+    )
+    if any(marker in normalized for marker in live_markers):
+        return True
+
+    if re.search(r"\b(news|berita)\s+update(s)?\b", normalized):
+        return True
+
+    # Date/year queries generally imply external verification.
+    if re.search(r"\b(19|20)\d{2}\b", normalized):
+        return True
+
+    # Search verbs in multilingual variants.
+    search_verbs = (
+        "find",
+        "search",
+        "look up",
+        "cari",
+        "carikan",
+        "telusuri",
+        "buscar",
+        "rechercher",
+    )
+    if any(normalized.startswith(f"{verb} ") for verb in search_verbs):
+        return True
+
+    return False
+
+
+def _is_short_context_followup(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    if "?" in str(text or ""):
+        return False
+    tokens = normalized.split()
+    if len(tokens) > 6:
+        return False
+    if len(normalized) > 64:
+        return False
+
+    lead = tokens[0]
+    question_leads = {
+        "apa", "apakah", "gimana", "bagaimana", "kenapa", "kok", "kapan", "berapa", "siapa", "mana",
+        "what", "why", "how", "when", "where", "who",
+        "quelle", "pourquoi", "comment", "quando", "donde", "dónde",
+    }
+    if lead in question_leads:
+        return False
+
+    negatives = {
+        "tidak", "nggak", "enggak", "ga", "gak", "jangan", "batal",
+        "no", "nope", "dont", "don't", "cancel", "stop",
+        "non", "nein",
+    }
+    if lead in negatives:
+        return False
+    if _looks_like_action_intent(normalized):
+        return False
+    return True
+
+
+def _looks_like_short_confirmation(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    if normalized in _SHORT_CONFIRMATION_TOKENS:
+        return True
+    if len(normalized) <= 64 and any(
+        normalized.startswith(prefix) for prefix in _SHORT_CONFIRMATION_PREFIXES
+    ):
+        return True
+    return False
+
+
+def _get_pending_followup_tool(session: Any, now_ts: float) -> dict[str, str] | None:
+    metadata = getattr(session, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    pending = metadata.get(_PENDING_FOLLOWUP_TOOL_KEY)
+    if not isinstance(pending, dict):
+        return None
+
+    tool_name = str(pending.get("tool") or "").strip()
+    expires_at = pending.get("expires_at")
+    try:
+        expires_ts = float(expires_at)
+    except Exception:
+        expires_ts = 0.0
+
+    if not tool_name or expires_ts <= now_ts:
+        metadata.pop(_PENDING_FOLLOWUP_TOOL_KEY, None)
+        return None
+    source = str(pending.get("source") or "").strip()
+    result = {"tool": tool_name}
+    if source:
+        result["source"] = source
+    return result
+
+
+def _set_pending_followup_tool(session: Any, tool_name: str, now_ts: float, source_text: str) -> None:
+    metadata = getattr(session, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    normalized_source = _normalize_text(source_text)[:160]
+    metadata[_PENDING_FOLLOWUP_TOOL_KEY] = {
+        "tool": tool_name,
+        "source": normalized_source,
+        "updated_at": now_ts,
+        "expires_at": now_ts + _PENDING_FOLLOWUP_TTL_SECONDS,
+    }
+
+
+def _clear_pending_followup_tool(session: Any) -> None:
+    metadata = getattr(session, "metadata", None)
+    if isinstance(metadata, dict):
+        metadata.pop(_PENDING_FOLLOWUP_TOOL_KEY, None)
+
+
+def _get_pending_followup_intent(session: Any, now_ts: float) -> dict[str, str] | None:
+    metadata = getattr(session, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    pending = metadata.get(_PENDING_FOLLOWUP_INTENT_KEY)
+    if not isinstance(pending, dict):
+        return None
+
+    intent_text = str(pending.get("text") or "").strip()
+    profile = str(pending.get("profile") or "").strip().upper() or "GENERAL"
+    expires_at = pending.get("expires_at")
+    try:
+        expires_ts = float(expires_at)
+    except Exception:
+        expires_ts = 0.0
+
+    if not intent_text or expires_ts <= now_ts:
+        metadata.pop(_PENDING_FOLLOWUP_INTENT_KEY, None)
+        return None
+    return {"text": intent_text, "profile": profile}
+
+
+def _set_pending_followup_intent(session: Any, intent_text: str, profile: str, now_ts: float) -> None:
+    metadata = getattr(session, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    normalized_intent = _normalize_text(intent_text)[:220]
+    if not normalized_intent:
+        return
+    metadata[_PENDING_FOLLOWUP_INTENT_KEY] = {
+        "text": normalized_intent,
+        "profile": str(profile or "GENERAL").strip().upper(),
+        "updated_at": now_ts,
+        "expires_at": now_ts + _PENDING_FOLLOWUP_TTL_SECONDS,
+    }
+
+
+def _clear_pending_followup_intent(session: Any) -> None:
+    metadata = getattr(session, "metadata", None)
+    if isinstance(metadata, dict):
+        metadata.pop(_PENDING_FOLLOWUP_INTENT_KEY, None)
+
+
+def _should_store_followup_intent(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    # Keep live/current-fact intent even when prompt is short, so
+    # confirmations like "ya/gas/ambil sekarang" can continue deterministically.
+    if _looks_like_live_research_query(normalized):
+        return True
+    if _looks_like_action_intent(normalized):
+        return True
+    if _looks_like_short_confirmation(normalized):
+        return False
+    return not _is_short_context_followup(normalized)
+
+
+def _build_untrusted_context_payload(
+    msg: InboundMessage,
+    *,
+    dropped_count: int,
+    dropped_preview: list[str],
+) -> dict[str, Any]:
+    """Build explicit untrusted metadata payload for prompt hardening."""
+    payload: dict[str, Any] = {
+        "channel": str(getattr(msg, "channel", "") or ""),
+        "chat_id": str(getattr(msg, "chat_id", "") or ""),
+        "sender_id": str(getattr(msg, "sender_id", "") or ""),
+    }
+    for key in ("account_id", "peer_kind", "peer_id", "guild_id", "team_id", "thread_id"):
+        value = getattr(msg, key, None)
+        if isinstance(value, str) and value.strip():
+            payload[key] = value.strip()
+    if dropped_count > 0:
+        payload["queue_merge"] = {
+            "dropped_count": dropped_count,
+            "preview": dropped_preview[:2],
+        }
+    meta = msg.metadata if isinstance(msg.metadata, dict) else {}
+    raw_meta = meta.get("raw")
+    if isinstance(raw_meta, (dict, list, str, int, float, bool)):
+        payload["raw_metadata"] = raw_meta
+    return payload
 
 
 async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | None:
@@ -85,7 +450,11 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     session = await loop._init_session(msg)
     if not bool(getattr(loop, "_cold_start_reported", False)):
         boot_started = getattr(loop, "_boot_started_at", None)
-        if isinstance(boot_started, (int, float)):
+        startup_ready = getattr(loop, "_startup_ready_at", None)
+        if isinstance(boot_started, (int, float)) and isinstance(startup_ready, (int, float)):
+            cold_start_ms = int((startup_ready - boot_started) * 1000)
+            logger.info(f"cold_start_ms={max(0, cold_start_ms)}")
+        elif isinstance(boot_started, (int, float)):
             cold_start_ms = int((time.perf_counter() - boot_started) * 1000)
             logger.info(f"cold_start_ms={cold_start_ms}")
         loop._cold_start_reported = True
@@ -93,6 +462,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     # Phase 9: Parse directives from message body
     clean_body, directives = loop.directive_parser.parse(msg.content)
     effective_content = clean_body or msg.content
+    intent_source_for_followup = effective_content
 
     # Store directives in session metadata
     if directives.raw_directives:
@@ -124,82 +494,348 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             effective_content += hint
             logger.info(f"Document hint injected: {len(document_paths)} files")
 
+    required_tool = loop._required_tool_for_query(effective_content)
+    required_tool_query = effective_content
+    now_ts = time.time()
+    is_background_task = (
+        (msg.channel or "").lower() == "system"
+        or (msg.sender_id or "").lower() == "system"
+        or (
+            isinstance(msg.content, str)
+            and msg.content.strip().lower().startswith("heartbeat task:")
+        )
+    )
+
+    _DIRECT_TOOLS = {
+        "get_process_memory",
+        "get_system_info",
+        "cleanup_system",
+        "web_search",
+        "weather",
+        "speedtest",
+        "stock",
+        "crypto",
+        "server_monitor",
+    }
+    fast_direct_context = bool(
+        perf_cfg
+        and bool(getattr(perf_cfg, "fast_first_response", True))
+        and required_tool in _DIRECT_TOOLS
+    )
+
     history_limit = 30
     if perf_cfg and bool(getattr(perf_cfg, "fast_first_response", True)):
         warmup_task = getattr(loop, "_memory_warmup_task", None)
         if warmup_task is not None and not warmup_task.done():
             history_limit = 12
+    if fast_direct_context:
+        history_limit = min(history_limit, 6)
 
-    conversation_history = loop.memory.get_conversation_context(msg.session_key, max_messages=history_limit)
-    if conversation_history:
-        conversation_history = [m for m in conversation_history if isinstance(m, dict)]
+    conversation_history: list[dict[str, Any]] = []
+    skip_history_for_speed = bool(
+        perf_cfg
+        and bool(getattr(perf_cfg, "fast_first_response", True))
+        and _looks_like_live_research_query(effective_content)
+    )
+    if not fast_direct_context and not skip_history_for_speed:
+        conversation_history = loop.memory.get_conversation_context(msg.session_key, max_messages=history_limit)
+        if conversation_history:
+            conversation_history = [m for m in conversation_history if isinstance(m, dict)]
 
     # Router triase: SIMPLE vs COMPLEX
     decision = await loop.router.route(effective_content)
     logger.info(f"Route: profile={decision.profile}, complex={decision.is_complex}")
+    try:
+        msg.metadata["route_profile"] = decision.profile
+        msg.metadata["route_complex"] = bool(decision.is_complex)
+    except Exception:
+        pass
 
-    context_builder = loop.context
-    resolve_context = getattr(loop, "_resolve_context_for_message", None)
-    if callable(resolve_context):
-        try:
-            resolved_context = resolve_context(msg)
-            if resolved_context is not None:
-                context_builder = resolved_context
-        except Exception as exc:
-            logger.warning(f"Failed to resolve routed context builder: {exc}")
-
-    context_started = time.perf_counter()
-    messages = context_builder.build_messages(
-        history=conversation_history,
-        current_message=effective_content,
-        media=msg.media if hasattr(msg, "media") else None,
-        channel=msg.channel,
-        chat_id=msg.chat_id,
-        profile=decision.profile,
-        tool_names=loop.tools.tool_names,
+    pending_followup_tool_payload = _get_pending_followup_tool(session, now_ts)
+    pending_followup_tool = (
+        str(pending_followup_tool_payload.get("tool") or "").strip()
+        if isinstance(pending_followup_tool_payload, dict)
+        else None
     )
-    context_build_ms = int((time.perf_counter() - context_started) * 1000)
-    max_context_build_ms = int(getattr(perf_cfg, "max_context_build_ms", 500)) if perf_cfg else 500
-    logger.info(f"turn_id={turn_id} context_build_ms={context_build_ms}")
-    _emit_runtime_event(
-        loop,
-        "context_built",
-        turn_id=turn_id,
-        context_build_ms=context_build_ms,
+    pending_followup_source = (
+        str(pending_followup_tool_payload.get("source") or "").strip()
+        if isinstance(pending_followup_tool_payload, dict)
+        else ""
     )
-    if context_build_ms > max_context_build_ms:
-        logger.warning(
-            f"turn_id={turn_id} context_build_ms={context_build_ms} exceeded budget={max_context_build_ms}"
+    pending_followup_intent = _get_pending_followup_intent(session, now_ts)
+    is_short_followup = _is_short_context_followup(effective_content)
+    is_short_confirmation = _looks_like_short_confirmation(effective_content)
+    if (
+        not required_tool
+        and str(decision.profile).upper() == "RESEARCH"
+        and _tool_registry_has(loop, "web_search")
+        and _looks_like_live_research_query(effective_content)
+    ):
+        required_tool = "web_search"
+        required_tool_query = effective_content
+        decision.is_complex = True
+        logger.info(
+            f"Research safety latch: '{_normalize_text(effective_content)[:120]}' -> required_tool=web_search"
+        )
+        fast_direct_context = bool(
+            perf_cfg
+            and bool(getattr(perf_cfg, "fast_first_response", True))
+            and required_tool in _DIRECT_TOOLS
         )
 
-    # Check if this query REQUIRES a specific tool (cleanup, sysinfo, weather, cron)
-    required_tool = loop._required_tool_for_query(effective_content)
+    if (
+        pending_followup_tool
+        and not decision.is_complex
+        and not required_tool
+        and (is_short_followup or is_short_confirmation)
+    ):
+        required_tool = pending_followup_tool
+        if pending_followup_source:
+            required_tool_query = pending_followup_source
+        decision.is_complex = True
+        logger.info(
+            f"Session follow-up inference: '{_normalize_text(effective_content)}' -> required_tool={required_tool}"
+        )
+        fast_direct_context = bool(
+            perf_cfg
+            and bool(getattr(perf_cfg, "fast_first_response", True))
+            and required_tool in _DIRECT_TOOLS
+        )
 
-    # CRITICAL FIX: If user gives a short confirmation, elevate to complex
-    # if the AI was offering an action in the previous turn. (Multilingual)
+    # Infer required tool for short follow-ups before context building, so
+    # confirmations like "gas"/"ambil sekarang" can take the direct fast path.
     if not decision.is_complex and not required_tool:
-        short_confirmations = (
-            "ya", "yes", "y", "iya", "ok", "oke", "boleh", "silakan", "lanjut", "sip", "yep", "yup", "sure",
-            "si", "sí", "oui", "ja", "da", "net",
-            "はい", "네", "是", "对", "好的", "baik"
-        )
-        offer_keywords = (
-            "reminder", "ingatkan", "set", "jadwal", "cleanup", "bersihkan", "download", "unduh",
-            "schedule", "alarm", "timer", "jadual", "peringatan", "เตือน", "ตาราง", "提醒", "日程",
-            "clean", "optimasi", "hapus", "delete", "remove"
-        )
-        if effective_content.strip().lower() in short_confirmations:
-            last_asst = next((m.get("content", "") for m in reversed(conversation_history) if m.get("role") == "assistant"), "")
-            if any(k in str(last_asst).lower() for k in offer_keywords):
-                logger.info("Elevating short confirmation to complex route based on recent AI offer")
+        normalized_followup = _normalize_text(effective_content)
+        if _looks_like_short_confirmation(normalized_followup):
+            inferred_tool = None
+            for item in reversed(conversation_history[-8:]):
+                candidate = str(item.get("content", "") or "").strip()
+                if not candidate:
+                    continue
+                candidate_norm = " ".join(candidate.lower().split())
+                if candidate_norm == normalized_followup:
+                    continue
+                inferred = loop._required_tool_for_query(candidate)
+                if inferred:
+                    inferred_tool = inferred
+                    required_tool_query = candidate
+                    break
+            if inferred_tool:
+                required_tool = inferred_tool
                 decision.is_complex = True
+                logger.info(
+                    f"Pre-context follow-up inference: '{normalized_followup}' -> required_tool={inferred_tool}"
+                )
+                fast_direct_context = bool(
+                    perf_cfg
+                    and bool(getattr(perf_cfg, "fast_first_response", True))
+                    and required_tool in _DIRECT_TOOLS
+                )
 
-    if decision.is_complex or required_tool:
-        if required_tool and not decision.is_complex:
-            logger.info(f"Route override: simple -> complex (required_tool={required_tool})")
-        final_content = await loop._run_agent_loop(msg, messages, session)
-    else:
-        final_content = await loop._run_simple_response(msg, messages)
+    if (
+        pending_followup_intent
+        and not required_tool
+        and (is_short_followup or is_short_confirmation)
+    ):
+        intent_text = str(pending_followup_intent.get("text") or "").strip()
+        intent_profile = str(pending_followup_intent.get("profile") or "GENERAL").strip().upper()
+        inferred_tool = loop._required_tool_for_query(intent_text) if intent_text else None
+        if inferred_tool:
+            required_tool = inferred_tool
+            required_tool_query = intent_text
+            decision.is_complex = True
+            logger.info(
+                f"Session intent follow-up inference: '{_normalize_text(effective_content)}' -> required_tool={inferred_tool}"
+            )
+            fast_direct_context = bool(
+                perf_cfg
+                and bool(getattr(perf_cfg, "fast_first_response", True))
+                and required_tool in _DIRECT_TOOLS
+            )
+        else:
+            # Preserve non-tool intent context so short confirms like
+            # "ya/lanjut/gas" still continue the previous actionable flow.
+            effective_content = (
+                f"{effective_content}\n\n[Follow-up Context]\n{intent_text}"
+                if intent_text
+                else effective_content
+            )
+            if not decision.is_complex and str(decision.profile).upper() == "CHAT":
+                decision.profile = intent_profile if intent_profile else decision.profile
+                if intent_profile in {"CODING", "RESEARCH", "GENERAL"}:
+                    decision.is_complex = True
+            logger.info(
+                f"Session intent context continued: '{_normalize_text(effective_content)[:120]}' profile={decision.profile} complex={decision.is_complex}"
+            )
+
+    if required_tool:
+        _set_pending_followup_tool(session, required_tool, now_ts, str(required_tool_query or effective_content))
+    elif not is_short_followup and not is_short_confirmation:
+        _clear_pending_followup_tool(session)
+
+    if _should_store_followup_intent(intent_source_for_followup):
+        _set_pending_followup_intent(session, intent_source_for_followup, str(decision.profile), now_ts)
+    elif not _is_short_context_followup(intent_source_for_followup) and not _looks_like_short_confirmation(intent_source_for_followup):
+        _clear_pending_followup_intent(session)
+
+    if isinstance(msg.metadata, dict):
+        msg.metadata["effective_content"] = effective_content
+        if required_tool:
+            msg.metadata["required_tool"] = required_tool
+            msg.metadata["required_tool_query"] = str(required_tool_query or effective_content).strip()
+        else:
+            msg.metadata.pop("required_tool", None)
+            msg.metadata.pop("required_tool_query", None)
+        msg.metadata["skip_critic_for_speed"] = bool(
+            required_tool
+            or _is_short_context_followup(msg.content)
+            or _is_short_context_followup(effective_content)
+            or _looks_like_short_confirmation(msg.content)
+            or _looks_like_short_confirmation(effective_content)
+        )
+
+    fast_simple_context = bool(
+        perf_cfg
+        and bool(getattr(perf_cfg, "fast_first_response", True))
+        and not decision.is_complex
+        and not required_tool
+    )
+
+    queue_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
+    queue_info = queue_meta.get("queue") if isinstance(queue_meta.get("queue"), dict) else {}
+    dropped_count = int(queue_info.get("dropped_count", 0) or 0)
+    dropped_preview = queue_info.get("dropped_preview", [])
+    preview_items = [str(item).strip() for item in dropped_preview if str(item).strip()]
+    untrusted_context = _build_untrusted_context_payload(
+        msg,
+        dropped_count=dropped_count,
+        dropped_preview=preview_items,
+    )
+
+    runtime_locale = _resolve_runtime_locale(session, msg, effective_content)
+    queued_status = t("runtime.status.queued", locale=runtime_locale, text=effective_content)
+    if dropped_count > 0:
+        queued_status += " " + t(
+            "runtime.status.queued_merged",
+            locale=runtime_locale,
+            text=effective_content,
+            count=dropped_count,
+        )
+        merge_note = f"[Queue Merge] {dropped_count} pending message(s) were merged before processing."
+        if preview_items:
+            merge_note += " Earlier snippets: " + " | ".join(preview_items[:2])
+        effective_content = f"{effective_content}\n\n{merge_note}"
+    thinking_status = t("runtime.status.thinking", locale=runtime_locale, text=effective_content)
+    done_status = t("runtime.status.done", locale=runtime_locale, text=effective_content)
+    error_status = t("runtime.status.error", locale=runtime_locale, text=effective_content)
+
+    async def _publish_status(text: str, phase: str, *, keepalive: bool = False) -> None:
+        bus = getattr(loop, "bus", None)
+        publish = getattr(bus, "publish_outbound", None)
+        if not callable(publish):
+            return
+        try:
+            metadata = {"type": "status_update", "phase": phase}
+            metadata["lane"] = "status"
+            if keepalive:
+                metadata["keepalive"] = True
+            await publish(
+                OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=text,
+                    metadata=metadata,
+                )
+            )
+        except Exception:
+            return
+
+    keepalive_stop = asyncio.Event()
+    keepalive_task: asyncio.Task | None = None
+
+    async def _keepalive_loop() -> None:
+        try:
+            try:
+                await asyncio.wait_for(
+                    keepalive_stop.wait(),
+                    timeout=float(_KEEPALIVE_INITIAL_DELAY_SECONDS),
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            while not keepalive_stop.is_set():
+                await _publish_status(thinking_status, "thinking", keepalive=True)
+                try:
+                    await asyncio.wait_for(
+                        keepalive_stop.wait(),
+                        timeout=float(_KEEPALIVE_INTERVAL_SECONDS),
+                    )
+                except asyncio.TimeoutError:
+                    continue
+        except asyncio.CancelledError:
+            return
+
+    if not is_background_task:
+        await _publish_status(queued_status, "queued")
+        keepalive_task = asyncio.create_task(_keepalive_loop())
+    try:
+        context_builder = loop.context
+        resolve_context = getattr(loop, "_resolve_context_for_message", None)
+        if callable(resolve_context):
+            try:
+                resolved_context = resolve_context(msg)
+                if resolved_context is not None:
+                    context_builder = resolved_context
+            except Exception as exc:
+                logger.warning(f"Failed to resolve routed context builder: {exc}")
+
+        if fast_direct_context or fast_simple_context:
+            messages = [{"role": "user", "content": effective_content}]
+            context_build_ms = 0
+        else:
+            context_started = time.perf_counter()
+            messages = await asyncio.to_thread(
+                context_builder.build_messages,
+                history=conversation_history,
+                current_message=effective_content,
+                media=msg.media if hasattr(msg, "media") else None,
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                profile=decision.profile,
+                tool_names=loop.tools.tool_names,
+                untrusted_context=untrusted_context,
+            )
+            context_build_ms = int((time.perf_counter() - context_started) * 1000)
+        max_context_build_ms = int(getattr(perf_cfg, "max_context_build_ms", 500)) if perf_cfg else 500
+        logger.info(f"turn_id={turn_id} context_build_ms={context_build_ms}")
+        _emit_runtime_event(
+            loop,
+            "context_built",
+            turn_id=turn_id,
+            context_build_ms=context_build_ms,
+        )
+        if context_build_ms > max_context_build_ms:
+            logger.warning(
+                f"turn_id={turn_id} context_build_ms={context_build_ms} exceeded budget={max_context_build_ms}"
+            )
+
+        if decision.is_complex or required_tool:
+            if required_tool and not decision.is_complex:
+                logger.info(f"Route override: simple -> complex (required_tool={required_tool})")
+            final_content = await loop._run_agent_loop(msg, messages, session)
+        else:
+            if not is_background_task:
+                await _publish_status(thinking_status, "thinking")
+            final_content = await loop._run_simple_response(msg, messages)
+            if not is_background_task:
+                await _publish_status(done_status if final_content else error_status, "done" if final_content else "error")
+    finally:
+        keepalive_stop.set()
+        if keepalive_task is not None:
+            keepalive_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await keepalive_task
 
     first_response_ms = int((time.perf_counter() - turn_started) * 1000)
     logger.info(f"turn_id={turn_id} first_response_ms={first_response_ms}")

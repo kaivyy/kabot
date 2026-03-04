@@ -30,6 +30,9 @@ class BaseChannel(ABC):
         self.config = config
         self.bus = bus
         self._running = False
+        # Per-chat status phase cache used to dedupe interim status updates.
+        self._status_phase_cache: dict[str, str] = {}
+        self._status_text_cache: dict[str, str] = {}
 
     @abstractmethod
     async def start(self) -> None:
@@ -232,5 +235,46 @@ class BaseChannel(ABC):
     def is_running(self) -> bool:
         """Check if the channel is running."""
         return self._running
+
+    def _status_update_payload(self, msg: OutboundMessage) -> tuple[bool, str, str]:
+        """Extract normalized progress-update info from outbound message."""
+        metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+        update_type = str(metadata.get("type") or "").strip().lower()
+        # Keep backward compatibility with existing status updates while
+        # allowing richer draft/partial updates on the same mutable lane.
+        if update_type not in {"status_update", "draft_update", "reasoning_update"}:
+            return False, "", ""
+        default_phase = "reasoning" if update_type == "reasoning_update" else "thinking"
+        phase = str(metadata.get("phase") or "").strip().lower() or default_phase
+        text = str(msg.content or "").strip()
+        return True, phase, text
+
+    def _should_skip_status_update(self, msg: OutboundMessage) -> bool:
+        """Return True when a status update is duplicate/no-op for this chat."""
+        is_status, phase, text = self._status_update_payload(msg)
+        if not is_status:
+            return False
+        metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+        # Keepalive pulses must pass through even when phase/text are unchanged,
+        # otherwise typing/activity indicators can appear stalled on long turns.
+        if bool(metadata.get("keepalive", False)):
+            return False
+        if not text:
+            return True
+        chat_key = str(msg.chat_id)
+        if (
+            self._status_phase_cache.get(chat_key) == phase
+            and self._status_text_cache.get(chat_key) == text
+        ):
+            return True
+        self._status_phase_cache[chat_key] = phase
+        self._status_text_cache[chat_key] = text
+        return False
+
+    def _clear_status_state(self, chat_id: str) -> None:
+        """Clear cached interim status state for a chat after final response."""
+        chat_key = str(chat_id)
+        self._status_phase_cache.pop(chat_key, None)
+        self._status_text_cache.pop(chat_key, None)
 
 

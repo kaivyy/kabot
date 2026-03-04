@@ -5,6 +5,128 @@ All notable changes to Kabot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2026-03-04 (P0 Delta)
+
+### Added
+- **Untrusted Context Guard (Prompt Injection Boundary)**:
+  - Added explicit untrusted metadata boundary in context assembly:
+    - system prompt now includes `Untrusted Context Safety` rules,
+    - runtime now injects `[UNTRUSTED_CONTEXT_JSON] ... [/UNTRUSTED_CONTEXT_JSON]` as data-only context.
+  - Runtime now passes normalized untrusted payload into context builder:
+    - channel/chat/sender routing fields,
+    - queue-merge metadata,
+    - raw transport metadata snapshot (`metadata.raw`) when present.
+- **Reasoning Lane Updates**:
+  - Added dedicated outbound `reasoning_update` lane in execution runtime.
+  - Runtime now emits lane metadata on progress events:
+    - `status_update` -> `lane=status`,
+    - `draft_update` -> `lane=partial`,
+    - `reasoning_update` -> `lane=reasoning`.
+- **Lightweight Gateway Dashboard (SSR + HTMX)**:
+  - Added minimal web dashboard routes:
+    - `/dashboard`
+    - `/dashboard/partials/summary`
+    - `/dashboard/partials/runtime`
+    - `/dashboard/api/status`
+  - Dashboard is server-rendered and HTMX-driven (no SPA runtime dependency).
+  - Added runtime status provider wiring from `kabot gateway`:
+    - model,
+    - channels enabled,
+    - cron jobs,
+    - uptime,
+    - host/port/tailscale mode.
+- **Gateway Method-Scope Governance (Baseline)**:
+  - Added scoped bearer-token format:
+    - `gateway.auth_token = "<token>|scope1,scope2,..."`
+  - Added per-route scope checks:
+    - webhook ingress (`/webhooks/trigger`, `/webhooks/meta` POST): `ingress.write`,
+    - dashboard/API status: `operator.read`.
+  - Backward compatibility preserved for plain tokens (no scopes specified): full access as before.
+- **PyPI Trusted Publisher Workflow**:
+  - Added GitHub Actions trusted publishing workflow at:
+    - `.github/workflows/workflow.yml`
+  - Workflow uses OpenID Connect (OIDC) with:
+    - `id-token: write`
+    - environment `pypi`
+    - publish trigger on tags (`v*`) and manual dispatch.
+
+### Changed
+- **Channel Progress Compatibility**:
+  - Base channel progress parser now accepts `reasoning_update` as progress payload.
+- **Multilingual/Encoding Hardening**:
+  - Rebuilt shared multilingual lexicon with valid UTF-8 entries (Thai/Chinese terms no longer mojibake).
+  - Reworked quality runtime refusal patterns to remove corrupted strings and improve multilingual matching quality.
+  - Added mojibake detection fallback in i18n translator:
+    - if locale string appears transcoding-corrupted, Kabot falls back to English template safely.
+  - Added Indonesian colloquial locale markers (`lumayan`, `ternyata`, `banget`, etc.) so casual Indonesian chat no longer falls back to English status text too often.
+  - Added session-level runtime locale stickiness for status updates:
+    - short follow-ups (`ya`, `ok`, `gas`) keep prior detected locale instead of re-detecting to English each turn.
+- **Gateway Startup Responsiveness (Watchdog Path)**:
+  - `kabot gateway` now emits an immediate bootstrap line (`Booting kabot gateway...`) before heavy runtime imports.
+  - Added preflight bind check before runtime initialization:
+    - detects occupied gateway port early,
+    - exits fast with code `78` (no long init wait before fail).
+  - Added bootstrap phase visibility:
+    - runtime module load duration,
+    - bootstrap-ready duration.
+  - Deferred heavy optional tool pack (Google Suite + GraphMemory) to background load after loop start, reducing cold import pressure on initial startup path.
+  - Deferred `WebhookServer` import/build from gateway bootstrap path into runtime startup phase, so channel and agent startup no longer wait on `aiohttp` import cost.
+  - Gateway runtime tasks now start (`agent`, `channels`, event dispatcher) before webhook server initialization, improving perceived readiness on slow disks.
+  - Reduced eager import pressure in `AgentLoop` by moving heavy tool imports to local registration path and switching `kabot.agent` package exports to lazy attribute resolution.
+- **Telegram Polling Conflict Hardening**:
+  - Added explicit polling error callback for Telegram channel runtime.
+  - `telegram.error.Conflict` now triggers controlled channel shutdown (single-shot) instead of repeated default traceback spam.
+  - Telegram stop path is now defensive (best-effort updater/app/shutdown sequence) to avoid noisy teardown failures.
+  - Telegram progress status updates now handle `Message is not modified` safely:
+    - keep existing mutable status bubble,
+    - do not emit duplicate “Processing your request…” status messages.
+- **Cross-Channel Mutable Status Hardening (Telegram/Slack/Discord)**:
+  - Telegram mutable status lifecycle now keeps status-id state on transient update/delete failures:
+    - prevents orphan + duplicate progress bubbles on temporary network hiccups,
+    - allows next keepalive/final pass to reconcile the same status message.
+  - Slack status updates now treat `message_not_modified` as no-op and keep existing mutable status message.
+  - Slack transient update/delete failures no longer force immediate new status bubble creation.
+  - Discord status updates now evaluate HTTP status codes for update/delete lifecycle:
+    - transient `429/5xx` keeps current mutable status id (prevents duplicate bubbles),
+    - `404` clears stale status id and recreates cleanly on next status update.
+  - Added/updated channel regression tests for these behaviors.
+- **LiteLLM Lazy Runtime Stability**:
+  - Fixed lazy exception symbol initialization in `LiteLLMProvider.chat`, preventing `TypeError: catching classes that do not inherit from BaseException` when `_execute_model_call` is monkeypatched or short-circuited.
+  - `chat()` now guarantees runtime exception classes are initialized before fallback/error handling.
+- **PyPI Packaging and Upgrade Naming Alignment**:
+  - Renamed project package in `pyproject.toml`:
+    - from `kabot-ai` to `kabot`.
+  - Updated install and update flows to use `kabot` package name:
+    - `install.sh`
+    - `install.ps1`
+    - docs quickstart/how-to references.
+  - Runtime updater now attempts:
+    - `kabot` first,
+    - falls back to legacy `kabot-ai` for backward compatibility.
+
+
+### Verified
+- Added/updated regression tests for:
+  - untrusted-context propagation and guard behavior,
+  - reasoning lane publication,
+  - scoped gateway auth + dashboard access control,
+  - mojibake fallback in i18n.
+- Relevant suites executed:
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/agent/loop_core/test_execution_runtime.py`
+  - `tests/agent/test_loop_facade_compat.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/test_multilingual_lexicon.py`
+  - `tests/cli/test_gateway_port_guard.py`
+  - `tests/cli/test_gateway_tailscale_runtime.py`
+  - `tests/channels/test_status_updates_cross_channel.py`
+  - `tests/channels/test_telegram_typing_status.py`
+  - `tests/agent/test_i18n_locale.py`
+  - `tests/gateway/test_webhooks.py`
+  - `tests/gateway/test_webhooks_meta.py`
+  - `tests/i18n/test_catalog_mojibake.py`
+  - `tests/providers/test_litellm_provider_resolution.py`
+
 ## [0.5.8] - 2026-03-03
 
 ### Added
@@ -32,6 +154,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `maxCostPerDayUsd`
     - `maxTokensPerHour`
     - `enforcementMode` (`warn|hard`)
+- **Runtime Queue Config (Typed)**:
+  - Added `runtime.queue`:
+    - `enabled`
+    - `mode` (`off|debounce`)
+    - `debounceWindowMs`
+    - `maxPendingPerSession`
+    - `dropPolicy` (`drop_oldest|drop_newest`)
+    - `summarizeDropped`
 - **Security Trust Mode Config (Typed)**:
   - Added `security.trustMode`:
     - `enabled`
@@ -115,6 +245,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `docs/plans/2026-03-02-kabot-0.5.8-wave1-implementation.md`.
 
 ### Changed
+- **Gateway Port Source-of-Truth Alignment**:
+  - `kabot gateway` now resolves runtime port from `config.gateway.port` when `--port` is not provided.
+  - CLI `--port` remains a one-run explicit override.
+  - Removes prior config/runtime mismatch where wizard-saved gateway port could be ignored at startup.
+- **Tailscale Runtime Activation (No Longer Config-Only Placeholder)**:
+  - Gateway startup now resolves tailscale mode from existing config fields:
+    - `bind_mode=tailscale` -> `tailscale serve --bg --yes <port>`
+    - `gateway.tailscale=true` (non-tailscale bind) -> `tailscale funnel --bg --yes <port>`
+  - When tailscale exposure is enabled, runtime host is forced to `127.0.0.1` to avoid accidental wide bind with overlay exposure.
+  - If tailscale setup fails while `bind_mode=tailscale`, gateway startup now fails fast with explicit error (instead of silently continuing as mock-like behavior).
+  - Successful setup prints resolved HTTPS endpoint when MagicDNS is available.
+- **Interactive Run Lifecycle (Cross-Channel)**:
+  - Runtime now emits multilingual phase status updates consistently for:
+    - `queued`
+    - `thinking`
+    - `tool`
+    - `done`
+    - `error`
+  - Added runtime keepalive pulse during long-running turns:
+    - after initial queued status, Kabot now emits periodic `thinking` status updates with `metadata.keepalive=true` until completion,
+    - closes "silent" windows during long context build / tool / LLM execution.
+  - Status dedupe now explicitly allows keepalive pulses to pass through:
+    - repeated keepalive updates are no longer dropped by base channel dedupe cache,
+    - bridge adapters can continue emitting activity typing hints on each pulse.
+  - Status text lookup is now centralized in `kabot.i18n.catalog` (`runtime.status.*`) instead of inline runtime string maps, so language behavior is config/catalog-driven and no longer hardcoded per module.
+  - Queue merge status (`queued_merged`) is now translated through i18n as well.
+  - System identity prompt guidance was made language-neutral (removed Indonesian-only hardcoded examples).
+  - Added draft-preview lifecycle on complex retries:
+    - runtime emits `draft_update` when self-eval/critic requests a retry,
+    - draft updates are deduped and use the same mutable progress lane as status updates,
+    - final non-progress reply clears the mutable draft/progress indicator.
+  - Added per-chat status dedupe in `BaseChannel` to suppress repeated/no-op phase messages.
+  - Channel-specific status handling now follows one lifecycle pattern:
+    - Telegram/Discord/Slack keep a mutable status message (edit-in-place, then cleanup on final reply),
+    - Feishu renders status updates as lightweight text payloads,
+    - bridge adapters emit best-effort typing activity hints for pre-final phases,
+    - Email intentionally suppresses interim status updates to avoid inbox spam.
+- **Fast Turn Path for Responsiveness**:
+  - Added fast context bypass for deterministic direct-tool requests (`get_process_memory`, `cleanup_system`, `get_system_info`, etc.) so these turns no longer build full history/system prompt.
+  - Added deterministic news/search path:
+    - news/headline intents now map to required tool `web_search`,
+    - `web_search` is now included in direct fast-path handling (raw tool result, no critic loop),
+    - planning step is skipped when a required tool is already known (`required_tool`), reducing extra LLM round-trips,
+    - `web_search` now falls back to Google News RSS when API-key providers are unavailable, so news queries still return live sources without key setup.
+  - Added fast simple-context path for short non-tool chat turns.
+  - Added speed guardrails in execution loop:
+    - skip critic retries on short/CHAT turns,
+    - skip critic retries on required-tool turns,
+    - skip self-eval/critic loops on background/heartbeat turns.
+  - Direct readouts for `cleanup_system` and `get_process_memory` now return raw tool output immediately (no extra summarization hop).
+- **OpenClaw-Style Input Maturity Hardening (Context over Keyword)**:
+  - Added session-scoped follow-up intent latch (`pending_followup_tool`) in message runtime:
+    - stores the last required tool per session with TTL,
+    - allows short confirmations/follow-ups (e.g. `ya`, `gas`, `lanjut`, `terusin`) to continue the prior intended action without repeating keywords.
+  - Added session-scoped non-tool follow-up intent continuity (`pending_followup_intent`):
+    - preserves prior actionable user intent text + route profile with TTL,
+    - maps short follow-ups like `ya lanjut` onto previous actionable context even when no explicit tool keyword is present,
+    - injects `[Follow-up Context]` into turn input to keep downstream routing/skills loading coherent.
+  - Added RESEARCH safety latch in message runtime:
+    - when route profile is `RESEARCH` and query indicates live/current facts (latest/time/year/news markers), Kabot now forces `required_tool=web_search`.
+  - Added execution-runtime RESEARCH fail-safe:
+    - if upstream routing metadata is `RESEARCH` and `web_search` exists, agent loop forces web search tool path to reduce hallucinated “from memory” answers.
+  - Extended critic speed policy:
+    - skip critic retries for `RESEARCH` profile turns (in addition to existing short/chat/required-tool shortcuts) to prevent 20-40s retry loops on live-news prompts.
+  - Added dedicated OpenClaw gap matrix document for operator parity tracking:
+    - `docs/plans/2026-03-03-openclaw-vs-kabot-input-gap-matrix.md`.
+  - Improved actionable-intent detection for short messages:
+    - short imperative prompts (e.g. `cek ram`, `buat skill`) are no longer treated as passive follow-up confirmations.
+  - Improved skill matching for creator workflows:
+    - `skill-creator` (and `writing-skills`) now gets intent-alias boost for phrases like:
+      - `buat skill baru`,
+      - `create/build skill`,
+      - `skills creator`.
+  - Fixed follow-up execution grounding across runtime phases:
+    - `message_runtime` now persists resolved runtime hints into inbound metadata:
+      - `effective_content`
+      - `required_tool`
+      - `required_tool_query`
+      - `skip_critic_for_speed`
+    - `execution_runtime` now consumes those hints so short confirmations like `ya/gas/lanjut` continue the intended prior action instead of re-asking or drifting.
+  - Fixed direct tool query source for short confirmations:
+    - deterministic fallback tools now use `required_tool_query` when present (instead of raw short text like `gas`), so `web_search/weather/cron` actions execute with the intended prior query context.
+  - Hardened short follow-up continuity for live research:
+    - short live-news prompts (for example `berita terbaru 2026 sekarang`) are now persisted as `pending_followup_intent` even when message length is short,
+    - short confirmation phrases including action-form confirmations (for example `ambil sekarang`, `ya lakukan`, `terusin`) now continue prior intent/tool flow instead of dropping context.
+  - Added execution-level live research fail-safe:
+    - `execution_runtime` now forces `required_tool=web_search` for live/current-fact style prompts when web search tool is available, even when upstream route metadata is not explicitly `RESEARCH`.
+  - Reduced critic-loop regressions on ambiguous confirmations:
+    - short confirmation detection is now explicit and multilingual in execution runtime, preventing avoidable critic retries on `ya/gas/lanjut` style turns.
+  - Telegram typing keepalive is now self-healing:
+    - progress/status updates ensure typing keepalive is active when missing,
+    - transient `send_chat_action` failures no longer terminate typing loop for the current run.
+  - Improved responsiveness under heavy context assembly:
+    - `context_builder.build_messages(...)` is now executed via `asyncio.to_thread(...)` in message runtime to avoid event-loop blocking,
+    - typing keepalive/status pulses remain active while expensive prompt-context assembly runs.
 - **Runtime Telemetry Emission**:
   - Added structured runtime events for:
     - turn lifecycle (`turn_start`, `turn_end`),
@@ -134,7 +359,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `hard` mode blocks request before provider call when projected quota exceeds limit.
 - **Config Migration Defaults**:
   - Loader now injects defaults for `runtime.observability`, `runtime.quotas`, `security.trustMode`, and `skills.onboarding`.
+  - Loader now injects defaults for `runtime.queue` and keeps queue policy canonical during migration.
   - Skills section is canonicalized through migration path consistently (with atomic write + backup behavior retained).
+- **Inbound Queue Burst Handling (OpenClaw-Style Core Parity)**:
+  - Added inbound queue policy engine in `MessageBus`:
+    - per-session debounce window,
+    - per-session pending-cap guard,
+    - deterministic drop policy (`drop_oldest` / `drop_newest`),
+    - dropped-message summarize metadata (`metadata.queue`) on surviving request.
+  - Agent loop now auto-applies runtime queue settings from config on startup.
+  - Message runtime now exposes merge awareness in queued phase text (e.g. merged pending messages) to improve interactivity.
 - **External Skill Install Flow**:
   - `kabot skills install --git ...` now honors:
     - trust-mode validation (when enabled),
@@ -192,16 +426,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added legacy adapter probe summary (`legacy_channels`) for enabled single-instance channels.
 
 ### Fixed
+- **Gateway/Tailscale Gap Regression Coverage**:
+  - Added tests to lock expected behavior for:
+    - runtime gateway port resolution precedence (`CLI > config > default`),
+    - tailscale mode resolution from current config contract,
+    - tailscale runtime command execution path (`status` then `serve/funnel`),
+    - tailscale startup failure propagation.
+- **Codex Tool-Call Protocol Replay Hardening**:
+  - Fixed duplicate `function_call_output` replay path that could emit repeated output entries for the same `call_id`.
+  - Runtime now suppresses duplicate tool-output append on `tool_call_id` replay when output for that `call_id` already exists in message history.
+  - ChatGPT backend request builder now prunes duplicate `function_call_output` entries per `call_id` (bounded by matching `function_call` count), preventing strict protocol rejection (`No tool call found for function call output ...`).
 - **Trust-Mode Enforcement Gap on Skill Install**:
   - Fixed missing trust gate in external skill installer path by adding signer-manifest validation hook and fail-closed block behavior.
 - **Doctor Surface Gap**:
   - Fixed CLI doctor surface by exposing explicit parity-report command path required by parity program ops flow.
+- **Config Migration Persistence Robustness**:
+  - `load_config` now degrades safely when migration write-back fails due filesystem permission errors:
+    - warning is logged,
+    - migrated config still applied in-memory,
+    - runtime no longer crashes in restricted environments during migration checks.
 - **Regression Coverage**:
   - Added tests for:
     - runtime schema defaults (`observability/quotas`, `security.trust_mode`, `skills.onboarding`),
     - migration defaults for the same sections,
     - doctor parity command surface + renderer dispatch,
     - quota warn/hard runtime behavior,
+    - RESEARCH route web-search latch in message runtime,
+    - critic bypass for long `RESEARCH` prompts,
+    - RAM intent disambiguation (`kapasitas/total/spec RAM` -> `get_system_info`, usage/proses -> `get_process_memory`),
+    - short follow-up continuation using pending non-tool intent context,
+    - `skill-creator` intent matching for "create/buat skill baru" phrasing without explicit full skill-name mention,
     - trust-mode rejection in `skills install`,
     - parity report mandatory section contract,
     - AGENTS template assistant generation path and capability-summary resolution.
@@ -250,6 +504,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Hardened skills test suite against host-environment contamination from `~/.kabot/skills`.
   - Added HOME isolation fixtures and managed-skill temp-dir overrides in skills matching/precedence/semantics/OS tests.
   - Result: skills suite is deterministic across environments and no longer depends on local globally-installed sample skills.
+- **Anti-Collision Regression Guards**:
+  - Added explicit regression checks to prevent hidden naming conflicts:
+    - unique `tool.name` across all tool classes,
+    - unique adapter keys in channel adapter registry,
+    - deterministic skill-name dedupe across all source roots (workspace/project-agents/personal-agents/managed/builtin/extra).
 
 ## [0.5.7] - 2026-02-26
 

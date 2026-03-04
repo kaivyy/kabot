@@ -58,6 +58,7 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_stock_tool=loop.tools.has("stock"),
         has_crypto_tool=loop.tools.has("crypto"),
         has_server_monitor_tool=loop.tools.has("server_monitor"),
+        has_web_search_tool=loop.tools.has("web_search"),
     )
 
 
@@ -72,13 +73,27 @@ def build_group_id_for_loop(loop: Any, title: str) -> str:
 
 async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: InboundMessage) -> str | None:
     """Deterministic fallback when model skips required tools repeatedly."""
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    resolved_query = str(metadata.get("required_tool_query") or "").strip()
+    source_text = resolved_query or str(msg.content or "")
+
+    if required_tool == "web_search":
+        query = source_text.strip()
+        if not query:
+            return "Please provide a search query."
+        result = await loop.tools.execute(
+            "web_search",
+            {"query": query, "count": 5, "context_text": query},
+        )
+        return str(result)
+
     if required_tool == "weather":
-        location = extract_weather_location(msg.content)
+        location = extract_weather_location(source_text)
         if not location:
-            return i18n_t("weather.need_location", msg.content)
+            return i18n_t("weather.need_location", source_text)
         result = await loop.tools.execute(
             "weather",
-            {"location": location, "context_text": msg.content},
+            {"location": location, "context_text": source_text},
         )
         return str(result)
 
@@ -91,7 +106,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         return str(result)
 
     if required_tool == "get_process_memory":
-        q_lower = (msg.content or "").lower()
+        q_lower = source_text.lower()
         limit = 15
         match = re.search(r"\b(\d{1,3})\b", q_lower)
         if match:
@@ -111,12 +126,12 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         return str(result)
 
     if required_tool == "stock":
-        q_lower = (msg.content or "").lower()
+        q_lower = source_text.lower()
         # Default for "top 10 indonesia" or similar general queries
         symbol = "TOP10_ID"
 
         # Try to extract ticker symbols (e.g. "harga AAPL", "cek BBCA.JK")
-        tickers = re.findall(r"\b([A-Z]{3,5}(?:\.[A-Z]{1,2})?)\b", (msg.content or ""))
+        tickers = re.findall(r"\b([A-Z]{3,5}(?:\.[A-Z]{1,2})?)\b", source_text)
         if tickers:
             symbol = ",".join(tickers)
         elif "crypto" in q_lower or "btc" in q_lower or "eth" in q_lower:
@@ -128,7 +143,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             return str(result)
 
     if required_tool == "crypto":
-        q_lower = (msg.content or "").lower()
+        q_lower = source_text.lower()
         coin = "bitcoin" # default
 
         # Simple extraction
@@ -142,7 +157,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
 
     if required_tool == "cleanup_system":
         # Detect cleanup level from user message
-        q_lower = (msg.content or "").lower()
+        q_lower = source_text.lower()
         level = "standard"
         if any(k in q_lower for k in ("deep", "dalam", "mendalam", "full", "lengkap")):
             level = "deep"
@@ -158,10 +173,10 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
 
     async def _exec_cron(payload: dict[str, Any]) -> Any:
         enriched = dict(payload)
-        enriched.setdefault("context_text", msg.content)
+        enriched.setdefault("context_text", source_text)
         return await loop.tools.execute("cron", enriched)
 
-    q_lower = (msg.content or "").lower()
+    q_lower = source_text.lower()
     is_management = any(op in q_lower for op in CRON_MANAGEMENT_OPS) and any(
         term in q_lower for term in CRON_MANAGEMENT_TERMS
     )
@@ -176,7 +191,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             result = await _exec_cron({"action": "remove_group", "group_id": group_id_match.group(0)})
             return str(result)
 
-        title = extract_explicit_schedule_title(msg.content)
+        title = extract_explicit_schedule_title(source_text)
         if title:
             result = await _exec_cron({"action": "remove_group", "title": title})
             return str(result)
@@ -186,7 +201,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             result = await _exec_cron({"action": "remove", "job_id": job_id_match.group(0)})
             return str(result)
 
-        return i18n_t("cron.remove.need_selector", msg.content)
+        return i18n_t("cron.remove.need_selector", source_text)
 
     if is_management and any(k in q_lower for k in ("edit", "ubah", "update")):
         selector_payload: dict[str, Any] = {}
@@ -194,33 +209,33 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         if group_id_match:
             selector_payload["group_id"] = group_id_match.group(0)
         else:
-            title = extract_explicit_schedule_title(msg.content)
+            title = extract_explicit_schedule_title(source_text)
             if title:
                 selector_payload["title"] = title
 
         if not selector_payload:
-            return i18n_t("cron.update.need_selector", msg.content)
+            return i18n_t("cron.update.need_selector", source_text)
 
         update_payload: dict[str, Any] = {"action": "update_group", **selector_payload}
-        recurring_update = extract_recurring_schedule(msg.content)
+        recurring_update = extract_recurring_schedule(source_text)
         if recurring_update:
             update_payload.update(recurring_update)
 
-        new_title = extract_new_schedule_title(msg.content)
+        new_title = extract_new_schedule_title(source_text)
         if new_title:
             update_payload["new_title"] = make_unique_schedule_title_for_loop(loop, new_title)
 
         if len(update_payload) <= 2:
-            return i18n_t("cron.update.incomplete", msg.content)
+            return i18n_t("cron.update.incomplete", source_text)
 
         result = await _exec_cron(update_payload)
         return str(result)
 
-    cycle_schedule = extract_cycle_schedule(msg.content)
+    cycle_schedule = extract_cycle_schedule(source_text)
     if cycle_schedule:
         every_seconds = int(cycle_schedule["period_days"]) * 86400
         group_title = nlp_build_cycle_title(
-            msg.content,
+            source_text,
             int(cycle_schedule["period_days"]),
             existing_schedule_titles(loop),
         )
@@ -240,15 +255,15 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             created_jobs += 1
         return i18n_t(
             "cron.cycle_created",
-            msg.content,
+            source_text,
             title=group_title,
             group_id=group_id,
             job_count=created_jobs,
             period_days=int(cycle_schedule["period_days"]),
         )
 
-    reminder_text = extract_reminder_message(msg.content)
-    recurring_schedule = extract_recurring_schedule(msg.content)
+    reminder_text = extract_reminder_message(source_text)
+    recurring_schedule = extract_recurring_schedule(source_text)
     if recurring_schedule:
         default_title = f"Recurring: {reminder_text[:40]}".strip()
         group_title = make_unique_schedule_title_for_loop(loop, default_title)
@@ -263,20 +278,20 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         return str(result)
 
     target_ms: int | None = None
-    relative_ms = parse_relative_time_ms(msg.content)
+    relative_ms = parse_relative_time_ms(source_text)
     if relative_ms is not None:
         now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
         target_ms = now_ms + relative_ms
     else:
         absolute_match = re.search(
             r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)",
-            msg.content or "",
+            source_text or "",
         )
         if absolute_match:
             target_ms = parse_absolute_time_ms(absolute_match.group(1))
 
     if target_ms is None:
-        return i18n_t("cron.time_unclear", msg.content)
+        return i18n_t("cron.time_unclear", source_text)
 
     at_time = datetime.fromtimestamp(target_ms / 1000, tz=timezone.utc).astimezone().isoformat(timespec="seconds")
     result = await _exec_cron(

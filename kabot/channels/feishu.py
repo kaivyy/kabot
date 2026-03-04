@@ -201,6 +201,11 @@ class FeishuChannel(BaseChannel):
         if not self._client:
             logger.warning("Feishu client not initialized")
             return
+        is_status_update, _phase, status_text = self._status_update_payload(msg)
+        if is_status_update and self._should_skip_status_update(msg):
+            return
+        if not is_status_update:
+            self._clear_status_state(msg.chat_id)
 
         try:
             # Determine receive_id_type based on chat_id format
@@ -210,20 +215,27 @@ class FeishuChannel(BaseChannel):
             else:
                 receive_id_type = "open_id"
 
-            # Build card with markdown + table support
-            elements = self._build_card_elements(msg.content)
-            card = {
-                "config": {"wide_screen_mode": True},
-                "elements": elements,
-            }
-            content = json.dumps(card, ensure_ascii=False)
+            if is_status_update:
+                if not status_text:
+                    return
+                msg_type = "text"
+                content = json.dumps({"text": status_text}, ensure_ascii=False)
+            else:
+                # Build card with markdown + table support
+                elements = self._build_card_elements(msg.content)
+                card = {
+                    "config": {"wide_screen_mode": True},
+                    "elements": elements,
+                }
+                msg_type = "interactive"
+                content = json.dumps(card, ensure_ascii=False)
 
             request = CreateMessageRequest.builder() \
                 .receive_id_type(receive_id_type) \
                 .request_body(
                     CreateMessageRequestBody.builder()
                     .receive_id(msg.chat_id)
-                    .msg_type("interactive")
+                    .msg_type(msg_type)
                     .content(content)
                     .build()
                 ).build()

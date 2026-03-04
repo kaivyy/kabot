@@ -16,6 +16,13 @@ def test_adapter_registry_flags_production_and_experimental():
     assert statuses["irc"].enabled is False
 
 
+def test_adapter_registry_keys_are_unique():
+    registry = AdapterRegistry()
+    statuses = registry.list_status()
+    keys = [s.key for s in statuses]
+    assert len(keys) == len(set(keys))
+
+
 def test_adapter_registry_creates_legacy_telegram_channel_when_enabled():
     config = Config()
     config.channels.telegram.enabled = True

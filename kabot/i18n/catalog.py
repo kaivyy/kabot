@@ -64,6 +64,12 @@ _CATALOG: dict[str, dict[str, str]] = {
         "update.install.restart_confirm": "Update complete. Restart Kabot now?",
         "update.install.dirty_tree": "Cannot update: uncommitted changes in working tree. Please commit or stash first.",
         "update.install.failed": "Update failed: {error}",
+        "runtime.status.queued": "Queued. Preparing your request...",
+        "runtime.status.queued_merged": "Merged {count} queued message(s).",
+        "runtime.status.thinking": "Processing your request, please wait...",
+        "runtime.status.tool": "Running the required tools, please wait...",
+        "runtime.status.done": "Done.",
+        "runtime.status.error": "An error occurred while processing your request.",
     },
     "id": {
         "weather.need_location": "Saya butuh lokasi untuk cek cuaca. Contoh: cek suhu Cilacap.",
@@ -112,6 +118,12 @@ _CATALOG: dict[str, dict[str, str]] = {
         "update.install.restart_confirm": "Update selesai. Restart Kabot sekarang?",
         "update.install.dirty_tree": "Tidak dapat update: ada perubahan yang belum di-commit. Silakan commit atau stash terlebih dahulu.",
         "update.install.failed": "Update gagal: {error}",
+        "runtime.status.queued": "Antrian diterima. Menyiapkan permintaan kamu...",
+        "runtime.status.queued_merged": "Menggabungkan {count} pesan antrean sebelumnya.",
+        "runtime.status.thinking": "Sedang memproses permintaan kamu, mohon tunggu sebentar...",
+        "runtime.status.tool": "Sedang menjalankan tools yang dibutuhkan, mohon tunggu sebentar...",
+        "runtime.status.done": "Selesai.",
+        "runtime.status.error": "Terjadi kendala saat memproses permintaan kamu.",
     },
     "ms": {
         "weather.need_location": "Saya perlukan lokasi untuk semak cuaca. Contoh: semak suhu di Kuala Lumpur.",
@@ -142,6 +154,12 @@ _CATALOG: dict[str, dict[str, str]] = {
         "update.install.restart_confirm": "Kemas kini selesai. Restart Kabot sekarang?",
         "update.install.dirty_tree": "Tidak dapat kemas kini: ada perubahan yang belum di-commit. Sila commit atau stash dahulu.",
         "update.install.failed": "Kemas kini gagal: {error}",
+        "runtime.status.queued": "Permintaan diterima. Menyiapkan permintaan anda...",
+        "runtime.status.queued_merged": "Menggabungkan {count} mesej beratur sebelumnya.",
+        "runtime.status.thinking": "Sedang memproses permintaan anda, sila tunggu sebentar...",
+        "runtime.status.tool": "Sedang menjalankan alat yang diperlukan, sila tunggu sebentar...",
+        "runtime.status.done": "Selesai.",
+        "runtime.status.error": "Ralat semasa memproses permintaan anda.",
     },
     "th": {
         "weather.need_location": "ฉันต้องการตำแหน่งเพื่อเช็กสภาพอากาศ ตัวอย่าง: เช็กอุณหภูมิที่กรุงเทพฯ",
@@ -231,6 +249,16 @@ def _normalize_key(key: str) -> str:
     return key
 
 
+def _looks_mojibake(value: str) -> bool:
+    """Detect common UTF-8 mojibake artifacts from bad transcoding."""
+    text = str(value or "")
+    if not text:
+        return False
+    markers = ("Ã", "Â", "â€", "à¸", "Ð", "Ñ", "ã‚", "ì„", "Ãƒ")
+    hits = sum(text.count(marker) for marker in markers)
+    return hits >= 2
+
+
 def tr(
     key: str,
     *,
@@ -241,7 +269,12 @@ def tr(
     """Translate key to locale, falling back to English."""
     lang = locale or detect_locale(text)
     normalized_key = _normalize_key(key)
-    template = _CATALOG.get(lang, {}).get(normalized_key) or _CATALOG["en"].get(normalized_key) or key
+    locale_template = _CATALOG.get(lang, {}).get(normalized_key)
+    english_template = _CATALOG["en"].get(normalized_key)
+    if locale_template and english_template and _looks_mojibake(locale_template):
+        template = english_template
+    else:
+        template = locale_template or english_template or key
     if not kwargs:
         return template
     try:

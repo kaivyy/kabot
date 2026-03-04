@@ -1,6 +1,0 @@
-﻿=== KAPASITAS DISK SETELAH CLEANUP ===
-  E: 40.93 GB free / 150 GB total (72.7% terpakai)
-  I: 112.4 GB free / 185.58 GB total (39.4% terpakai)
-  C: 22.17 GB free / 237.65 GB total (90.7% terpakai)
-  D: 12.36 GB free / 126.64 GB total (90.2% terpakai)
-

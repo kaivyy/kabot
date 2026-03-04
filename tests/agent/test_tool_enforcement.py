@@ -35,6 +35,10 @@ def test_required_tool_for_query_detects_weather_and_reminder(agent_loop):
     assert agent_loop._required_tool_for_query("tolong cek suhu cilacap hari ini") == "weather"
     assert agent_loop._required_tool_for_query("ingatkan 2 menit lagi makan") == "cron"
     assert agent_loop._required_tool_for_query("tolong list jadwal reminder saya") == "cron"
+    assert agent_loop._required_tool_for_query("kapasitas ram berapa") == "get_system_info"
+    assert agent_loop._required_tool_for_query("cek ram proses sekarang") == "get_process_memory"
+    assert agent_loop._required_tool_for_query("carikan berita perang us israel vs iran terbaru") == "web_search"
+    assert agent_loop._required_tool_for_query("berita terbaru 2026 sekarang") == "web_search"
     assert agent_loop._required_tool_for_query("hai") is None
 
 
@@ -85,6 +89,53 @@ async def test_execute_required_tool_fallback_weather_calls_weather_tool(agent_l
         "weather",
         {"location": "Cilacap", "context_text": "cek suhu Cilacap hari ini"},
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_web_search_calls_search_tool(agent_loop):
+    execute_mock = AsyncMock(return_value="1. Reuters ...")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="carikan berita perang us israel vs iran terbaru",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("web_search", msg)
+    assert "Reuters" in result
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "web_search"
+    assert params["query"] == msg.content
+    assert params["count"] == 5
+    assert params["context_text"] == msg.content
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_web_search_uses_resolved_query_metadata(agent_loop):
+    execute_mock = AsyncMock(return_value="1. Reuters ...")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="gas",
+        metadata={"required_tool_query": "berita terbaru 2026 sekarang"},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("web_search", msg)
+    assert "Reuters" in result
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "web_search"
+    assert params["query"] == "berita terbaru 2026 sekarang"
+    assert params["count"] == 5
+    assert params["context_text"] == "berita terbaru 2026 sekarang"
 
 
 @pytest.mark.asyncio

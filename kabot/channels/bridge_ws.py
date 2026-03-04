@@ -65,6 +65,12 @@ class BridgeWebSocketChannel(BaseChannel):
             self._ws = None
 
     async def send(self, msg: OutboundMessage) -> None:
+        is_status_update, phase, _text = self._status_update_payload(msg)
+        if is_status_update and self._should_skip_status_update(msg):
+            return
+        if not is_status_update:
+            self._clear_status_state(msg.chat_id)
+
         if not self._connected or self._ws is None:
             logger.warning(f"{self.name} bridge not connected")
             return
@@ -87,6 +93,22 @@ class BridgeWebSocketChannel(BaseChannel):
             payload["media"] = list(msg.media)
         if msg.metadata:
             payload["metadata"] = dict(msg.metadata)
+
+        # Best-effort typing/activity hint for bridge adapters.
+        if is_status_update and phase in {"queued", "thinking", "tool"}:
+            try:
+                await self._ws.send(
+                    json.dumps(
+                        {
+                            "type": "activity",
+                            "to": chat_id,
+                            "activity": "typing",
+                            "phase": phase,
+                        }
+                    )
+                )
+            except Exception:
+                pass
         await self._ws.send(json.dumps(payload))
 
     async def _handle_bridge_message(self, raw: str) -> None:

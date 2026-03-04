@@ -8,15 +8,7 @@ import os
 import time
 from typing import Any
 
-import litellm
 import requests
-from litellm import acompletion
-from litellm.exceptions import (
-    APIConnectionError,
-    InvalidRequestError,
-    RateLimitError,
-    ServiceUnavailableError,
-)
 from tenacity import (
     before_sleep_log,
     retry,
@@ -38,6 +30,56 @@ from kabot.providers.chatgpt_backend_client import (
 from kabot.providers.registry import find_by_model, find_gateway
 
 logger = logging.getLogger(__name__)
+
+# Lazy-loaded LiteLLM symbols.
+litellm = None
+acompletion = None
+APIConnectionError = None
+InvalidRequestError = None
+RateLimitError = None
+ServiceUnavailableError = None
+
+
+def _ensure_litellm_symbols() -> tuple[Any, Any, Any, Any, Any, Any]:
+    """Load litellm runtime symbols on first real model use."""
+    global litellm
+    global acompletion
+    global APIConnectionError
+    global InvalidRequestError
+    global RateLimitError
+    global ServiceUnavailableError
+
+    if litellm is None:
+        import litellm as _litellm
+
+        litellm = _litellm
+
+    if acompletion is None:
+        from litellm import acompletion as _acompletion
+
+        acompletion = _acompletion
+
+    if any(x is None for x in (APIConnectionError, InvalidRequestError, RateLimitError, ServiceUnavailableError)):
+        from litellm.exceptions import (
+            APIConnectionError as _APIConnectionError,
+            InvalidRequestError as _InvalidRequestError,
+            RateLimitError as _RateLimitError,
+            ServiceUnavailableError as _ServiceUnavailableError,
+        )
+
+        APIConnectionError = _APIConnectionError
+        InvalidRequestError = _InvalidRequestError
+        RateLimitError = _RateLimitError
+        ServiceUnavailableError = _ServiceUnavailableError
+
+    return (
+        litellm,
+        acompletion,
+        APIConnectionError,
+        InvalidRequestError,
+        RateLimitError,
+        ServiceUnavailableError,
+    )
 
 class LiteLLMProvider(LLMProvider):
     """
@@ -76,18 +118,45 @@ class LiteLLMProvider(LLMProvider):
         # provider_name (from config key) is the primary signal;
         # api_key / api_base are fallback for auto-detection.
         self._gateway = find_gateway(provider_name, api_key, api_base)
+        self._litellm_runtime_ready = False
 
         # Configure environment variables
         if api_key:
             self._setup_env(api_key, api_base, default_model)
 
-        if api_base:
-            litellm.api_base = api_base
+    def _ensure_litellm_runtime(self) -> tuple[Any, Any, Any, Any, Any]:
+        """Apply runtime LiteLLM settings lazily on first model call."""
+        (
+            runtime_litellm,
+            runtime_acompletion,
+            runtime_api_connection_error,
+            runtime_rate_limit_error,
+            runtime_service_unavailable_error,
+        ) = (None, None, None, None, None)
 
-        # Disable LiteLLM logging noise
-        litellm.suppress_debug_info = True
-        # Drop unsupported parameters for providers (e.g., gpt-5 rejects some params)
-        litellm.drop_params = True
+        (
+            runtime_litellm,
+            runtime_acompletion,
+            runtime_api_connection_error,
+            _runtime_invalid_request_error,
+            runtime_rate_limit_error,
+            runtime_service_unavailable_error,
+        ) = _ensure_litellm_symbols()
+
+        if not self._litellm_runtime_ready:
+            if self.api_base:
+                runtime_litellm.api_base = self.api_base
+            runtime_litellm.suppress_debug_info = True
+            runtime_litellm.drop_params = True
+            self._litellm_runtime_ready = True
+
+        return (
+            runtime_acompletion,
+            runtime_api_connection_error,
+            runtime_rate_limit_error,
+            runtime_service_unavailable_error,
+            _runtime_invalid_request_error,
+        )
 
     @staticmethod
     def _normalize_provider_key(provider: str | None) -> str | None:
@@ -261,12 +330,13 @@ class LiteLLMProvider(LLMProvider):
         temperature: float,
     ) -> LLMResponse:
         """Execute a single model call with retries for transient errors."""
-        # Lazy imports for performance
-        from litellm.exceptions import (
-            APIConnectionError,
-            RateLimitError,
-            ServiceUnavailableError,
-        )
+        (
+            runtime_acompletion,
+            runtime_api_connection_error,
+            runtime_rate_limit_error,
+            runtime_service_unavailable_error,
+            _runtime_invalid_request_error,
+        ) = self._ensure_litellm_runtime()
 
         resolved_model = self._resolve_model(model)
         _, request_api_key, request_api_base, request_headers = self._resolve_runtime_options(model)
@@ -321,14 +391,20 @@ class LiteLLMProvider(LLMProvider):
 
         # Dynamically create the retry wrapper for acompletion
         @retry(
-            retry=retry_if_exception_type((RateLimitError, APIConnectionError, ServiceUnavailableError)),
+            retry=retry_if_exception_type(
+                (
+                    runtime_rate_limit_error,
+                    runtime_api_connection_error,
+                    runtime_service_unavailable_error,
+                )
+            ),
             wait=wait_exponential(multiplier=1, min=2, max=60),
             stop=stop_after_attempt(3),
             reraise=True,
             before_sleep=before_sleep_log(logger, logging.WARNING)
         )
         async def _do_call():
-            return await acompletion(**kwargs)
+            return await runtime_acompletion(**kwargs)
 
         response = await _do_call()
         return self._parse_response(response)
@@ -354,6 +430,23 @@ class LiteLLMProvider(LLMProvider):
         Returns:
             LLMResponse with content and/or tool calls.
         """
+        (
+            _runtime_acompletion,
+            runtime_api_connection_error,
+            runtime_rate_limit_error,
+            runtime_service_unavailable_error,
+            runtime_invalid_request_error,
+        ) = self._ensure_litellm_runtime()
+        transient_error_types = tuple(
+            exc
+            for exc in (
+                runtime_rate_limit_error,
+                runtime_api_connection_error,
+                runtime_service_unavailable_error,
+            )
+            if isinstance(exc, type) and issubclass(exc, BaseException)
+        )
+
         # Sanitize messages to remove internal fields (like 'tool_results') that might cause API errors
         sanitized_messages = []
         for msg in messages:
@@ -445,12 +538,12 @@ class LiteLLMProvider(LLMProvider):
                     max_tokens=max_tokens,
                     temperature=temperature
                 )
-            except (RateLimitError, APIConnectionError, ServiceUnavailableError) as e:
+            except transient_error_types as e:
                 # Transient error after retries exhausted for this model.
                 logger.warning(f"Model {attempt_model} failed after retries: {e}. Trying next...")
                 last_exception = e
                 continue
-            except InvalidRequestError as e:
+            except runtime_invalid_request_error as e:
                 # LiteLLM often wraps upstream HTTP errors as InvalidRequestError with status=400.
                 # For failover decisions we prefer message-based classification in this case.
                 status_code = getattr(e, "status_code", None)

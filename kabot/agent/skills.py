@@ -76,6 +76,25 @@ def _extract_keywords(text: str) -> set[str]:
     return stemmed | originals
 
 
+def _intent_alias_bonus(skill_name: str, message_lower: str) -> float:
+    """Provide intent-level boost for well-known workflow skills."""
+    normalized_skill = (skill_name or "").strip().lower()
+    if not normalized_skill:
+        return 0.0
+
+    if normalized_skill in {"skill-creator", "writing-skills"}:
+        patterns = (
+            r"\b(skill[\s_-]?creator|skills? creator|skill[\s_-]?builder)\b",
+            r"\b(create|build|make|write|generate|buat|bikin|kembangkan|rancang)\b.*\b(skill|skills|plugin)\b",
+            r"\b(skill|skills|plugin)\b.*\b(new|baru|create|creator|buat|bikin)\b",
+            r"\bbuat\b.*\bskill\b",
+        )
+        for pattern in patterns:
+            if re.search(pattern, message_lower):
+                return 6.0
+    return 0.0
+
+
 
 class SkillsLoader:
     """
@@ -257,8 +276,15 @@ class SkillsLoader:
                 kw for kw in body_keywords
                 if len(kw) >= 2 and any(ord(ch) > 127 for ch in kw) and kw in message_lower
             }
+            alias_bonus = _intent_alias_bonus(skill_name, message_lower)
 
-            if not overlap and not body_overlap and not contain_overlap and not contain_body_overlap:
+            if (
+                not overlap
+                and not body_overlap
+                and not contain_overlap
+                and not contain_body_overlap
+                and alias_bonus <= 0
+            ):
                 continue
 
             # Primary keywords score 1.0 each, body keywords 0.2 each
@@ -280,6 +306,8 @@ class SkillsLoader:
             )
             if explicit_full_name_match:
                 score += 5.0
+            if alias_bonus > 0:
+                score += alias_bonus
 
             # Bonus for action/domain word overlap (verbs that indicate intent)
             action_words = {"debug", "fix", "error", "bug", "test", "create", "build",
@@ -294,7 +322,7 @@ class SkillsLoader:
 
             # Skip weak matches: require 2+ overlaps unless name matches
             total_overlap = len(overlap) + len(body_overlap) + len(contain_overlap) + len(contain_body_overlap)
-            if not explicit_full_name_match and not name_overlap and total_overlap < 2:
+            if alias_bonus <= 0 and not explicit_full_name_match and not name_overlap and total_overlap < 2:
                 continue
 
             scored.append((skill_name, explicit_full_name_match, score))

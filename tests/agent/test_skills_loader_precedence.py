@@ -107,6 +107,39 @@ def test_skills_precedence_builtin_over_extra(tmp_path):
     assert "builtin-version" in (loader.load_skill("shared") or "")
 
 
+def test_skills_list_dedupes_name_collisions_across_all_roots(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True)
+    managed = tmp_path / "managed"
+    managed.mkdir(parents=True)
+    extra = tmp_path / "extra"
+    extra.mkdir(parents=True)
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    _write_skill(extra, "collision", "extra-version")
+    _write_skill(builtin, "collision", "builtin-version")
+    _write_skill(managed, "collision", "managed-version")
+    _write_skill(fake_home / ".agents" / "skills", "collision", "personal-version")
+    _write_skill(workspace / ".agents" / "skills", "collision", "project-version")
+    _write_skill(workspace / "skills", "collision", "workspace-version")
+
+    loader = SkillsLoader(
+        workspace=workspace,
+        builtin_skills_dir=builtin,
+        skills_config={"load": {"managed_dir": str(managed), "extra_dirs": [str(extra)]}},
+    )
+
+    all_skills = loader.list_skills(filter_unavailable=False)
+    collisions = [s for s in all_skills if s["name"] == "collision"]
+
+    assert len(collisions) == 1
+    assert collisions[0]["source"] == "workspace"
+    assert "workspace-version" in (loader.load_skill("collision") or "")
+
+
 def test_skills_precedence_workspace_over_project_agents_over_personal_agents(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True)

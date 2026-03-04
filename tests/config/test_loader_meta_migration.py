@@ -99,6 +99,7 @@ def test_migrate_injects_runtime_resilience_and_performance_defaults():
     assert autopilot["maxActionsPerBeat"] == 1
     observability = runtime_cfg.get("observability", {})
     quotas = runtime_cfg.get("quotas", {})
+    queue = runtime_cfg.get("queue", {})
     assert observability["enabled"] is True
     assert observability["emitStructuredEvents"] is True
     assert observability["sampleRate"] == 1.0
@@ -107,6 +108,12 @@ def test_migrate_injects_runtime_resilience_and_performance_defaults():
     assert quotas["maxCostPerDayUsd"] == 0.0
     assert quotas["maxTokensPerHour"] == 0
     assert quotas["enforcementMode"] == "warn"
+    assert queue["enabled"] is True
+    assert queue["mode"] == "debounce"
+    assert queue["debounceWindowMs"] == 1200
+    assert queue["maxPendingPerSession"] == 4
+    assert queue["dropPolicy"] == "drop_oldest"
+    assert queue["summarizeDropped"] is True
 
 
 def test_migrate_injects_security_trust_mode_and_skills_onboarding_defaults():

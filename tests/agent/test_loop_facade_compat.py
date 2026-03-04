@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,6 +16,41 @@ def test_loop_facade_exports_legacy_symbols():
     assert hasattr(loop_module, "HybridMemoryManager")
     assert hasattr(loop_module, "IntentRouter")
     assert hasattr(loop_module, "SubagentManager")
+
+
+def test_ensure_memory_warmup_task_runs_once_per_boot(monkeypatch):
+    created: list[object] = []
+
+    class _Task:
+        def __init__(self):
+            self._done = False
+
+        def done(self):
+            return self._done
+
+    def _fake_create_task(_coro):
+        _coro.close()
+        task = _Task()
+        created.append(task)
+        return task
+
+    monkeypatch.setattr("kabot.agent.loop.asyncio.create_task", _fake_create_task)
+
+    async def _fake_warmup():
+        return None
+
+    loop_like = SimpleNamespace(
+        _memory_warmup_attempted=False,
+        _memory_warmup_task=None,
+        _warmup_memory=_fake_warmup,
+    )
+
+    AgentLoop._ensure_memory_warmup_task(loop_like)
+    assert len(created) == 1
+
+    loop_like._memory_warmup_attempted = True
+    AgentLoop._ensure_memory_warmup_task(loop_like)
+    assert len(created) == 1
 
 
 @pytest.fixture

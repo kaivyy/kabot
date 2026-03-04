@@ -21,6 +21,13 @@ def test_runtime_resilience_and_performance_defaults_present():
     assert cfg.runtime.quotas.max_cost_per_day_usd == 0.0
     assert cfg.runtime.quotas.max_tokens_per_hour == 0
     assert cfg.runtime.quotas.enforcement_mode == "warn"
+    assert cfg.runtime.queue.enabled is True
+    assert cfg.runtime.queue.mode == "debounce"
+    assert cfg.runtime.queue.debounce_window_ms == 1200
+    assert cfg.runtime.queue.max_pending_per_session == 4
+    assert cfg.runtime.queue.drop_policy == "drop_oldest"
+    assert cfg.runtime.queue.summarize_dropped is True
+    assert cfg.agents.defaults.heartbeat.startup_delay_seconds == 120
     assert cfg.security.trust_mode.enabled is False
     assert cfg.security.trust_mode.verify_skill_manifest is False
     assert cfg.security.trust_mode.allowed_signers == []

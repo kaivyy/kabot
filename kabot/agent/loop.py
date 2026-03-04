@@ -4,11 +4,10 @@ import asyncio
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from kabot.agent.context import ContextBuilder
 from kabot.agent.cron_fallback_nlp import (
     REMINDER_KEYWORDS,
     WEATHER_KEYWORDS,
@@ -20,33 +19,7 @@ from kabot.agent.loop_core import quality_runtime as loop_quality_runtime
 from kabot.agent.loop_core import routing_runtime as loop_routing_runtime
 from kabot.agent.loop_core import session_flow as loop_session_flow
 from kabot.agent.loop_core import tool_enforcement as loop_tool_enforcement
-from kabot.agent.router import IntentRouter
-from kabot.agent.subagent import SubagentManager
-from kabot.agent.tools.autoplanner import AutoPlanner
-from kabot.agent.tools.browser import BrowserTool
-from kabot.agent.tools.cron import CronTool
-from kabot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from kabot.agent.tools.google_suite import (
-    GmailTool,
-    GoogleCalendarTool,
-    GoogleDocsTool,
-    GoogleDriveTool,
-)
-from kabot.agent.tools.graph_memory import GraphMemoryTool
-from kabot.agent.tools.knowledge import KnowledgeLearnTool
-from kabot.agent.tools.memory import GetMemoryTool, ListRemindersTool, SaveMemoryTool
-from kabot.agent.tools.memory_search import MemorySearchTool
-from kabot.agent.tools.message import MessageTool
-from kabot.agent.tools.meta_graph import MetaGraphTool
 from kabot.agent.tools.registry import ToolRegistry
-from kabot.agent.tools.shell import ExecTool
-from kabot.agent.tools.spawn import SpawnTool
-from kabot.agent.tools.stock import CryptoTool, StockTool
-from kabot.agent.tools.stock_analysis import StockAnalysisTool
-from kabot.agent.tools.speedtest import SpeedtestTool
-from kabot.agent.tools.weather import WeatherTool
-from kabot.agent.tools.web_fetch import WebFetchTool
-from kabot.agent.tools.web_search import WebSearchTool
 
 # Phase 12: Critical Features
 from kabot.agent.truncator import ToolResultTruncator
@@ -65,8 +38,6 @@ from kabot.core.msg_context import MsgContext
 from kabot.core.resilience import ResilienceLayer
 from kabot.core.status import BenchmarkService, StatusService
 from kabot.core.update import SystemControl, UpdateService
-from kabot.memory import HybridMemoryManager
-from kabot.memory.vector_store import VectorStore
 
 # Phase 13: Resilience & Security
 from kabot.core.sentinel import CrashSentinel, format_recovery_message
@@ -80,6 +51,30 @@ from kabot.providers.registry import ModelRegistry
 from kabot.session.manager import SessionManager
 
 _APPROVAL_CMD_RE = re.compile(r"^\s*/(approve|deny)(?:\s+([A-Za-z0-9_-]+))?\s*$", re.IGNORECASE)
+
+if TYPE_CHECKING:
+    from kabot.agent.context import ContextBuilder
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy compatibility exports for legacy module consumers."""
+    if name == "ContextBuilder":
+        from kabot.agent.context import ContextBuilder
+
+        return ContextBuilder
+    if name == "HybridMemoryManager":
+        from kabot.memory import HybridMemoryManager
+
+        return HybridMemoryManager
+    if name == "IntentRouter":
+        from kabot.agent.router import IntentRouter
+
+        return IntentRouter
+    if name == "SubagentManager":
+        from kabot.agent.subagent import SubagentManager
+
+        return SubagentManager
+    raise AttributeError(f"module 'kabot.agent.loop' has no attribute '{name}'")
 
 
 class AgentLoop:
@@ -111,7 +106,10 @@ class AgentLoop:
         enable_hybrid_memory: bool = True,
         mode_manager: Any = None,
     ):
+        from kabot.agent.context import ContextBuilder
         from kabot.agent.coordinator import Coordinator
+        from kabot.agent.router import IntentRouter
+        from kabot.agent.subagent import SubagentManager
         from kabot.agent.mode_manager import ModeManager
         from kabot.config.schema import Config, ExecToolConfig
 
@@ -121,10 +119,14 @@ class AgentLoop:
         self.runtime_observability = getattr(getattr(self.config, "runtime", None), "observability", None)
         self.runtime_quotas = getattr(getattr(self.config, "runtime", None), "quotas", None)
         self._boot_started_at = time.perf_counter()
+        self._startup_ready_at: float | None = None
         self._cold_start_reported = False
         self._memory_warmup_task: asyncio.Task | None = None
         self._memory_warmup_started_at: float | None = None
         self._memory_warmup_completed_at: float | None = None
+        self._memory_warmup_attempted: bool = False
+        self._optional_tools_task: asyncio.Task | None = None
+        self._optional_tools_loaded: bool = False
         self._pending_memory_tasks: set[asyncio.Task] = set()
         self._tool_payload_cache: dict[str, tuple[float, str]] = {}
         self._tool_call_id_cache: dict[str, tuple[float, str]] = {}
@@ -135,6 +137,13 @@ class AgentLoop:
         )
         self.coordinator = Coordinator(bus, "master")
         self.bus = bus
+        configure_inbound_queue = getattr(self.bus, "configure_inbound_queue", None)
+        if callable(configure_inbound_queue):
+            runtime_queue = getattr(getattr(self.config, "runtime", None), "queue", None)
+            try:
+                configure_inbound_queue(runtime_queue)
+            except Exception as exc:
+                logger.warning(f"Failed to configure inbound queue policy: {exc}")
         self.provider = provider
         self.workspace = workspace
 
@@ -156,12 +165,13 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
+        self._context_builder_cls = ContextBuilder
         self.context = ContextBuilder(
             workspace,
             skills_config=self.config.skills,
             memory_config=self.config.memory,
         )
-        self._context_builders: dict[str, ContextBuilder] = {
+        self._context_builders: dict[str, "ContextBuilder"] = {
             str(workspace.expanduser().resolve()): self.context
         }
         self.sessions = session_manager or SessionManager(workspace)
@@ -418,13 +428,13 @@ class AgentLoop:
             logger.warning(f"Failed to resolve workspace for agent '{agent_id}': {exc}")
             return self.workspace
 
-    def _context_for_workspace(self, workspace: Path) -> ContextBuilder:
+    def _context_for_workspace(self, workspace: Path) -> "ContextBuilder":
         """Return cached ContextBuilder for workspace or create one lazily."""
         key = str(workspace.expanduser().resolve())
         context = self._context_builders.get(key)
         if context is not None:
             return context
-        context = ContextBuilder(
+        context = self._context_builder_cls(
             workspace,
             skills_config=self.config.skills,
             memory_config=self.config.memory,
@@ -432,13 +442,13 @@ class AgentLoop:
         self._context_builders[key] = context
         return context
 
-    def _resolve_context_for_message(self, msg: InboundMessage) -> ContextBuilder:
+    def _resolve_context_for_message(self, msg: InboundMessage) -> "ContextBuilder":
         """Resolve context builder bound to routed agent workspace for this message."""
         agent_id = self._resolve_agent_id_for_message(msg)
         workspace = self._resolve_workspace_for_agent(agent_id)
         return self._context_for_workspace(workspace)
 
-    def _resolve_context_for_channel_chat(self, channel: str, chat_id: str) -> ContextBuilder:
+    def _resolve_context_for_channel_chat(self, channel: str, chat_id: str) -> "ContextBuilder":
         """Resolve context builder for synthetic/system flows using channel/chat route."""
         probe = InboundMessage(
             channel=channel,
@@ -450,6 +460,29 @@ class AgentLoop:
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
+        from kabot.agent.tools.autoplanner import AutoPlanner
+        from kabot.agent.tools.browser import BrowserTool
+        from kabot.agent.tools.cron import CronTool
+        from kabot.agent.tools.filesystem import (
+            EditFileTool,
+            ListDirTool,
+            ReadFileTool,
+            WriteFileTool,
+        )
+        from kabot.agent.tools.knowledge import KnowledgeLearnTool
+        from kabot.agent.tools.memory import GetMemoryTool, ListRemindersTool, SaveMemoryTool
+        from kabot.agent.tools.memory_search import MemorySearchTool
+        from kabot.agent.tools.message import MessageTool
+        from kabot.agent.tools.meta_graph import MetaGraphTool
+        from kabot.agent.tools.shell import ExecTool
+        from kabot.agent.tools.spawn import SpawnTool
+        from kabot.agent.tools.speedtest import SpeedtestTool
+        from kabot.agent.tools.stock import CryptoTool, StockTool
+        from kabot.agent.tools.stock_analysis import StockAnalysisTool
+        from kabot.agent.tools.weather import WeatherTool
+        from kabot.agent.tools.web_fetch import WebFetchTool
+        from kabot.agent.tools.web_search import WebSearchTool
+
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         self.tools.register(ReadFileTool(allowed_dir=allowed_dir))
         self.tools.register(WriteFileTool(allowed_dir=allowed_dir))
@@ -464,11 +497,8 @@ class AgentLoop:
             policy_preset=str(getattr(self.exec_config, "policy_preset", "strict")),
         ))
 
-        # Google Suite Native Tools
-        self.tools.register(GmailTool())
-        self.tools.register(GoogleCalendarTool())
-        self.tools.register(GoogleDriveTool())
-        self.tools.register(GoogleDocsTool())
+        # Optional Google Suite tools are loaded in background after startup
+        # to keep cold-start path responsive.
         self.tools.register(KnowledgeLearnTool(workspace=self.workspace))
 
         self.tools.register(WebSearchTool(
@@ -518,7 +548,6 @@ class AgentLoop:
 
         self.tools.register(SaveMemoryTool(memory_manager=self.memory))
         self.tools.register(GetMemoryTool(memory_manager=self.memory))
-        self.tools.register(GraphMemoryTool(memory_manager=self.memory))
 
         # Vector memory search tool (Phase 7)
         self.tools.register(MemorySearchTool(store=lambda: self.vector_store))
@@ -537,6 +566,50 @@ class AgentLoop:
 
         # Load plugin-based tools (Phase 6)
         self._register_plugin_tools()
+
+    def _build_optional_tools(self) -> list[Any]:
+        """Build optional heavy tools in a worker thread."""
+        from kabot.agent.tools.google_suite import (
+            GmailTool,
+            GoogleCalendarTool,
+            GoogleDocsTool,
+            GoogleDriveTool,
+        )
+        from kabot.agent.tools.graph_memory import GraphMemoryTool
+
+        return [
+            GmailTool(),
+            GoogleCalendarTool(),
+            GoogleDriveTool(),
+            GoogleDocsTool(),
+            GraphMemoryTool(memory_manager=self.memory),
+        ]
+
+    async def _load_optional_tools(self) -> None:
+        """Load optional heavy tools without blocking startup-critical path."""
+        if self._optional_tools_loaded:
+            return
+        started_at = time.perf_counter()
+        try:
+            optional_tools = await asyncio.to_thread(self._build_optional_tools)
+            for tool in optional_tools:
+                if not self.tools.has(tool.name):
+                    self.tools.register(tool)
+            self._optional_tools_loaded = True
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                f"optional_tools_loaded count={len(optional_tools)} duration_ms={elapsed_ms}"
+            )
+        except Exception as exc:
+            logger.warning(f"Optional tools load skipped: {exc}")
+
+    def _ensure_optional_tools_task(self) -> None:
+        """Schedule optional tool loading once."""
+        if self._optional_tools_loaded:
+            return
+        if self._optional_tools_task and not self._optional_tools_task.done():
+            return
+        self._optional_tools_task = asyncio.create_task(self._load_optional_tools())
 
     def _register_plugin_tools(self) -> None:
         """Register tools from loaded plugins."""
@@ -615,6 +688,7 @@ class AgentLoop:
 
     async def _warmup_memory(self):
         """Background warmup of embedding model so first message is fast."""
+        self._memory_warmup_attempted = True
         self._memory_warmup_started_at = time.perf_counter()
         try:
             timeout_ms = int(getattr(self.runtime_performance, "embed_warmup_timeout_ms", 1200))
@@ -632,6 +706,8 @@ class AgentLoop:
 
     def _ensure_memory_warmup_task(self) -> None:
         """Start memory warmup task once (non-blocking)."""
+        if self._memory_warmup_attempted:
+            return
         if self._memory_warmup_task and not self._memory_warmup_task.done():
             return
         self._memory_warmup_task = asyncio.create_task(self._warmup_memory())
@@ -643,6 +719,7 @@ class AgentLoop:
             self._ensure_memory_warmup_task()
         else:
             logger.info("Memory warmup deferred (fast-first-response mode)")
+        self._ensure_optional_tools_task()
 
         self._running = True
         logger.info("Agent loop started")
@@ -677,6 +754,9 @@ class AgentLoop:
 
         # Phase 10: Emit ON_STARTUP hook
         await self.hooks.emit("ON_STARTUP")
+        self._startup_ready_at = time.perf_counter()
+        startup_ready_ms = int((self._startup_ready_at - self._boot_started_at) * 1000)
+        logger.info(f"startup_ready_ms={startup_ready_ms}")
 
         while self._running:
             try:

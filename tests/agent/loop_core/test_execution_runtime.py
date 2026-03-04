@@ -1,8 +1,10 @@
+import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import kabot.agent.loop_core.execution_runtime as execution_runtime_module
 from kabot.agent.context import ContextBuilder
 from kabot.agent.loop_core.execution_runtime import (
     _sanitize_error,
@@ -236,6 +238,60 @@ async def test_process_tool_calls_dedupes_duplicate_payload_within_turn(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_process_tool_calls_replayed_call_id_does_not_append_duplicate_tool_result(tmp_path):
+    tool_executor = AsyncMock(return_value="scheduled")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(truncate=lambda value, _tool_name: value, _count_tokens=lambda _value: 0),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+        runtime_resilience=SimpleNamespace(dedupe_tool_calls=True, idempotency_ttl_seconds=600),
+        runtime_performance=SimpleNamespace(fast_first_response=False),
+        _active_turn_id="turn-1",
+        _pending_memory_tasks=set(),
+        _tool_payload_cache={},
+        _tool_call_id_cache={"call_same": (time.time() + 600, "cached-result")},
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="ingatkan")
+    response = LLMResponse(
+        content="Scheduling task",
+        tool_calls=[ToolCallRequest(id="call_same", name="cron", arguments={"action": "add", "title": "A"})],
+    )
+
+    prior_messages = [
+        {"role": "user", "content": "ingatkan"},
+        {
+            "role": "assistant",
+            "content": "Scheduling task",
+            "tool_calls": [
+                {"id": "call_same", "type": "function", "function": {"name": "cron", "arguments": "{\"action\":\"add\",\"title\":\"A\"}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_same", "name": "cron", "content": "cached-result"},
+    ]
+
+    updated = await process_tool_calls(loop, msg, prior_messages, response, session=SimpleNamespace(metadata={}))
+
+    # Replay must not execute tool again.
+    assert tool_executor.await_count == 0
+    # Ensure no duplicate tool output is appended for the same replayed call id.
+    assert sum(1 for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_same") == 1
+
+
+@pytest.mark.asyncio
 async def test_call_llm_with_fallback_disables_provider_internal_fallbacks():
     class _Provider:
         def __init__(self):
@@ -382,7 +438,80 @@ async def test_run_agent_loop_direct_cleanup_returns_raw_result_without_summary_
 
     assert result == raw_result
     loop._execute_required_tool_fallback.assert_awaited_once_with("cleanup_system", msg)
+    loop._plan_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_status_text_comes_from_i18n_translator(monkeypatch):
+    published = []
+
+    async def _publish(msg):
+        published.append(msg)
+
+    def _fake_t(key: str, text: str | None = None, **kwargs) -> str:
+        return f"<{key}>"
+
+    monkeypatch.setattr(execution_runtime_module, "t", _fake_t)
+
+    raw_result = "cleanup: removed temp files"
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "cleanup_system",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="unused"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(side_effect=_publish)),
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="chat-1", sender_id="user", content="clean up")
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    statuses = [m for m in published if (m.metadata or {}).get("type") == "status_update"]
+    phases = [m.metadata.get("phase") for m in statuses]
+    contents = [m.content for m in statuses]
+
+    assert result == raw_result
+    assert "thinking" in phases
+    assert "tool" in phases
+    assert "done" in phases
+    assert "<runtime.status.thinking>" in contents
+    assert "<runtime.status.tool>" in contents
+    assert "<runtime.status.done>" in contents
     loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_direct_process_memory_returns_raw_without_summary_chat():
+    raw_result = "ProcessName Id RAM_MB\npython 123 420.0"
+    bus = SimpleNamespace(publish_outbound=AsyncMock(return_value=None))
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "get_process_memory",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=bus,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+    )
+
+    msg = InboundMessage(channel="cli", chat_id="direct", sender_id="user", content="cek ram sekarang")
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == raw_result
+    loop._execute_required_tool_fallback.assert_awaited_once_with("get_process_memory", msg)
+    loop.provider.chat.assert_not_awaited()
+    outbound_texts = [call.args[0].content for call in bus.publish_outbound.await_args_list]
+    assert any("wait" in text.lower() or "tunggu" in text.lower() for text in outbound_texts)
 
 
 @pytest.mark.asyncio
@@ -407,7 +536,112 @@ async def test_run_agent_loop_direct_read_only_tool_returns_summary_via_provider
 
     assert result == summarized
     loop._execute_required_tool_fallback.assert_awaited_once_with("get_system_info", msg)
+    loop._plan_task.assert_not_awaited()
     loop.provider.chat.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_direct_web_search_returns_raw_without_summary_chat():
+    raw_result = "Results for: perang us israel iran\\n1. Reuters\\n2. AP"
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "web_search",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="carikan berita perang us israel vs iran")
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == raw_result
+    loop._execute_required_tool_fallback.assert_awaited_once_with("web_search", msg)
+    loop._plan_task.assert_not_awaited()
+    loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_uses_required_tool_from_message_metadata():
+    raw_result = "Results for: berita terbaru 2026 sekarang\n1. Reuters"
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="gas",
+        metadata={
+            "required_tool": "web_search",
+            "required_tool_query": "berita terbaru 2026 sekarang",
+            "route_profile": "RESEARCH",
+            "effective_content": "berita terbaru 2026 sekarang",
+        },
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": "berita terbaru 2026 sekarang"}], session)
+
+    assert result == raw_result
+    loop._execute_required_tool_fallback.assert_awaited_once_with("web_search", msg)
+    loop._plan_task.assert_not_awaited()
+    loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_heartbeat_skips_self_eval_and_critic():
+    loop = SimpleNamespace(
+        max_iterations=1,
+        context_guard=SimpleNamespace(check_overflow=lambda _messages, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _is_weak_model=lambda _model: False,
+        _required_tool_for_query=lambda _text: None,
+        _plan_task=AsyncMock(return_value="1. check"),
+        _apply_think_mode=lambda messages, _session: messages,
+        _call_llm_with_fallback=AsyncMock(return_value=(LLMResponse(content="heartbeat-ok"), None)),
+        _self_evaluate=MagicMock(return_value=(False, "nudge")),
+        _critic_evaluate=AsyncMock(return_value=(1, "retry")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(),
+        _execute_required_tool_fallback=AsyncMock(return_value="fallback"),
+        _should_log_verbose=lambda _session: False,
+        context=SimpleNamespace(
+            add_assistant_message=lambda messages, content, reasoning_content=None: messages
+            + [{"role": "assistant", "content": content}]
+        ),
+        provider=SimpleNamespace(),
+    )
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="Heartbeat task: Autopilot patrol: review recent context and schedules",
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "heartbeat-ok"
+    loop._plan_task.assert_awaited_once()
+    loop._self_evaluate.assert_not_called()
+    loop._critic_evaluate.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -447,7 +681,10 @@ async def test_run_agent_loop_uses_neutral_status_when_tool_calls_have_completio
 
     outbound_texts = [call.args[0].content for call in bus.publish_outbound.await_args_list]
     assert "Cleanup selesai total" not in outbound_texts
-    assert "Processing your request, please wait..." in outbound_texts
+    assert any(
+        ("processing your request" in text.lower()) or ("sedang memproses permintaan" in text.lower())
+        for text in outbound_texts
+    )
 
 
 @pytest.mark.asyncio
@@ -486,7 +723,186 @@ async def test_run_agent_loop_uses_neutral_status_when_tool_calls_have_empty_con
     await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
 
     outbound_texts = [call.args[0].content for call in bus.publish_outbound.await_args_list]
-    assert "Processing your request, please wait..." in outbound_texts
+    assert any(
+        ("processing your request" in text.lower()) or ("sedang memproses permintaan" in text.lower())
+        for text in outbound_texts
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_skips_critic_for_short_fast_prompt():
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(return_value=(LLMResponse(content="RAM total 16 GB"), None)),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(2, "retry")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, msgs, _resp, _sess: msgs),
+        context=SimpleNamespace(
+            add_assistant_message=lambda msgs, content, reasoning_content=None: msgs + [{"role": "assistant", "content": content}]
+        ),
+        context_guard=SimpleNamespace(check_overflow=lambda _m, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _is_weak_model=lambda _model: False,
+        provider=SimpleNamespace(),
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="kapasitas ram berapa")
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "RAM total 16 GB"
+    loop._call_llm_with_fallback.assert_awaited_once()
+    loop._critic_evaluate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_skips_critic_for_research_route_even_when_prompt_is_long():
+    long_query = (
+        "carikan update paling terbaru dari sumber terpercaya tentang perkembangan konflik "
+        "regional dan dampak ekonominya sampai saat ini"
+    )
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(return_value=(LLMResponse(content="Ringkasan awal"), None)),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(2, "retry")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, msgs, _resp, _sess: msgs),
+        context=SimpleNamespace(
+            add_assistant_message=lambda msgs, content, reasoning_content=None: msgs + [{"role": "assistant", "content": content}]
+        ),
+        context_guard=SimpleNamespace(check_overflow=lambda _m, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _is_weak_model=lambda _model: False,
+        provider=SimpleNamespace(),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content=long_query,
+        metadata={"route_profile": "RESEARCH"},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "Ringkasan awal"
+    loop._call_llm_with_fallback.assert_awaited_once()
+    loop._critic_evaluate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_publishes_draft_update_before_critic_retry():
+    bus = SimpleNamespace(publish_outbound=AsyncMock(return_value=None))
+    first = LLMResponse(content="Jawaban awal ini masih terlalu umum dan perlu diperbaiki.", tool_calls=[])
+    second = LLMResponse(content="Jawaban final ini lebih lengkap dan presisi.", tool_calls=[])
+
+    loop = SimpleNamespace(
+        max_iterations=2,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(side_effect=[(first, None), (second, None)]),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(side_effect=[(2, "perbaiki"), (9, "ok")]),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, msgs, _resp, _sess: msgs),
+        context=SimpleNamespace(
+            add_assistant_message=lambda msgs, content, reasoning_content=None: msgs + [{"role": "assistant", "content": content}]
+        ),
+        context_guard=SimpleNamespace(check_overflow=lambda _m, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _is_weak_model=lambda _model: False,
+        bus=bus,
+        provider=SimpleNamespace(),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086618307",
+        sender_id="user",
+        content="Tolong jelaskan kondisi penggunaan memori sistem saya saat ini dengan ringkas dan jelas.",
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == second.content
+    outbound = [call.args[0] for call in bus.publish_outbound.await_args_list]
+    draft_updates = [
+        item
+        for item in outbound
+        if isinstance(item.metadata, dict) and item.metadata.get("type") == "draft_update"
+    ]
+    assert draft_updates
+    assert any("Jawaban awal" in str(item.content) for item in draft_updates)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_publishes_reasoning_lane_update_when_available():
+    bus = SimpleNamespace(publish_outbound=AsyncMock(return_value=None))
+    response = LLMResponse(
+        content="Berikut ringkasan terbaru.",
+        tool_calls=[],
+        reasoning_content="Checking trusted sources and validating timestamps before final answer.",
+    )
+
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(return_value=(response, None)),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(10, "ok")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, msgs, _resp, _sess: msgs),
+        context=SimpleNamespace(
+            add_assistant_message=lambda msgs, content, reasoning_content=None: msgs
+            + [{"role": "assistant", "content": content, "reasoning_content": reasoning_content}]
+        ),
+        context_guard=SimpleNamespace(check_overflow=lambda _m, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _is_weak_model=lambda _model: False,
+        bus=bus,
+        provider=SimpleNamespace(),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086618307",
+        sender_id="user",
+        content="carikan update terbaru global",
+        metadata={"skip_critic_for_speed": True},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == response.content
+    outbound = [call.args[0] for call in bus.publish_outbound.await_args_list]
+    reasoning_updates = [
+        item
+        for item in outbound
+        if isinstance(item.metadata, dict)
+        and item.metadata.get("type") == "reasoning_update"
+        and item.metadata.get("lane") == "reasoning"
+    ]
+    assert reasoning_updates
 
 
 @pytest.mark.asyncio
@@ -560,3 +976,94 @@ async def test_call_llm_with_fallback_warns_when_quota_warn_limit_exceeded(monke
     assert response.content == "ok"
     provider.chat.assert_awaited_once()
     assert any("quota" in item.lower() and "warn" in item.lower() for item in warnings)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_forces_web_search_for_live_query_even_without_research_route():
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _execute_required_tool_fallback=AsyncMock(return_value="live-result"),
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(return_value=(LLMResponse(content="should-not-run"), None)),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(9, "ok")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, msgs, _resp, _sess: msgs),
+        context=SimpleNamespace(
+            add_assistant_message=lambda msgs, content, reasoning_content=None: msgs + [{"role": "assistant", "content": content}]
+        ),
+        context_guard=SimpleNamespace(check_overflow=lambda _m, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _is_weak_model=lambda _model: False,
+        tools=SimpleNamespace(has=lambda name: name == "web_search"),
+        provider=SimpleNamespace(),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="berita terbaru 2026 sekarang",
+        metadata={"route_profile": "GENERAL"},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "live-result"
+    loop._execute_required_tool_fallback.assert_awaited_once_with("web_search", msg)
+    loop._call_llm_with_fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_short_followup_skips_plan_and_critic_even_with_long_effective_context():
+    response = LLMResponse(content="Siap, lanjut sekarang.")
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _execute_required_tool_fallback=AsyncMock(return_value=None),
+        _plan_task=AsyncMock(return_value="1. Dummy plan"),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(return_value=(response, None)),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(1, "retry")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, msgs, _resp, _sess: msgs),
+        context=SimpleNamespace(
+            add_assistant_message=lambda msgs, content, reasoning_content=None: msgs
+            + [{"role": "assistant", "content": content}]
+        ),
+        context_guard=SimpleNamespace(check_overflow=lambda _m, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _is_weak_model=lambda _model: False,
+        tools=SimpleNamespace(has=lambda _name: False),
+        provider=SimpleNamespace(),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    long_followup_context = (
+        "ya\n\n[Follow-up Context]\nPlease continue the previous execution details, "
+        "validate latest sources, and summarize all findings in one final answer."
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="ya",
+        metadata={
+            "route_profile": "GENERAL",
+            "effective_content": long_followup_context,
+        },
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "Siap, lanjut sekarang."
+    loop._plan_task.assert_not_awaited()
+    loop._critic_evaluate.assert_not_awaited()

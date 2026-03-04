@@ -1,5 +1,6 @@
 """Tests for multi-platform daemon support (Phase 12 - Task 37)."""
 
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,6 +10,8 @@ from kabot.core.daemon import (
     get_service_status,
     install_launchd_service,
     install_systemd_service,
+    install_termux_service,
+    install_windows_task_service,
 )
 
 
@@ -24,7 +27,8 @@ def test_generate_systemd_unit():
     assert "[Install]" in unit
     assert "User=testuser" in unit
     assert "WorkingDirectory=/home/testuser/kabot" in unit
-    assert "ExecStart=/home/testuser/kabot/venv/bin/python -m kabot.cli start" in unit
+    assert "ExecStart=" in unit
+    assert "-m kabot gateway" in unit
     assert "Restart=always" in unit
 
 
@@ -36,7 +40,7 @@ def test_generate_systemd_unit_custom_python():
         python_path="/usr/bin/python3"
     )
 
-    assert "ExecStart=/usr/bin/python3 -m kabot.cli start" in unit
+    assert "ExecStart=/usr/bin/python3 -m kabot gateway" in unit
 
 
 def test_generate_launchagent_plist():
@@ -52,6 +56,7 @@ def test_generate_launchagent_plist():
     assert "<string>com.test.kabot</string>" in plist
     assert "<key>WorkingDirectory</key>" in plist
     assert "<string>/Users/test/kabot</string>" in plist
+    assert "<string>gateway</string>" in plist
     assert "<key>RunAtLoad</key>" in plist
     assert "<key>KeepAlive</key>" in plist
 
@@ -84,13 +89,16 @@ def test_install_systemd_service_success():
                 mock_path.write_text = MagicMock()
 
                 with patch('kabot.core.daemon.Path') as mock_path_class:
-                    mock_path_class.home.return_value.__truediv__.return_value.__truediv__.return_value.__truediv__.return_value.__truediv__.return_value = mock_path
-                    mock_path.__truediv__.return_value = mock_path
+                    with patch('kabot.core.daemon.subprocess.run') as mock_run:
+                        mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+                        mock_path_class.home.return_value.__truediv__.return_value.__truediv__.return_value.__truediv__.return_value.__truediv__.return_value = mock_path
+                        mock_path.__truediv__.return_value = mock_path
 
-                    success, message = install_systemd_service()
-                    assert success is True
-                    assert "Service file created" in message
-                    assert "systemctl --user enable" in message
+                        success, message = install_systemd_service()
+                        assert success is True
+                        assert "Service file created" in message
+                        assert "enabled/started" in message
+                        assert mock_run.call_count >= 3
 
 
 def test_install_launchd_service_not_macos():
@@ -109,13 +117,58 @@ def test_install_launchd_service_success():
             mock_path.write_text = MagicMock()
 
             with patch('kabot.core.daemon.Path') as mock_path_class:
-                mock_path_class.home.return_value.__truediv__.return_value.__truediv__.return_value = mock_path
-                mock_path.__truediv__.return_value = mock_path
+                with patch('kabot.core.daemon.subprocess.run') as mock_run:
+                    mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+                    mock_path_class.home.return_value.__truediv__.return_value.__truediv__.return_value = mock_path
+                    mock_path.__truediv__.return_value = mock_path
 
-                success, message = install_launchd_service()
+                    success, message = install_launchd_service()
+                    assert success is True
+                    assert "Service file created" in message
+                    assert "loaded/started" in message
+                    assert mock_run.call_count >= 2
+
+
+def test_install_windows_task_service_uses_gateway_entrypoint():
+    """Task scheduler command should launch `kabot gateway` entrypoint."""
+    with patch("sys.platform", "win32"):
+        with patch("kabot.core.daemon.subprocess.run") as mock_run:
+            mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            success, _message = install_windows_task_service(
+                task_name="kabot",
+                workdir="C:\\kabot",
+                python_path="C:\\Python\\python.exe",
+            )
+            assert success is True
+            assert mock_run.call_count >= 2
+            create_cmd = mock_run.call_args_list[0][0][0]
+            assert "/TR" in create_cmd
+            tr_value = create_cmd[create_cmd.index("/TR") + 1]
+            assert "-m kabot gateway" in tr_value
+            run_cmd = mock_run.call_args_list[1][0][0]
+            assert run_cmd[:3] == ["schtasks", "/Run", "/TN"]
+
+
+def test_install_termux_service_uses_gateway_entrypoint(tmp_path, monkeypatch):
+    """Termux run script should execute `kabot gateway`."""
+    monkeypatch.setenv("PREFIX", str(tmp_path))
+    with patch("kabot.utils.environment.detect_runtime_environment", return_value=SimpleNamespace(is_termux=True)):
+        with patch("kabot.core.daemon.shutil.which", return_value="/data/data/com.termux/files/usr/bin/sv"):
+            with patch("kabot.core.daemon.subprocess.run") as mock_run:
+                mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+                success, _message = install_termux_service(
+                    service_name="kabot",
+                    workdir="/data/data/com.termux/files/home/kabot",
+                    python_path="/data/data/com.termux/files/usr/bin/python",
+                )
                 assert success is True
-                assert "Service file created" in message
-                assert "launchctl load" in message
+                called_commands = [call.args[0] for call in mock_run.call_args_list]
+                assert ["sv-enable", "kabot"] in called_commands
+                assert ["sv", "up", "kabot"] in called_commands
+    run_file = tmp_path / "var" / "service" / "kabot" / "run"
+    assert run_file.exists()
+    content = run_file.read_text()
+    assert "-m kabot gateway" in content
 
 
 def test_get_service_status_linux():

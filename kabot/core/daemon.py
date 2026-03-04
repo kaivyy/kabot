@@ -34,7 +34,7 @@ def generate_systemd_unit(
         Systemd unit file content
     """
     if python_path is None:
-        python_path = f"{workdir}/venv/bin/python"
+        python_path = sys.executable
 
     return f"""[Unit]
 Description={description}
@@ -44,7 +44,7 @@ After=network.target
 Type=simple
 User={user}
 WorkingDirectory={workdir}
-ExecStart={python_path} -m kabot.cli start
+ExecStart={python_path} -m kabot gateway
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -78,7 +78,7 @@ def generate_launchagent_plist(
         launchd plist file content
     """
     if python_path is None:
-        python_path = f"{workdir}/venv/bin/python"
+        python_path = sys.executable
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -91,8 +91,8 @@ def generate_launchagent_plist(
     <array>
         <string>{python_path}</string>
         <string>-m</string>
-        <string>kabot.cli</string>
-        <string>start</string>
+        <string>kabot</string>
+        <string>gateway</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -156,7 +156,34 @@ def install_systemd_service(
 
     try:
         unit_file.write_text(unit_content)
-        return True, f"Service file created at {unit_file}\n\nTo enable and start:\n  systemctl --user enable {service_name}\n  systemctl --user start {service_name}"
+
+        commands = [
+            ["systemctl", "--user", "daemon-reload"],
+            ["systemctl", "--user", "enable", service_name],
+            ["systemctl", "--user", "restart", service_name],
+        ]
+        for command in commands:
+            result = subprocess.run(command, capture_output=True, text=True)
+            if result.returncode != 0:
+                detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+                return (
+                    False,
+                    (
+                        f"Service file created at {unit_file}, but failed to apply systemd command: "
+                        f"`{' '.join(command)}` ({detail}).\n"
+                        f"Run manually:\n  systemctl --user daemon-reload\n"
+                        f"  systemctl --user enable {service_name}\n"
+                        f"  systemctl --user start {service_name}"
+                    ),
+                )
+        return (
+            True,
+            (
+                f"Service file created at {unit_file} and enabled/started.\n"
+                f"Manage with:\n  systemctl --user status {service_name}\n"
+                f"  systemctl --user restart {service_name}"
+            ),
+        )
     except Exception as e:
         return False, f"Failed to create service file: {e}"
 
@@ -192,7 +219,40 @@ def install_launchd_service(
 
     try:
         plist_file.write_text(plist_content)
-        return True, f"Service file created at {plist_file}\n\nTo load and start:\n  launchctl load {plist_file}\n  launchctl start {label}"
+
+        # Best effort unload old definition first (ignore exit code).
+        subprocess.run(["launchctl", "unload", str(plist_file)], capture_output=True, text=True)
+        load_result = subprocess.run(["launchctl", "load", "-w", str(plist_file)], capture_output=True, text=True)
+        if load_result.returncode != 0:
+            detail = load_result.stderr.strip() or load_result.stdout.strip() or "unknown error"
+            return (
+                False,
+                (
+                    f"Service file created at {plist_file}, but failed to load launchd service ({detail}).\n"
+                    f"Run manually:\n  launchctl load -w {plist_file}\n"
+                    f"  launchctl start {label}"
+                ),
+            )
+
+        start_result = subprocess.run(["launchctl", "start", label], capture_output=True, text=True)
+        if start_result.returncode != 0:
+            detail = start_result.stderr.strip() or start_result.stdout.strip() or "unknown error"
+            return (
+                False,
+                (
+                    f"Service file created at {plist_file} and loaded, but failed to start ({detail}).\n"
+                    f"Run manually:\n  launchctl start {label}"
+                ),
+            )
+
+        return (
+            True,
+            (
+                f"Service file created at {plist_file} and loaded/started.\n"
+                f"Manage with:\n  launchctl list | grep {label}\n"
+                f"  launchctl kickstart -k gui/$(id -u)/{label}"
+            ),
+        )
     except Exception as e:
         return False, f"Failed to create service file: {e}"
 
@@ -218,7 +278,7 @@ def install_windows_task_service(
 
     workdir = workdir or os.getcwd()
     python_path = python_path or sys.executable
-    task_command = f'"{python_path}" -m kabot.cli start'
+    task_command = f'"{python_path}" -m kabot gateway'
 
     create_cmd = [
         "schtasks",
@@ -241,7 +301,19 @@ def install_windows_task_service(
         detail = result.stderr.strip() or result.stdout.strip() or "Unknown schtasks error"
         return False, f"Failed to create Windows task: {detail}"
 
-    return True, f"Windows startup task created: {task_name}"
+    run_cmd = ["schtasks", "/Run", "/TN", task_name]
+    run_result = subprocess.run(run_cmd, capture_output=True, text=True, env=env)
+    if run_result.returncode == 0:
+        return True, f"Windows startup task created and started: {task_name}"
+
+    run_detail = run_result.stderr.strip() or run_result.stdout.strip() or "unknown run error"
+    return (
+        True,
+        (
+            f"Windows startup task created: {task_name}. "
+            f"Immediate start failed ({run_detail}); task will run at next logon."
+        ),
+    )
 
 
 def install_termux_service(
@@ -281,15 +353,25 @@ def install_termux_service(
         run_content = f"""#!/bin/sh
 exec 2>&1
 export KABOT_WORKDIR="{workdir}"
-exec {python_path} -m kabot.cli start
+exec {python_path} -m kabot gateway
 """
         run_file.write_text(run_content)
         run_file.chmod(0o755)
 
         # Enable the service
         subprocess.run(["sv-enable", service_name], capture_output=True)
+        up_result = subprocess.run(["sv", "up", service_name], capture_output=True, text=True)
+        if up_result.returncode == 0:
+            return True, f"Termux service installed, enabled, and started: {service_name}"
 
-        return True, f"Termux service installed and enabled: {service_name}\nStart with: sv up {service_name}"
+        up_detail = up_result.stderr.strip() or up_result.stdout.strip() or "unknown sv up error"
+        return (
+            True,
+            (
+                f"Termux service installed and enabled: {service_name}. "
+                f"Immediate start failed ({up_detail}); run manually: sv up {service_name}"
+            ),
+        )
     except Exception as e:
         return False, f"Failed to create Termux service: {e}"
 

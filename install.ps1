@@ -130,10 +130,16 @@ function Main {
     Write-Info "Upgrading pip..."
     & $venvPython -m pip install --upgrade pip setuptools wheel | Out-Null
 
-    # Install Kabot from LOCAL source
-    Write-Info "Installing kabot-ai and dependencies from local source..."
-    & $venvPip install -e .
-    & $venvPip install questionary
+    # Install Kabot from local source if available, otherwise use PyPI (core-only).
+    $localPyproject = Join-Path (Get-Location) "pyproject.toml"
+    if (Test-Path $localPyproject) {
+        Write-Info "Installing kabot from local source..."
+        & $venvPip install -e .
+    }
+    else {
+        Write-Info "Installing kabot from PyPI..."
+        & $venvPip install kabot
+    }
 
     # Create wrapper batch file
     Write-Info "Creating kabot command wrapper..."

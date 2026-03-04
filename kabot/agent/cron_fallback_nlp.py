@@ -95,7 +95,8 @@ PROCESS_RAM_KEYWORDS = (
     "ram terbesar", "aplikasi boros", "aplikasi makan ram",
     "proses boros", "proses makan ram", "proses terbesar",
     "daftar proses", "top proses",
-    "berapa ram", "ram pc", "ram laptop", "ram komputer",
+    "berapa ram", "ram berapa", "kapasitas ram", "kapasitas memori",
+    "total ram", "total memori", "ram pc", "ram laptop", "ram komputer",
     # Multilingual
     "memoria", "uso de memoria", "uso de ram",
     "utilisation mémoire", "utilisation ram",
@@ -196,6 +197,15 @@ SPEEDTEST_KEYWORDS = (
     "ping pc", "cek ping", "tes ping",
 )
 
+NEWS_KEYWORDS = (
+    # English
+    "news", "headline", "breaking news", "latest news", "current events",
+    # Indonesian / Malay
+    "berita", "kabar", "berita terbaru", "berita terkini", "kabar terbaru",
+    # Simple multilingual anchors
+    "noticias", "actualites", "nachrichten", "новости", "新闻", "ข่าว",
+)
+
 CRON_MANAGEMENT_OPS = (
     "list",
     "lihat",
@@ -265,9 +275,37 @@ def required_tool_for_query(
     has_stock_tool: bool = False,
     has_crypto_tool: bool = False,
     has_server_monitor_tool: bool = False,
+    has_web_search_tool: bool = False,
 ) -> str | None:
     """Return required tool name for immediate-action prompts."""
     q_lower = (question or "").lower()
+    ram_capacity_markers = (
+        "kapasitas",
+        "total ram",
+        "total memori",
+        "ram terpasang",
+        "installed ram",
+        "memory capacity",
+        "ram capacity",
+        "ram berapa",
+        "berapa ram",
+        "spec",
+        "spek",
+        "spesifikasi",
+    )
+    ram_usage_markers = (
+        "usage",
+        "penggunaan",
+        "dipakai",
+        "pemakaian",
+        "per proses",
+        "per process",
+        "top",
+        "boros",
+        "makan ram",
+        "process",
+        "proses",
+    )
 
     # CRITICAL FIX: Cron/Reminder takes highest precedence.
     # If the user says "remind me to clean my PC", the PRIMARY action right now is to schedule a reminder.
@@ -289,6 +327,12 @@ def required_tool_for_query(
         return "server_monitor"
 
     if has_process_memory_tool and any(k in q_lower for k in PROCESS_RAM_KEYWORDS):
+        if (
+            has_system_info_tool
+            and any(marker in q_lower for marker in ram_capacity_markers)
+            and not any(marker in q_lower for marker in ram_usage_markers)
+        ):
+            return "get_system_info"
         return "get_process_memory"
 
     if has_stock_tool and any(k in q_lower for k in STOCK_KEYWORDS):
@@ -296,6 +340,9 @@ def required_tool_for_query(
 
     if has_crypto_tool and any(k in q_lower for k in CRYPTO_KEYWORDS):
         return "crypto"
+
+    if has_web_search_tool and any(k in q_lower for k in NEWS_KEYWORDS):
+        return "web_search"
 
     if has_speedtest_tool and any(k in q_lower for k in SPEEDTEST_KEYWORDS):
         return "speedtest"

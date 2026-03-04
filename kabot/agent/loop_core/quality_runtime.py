@@ -10,42 +10,6 @@ from loguru import logger
 from kabot.agent.language.lexicon import REMINDER_TERMS, WEATHER_TERMS
 
 IMMEDIATE_ACTION_PATTERNS = [
-    # Reminders / scheduling (multilingual)
-    "remind",
-    "reminder",
-    "schedule",
-    "alarm",
-    "ingatkan",
-    "bangunkan",
-    "jadwalkan",
-    "pengingat",
-    "timer",
-    "wake me",
-    "peringatan",
-    "jadual",
-    "เตือน",
-    "提醒",
-    # Weather
-    "weather",
-    "cuaca",
-    "suhu",
-    "temperature",
-    "ramalan",
-    "อากาศ",
-    "天气",
-    "气温",
-    # Quick lookups
-    "stock",
-    "crypto",
-    "saham",
-    "harga",
-    # Time queries
-    "what time",
-    "jam berapa",
-]
-
-
-IMMEDIATE_ACTION_PATTERNS = [
     *REMINDER_TERMS,
     *WEATHER_TERMS,
     # Quick lookups
@@ -85,26 +49,29 @@ def self_evaluate(loop: Any, question: str, answer: str) -> tuple[bool, str | No
         "no tengo acceso",
         # French
         "je ne peux pas",
-        "je n'ai pas accÃ¨s",
+        "je n'ai pas acces",
+        "je n'ai pas accès",
         # German
         "ich kann nicht",
         "ich habe keinen zugriff",
         # Portuguese
-        "nÃ£o consigo",
-        "nÃ£o tenho acesso",
+        "nao consigo",
+        "não consigo",
+        "nao tenho acesso",
+        "não tenho acesso",
         # Russian
-        "Ñ Ð½Ðµ Ð¼Ð¾Ð³Ñƒ",
-        "Ñƒ Ð¼ÐµÐ½Ñ Ð½ÐµÑ‚ Ð´Ð¾ÑÑ‚ÑƒÐ¿Ð°",
+        "я не могу",
+        "у меня нет доступа",
         # Japanese
-        "ã§ãã¾ã›ã‚“",
-        "ã‚¢ã‚¯ã‚»ã‚¹ã§ãã¾ã›ã‚“",
+        "できません",
+        "アクセスできません",
         # Chinese
-        "æˆ‘æ— æ³•",
-        "æˆ‘ä¸èƒ½",
-        "æ— æ³•è®¿é—®",
+        "我无法",
+        "我不能",
+        "无法访问",
         # Korean
-        "í•  ìˆ˜ ì—†",
-        "ì ‘ê·¼í•  ìˆ˜ ì—†",
+        "할 수 없",
+        "접근할 수 없",
     ]
 
     has_refusal = any(p in answer_lower for p in refusal_patterns)
@@ -112,8 +79,8 @@ def self_evaluate(loop: Any, question: str, answer: str) -> tuple[bool, str | No
         tool_list = ", ".join(loop.tools.tool_names)
         return False, (
             f"SYSTEM: You said you cannot do something, but you have these tools: {tool_list}. "
-            f"Use the appropriate tool instead of refusing. For example, use 'read_file' to read files, "
-            f"'exec' to run commands, 'web_search' to search the web. Try again and actually use a tool."
+            "Use the appropriate tool instead of refusing. For example, use 'read_file' to read files, "
+            "'exec' to run commands, 'web_search' to search the web. Try again and actually use a tool."
         )
 
     return True, None
@@ -152,8 +119,8 @@ Reply with a numbered plan. Be concise."""
         )
         logger.info(f"Plan generated: {response.content[:100]}...")
         return response.content
-    except Exception as e:
-        logger.warning(f"Planning failed: {e}")
+    except Exception as exc:
+        logger.warning(f"Planning failed: {exc}")
         return None
 
 
@@ -223,11 +190,11 @@ FEEDBACK: <one sentence explaining the score>"""
         feedback_match = re.search(r"FEEDBACK:\s*(.+)", response.content)
         feedback = feedback_match.group(1).strip() if feedback_match else response.content
 
-        logger.info(f"Critic score: {score}/10 â€” {feedback[:80]}")
+        logger.info(f"Critic score: {score}/10 - {feedback[:80]}")
         return score, feedback
 
-    except Exception as e:
-        logger.warning(f"Critic evaluation failed: {e}")
+    except Exception as exc:
+        logger.warning(f"Critic evaluation failed: {exc}")
         return 7, "Evaluation skipped"
 
 
@@ -247,6 +214,6 @@ async def log_lesson(loop: Any, question: str, feedback: str, score_before: int,
             score_after=score_after,
             task_type="complex",
         )
-        logger.info(f"Lesson logged: {lesson_id} ({score_before}â†’{score_after})")
-    except Exception as e:
-        logger.warning(f"Failed to log lesson: {e}")
+        logger.info(f"Lesson logged: {lesson_id} ({score_before}->{score_after})")
+    except Exception as exc:
+        logger.warning(f"Failed to log lesson: {exc}")

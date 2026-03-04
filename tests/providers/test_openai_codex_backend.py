@@ -296,3 +296,41 @@ def test_build_chatgpt_request_drops_unmatched_function_call_output_when_ids_mis
 
     assert function_calls == []
     assert output_items == []
+
+
+def test_build_chatgpt_request_dedupes_duplicate_function_call_output_same_call_id():
+    body = build_chatgpt_request(
+        model="gpt-5.3-codex",
+        messages=[
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_real",
+                        "type": "function",
+                        "function": {
+                            "name": "cron",
+                            "arguments": "{\"action\":\"add\"}",
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_real",
+                "name": "cron",
+                "content": "Created job #1",
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_real",
+                "name": "cron",
+                "content": "Created job #2 (duplicate replay)",
+            },
+            {"role": "user", "content": "lanjut"},
+        ],
+    )
+
+    output_items = [item for item in body["input"] if item.get("type") == "function_call_output"]  # type: ignore[index]
+    assert len(output_items) == 1
+    assert output_items[0]["call_id"] == "call_real"  # type: ignore[index]

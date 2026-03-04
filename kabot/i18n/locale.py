@@ -28,6 +28,14 @@ _ID_MARKERS = (
     "cek",
     "perbarui",
     "pasang",
+    # colloquial/day-to-day Indonesian markers
+    "lumayan",
+    "ternyata",
+    "banget",
+    "gimana",
+    "aku",
+    "kamu",
+    "saya",
 )
 
 _MS_MARKERS = (
@@ -133,4 +141,3 @@ def detect_locale(text: str | None) -> str:
         "fr": fr_score,
     }
     return max(scores, key=scores.get)
-

@@ -95,6 +95,12 @@ class QQChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through QQ."""
+        is_status_update, _phase, _status_text = self._status_update_payload(msg)
+        if is_status_update and self._should_skip_status_update(msg):
+            return
+        if not is_status_update:
+            self._clear_status_state(msg.chat_id)
+
         if not self._client:
             logger.warning("QQ client not initialized")
             return

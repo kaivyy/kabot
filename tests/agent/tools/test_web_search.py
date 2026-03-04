@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from kabot.agent.tools import web_search as web_search_module
 from kabot.agent.tools.web_search import WebSearchTool
 
 
@@ -98,3 +99,23 @@ async def test_web_search_kimi_fallback_to_brave(monkeypatch):
 
     result = await tool.execute("fallback query")
     assert "brave-fallback-ok" in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_no_keys_falls_back_to_google_news_rss(monkeypatch):
+    web_search_module._SEARCH_CACHE.clear()
+    tool = WebSearchTool(
+        provider="brave",
+        api_key="",
+        perplexity_api_key="",
+        xai_api_key="",
+        kimi_api_key="",
+    )
+
+    async def _rss(query: str, count: int) -> str:
+        return f"rss-fallback-ok:{query}:{count}"
+
+    monkeypatch.setattr(tool, "_search_google_news_rss", _rss)
+
+    result = await tool.execute("berita terbaru 2026 sekarang", count=5)
+    assert "rss-fallback-ok:berita terbaru 2026 sekarang:5" in result

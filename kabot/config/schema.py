@@ -208,6 +208,7 @@ class HeartbeatDefaults(BaseModel):
 
     enabled: bool = True
     interval_minutes: int = 30
+    startup_delay_seconds: int = 120
     target_channel: str = "last"
     target_to: str = ""
     active_hours_start: str = ""
@@ -504,6 +505,17 @@ class RuntimeQuotaConfig(BaseModel):
     enforcement_mode: str = "warn"  # "warn" | "hard"
 
 
+class RuntimeQueueConfig(BaseModel):
+    """Inbound message queue policy for burst handling and responsiveness."""
+
+    enabled: bool = True
+    mode: str = "debounce"  # "off" | "debounce"
+    debounce_window_ms: int = 1200
+    max_pending_per_session: int = 4
+    drop_policy: str = "drop_oldest"  # "drop_oldest" | "drop_newest"
+    summarize_dropped: bool = True
+
+
 class RuntimeConfig(BaseModel):
     """Runtime feature flags for resilience and performance behavior."""
 
@@ -512,6 +524,7 @@ class RuntimeConfig(BaseModel):
     autopilot: RuntimeAutopilotConfig = Field(default_factory=RuntimeAutopilotConfig)
     observability: RuntimeObservabilityConfig = Field(default_factory=RuntimeObservabilityConfig)
     quotas: RuntimeQuotaConfig = Field(default_factory=RuntimeQuotaConfig)
+    queue: RuntimeQueueConfig = Field(default_factory=RuntimeQueueConfig)
 
 
 class SkillEntryConfig(BaseModel):

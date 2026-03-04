@@ -30,7 +30,13 @@ class DiscordChannel(BaseChannel):
         self._seq: int | None = None
         self._heartbeat_task: asyncio.Task | None = None
         self._typing_tasks: dict[str, asyncio.Task] = {}
+        # Keep one mutable status message per channel for phase updates.
+        self._status_message_ids: dict[str, str] = {}
         self._http: httpx.AsyncClient | None = None
+
+    @staticmethod
+    def _is_transient_http_status(status_code: int) -> bool:
+        return status_code == 429 or 500 <= status_code <= 599
 
     async def start(self) -> None:
         """Start the Discord gateway connection."""
@@ -76,6 +82,11 @@ class DiscordChannel(BaseChannel):
         if not self._http:
             logger.warning("Discord HTTP client not initialized")
             return
+        is_progress_update, _phase, _status_text = self._status_update_payload(msg)
+        if is_progress_update and self._should_skip_status_update(msg):
+            return
+        if not is_progress_update:
+            self._clear_status_state(msg.chat_id)
 
         url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
         payload: dict[str, Any] = {"content": msg.content}
@@ -94,6 +105,53 @@ class DiscordChannel(BaseChannel):
         headers = {"Authorization": f"Bot {self.config.token}"}
 
         try:
+            if is_progress_update:
+                status_content = str(msg.content or "").strip()
+                if not status_content:
+                    return
+                status_payload = {"content": status_content}
+                existing_status_id = self._status_message_ids.get(msg.chat_id)
+                if existing_status_id:
+                    update_url = f"{url}/{existing_status_id}"
+                    try:
+                        response = await self._http.patch(update_url, headers=headers, json=status_payload)
+                        if 200 <= response.status_code < 300:
+                            return
+                        if response.status_code == 404:
+                            self._status_message_ids.pop(msg.chat_id, None)
+                        elif self._is_transient_http_status(response.status_code):
+                            return
+                        else:
+                            self._status_message_ids.pop(msg.chat_id, None)
+                    except Exception:
+                        # Keep existing status id on transport issues to avoid duplicate status bubbles.
+                        return
+                created = await self._http.post(url, headers=headers, json=status_payload)
+                if not (200 <= created.status_code < 300):
+                    logger.warning(
+                        f"Discord status update failed: status={created.status_code} chat_id={msg.chat_id}"
+                    )
+                    return
+                try:
+                    created_data = created.json()
+                except Exception:
+                    created_data = {}
+                created_id = created_data.get("id")
+                if created_id:
+                    self._status_message_ids[msg.chat_id] = str(created_id)
+                return
+
+            existing_status_id = self._status_message_ids.get(msg.chat_id)
+            if existing_status_id:
+                try:
+                    response = await self._http.delete(f"{url}/{existing_status_id}", headers=headers)
+                    if 200 <= response.status_code < 300 or response.status_code == 404:
+                        self._status_message_ids.pop(msg.chat_id, None)
+                    elif not self._is_transient_http_status(response.status_code):
+                        self._status_message_ids.pop(msg.chat_id, None)
+                except Exception:
+                    pass
+
             # 1. Send text only
             if not msg.media:
                 payload = {"content": msg.content}
@@ -142,7 +200,8 @@ class DiscordChannel(BaseChannel):
         except Exception as e:
             logger.error(f"Error sending Discord message: {e}")
         finally:
-            await self._stop_typing(msg.chat_id)
+            if not is_progress_update:
+                await self._stop_typing(msg.chat_id)
 
     async def _gateway_loop(self) -> None:
         """Main gateway loop: identify, heartbeat, dispatch events."""

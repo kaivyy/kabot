@@ -168,31 +168,56 @@ def _append_assistant_tool_calls(
 
 
 def _prune_orphan_tool_outputs(input_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop function_call_output entries that have no paired function_call."""
-    function_call_ids = {
-        str(item.get("call_id")).strip()
-        for item in input_messages
-        if item.get("type") == "function_call" and item.get("call_id")
-    }
+    """Drop invalid/duplicate function_call_output entries.
 
-    if not function_call_ids:
+    Rules:
+    - output call_id must have at least one matching function_call call_id.
+    - number of outputs per call_id cannot exceed number of function_call entries
+      with the same call_id (strict backend pairing).
+    """
+    function_call_counts: dict[str, int] = {}
+    for item in input_messages:
+        if item.get("type") != "function_call":
+            continue
+        raw = item.get("call_id")
+        if not raw:
+            continue
+        call_id = str(raw).strip()
+        if not call_id:
+            continue
+        function_call_counts[call_id] = function_call_counts.get(call_id, 0) + 1
+
+    if not function_call_counts:
         dropped = sum(1 for item in input_messages if item.get("type") == "function_call_output")
         if dropped:
             logger.debug(f"Dropping {dropped} orphan function_call_output item(s): no function_call present")
         return [item for item in input_messages if item.get("type") != "function_call_output"]
 
     filtered: list[dict[str, Any]] = []
+    output_counts: dict[str, int] = {}
     dropped = 0
     for item in input_messages:
-        if item.get("type") == "function_call_output":
-            call_id = str(item.get("call_id") or "").strip()
-            if call_id not in function_call_ids:
-                dropped += 1
-                continue
+        if item.get("type") != "function_call_output":
+            filtered.append(item)
+            continue
+
+        call_id = str(item.get("call_id") or "").strip()
+        allowed = function_call_counts.get(call_id, 0)
+        if allowed <= 0:
+            dropped += 1
+            continue
+        current = output_counts.get(call_id, 0)
+        if current >= allowed:
+            dropped += 1
+            continue
+        output_counts[call_id] = current + 1
         filtered.append(item)
 
     if dropped:
-        logger.debug(f"Dropping {dropped} orphan function_call_output item(s): missing matching call_id")
+        logger.debug(
+            f"Dropping {dropped} orphan/duplicate function_call_output item(s): "
+            "missing matching call_id or replayed output"
+        )
 
     return filtered
 
