@@ -44,55 +44,148 @@ def _emit_runtime_event(loop: Any, event_name: str, **fields: Any) -> None:
 _PENDING_FOLLOWUP_TOOL_KEY = "pending_followup_tool"
 _PENDING_FOLLOWUP_INTENT_KEY = "pending_followup_intent"
 _PENDING_FOLLOWUP_TTL_SECONDS = 15 * 60
-_KEEPALIVE_INITIAL_DELAY_SECONDS = 2.5
-_KEEPALIVE_INTERVAL_SECONDS = 5.0
-_SHORT_CONFIRMATION_TOKENS = {
-    "ya",
-    "yes",
-    "y",
-    "iya",
-    "ok",
-    "oke",
-    "sip",
-    "sure",
-    "go ahead",
-    "do it",
-    "proceed",
-    "continue",
-    "lanjut",
-    "lanjutkan",
-    "jalankan",
-    "jalankan sekarang",
-    "lakukan",
-    "lakukan sekarang",
-    "ya lakukan",
-    "ambil sekarang",
-    "gas",
-    "gaskeun",
-    "terusin",
-    "teruskan",
-    "si",
-    "oui",
-    "ja",
-    "baik",
+_KEEPALIVE_INITIAL_DELAY_SECONDS = 1.0
+_KEEPALIVE_INTERVAL_SECONDS = 4.0
+_KEEPALIVE_PASSTHROUGH_CHANNELS = {
+    "telegram",
+    "discord",
+    "signal",
+    "matrix",
+    "teams",
+    "google_chat",
+    "mattermost",
+    "webex",
+    "line",
 }
-_SHORT_CONFIRMATION_PREFIXES = (
-    "ya ",
-    "yes ",
-    "ok ",
-    "oke ",
-    "lanjut ",
-    "jalankan ",
-    "lakukan ",
-    "ambil ",
-    "gas ",
-    "terusin ",
-    "teruskan ",
-)
+_MUTABLE_STATUS_LANE_CHANNELS = {
+    "telegram",
+    "discord",
+    "slack",
+    "signal",
+    "matrix",
+    "teams",
+    "google_chat",
+    "mattermost",
+    "webex",
+    "line",
+}
+_ABORT_REQUEST_TRIGGERS = {
+    "stop",
+    "abort",
+    "halt",
+    "interrupt",
+    "exit",
+    "wait",
+    "please stop",
+    "stop please",
+    "stop kabot",
+    "kabot stop",
+    "stop action",
+    "stop current action",
+    "stop run",
+    "stop current run",
+    "stop agent",
+    "stop the agent",
+    "stop do not do anything",
+    "stop don't do anything",
+    "stop dont do anything",
+    "stop doing anything",
+    "do not do that",
+    # Indonesian / Malay
+    "berhenti",
+    "hentikan",
+    "stop dulu",
+    "jangan lakukan itu",
+    "jangan lakukan",
+    # Spanish / French / German / Portuguese
+    "detente",
+    "deten",
+    "arrete",
+    "stopp",
+    "anhalten",
+    "aufhoren",
+    "hoer auf",
+    "pare",
+    # Chinese / Japanese / Hindi / Arabic / Russian
+    "\u505c\u6b62",
+    "\u3084\u3081\u3066",
+    "\u6b62\u3081\u3066",
+    "\u0930\u0941\u0915\u094b",
+    "\u062a\u0648\u0642\u0641",
+    "\u0441\u0442\u043e\u043f",
+    "\u043e\u0441\u0442\u0430\u043d\u043e\u0432\u0438",
+    "\u043e\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0441\u044c",
+    "\u043f\u0440\u0435\u043a\u0440\u0430\u0442\u0438",
+}
+_TRAILING_ABORT_PUNCT_RE = re.compile(r"[.!?,;:'\"\u2019\u201d)\]\}]+$", re.UNICODE)
 
 
 def _normalize_text(text: str) -> str:
     return " ".join(str(text or "").strip().lower().split())
+
+
+def _normalize_abort_trigger_text(text: str) -> str:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return ""
+    normalized = normalized.replace("\u2019", "'").replace("`", "'")
+    while True:
+        updated = _TRAILING_ABORT_PUNCT_RE.sub("", normalized).strip()
+        if updated == normalized:
+            break
+        normalized = updated
+    return normalized
+
+
+def _is_abort_request_text(text: str) -> bool:
+    normalized = _normalize_abort_trigger_text(text)
+    if not normalized:
+        return False
+    if normalized == "/stop":
+        return True
+    if normalized.startswith("/stop@") and " " not in normalized:
+        return True
+    return normalized in _ABORT_REQUEST_TRIGGERS
+
+
+def _is_low_information_turn(text: str, *, max_tokens: int, max_chars: int) -> bool:
+    """
+    Detect short follow-up acknowledgements without language-specific keyword catalogs.
+
+    The decision is structural (length + payload shape), so it remains multilingual.
+    """
+    raw_text = str(text or "")
+    normalized = _normalize_text(raw_text)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    if any(mark in raw_text for mark in ("?", "？", "¿", "؟")):
+        return False
+
+    tokens = normalized.split()
+    if len(tokens) == 0 or len(tokens) > max_tokens:
+        return False
+    if len(normalized) > max_chars:
+        return False
+
+    # Languages/scripts that are commonly written without spaces should not be
+    # treated as low-information when the raw utterance is substantive.
+    if not any(ch.isspace() for ch in raw_text):
+        if re.search(r"[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\u0E00-\u0E7F\u0600-\u06FF]", raw_text):
+            if len(raw_text) >= 5:
+                return False
+
+    # Rich payloads usually indicate fresh intent, not lightweight continuation.
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if re.search(r"[@#]\w+", normalized):
+        return False
+    if re.search(r"\d{3,}", normalized):
+        return False
+    if any(ch in raw_text for ch in "{}[]=`\\/"):
+        return False
+    return True
 
 
 def _normalize_locale_tag(value: Any) -> str | None:
@@ -147,29 +240,53 @@ def _tool_registry_has(loop: Any, tool_name: str) -> bool:
     return False
 
 
-def _looks_like_action_intent(text: str) -> bool:
-    normalized = _normalize_text(text)
+def _channel_supports_keepalive_passthrough(loop: Any, channel_name: str) -> bool:
+    """Return whether the current channel should receive periodic keepalive pulses."""
+    normalized = str(channel_name or "").strip()
     if not normalized:
         return False
-    if normalized.startswith("/"):
+
+    manager = getattr(loop, "channel_manager", None)
+    channels_map = getattr(manager, "channels", None) if manager is not None else None
+    if isinstance(channels_map, dict):
+        channel_obj = channels_map.get(normalized)
+        if channel_obj is None:
+            lowered = normalized.lower()
+            channel_obj = channels_map.get(lowered)
+        if channel_obj is not None:
+            allow_keepalive = getattr(channel_obj, "_allow_keepalive_passthrough", None)
+            if callable(allow_keepalive):
+                try:
+                    return bool(allow_keepalive())
+                except Exception:
+                    pass
+
+    channel_base = normalized.lower().split(":", 1)[0]
+    return channel_base in _KEEPALIVE_PASSTHROUGH_CHANNELS
+
+
+def _channel_uses_mutable_status_lane(loop: Any, channel_name: str) -> bool:
+    """Return whether status phases should be emitted as full mutable lifecycle."""
+    normalized = str(channel_name or "").strip()
+    if not normalized:
         return False
 
-    tokens = normalized.split()
-    lead = tokens[0]
-    action_starters = {
-        "buat", "bikin", "buatkan", "create", "build", "write", "generate",
-        "cek", "check", "cari", "carikan", "search", "find", "look", "ambil",
-        "run", "jalankan", "lakukan", "perbaiki", "fix", "install", "setup", "configure",
-        "ringkas", "summarize", "terjemahkan", "translate",
-    }
-    if lead in action_starters:
-        return True
+    manager = getattr(loop, "channel_manager", None)
+    channels_map = getattr(manager, "channels", None) if manager is not None else None
+    if isinstance(channels_map, dict):
+        channel_obj = channels_map.get(normalized)
+        if channel_obj is None:
+            channel_obj = channels_map.get(normalized.lower())
+        if channel_obj is not None:
+            mutable_status = getattr(channel_obj, "_uses_mutable_status_lane", None)
+            if callable(mutable_status):
+                try:
+                    return bool(mutable_status())
+                except Exception:
+                    pass
 
-    # Intent phrase for skill workflow even when user phrasing is short.
-    if "skill" in normalized and any(k in normalized for k in ("baru", "new", "creator", "create", "buat", "bikin")):
-        return True
-
-    return False
+    channel_base = normalized.lower().split(":", 1)[0]
+    return channel_base in _MUTABLE_STATUS_LANE_CHANNELS
 
 
 def _looks_like_live_research_query(text: str) -> bool:
@@ -220,53 +337,11 @@ def _looks_like_live_research_query(text: str) -> bool:
 
 
 def _is_short_context_followup(text: str) -> bool:
-    normalized = _normalize_text(text)
-    if not normalized:
-        return False
-    if normalized.startswith("/"):
-        return False
-    if "?" in str(text or ""):
-        return False
-    tokens = normalized.split()
-    if len(tokens) > 6:
-        return False
-    if len(normalized) > 64:
-        return False
-
-    lead = tokens[0]
-    question_leads = {
-        "apa", "apakah", "gimana", "bagaimana", "kenapa", "kok", "kapan", "berapa", "siapa", "mana",
-        "what", "why", "how", "when", "where", "who",
-        "quelle", "pourquoi", "comment", "quando", "donde", "dónde",
-    }
-    if lead in question_leads:
-        return False
-
-    negatives = {
-        "tidak", "nggak", "enggak", "ga", "gak", "jangan", "batal",
-        "no", "nope", "dont", "don't", "cancel", "stop",
-        "non", "nein",
-    }
-    if lead in negatives:
-        return False
-    if _looks_like_action_intent(normalized):
-        return False
-    return True
+    return _is_low_information_turn(text, max_tokens=6, max_chars=64)
 
 
 def _looks_like_short_confirmation(text: str) -> bool:
-    normalized = _normalize_text(text)
-    if not normalized:
-        return False
-    if normalized.startswith("/"):
-        return False
-    if normalized in _SHORT_CONFIRMATION_TOKENS:
-        return True
-    if len(normalized) <= 64 and any(
-        normalized.startswith(prefix) for prefix in _SHORT_CONFIRMATION_PREFIXES
-    ):
-        return True
-    return False
+    return _is_low_information_turn(text, max_tokens=4, max_chars=40)
 
 
 def _get_pending_followup_tool(session: Any, now_ts: float) -> dict[str, str] | None:
@@ -356,21 +431,34 @@ def _clear_pending_followup_intent(session: Any) -> None:
         metadata.pop(_PENDING_FOLLOWUP_INTENT_KEY, None)
 
 
-def _should_store_followup_intent(text: str) -> bool:
+def _should_store_followup_intent(
+    text: str,
+    *,
+    required_tool: str | None = None,
+    decision_profile: str = "GENERAL",
+    decision_is_complex: bool = False,
+) -> bool:
     normalized = _normalize_text(text)
     if not normalized:
         return False
     if normalized.startswith("/"):
         return False
+    if required_tool:
+        return True
     # Keep live/current-fact intent even when prompt is short, so
     # confirmations like "ya/gas/ambil sekarang" can continue deterministically.
     if _looks_like_live_research_query(normalized):
         return True
-    if _looks_like_action_intent(normalized):
-        return True
     if _looks_like_short_confirmation(normalized):
         return False
-    return not _is_short_context_followup(normalized)
+    if _is_short_context_followup(normalized):
+        return False
+    profile = str(decision_profile or "").strip().upper()
+    # Prefer storing follow-up intent for actionable/complex turns only, to avoid
+    # carrying unrelated chat context into short confirmations.
+    if decision_is_complex:
+        return True
+    return profile in {"CODING", "RESEARCH"}
 
 
 def _build_untrusted_context_payload(
@@ -427,6 +515,17 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             action=action,
             approval_id=approval_id,
         )
+
+    # OpenClaw-style abort shortcut: standalone stop/cancel intent should
+    # immediately halt follow-up continuation and clear pending intent state.
+    if _is_abort_request_text(msg.content):
+        session = await loop._init_session(msg)
+        _clear_pending_followup_tool(session)
+        _clear_pending_followup_intent(session)
+        runtime_locale = _resolve_runtime_locale(session, msg, msg.content)
+        stop_text = t("runtime.abort.ack", locale=runtime_locale, text=msg.content)
+        _emit_runtime_event(loop, "turn_abort_shortcut", turn_id=turn_id)
+        return await loop._finalize_session(msg, session, stop_text)
 
     # Phase 8: Intercept slash commands BEFORE routing to LLM
     if loop.command_router.is_command(msg.content):
@@ -506,7 +605,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         )
     )
 
-    _DIRECT_TOOLS = {
+    direct_tools = {
         "get_process_memory",
         "get_system_info",
         "cleanup_system",
@@ -516,11 +615,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         "stock",
         "crypto",
         "server_monitor",
+        "check_update",
+        "system_update",
     }
     fast_direct_context = bool(
         perf_cfg
         and bool(getattr(perf_cfg, "fast_first_response", True))
-        and required_tool in _DIRECT_TOOLS
+        and required_tool in direct_tools
     )
 
     history_limit = 30
@@ -563,8 +664,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         else ""
     )
     pending_followup_intent = _get_pending_followup_intent(session, now_ts)
-    is_short_followup = _is_short_context_followup(effective_content)
-    is_short_confirmation = _looks_like_short_confirmation(effective_content)
+    is_short_followup = bool(not required_tool and _is_short_context_followup(effective_content))
+    is_short_confirmation = bool(not required_tool and _looks_like_short_confirmation(effective_content))
     if (
         not required_tool
         and str(decision.profile).upper() == "RESEARCH"
@@ -580,7 +681,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         fast_direct_context = bool(
             perf_cfg
             and bool(getattr(perf_cfg, "fast_first_response", True))
-            and required_tool in _DIRECT_TOOLS
+            and required_tool in direct_tools
         )
 
     if (
@@ -599,29 +700,51 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         fast_direct_context = bool(
             perf_cfg
             and bool(getattr(perf_cfg, "fast_first_response", True))
-            and required_tool in _DIRECT_TOOLS
+            and required_tool in direct_tools
         )
 
     # Infer required tool for short follow-ups before context building, so
     # confirmations like "gas"/"ambil sekarang" can take the direct fast path.
     if not decision.is_complex and not required_tool:
         normalized_followup = _normalize_text(effective_content)
-        if _looks_like_short_confirmation(normalized_followup):
+        if _is_short_context_followup(normalized_followup):
             inferred_tool = None
-            for item in reversed(conversation_history[-8:]):
-                candidate = str(item.get("content", "") or "").strip()
-                if not candidate:
-                    continue
-                candidate_norm = " ".join(candidate.lower().split())
-                if candidate_norm == normalized_followup:
-                    continue
-                inferred = loop._required_tool_for_query(candidate)
-                if inferred:
-                    inferred_tool = inferred
-                    required_tool_query = candidate
-                    break
+            inferred_source = None
+            infer_from_history = getattr(loop, "_infer_required_tool_from_history", None)
+            if callable(infer_from_history):
+                try:
+                    inferred_tool, inferred_source = infer_from_history(
+                        effective_content,
+                        conversation_history,
+                    )
+                except Exception:
+                    inferred_tool, inferred_source = None, None
+            else:
+                # Backward-compatible fallback for lightweight test doubles
+                # that don't expose the loop facade helper yet.
+                for item in reversed(conversation_history[-8:]):
+                    role = str(item.get("role", "") or "").strip().lower()
+                    candidate = str(item.get("content", "") or "").strip()
+                    if not candidate:
+                        continue
+                    # Never infer required tools from assistant text. Assistant
+                    # summaries/offers can contain rich keywords/tickers that are
+                    # not fresh user intent and can cause rigid/hallucinated routing.
+                    if role != "user":
+                        continue
+                    candidate_norm = _normalize_text(candidate)
+                    if not candidate_norm or candidate_norm == normalized_followup:
+                        continue
+                    if _looks_like_short_confirmation(candidate):
+                        continue
+                    inferred = loop._required_tool_for_query(candidate)
+                    if inferred:
+                        inferred_tool = inferred
+                        inferred_source = candidate
+                        break
             if inferred_tool:
                 required_tool = inferred_tool
+                required_tool_query = str(inferred_source or required_tool_query or effective_content).strip()
                 decision.is_complex = True
                 logger.info(
                     f"Pre-context follow-up inference: '{normalized_followup}' -> required_tool={inferred_tool}"
@@ -629,7 +752,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 fast_direct_context = bool(
                     perf_cfg
                     and bool(getattr(perf_cfg, "fast_first_response", True))
-                    and required_tool in _DIRECT_TOOLS
+                    and required_tool in direct_tools
                 )
 
     if (
@@ -650,7 +773,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             fast_direct_context = bool(
                 perf_cfg
                 and bool(getattr(perf_cfg, "fast_first_response", True))
-                and required_tool in _DIRECT_TOOLS
+                and required_tool in direct_tools
             )
         else:
             # Preserve non-tool intent context so short confirms like
@@ -673,12 +796,19 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     elif not is_short_followup and not is_short_confirmation:
         _clear_pending_followup_tool(session)
 
-    if _should_store_followup_intent(intent_source_for_followup):
+    if _should_store_followup_intent(
+        intent_source_for_followup,
+        required_tool=required_tool,
+        decision_profile=str(decision.profile),
+        decision_is_complex=bool(decision.is_complex),
+    ):
         _set_pending_followup_intent(session, intent_source_for_followup, str(decision.profile), now_ts)
     elif not _is_short_context_followup(intent_source_for_followup) and not _looks_like_short_confirmation(intent_source_for_followup):
         _clear_pending_followup_intent(session)
 
+    runtime_locale = _resolve_runtime_locale(session, msg, effective_content)
     if isinstance(msg.metadata, dict):
+        msg.metadata["runtime_locale"] = runtime_locale
         msg.metadata["effective_content"] = effective_content
         if required_tool:
             msg.metadata["required_tool"] = required_tool
@@ -692,6 +822,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             or _is_short_context_followup(effective_content)
             or _looks_like_short_confirmation(msg.content)
             or _looks_like_short_confirmation(effective_content)
+        )
+        msg.metadata["status_mutable_lane"] = bool(
+            _channel_uses_mutable_status_lane(loop, msg.channel)
         )
 
     fast_simple_context = bool(
@@ -712,7 +845,6 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         dropped_preview=preview_items,
     )
 
-    runtime_locale = _resolve_runtime_locale(session, msg, effective_content)
     queued_status = t("runtime.status.queued", locale=runtime_locale, text=effective_content)
     if dropped_count > 0:
         queued_status += " " + t(
@@ -776,9 +908,16 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         except asyncio.CancelledError:
             return
 
+    mutable_status_lane = bool(_channel_uses_mutable_status_lane(loop, msg.channel))
+    keepalive_enabled = bool(
+        not is_background_task and _channel_supports_keepalive_passthrough(loop, msg.channel)
+    )
     if not is_background_task:
         await _publish_status(queued_status, "queued")
-        keepalive_task = asyncio.create_task(_keepalive_loop())
+        if keepalive_enabled and isinstance(msg.metadata, dict):
+            msg.metadata["suppress_initial_thinking_status"] = True
+        if keepalive_enabled:
+            keepalive_task = asyncio.create_task(_keepalive_loop())
     try:
         context_builder = loop.context
         resolve_context = getattr(loop, "_resolve_context_for_message", None)
@@ -825,10 +964,10 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 logger.info(f"Route override: simple -> complex (required_tool={required_tool})")
             final_content = await loop._run_agent_loop(msg, messages, session)
         else:
-            if not is_background_task:
+            if not is_background_task and mutable_status_lane:
                 await _publish_status(thinking_status, "thinking")
             final_content = await loop._run_simple_response(msg, messages)
-            if not is_background_task:
+            if not is_background_task and mutable_status_lane:
                 await _publish_status(done_status if final_content else error_status, "done" if final_content else "error")
     finally:
         keepalive_stop.set()

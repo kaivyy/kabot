@@ -11,6 +11,7 @@ import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
 
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
 from kabot.agent.tools.web_cache import TTLCache
 
@@ -170,10 +171,11 @@ Use this for:
         max_chars: int = MAX_CHARS_DEFAULT,
         **kwargs: Any,
     ) -> str:
+        context_text = str(kwargs.get("context_text") or url or "").strip()
         try:
             self._validate_target(url)
         except ValueError as e:
-            return f"Error: {e}"
+            return i18n_t("web_fetch.validation_error", context_text, error=str(e))
 
         max_chars = min(max_chars, MAX_CHARS_CAP)
         req_headers = {"User-Agent": USER_AGENT}
@@ -255,9 +257,14 @@ Use this for:
                 return result
 
         except httpx.TimeoutException:
-            return f"Error: Request timed out after {TIMEOUT_SECONDS}s"
+            return i18n_t("web_fetch.timeout", context_text, seconds=TIMEOUT_SECONDS)
         except Exception as e:
-            return f"Error: {type(e).__name__}: {str(e)}"
+            return i18n_t(
+                "web_fetch.request_error",
+                context_text,
+                error_type=type(e).__name__,
+                error=str(e),
+            )
 
     def _validate_target(self, url: str) -> None:
         if not self.guard_enabled:

@@ -24,6 +24,16 @@ class BridgeWebSocketChannel(BaseChannel):
         self._ws = None
         self._connected = False
 
+    def _allow_keepalive_passthrough(self) -> bool:
+        """Bridge adapters use keepalive pulses for activity/typing hints."""
+        return True
+
+    def _uses_mutable_status_lane(self) -> bool:
+        """
+        Bridge consumers commonly render status as a single UI lane client-side.
+        """
+        return True
+
     async def start(self) -> None:
         """Connect to websocket bridge and forward inbound messages."""
         import websockets
@@ -65,51 +75,52 @@ class BridgeWebSocketChannel(BaseChannel):
             self._ws = None
 
     async def send(self, msg: OutboundMessage) -> None:
-        is_status_update, phase, _text = self._status_update_payload(msg)
-        if is_status_update and self._should_skip_status_update(msg):
-            return
-        if not is_status_update:
-            self._clear_status_state(msg.chat_id)
-
-        if not self._connected or self._ws is None:
-            logger.warning(f"{self.name} bridge not connected")
-            return
         chat_id = str(msg.chat_id or "").strip()
-        if not chat_id:
-            logger.warning(f"{self.name} outbound dropped: missing chat_id")
-            return
-        has_text = bool(str(msg.content or "").strip())
-        has_media = bool(msg.media)
-        if not has_text and not has_media:
-            logger.debug(f"{self.name} outbound dropped: empty content and media")
-            return
+        async with self._get_chat_send_lock(chat_id):
+            is_status_update, phase, _text = self._status_update_payload(msg)
+            if is_status_update and self._should_skip_status_update(msg):
+                return
+            if not is_status_update:
+                self._clear_status_state(msg.chat_id)
 
-        payload: dict[str, Any] = {
-            "type": "send",
-            "to": chat_id,
-            "text": msg.content,
-        }
-        if msg.media:
-            payload["media"] = list(msg.media)
-        if msg.metadata:
-            payload["metadata"] = dict(msg.metadata)
+            if not self._connected or self._ws is None:
+                logger.warning(f"{self.name} bridge not connected")
+                return
+            if not chat_id:
+                logger.warning(f"{self.name} outbound dropped: missing chat_id")
+                return
+            has_text = bool(str(msg.content or "").strip())
+            has_media = bool(msg.media)
+            if not has_text and not has_media:
+                logger.debug(f"{self.name} outbound dropped: empty content and media")
+                return
 
-        # Best-effort typing/activity hint for bridge adapters.
-        if is_status_update and phase in {"queued", "thinking", "tool"}:
-            try:
-                await self._ws.send(
-                    json.dumps(
-                        {
-                            "type": "activity",
-                            "to": chat_id,
-                            "activity": "typing",
-                            "phase": phase,
-                        }
+            payload: dict[str, Any] = {
+                "type": "send",
+                "to": chat_id,
+                "text": msg.content,
+            }
+            if msg.media:
+                payload["media"] = list(msg.media)
+            if msg.metadata:
+                payload["metadata"] = dict(msg.metadata)
+
+            # Best-effort typing/activity hint for bridge adapters.
+            if is_status_update and phase in {"queued", "thinking", "tool"}:
+                try:
+                    await self._ws.send(
+                        json.dumps(
+                            {
+                                "type": "activity",
+                                "to": chat_id,
+                                "activity": "typing",
+                                "phase": phase,
+                            }
+                        )
                     )
-                )
-            except Exception:
-                pass
-        await self._ws.send(json.dumps(payload))
+                except Exception:
+                    pass
+            await self._ws.send(json.dumps(payload))
 
     async def _handle_bridge_message(self, raw: str) -> None:
         try:

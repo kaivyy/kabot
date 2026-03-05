@@ -198,60 +198,62 @@ class FeishuChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu."""
-        if not self._client:
-            logger.warning("Feishu client not initialized")
-            return
-        is_status_update, _phase, status_text = self._status_update_payload(msg)
-        if is_status_update and self._should_skip_status_update(msg):
-            return
-        if not is_status_update:
-            self._clear_status_state(msg.chat_id)
+        chat_id_str = str(msg.chat_id)
+        async with self._get_chat_send_lock(chat_id_str):
+            if not self._client:
+                logger.warning("Feishu client not initialized")
+                return
+            is_status_update, _phase, status_text = self._status_update_payload(msg)
+            if is_status_update and self._should_skip_status_update(msg):
+                return
+            if not is_status_update:
+                self._clear_status_state(msg.chat_id)
 
-        try:
-            # Determine receive_id_type based on chat_id format
-            # open_id starts with "ou_", chat_id starts with "oc_"
-            if msg.chat_id.startswith("oc_"):
-                receive_id_type = "chat_id"
-            else:
-                receive_id_type = "open_id"
+            try:
+                # Determine receive_id_type based on chat_id format
+                # open_id starts with "ou_", chat_id starts with "oc_"
+                if msg.chat_id.startswith("oc_"):
+                    receive_id_type = "chat_id"
+                else:
+                    receive_id_type = "open_id"
 
-            if is_status_update:
-                if not status_text:
-                    return
-                msg_type = "text"
-                content = json.dumps({"text": status_text}, ensure_ascii=False)
-            else:
-                # Build card with markdown + table support
-                elements = self._build_card_elements(msg.content)
-                card = {
-                    "config": {"wide_screen_mode": True},
-                    "elements": elements,
-                }
-                msg_type = "interactive"
-                content = json.dumps(card, ensure_ascii=False)
+                if is_status_update:
+                    if not status_text:
+                        return
+                    msg_type = "text"
+                    content = json.dumps({"text": status_text}, ensure_ascii=False)
+                else:
+                    # Build card with markdown + table support
+                    elements = self._build_card_elements(msg.content)
+                    card = {
+                        "config": {"wide_screen_mode": True},
+                        "elements": elements,
+                    }
+                    msg_type = "interactive"
+                    content = json.dumps(card, ensure_ascii=False)
 
-            request = CreateMessageRequest.builder() \
-                .receive_id_type(receive_id_type) \
-                .request_body(
-                    CreateMessageRequestBody.builder()
-                    .receive_id(msg.chat_id)
-                    .msg_type(msg_type)
-                    .content(content)
-                    .build()
-                ).build()
+                request = CreateMessageRequest.builder() \
+                    .receive_id_type(receive_id_type) \
+                    .request_body(
+                        CreateMessageRequestBody.builder()
+                        .receive_id(msg.chat_id)
+                        .msg_type(msg_type)
+                        .content(content)
+                        .build()
+                    ).build()
 
-            response = self._client.im.v1.message.create(request)
+                response = self._client.im.v1.message.create(request)
 
-            if not response.success():
-                logger.error(
-                    f"Failed to send Feishu message: code={response.code}, "
-                    f"msg={response.msg}, log_id={response.get_log_id()}"
-                )
-            else:
-                logger.debug(f"Feishu message sent to {msg.chat_id}")
+                if not response.success():
+                    logger.error(
+                        f"Failed to send Feishu message: code={response.code}, "
+                        f"msg={response.msg}, log_id={response.get_log_id()}"
+                    )
+                else:
+                    logger.debug(f"Feishu message sent to {msg.chat_id}")
 
-        except Exception as e:
-            logger.error(f"Error sending Feishu message: {e}")
+            except Exception as e:
+                logger.error(f"Error sending Feishu message: {e}")
 
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         """

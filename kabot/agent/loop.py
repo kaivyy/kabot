@@ -29,20 +29,12 @@ from kabot.bus.queue import MessageBus
 # Phase 8: System Internals
 from kabot.core.command_router import CommandRouter
 from kabot.core.commands_setup import register_builtin_commands
-
-# Phase 9: Architecture Overhaul
-from kabot.core.directives import DirectiveParser
-from kabot.core.doctor import DoctorService
 from kabot.core.heartbeat import HeartbeatInjector
 from kabot.core.msg_context import MsgContext
 from kabot.core.resilience import ResilienceLayer
-from kabot.core.status import BenchmarkService, StatusService
-from kabot.core.update import SystemControl, UpdateService
 
 # Phase 13: Resilience & Security
 from kabot.core.sentinel import CrashSentinel, format_recovery_message
-
-
 from kabot.plugins.hooks import HookManager
 from kabot.plugins.loader import load_dynamic_plugins, load_plugins
 from kabot.plugins.registry import PluginRegistry
@@ -108,9 +100,9 @@ class AgentLoop:
     ):
         from kabot.agent.context import ContextBuilder
         from kabot.agent.coordinator import Coordinator
+        from kabot.agent.mode_manager import ModeManager
         from kabot.agent.router import IntentRouter
         from kabot.agent.subagent import SubagentManager
-        from kabot.agent.mode_manager import ModeManager
         from kabot.config.schema import Config, ExecToolConfig
 
         self.config = config or Config()
@@ -175,11 +167,12 @@ class AgentLoop:
             str(workspace.expanduser().resolve()): self.context
         }
         self.sessions = session_manager or SessionManager(workspace)
-        from kabot.memory.memory_factory import MemoryFactory
         from kabot.config.loader import load_config
+        from kabot.memory.memory_factory import MemoryFactory
+
         _cfg_obj = load_config()
         # Convert Pydantic model to dict for MemoryFactory
-        _cfg = _cfg_obj.model_dump() if hasattr(_cfg_obj, 'model_dump') else _cfg_obj.dict()
+        _cfg = _cfg_obj.model_dump() if hasattr(_cfg_obj, "model_dump") else _cfg_obj.dict()
         # Allow constructor param to override config
         if not enable_hybrid_memory:
             _cfg.setdefault("memory", {})["enable_hybrid_search"] = False
@@ -524,7 +517,7 @@ class AgentLoop:
         self.tools.register(SpeedtestTool())
         self.tools.register(BrowserTool())
 
-        from kabot.agent.tools.system import SystemInfoTool, ProcessMemoryTool
+        from kabot.agent.tools.system import ProcessMemoryTool, SystemInfoTool
         self.tools.register(SystemInfoTool())
         self.tools.register(ProcessMemoryTool())
 
@@ -919,6 +912,17 @@ class AgentLoop:
 
     def _required_tool_for_query(self, question: str) -> str | None:
         return loop_tool_enforcement.required_tool_for_query_for_loop(self, question)
+
+    def _infer_required_tool_from_history(
+        self,
+        followup_text: str,
+        history: list[dict[str, Any]] | None,
+    ) -> tuple[str | None, str | None]:
+        return loop_tool_enforcement.infer_required_tool_from_history_for_loop(
+            self,
+            followup_text,
+            history,
+        )
 
     def _make_unique_schedule_title(self, base_title: str) -> str:
         return loop_tool_enforcement.make_unique_schedule_title_for_loop(self, base_title)

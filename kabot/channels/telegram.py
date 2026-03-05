@@ -27,6 +27,11 @@ from kabot.utils.text_safety import ensure_utf8_text
 if TYPE_CHECKING:
     from kabot.session.manager import SessionManager
 
+_TELEGRAM_TYPING_INTERVAL_SECONDS = 4.0
+_TELEGRAM_TYPING_RETRY_DELAY_SECONDS = 2.0
+_TELEGRAM_TYPING_MAX_DURATION_SECONDS = 120.0
+_TELEGRAM_TYPING_MAX_CONSECUTIVE_FAILURES = 6
+
 
 def _markdown_to_telegram_html(text: str) -> str:
     """
@@ -205,7 +210,17 @@ class TelegramChannel(BaseChannel):
         self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
         # Keep one mutable status message per chat for phase updates.
         self._status_message_ids: dict[str, int] = {}
+        # Track stale status bubbles that should be cleaned before final reply.
+        self._stale_status_message_ids: dict[str, set[int]] = {}
         self._polling_conflict_handled: bool = False
+
+    def _allow_keepalive_passthrough(self) -> bool:
+        """Telegram needs keepalive pulses to maintain typing continuity."""
+        return True
+
+    def _uses_mutable_status_lane(self) -> bool:
+        """Telegram edits a single status bubble across phases."""
+        return True
 
     def get_bot_commands_from_router(self, router: Any) -> list[BotCommand]:
         """Generate BotCommand list from CommandRouter.
@@ -311,6 +326,7 @@ class TelegramChannel(BaseChannel):
         for chat_id in list(self._typing_tasks):
             self._stop_typing(chat_id)
         self._status_message_ids.clear()
+        self._stale_status_message_ids.clear()
 
         if self._app:
             logger.info("Stopping Telegram bot...")
@@ -379,65 +395,90 @@ class TelegramChannel(BaseChannel):
         )
         return any(marker in text for marker in transient_markers)
 
+    def _mark_stale_status(self, chat_id: str, message_id: int | None) -> None:
+        if not message_id:
+            return
+        bucket = self._stale_status_message_ids.setdefault(str(chat_id), set())
+        bucket.add(int(message_id))
+
+    async def _cleanup_stale_status_messages(self, chat_id_str: str, chat_id: int) -> None:
+        stale_ids = sorted(self._stale_status_message_ids.get(chat_id_str, set()))
+        if not stale_ids:
+            return
+        for stale_id in stale_ids:
+            try:
+                await self._app.bot.delete_message(chat_id=chat_id, message_id=stale_id)
+            except Exception as exc:
+                if self._is_message_not_found_error(exc):
+                    continue
+                if self._is_transient_message_error(exc):
+                    continue
+                logger.debug(
+                    f"Telegram stale status delete failed chat={chat_id_str} msg_id={stale_id}: {exc}"
+                )
+        self._stale_status_message_ids.pop(chat_id_str, None)
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Telegram."""
         if not self._app:
             logger.warning("Telegram bot not running")
             return
 
+        chat_id_str = str(msg.chat_id)
         is_progress_update, _phase, _status_text = self._status_update_payload(msg)
-        if is_progress_update and self._should_skip_status_update(msg):
-            return
+
         if not is_progress_update:
             self._clear_status_state(msg.chat_id)
-        # Keep typing indicator alive across interim status updates.
-        if not is_progress_update:
+            # Keep typing indicator alive across interim status updates.
             self._stop_typing(msg.chat_id)
 
         try:
             # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
-            chat_id_str = str(msg.chat_id)
             if is_progress_update:
-                self._ensure_typing(chat_id_str)
-
-            if is_progress_update:
-                status_text = ensure_utf8_text(msg.content or "").strip()
-                if not status_text:
+                async with self._get_chat_send_lock(chat_id_str):
+                    if self._should_skip_status_update(msg):
+                        return
+                    self._ensure_typing(chat_id_str)
+                    status_text = ensure_utf8_text(msg.content or "").strip()
+                    if not status_text:
+                        return
+                    existing_status_id = self._status_message_ids.get(chat_id_str)
+                    if existing_status_id:
+                        try:
+                            await self._app.bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=existing_status_id,
+                                text=status_text,
+                            )
+                            return
+                        except Exception as exc:
+                            if self._is_message_not_modified_error(exc):
+                                # Keep existing mutable status bubble and avoid creating duplicates.
+                                return
+                            if self._is_transient_message_error(exc):
+                                # Keep current status bubble and retry on next keepalive/status pulse.
+                                return
+                            self._mark_stale_status(chat_id_str, existing_status_id)
+                            self._status_message_ids.pop(chat_id_str, None)
+                    sent_status = await self._app.bot.send_message(chat_id=chat_id, text=status_text)
+                    if getattr(sent_status, "message_id", None):
+                        self._status_message_ids[chat_id_str] = int(sent_status.message_id)
                     return
+
+            # Clear stale status indicator when sending the final/non-progress response.
+            async with self._get_chat_send_lock(chat_id_str):
                 existing_status_id = self._status_message_ids.get(chat_id_str)
                 if existing_status_id:
                     try:
-                        await self._app.bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=existing_status_id,
-                            text=status_text,
-                        )
-                        return
+                        await self._app.bot.delete_message(chat_id=chat_id, message_id=existing_status_id)
+                        self._status_message_ids.pop(chat_id_str, None)
                     except Exception as exc:
-                        if self._is_message_not_modified_error(exc):
-                            # Keep existing mutable status bubble and avoid creating duplicates.
-                            return
-                        if self._is_transient_message_error(exc):
-                            # Keep current status bubble and retry on next keepalive/status pulse.
-                            return
-                        self._status_message_ids.pop(chat_id_str, None)
-                sent_status = await self._app.bot.send_message(chat_id=chat_id, text=status_text)
-                if getattr(sent_status, "message_id", None):
-                    self._status_message_ids[chat_id_str] = int(sent_status.message_id)
-                return
-
-            # Clear stale status indicator when sending the final/non-progress response.
-            existing_status_id = self._status_message_ids.get(chat_id_str)
-            if existing_status_id:
-                try:
-                    await self._app.bot.delete_message(chat_id=chat_id, message_id=existing_status_id)
-                    self._status_message_ids.pop(chat_id_str, None)
-                except Exception as exc:
-                    if self._is_message_not_found_error(exc):
-                        self._status_message_ids.pop(chat_id_str, None)
-                    else:
-                        logger.warning(f"Telegram status delete deferred for chat={chat_id_str}: {exc}")
+                        if self._is_message_not_found_error(exc):
+                            self._status_message_ids.pop(chat_id_str, None)
+                        else:
+                            logger.warning(f"Telegram status delete deferred for chat={chat_id_str}: {exc}")
+                await self._cleanup_stale_status_messages(chat_id_str, chat_id)
             reply_markup = None
             if isinstance(msg.metadata, dict):
                 inline_rows = msg.metadata.get("inline_keyboard")
@@ -738,22 +779,41 @@ class TelegramChannel(BaseChannel):
 
     async def _typing_loop(self, chat_id: str) -> None:
         """Repeatedly send 'typing' action until cancelled."""
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        consecutive_failures = 0
+        current_task = asyncio.current_task()
         try:
             while self._app:
+                if (loop.time() - started_at) >= float(_TELEGRAM_TYPING_MAX_DURATION_SECONDS):
+                    logger.debug(f"Typing indicator TTL reached for {chat_id}; stopping loop")
+                    break
                 try:
                     await self._app.bot.send_chat_action(chat_id=int(chat_id), action="typing")
+                    consecutive_failures = 0
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     # Keepalive must survive transient transport errors.
+                    consecutive_failures += 1
                     logger.debug(f"Typing indicator transient failure for {chat_id}: {e}")
-                    await asyncio.sleep(2)
+                    if consecutive_failures >= int(_TELEGRAM_TYPING_MAX_CONSECUTIVE_FAILURES):
+                        logger.warning(
+                            "Typing indicator stopped after repeated failures "
+                            f"for chat={chat_id} failures={consecutive_failures}"
+                        )
+                        break
+                    await asyncio.sleep(float(_TELEGRAM_TYPING_RETRY_DELAY_SECONDS))
                     continue
-                await asyncio.sleep(4)
+                await asyncio.sleep(float(_TELEGRAM_TYPING_INTERVAL_SECONDS))
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.debug(f"Typing indicator stopped for {chat_id}: {e}")
+        finally:
+            existing = self._typing_tasks.get(chat_id)
+            if existing is current_task:
+                self._typing_tasks.pop(chat_id, None)
 
     def _get_extension(self, media_type: str, mime_type: str | None) -> str:
         """Get file extension based on media type."""

@@ -5,10 +5,10 @@ import atexit
 import json
 import os
 import select
+import shutil
 import signal
 import subprocess
 import sys
-import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -1254,6 +1254,8 @@ def gateway(
 
     # Create channel manager
     channels = ChannelManager(config, bus, session_manager=session_manager)
+    # Expose channel capabilities to runtime (e.g., keepalive/status behavior).
+    setattr(agent, "channel_manager", channels)
 
     gateway_started_at = time.time()
 

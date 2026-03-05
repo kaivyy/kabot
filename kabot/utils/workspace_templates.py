@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 DEFAULT_BOOTSTRAP_TEMPLATES: dict[str, str] = {
     "AGENTS.md": """# Agent Instructions
 

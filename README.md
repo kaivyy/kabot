@@ -44,6 +44,26 @@ No need to clone repo for normal usage.
 
 ### 1) Install Kabot
 
+**Universal (recommended for most users):**
+```bash
+pip install kabot
+```
+
+If `pip` is not found, run with Python:
+```bash
+python -m pip install kabot
+```
+
+If you already installed Kabot before and want to upgrade:
+```bash
+pip install -U kabot
+```
+
+### 1b) One-Command Auto Installer (Optional)
+
+Use this if you want automatic environment setup.  
+Installer scripts auto-detect runtime profile (macOS/Linux/WSL/Windows/Termux/headless) and prepare sane defaults.
+
 **Linux / macOS / WSL2**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kaivyy/kabot/main/install.sh | bash
@@ -87,7 +107,7 @@ kabot doctor --fix # auto-diagnose and repair common issues
 
 ### Core-Only Manual Install (Minimal Footprint)
 
-If you only want essential runtime components from PyPI:
+If you prefer isolated venv install:
 
 ```bash
 python3 -m venv ~/.kabot/venv
@@ -137,9 +157,17 @@ Gateway runtime notes:
 - Lightweight dashboard is available at `/dashboard` (SSR + HTMX, low-RAM friendly).
 - `gateway.auth_token` supports scoped mode:
   - Plain: `my-token` (legacy full access)
-  - Scoped: `my-token|operator.read,ingress.write`
+  - Scoped: `my-token|operator.read,operator.write,ingress.write`
   - `operator.read` is required for dashboard/status routes.
+  - `operator.write` is required for dashboard control routes (`/dashboard/api/control`, `/dashboard/partials/control` POST).
   - `ingress.write` is required for webhook ingress routes.
+  - Scope shortcuts are supported: `operator.*`, `ingress.*`, `<family>.admin`, `*`.
+  - `operator.write` also grants read-only dashboard access.
+- Dashboard access:
+  - No gateway auth token: open `http://127.0.0.1:<port>/dashboard`
+  - With gateway auth token: open `http://127.0.0.1:<port>/dashboard?token=<your-token>`
+  - For API clients, you can still use header auth: `Authorization: Bearer <your-token>`
+  - Query-token auth is intentionally limited to `/dashboard*` routes (not webhook ingress).
 
 ### Chatting
 Once the gateway is running, you can talk to Kabot via:

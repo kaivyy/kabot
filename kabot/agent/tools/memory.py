@@ -5,6 +5,7 @@ from typing import Any
 
 from loguru import logger
 
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
 from kabot.memory import ChromaMemoryManager  # Uses alias for HybridMemoryManager
 
@@ -48,7 +49,7 @@ class SaveMemoryTool(Tool):
         """Save memory to long-term storage."""
         try:
             if not self.memory:
-                return "Error: Memory manager not available"
+                return i18n_t("memory.manager_unavailable", content)
 
             # Add timestamp for diary entries
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -67,13 +68,18 @@ class SaveMemoryTool(Tool):
             )
 
             if success:
-                return f"[OK] {category.title()} saved: {content[:100]}..."
+                return i18n_t(
+                    "memory.save_success",
+                    content,
+                    category=category,
+                    preview=f"{content[:100]}...",
+                )
             else:
-                return f"[ERROR] Failed to save {category}"
+                return i18n_t("memory.save_category_failed", content, category=category)
 
         except Exception as e:
             logger.error(f"Error saving memory: {e}")
-            return f"Error: {str(e)}"
+            return i18n_t("memory.save_failed", content, error=str(e))
 
 
 class GetMemoryTool(Tool):
@@ -114,7 +120,7 @@ class GetMemoryTool(Tool):
         """Retrieve memories from storage."""
         try:
             if not self.memory:
-                return "Error: Memory manager not available"
+                return i18n_t("memory.manager_unavailable", query)
 
             # Search memories
             memories = await self.memory.search_memory(
@@ -124,22 +130,32 @@ class GetMemoryTool(Tool):
 
             if not memories:
                 # FALLBACK: Provide helpful hints if nothing found
-                hint = f"No memories found for: '{query}'.\n"
+                hint_lines = [
+                    i18n_t("memory.search.no_results", query, query=query),
+                ]
 
                 # Try to list available categories to help the AI refine
                 try:
                     facts = self.memory.metadata.get_facts(limit=10)
                     if facts:
                         categories = sorted(list(set(f.get('category', 'fact') for f in facts)))
-                        hint += f"HINT: Try searching with categories: {', '.join(categories)}\n"
+                        hint_lines.append(
+                            i18n_t(
+                                "memory.search.hint_categories",
+                                query,
+                                categories=", ".join(categories),
+                            )
+                        )
 
                     recent = self.memory.metadata.get_message_chain(limit=5)
                     if recent:
-                        hint += "HINT: Check your keywords or use 'list_reminders' for schedules."
+                        hint_lines.append(
+                            i18n_t("memory.search.hint_keywords", query)
+                        )
                 except Exception:
                     pass
 
-                return hint
+                return "\n".join(hint_lines)
 
             # Format results
             results = []
@@ -152,7 +168,7 @@ class GetMemoryTool(Tool):
 
         except Exception as e:
             logger.error(f"Error retrieving memory: {e}")
-            return f"Error: {str(e)}"
+            return i18n_t("memory.get_failed", query, error=str(e))
 
 
 class ListRemindersTool(Tool):
@@ -177,12 +193,12 @@ class ListRemindersTool(Tool):
         """List all reminders."""
         try:
             if not self.cron:
-                return "No active reminders"
+                return i18n_t("memory.reminders.none")
 
             jobs = self.cron.list_jobs(include_disabled=False)
 
             if not jobs:
-                return "No active reminders"
+                return i18n_t("memory.reminders.none")
 
             grouped: dict[str, dict[str, Any]] = {}
             for job in jobs:
@@ -202,7 +218,11 @@ class ListRemindersTool(Tool):
                 results.append(f"* {data['title']} [group_id: {group_id}]")
                 results.extend(data["items"])
 
-            return "[LIST] Active reminders:\n\n" + "\n".join(results)
+            return i18n_t(
+                "memory.reminders.header",
+                self._session_key,
+                items="\n".join(results),
+            )
 
         except Exception as e:
             logger.error(f"Error listing reminders: {e}")

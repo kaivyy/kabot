@@ -5,11 +5,472 @@ All notable changes to Kabot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.9] - 2026-03-04
+## [0.6.0] - Unreleased
 
 ### Changed
-- Release rollover from `0.5.8` to `0.5.9` to avoid rewriting an existing remote `v0.5.8` tag.
-- Kept the full implementation content from `0.5.8` intact; this release is the canonical publish tag for the same finalized code state.
+- Added explicit design + implementation planning docs for semantic-first routing rollout (without architectural rewrite):
+  - `docs/plans/2026-03-05-semantic-intent-routing-design.md`
+  - `docs/plans/2026-03-05-semantic-intent-routing-implementation.md`
+- Planning baseline now formalizes `semantic-intent -> deterministic fallback` routing order, web search/fetch orchestration rules, and API-skill preflight hardening phases.
+- Consolidated all current uncommitted changes under the next release track `0.6.0` (unreleased).
+- This section is now the canonical pending-release notes for the next repo/PyPI publication.
+- Deterministic tool/error responses are now more consistently multilingual and less hardcoded across fallback paths:
+  - moved remaining literal fallback prompts for `web_search` into i18n keys (`web_search.need_query`, `web_search.need_topic`),
+  - stock/weather/crypto tool-level failure responses now use i18n catalog keys instead of inline literals (`stock.fetch_failed`, `weather.fetch_failed`, `crypto.fetch_failed`, etc.),
+  - Meta Graph tool errors are now catalog-driven (`meta.missing_access_token`, `meta.unsupported_action`, `meta.error`) with locale-aware wording.
+- Additional core-tool user-facing errors are now i18n-driven (reduced hardcoded English in cross-channel/tool-call paths):
+  - filesystem tools (`read_file`, `write_file`, `edit_file`, `list_dir`) now emit catalog-based errors for not-found, permission, parse/replace mismatch, and list/read/write failures,
+  - message tool now localizes missing target / missing callback / send-failure responses,
+  - speedtest tool now localizes runtime failure + missing dependency + execution error responses.
+- Knowledge/memory tool error paths are now catalog-driven and multilingual:
+  - `knowledge_learn` now localizes file-not-found, extraction-failure, empty-readable-text, and long-term-memory save-failure responses (`knowledge.*`),
+  - memory tools now localize missing memory-manager and exception failures (`memory.*`) instead of returning hardcoded English error strings,
+  - memory UX responses now also use i18n keys for save-success/save-failed, empty-memory-search hints, and empty reminder list output.
+- News-vs-market routing is now safer for conversational geopolitical queries:
+  - strong geo-conflict topics (`iran/israel/war/conflict/...`) now boost `web_search` when users ask live/current context,
+  - stock company-name fallback no longer triggers for those geo-conflict prompts (prevents misroute to stock ticker guidance),
+  - feedback/meta chat containing `berita/news` (e.g. “kenapa jawabnya...”) now scores as soft chat instead of forcing web search.
+- Google News RSS fallback quality improved:
+  - added lightweight relevance filtering by query terms to suppress clearly unrelated headlines in fallback result lists,
+  - explicit `google_news_rss` provider selection is now recognized directly in provider picker (no unknown-provider fallback warning).
+- Follow-up intent handling is now structural and multilingual:
+  - removed hardcoded short-confirmation token catalogs in runtime flow,
+  - replaced with low-information turn detection (length/payload-shape based),
+  - explicit current-turn tool intent now overrides pending follow-up context,
+  - added script-aware guard for non-whitespace languages (CJK/Thai/Arabic) so substantive short native-text requests are not misclassified as lightweight follow-ups.
+- Deterministic tool fallback now prefers fresh raw user input over stale `required_tool_query` metadata when both map to the same required tool (prevents stale context bleed for weather/stock requests).
+- Deterministic fallback now prioritizes short-turn raw payload when it contains concrete tool entities:
+  - stock follow-ups like `adaro mana` no longer reuse stale previous ticker list metadata,
+  - crypto follow-ups like `ethereum berapa` no longer reuse older multi-coin query metadata,
+  - keeps continuation responsive while reducing rigid stale-context behavior.
+- Deterministic router and direct-tool execution now include update intents:
+  - `check_update` and `system_update` can be selected from natural user prompts,
+  - update actions can run via required-tool fallback without forcing rigid command phrasing.
+- Update runtime flow is stricter and more transparent:
+  - installed version resolution now reads package metadata (`kabot` first, then `kabot-ai` fallback),
+  - version comparisons normalize `v`-prefixed tags (`v0.6.0` == `0.6.0`),
+  - post-update pip path verifies installed version against latest release and emits explicit mismatch failure if not actually latest,
+  - tool payload now includes `notify_user` / `notify_message` for reliable post-update user notification.
+- Weather intent extraction is more conversationally robust:
+  - handles natural phrasing like `gimana suhu ...`, `kalau suhu ...`, and confirmation-prefixed requests (`ya coba cek ...`),
+  - strips conversational prefixes before location resolution so users do not need rigid location-only input.
+- Weather location extraction now supports non-Latin city names more reliably (e.g. `東京`) and removes multilingual weather terms before final location normalization.
+- Weather fetch timeout is tightened to a shared 3s request timeout to reduce long waits on failing providers.
+- Deterministic fallback now has a generic stale-metadata guard (not stock-only):
+  - short low-information follow-ups (e.g. `ya/ok/gas`) no longer reuse long assistant-style metadata blobs as fresh tool input,
+  - web-search fallback now asks for clear topic/keywords when stale metadata is dropped.
+- Weather tool latency path is reduced:
+  - Open-Meteo and wttr providers now run in parallel for `simple` mode,
+  - shared provider timeout tightened to 3s per request to reduce long tail waits.
+- Stock deterministic fallback is now more natural-language tolerant and no longer uses invalid hardcoded placeholder symbols:
+  - removed `TOP10_ID` fallback path that caused noisy fetch failures,
+  - added IDX alias mapping for common conversational terms (`bca/bri/mandiri` -> `BBCA.JK/BBRI.JK/BMRI.JK`),
+  - if user asks list/ranking style stock queries without explicit tickers, fallback now routes to `web_search` instead of forcing broken stock symbols,
+  - added localized guidance (`stock.need_symbol`) when ticker data is truly missing.
+- Follow-up inference is now safer on short confirmations (`ya/iya/gas`):
+  - pre-context continuation no longer treats arbitrary assistant output as user query context,
+  - assistant history is only eligible when it matches a short follow-up offer pattern,
+  - prevents stale assistant paragraphs from being re-parsed into invalid stock symbols.
+- Stock fallback now guards stale verbose metadata for short confirmations:
+  - when confirmation is very short but carried `required_tool_query` is long/noisy, fallback prefers fresh raw input,
+  - bare-token parsing is stricter to avoid regular words becoming ticker symbols.
+- Runtime status locale is now pinned across phases:
+  - message runtime persists `runtime_locale` into turn metadata,
+  - execution runtime consumes that locale for `thinking/tool/done/error` phase text,
+  - reduced mixed-language status flips in multilingual chats.
+- Cross-runtime status duplication guard:
+  - message runtime marks turns that already emitted initial status lane,
+  - execution runtime suppresses duplicate initial `thinking` phase for those turns (prevents double "Processing your request..." bubbles).
+- Outbound status/send race guard is now extended to additional channels:
+  - added per-chat send-lock serialization for Bridge WebSocket, WhatsApp, QQ, Feishu, and DingTalk channel send paths,
+  - prevents concurrent status/final-message interleaving from creating stale/duplicate progress behavior.
+- Added OpenClaw-style abort shortcuts for safer interaction control:
+  - recognizes standalone stop intent across slash + natural phrasing (`/stop`, `stop action`, `please stop`, `do not do that`, multilingual variants),
+  - accepts trailing punctuation in stop requests (`STOP!!!`),
+  - clears pending follow-up tool/intent context immediately to prevent stale continuation after user cancellation,
+  - returns localized stop acknowledgement via i18n (`runtime.abort.ack`).
+- Channel typing keepalive is now hardened to avoid silent stalls:
+  - Telegram and Discord typing loops now include max-duration TTL guard and repeated-failure breaker,
+  - typing loop tasks now self-clean from per-chat task maps after exit (no stale task handle retention),
+  - prevents indefinite looping during transport instability while allowing automatic restart from status pulses.
+- Discord status lane now explicitly ensures typing keepalive while progress updates are sent (`queued/thinking/tool`), improving responsiveness parity with Telegram/OpenClaw behavior.
+- Stock tool now has defensive symbol extraction at tool layer (not only router layer):
+  - mixed natural-language input is filtered to valid ticker candidates only,
+  - plain confirmation/chat text is rejected with a clear ticker guidance error,
+  - avoids per-word Yahoo fetch spam when upstream routing payload is noisy or stale.
+- Deterministic required-tool routing now uses a scored intent layer (structure + confidence), not pure keyword matching:
+  - added `score_required_tool_intents(...)` to rank candidates by multilingual lexical + structural signals,
+  - added confidence/ambiguity gating to avoid forcing tools on unclear short chat text,
+  - added structural stock detection for explicit ticker symbols (e.g. `BBRI BBCA BMRI`, `BBCA.JK`) even when user omits `saham/stock` keywords,
+  - improved live-research routing for time-sensitive prompts (e.g. `latest ... 2026 now`) while suppressing false web-search routing on local system-operation requests (`cek free space`, etc.).
+- Follow-up tool continuation now uses a dedicated history-inference helper (loop facade + runtime integration):
+  - `AgentLoop._infer_required_tool_from_history(...)` added for deterministic, testable multi-turn continuation behavior,
+  - recent user intent scanning now skips assistant turns and ultra-short confirmation-only user turns,
+  - continuation prefers newest substantive user intent (e.g., latest stock query) instead of older stale tool intents.
+- Intent scorer now supports conservative typo-tolerant matching for Latin-script terms:
+  - added bounded edit-distance matching (`<=1`) for single-word intent terms (reminder/weather/cleanup/system/monitor/search),
+  - added conservative fuzzy matching for multi-word Latin phrases (e.g. `check update`, `disk cleanup` variants),
+  - keeps multilingual exact matching for non-Latin scripts unchanged,
+  - improves natural routing on common typo variants (`ingatkn`, `temprature`, `bersihkn`) without widening false positives aggressively.
+- Reminder intent now supports time-action structure even without explicit reminder keyword:
+  - detects patterns like `in 10 minutes ...` / `2 menit lagi ...` as cron intent when no stronger competing domain marker is present,
+  - guarded against question-style and cross-domain text to avoid over-triggering.
+- Update-intent disambiguation is now safer:
+  - check/update prompts with explicit check verbs now prioritize `check_update`,
+  - generic non-update prompts starting with `cek/check` no longer get misrouted into update tools.
+- Stock fallback routing now reuses the same symbol parser as the stock tool:
+  - removed duplicated ticker extraction logic from `tool_enforcement` fallback,
+  - uses shared `extract_stock_symbols(...)` from `stock` tool as single source of truth,
+  - keeps deterministic behavior while reducing hardcoded drift between routing and tool execution paths.
+- Stock intent scoring now also reuses the shared stock parser:
+  - cron/intents scorer (`required_tool_for_query`) now consumes stock candidates from `extract_stock_symbols(...)`,
+  - removes parser drift between routing score and execution fallback.
+- Stock parser fallback is now stricter for unknown bare symbols:
+  - unknown bare ticker fallback now requires explicit uppercase token input,
+  - prevents casual lowercase single words (e.g. `hai`) from being misread as stock symbols.
+- Stock alias coverage now includes `adaro` -> `ADRO.JK` for natural IDX phrasing.
+- Stock novice-name resolver now supports broader natural company references without rigid ticker input:
+  - added common Indonesian company phrase aliases (e.g., `bank rakyat indonesia`, `bank central asia`, `bank mandiri`, `bank negara indonesia`, `adaro energy indonesia`, `toba bara`),
+  - added `toba` -> `TOBA.JK`,
+  - stock alias parser now resolves alias mentions by in-text order (stable multi-symbol extraction from free-form sentences),
+  - optional alias extension file is supported (`~/.kabot/stock_aliases.json` or `KABOT_STOCK_ALIASES_PATH`) so user-created skills can add new company aliases without core-code edits.
+- Stock parser now tolerates single-character typo on explicit IDX symbols with `.JK` suffix (e.g. `AADRO.JK` -> `ADRO.JK`).
+- Stock global-name resolution is now more novice-friendly and less country-hardcoded:
+  - stock tool now attempts Yahoo symbol search when user gives company names instead of ticker format,
+  - supports natural prompts like `toyota sekarang berapa` without requiring explicit `7203.T`,
+  - keeps strict small-talk guard so non-market chat (`umur kamu berapa`) does not trigger symbol search/fetch.
+- Stock name resolution now handles non-Latin company queries more robustly:
+  - non-Latin compact company names (e.g. `トヨタ`) are now preserved as search candidates instead of being dropped by ASCII-only tokenization,
+  - improves global novice flow where users type company names in native scripts without ticker suffix.
+- Stock intent lexicon/value markers expanded for multilingual market phrasing (Thai/Japanese/Chinese/Korean) to reduce rigid language dependence.
+- Stock symbol discovery fallback is now more resilient and market-aware:
+  - Yahoo symbol search now falls back across `query2` -> `query1` -> `autoc` endpoints before giving up,
+  - ambiguous global company name matches are ranked by market hints in user text (e.g. `jepang/japan/tokyo` prefers `.T`),
+  - keeps deterministic novice flow while reducing failed lookups on single-endpoint outages.
+- Stock tool now asks a one-step clarification for ambiguous cross-market company names:
+  - if a novice query resolves to multiple plausible listings without market hint (e.g. ADR vs local listing), Kabot asks which ticker/market the user means,
+  - avoids silently choosing wrong exchange while staying concise/user-friendly.
+- Ambiguous stock clarification is now locale-aware:
+  - clarification prompt uses i18n catalog and follows detected user language (e.g. Indonesian phrasing for `... berapa sekarang`),
+  - added `stock.ambiguous_symbol` translation entries (`en`, `id`, `ms`).
+- Stock name resolver now caches repeated query results in-memory (TTL + bounded size):
+  - repeated novice queries in the same runtime avoid redundant Yahoo symbol-search calls,
+  - cache stores both resolved symbol list and ambiguity prompt candidates.
+- Locale detector improved for Indonesian daily phrasing in short queries (`berapa`, `sekarang`, `harga`) to reduce accidental English fallback.
+- ID/MS locale disambiguation for fallback i18n was rebalanced to reduce mixed-Malay false Indonesian detection:
+  - removed overly generic Indonesian bias marker (`tolong`),
+  - added Malay action marker (`tetapkan`) for reminder-style phrasing.
+- Semantic-routing core code was lint-hardened without behavior changes:
+  - normalized import ordering and removed dead imports in `loop.py` and `cron_fallback_nlp.py`,
+  - replaced lambda resolver fallback in `tool_enforcement.py` with explicit helper function,
+  - renamed function-scope all-caps locals in runtime files to comply with naming lint while preserving logic,
+  - fixed follow-up path references in `message_runtime.py` after local variable rename.
+- High-traffic tool modules were lint-hardened without functional behavior changes:
+  - import/style cleanup in `stock.py`, `speedtest.py`, `update.py`,
+  - `update.py` no longer uses bare `except` in git-cleanliness check helper.
+- CLI + memory support modules were lint-hardened without functional behavior changes:
+  - normalized import/style cleanup across `commands.py`, `bridge_utils.py`, memory backend/factory/vector-store helpers, and related tests,
+  - `setup_wizard.py` section binding import now uses a local binder helper (removes late module import pattern),
+  - `memory/__init__.py` keeps lazy export behavior via `_MODULE_LOCKS` + `__getattr__` without unused TYPE_CHECKING import block.
+- Providers/core/utils support area was lint-hardened without functional behavior changes:
+  - import/style cleanup in `litellm_provider.py`, `update_service.py`, `doctor.py`, `skill_validator.py`, `workspace_templates.py`,
+  - aligned related providers/core tests with import-order and unused-import constraints.
+- Setup wizard compatibility surface now explicitly retains `Prompt` export for test/monkeypatch and legacy caller stability after lint cleanup.
+- Stock intent scoring now supports value-query phrasing with company-name candidates:
+  - `required_tool_for_query` can classify concise company-name prompts without explicit `stock/saham` keyword when structure indicates market-price intent,
+  - includes personal-chat guardrails to reduce false-positive stock routing.
+- Deterministic stock fallback now aligns with the stock tool name-resolver path:
+  - when no explicit ticker is found, fallback first checks company-name candidates before invoking stock tool,
+  - low-information or non-market chat text still returns ticker guidance directly (no blind stock execution).
+- Crypto deterministic fallback and tool execution now support multi-asset requests:
+  - fallback extracts multiple coin IDs from natural phrases (e.g. `bitcoin dan ethereum`),
+  - crypto tool accepts comma-separated CoinGecko IDs (`bitcoin,ethereum`) and returns combined output in one response.
+- Weather intent/location parsing is now more conversational for degree phrasing:
+  - added multilingual weather markers for `derajat/degree/celsius/fahrenheit`,
+  - weather location extraction now strips those markers so prompts like `purwokerto berapa derajat sekarang` map cleanly to `Purwokerto`.
+- Telegram status bubble lifecycle is hardened against stale duplicates:
+  - when status edit fails with non-transient error, old status bubble is tracked as stale,
+  - final response now best-effort cleans tracked stale status bubbles in addition to the active status bubble.
+- Discord and Slack status bubble lifecycle now follows the same stale-cleanup model:
+  - non-transient status-edit/update failures mark prior status bubble as stale,
+  - final response path now cleans both active + stale status bubbles best-effort,
+  - reduces cross-channel "status nyangkut" differences versus Telegram.
+- Runtime keepalive cadence is faster for perceived responsiveness:
+  - first keepalive pulse delay reduced (`2.5s -> 1.0s`),
+  - keepalive interval tightened (`5.0s -> 4.0s`).
+- Keepalive status dedupe is now channel-capability aware:
+  - keepalive bypass is opt-in per channel instead of global behavior,
+  - Telegram/Discord/Bridge WebSocket keep keepalive passthrough for typing/activity continuity,
+  - non-typing channels (e.g. WhatsApp/QQ/Feishu/DingTalk) now dedupe repeated keepalive status text to avoid user-facing progress spam.
+- Runtime keepalive emission is now channel-aware:
+  - message runtime only starts periodic keepalive loop on passthrough-capable channels,
+  - passthrough capability is resolved from live channel adapter wiring (`channel_manager`) with safe fallback by channel family,
+  - non-passthrough channels keep queued/thinking/done lifecycle without periodic keepalive spam.
+- Gateway startup now wires `ChannelManager` into `AgentLoop` so runtime status policy can follow real channel capabilities.
+- Tool-call progress updates now emit explicit status metadata:
+  - tool execution status messages from `process_tool_calls` now include `phase=tool` and `lane=status`,
+  - prevents ambiguous status classification as default `thinking` in channel lifecycle handlers.
+- Status-lane policy is now capability-aware (mutable vs non-mutable channels):
+  - added channel capability contract (`_uses_mutable_status_lane`) with default-safe `False`,
+  - mutable-lane channels (Telegram/Discord/Slack/Bridge adapters) keep full phase lifecycle UX,
+  - non-mutable channels now emit minimal phase status (queued + tool-level progress) to reduce duplicate/noisy interim messages.
+- Gateway method-scope governance is now centralized and stricter:
+  - replaced scattered per-handler scope checks with route-policy evaluation (`method + path` rules),
+  - added hierarchical scope compatibility (`operator.*`, `<family>.admin`, `operator.write -> operator.read`),
+  - added dedicated dashboard control surface scopes (`operator.write`) separate from read-only dashboards (`operator.read`).
+- Lightweight dashboard control surface is now available for operator flows:
+  - added `GET /dashboard/api/control` capability metadata,
+  - added `POST /dashboard/api/control` for structured control actions,
+  - added HTMX control partial (`/dashboard/partials/control`) with safe action normalization and explicit error contracts (`invalid_action`, `control_unavailable`, `control_failed`),
+  - control execution path supports sync/async handlers without changing existing gateway wiring.
+- Dashboard access UX is now simpler for browser users with gateway auth enabled:
+  - dashboard routes now accept token query auth (`/dashboard?token=...`) in addition to bearer headers,
+  - dashboard HTML preserves query-token for HTMX partial/control refresh routes,
+  - query-token auth is restricted to `/dashboard*` only and is not accepted for webhook ingress routes.
+
+### Verified
+- Added semantic-intent routing verification log for this phase:
+  - `docs/logs/2026-03-05-semantic-intent-routing-verification.md`
+- Lint baseline check:
+  - `ruff check kabot tests`
+  - Result: `FAILED` (`140` findings; repo-wide existing lint debt, not fully remediated in this batch).
+- Focused lint check for touched locale/i18n files:
+  - `ruff check kabot/i18n/locale.py tests/agent/test_fallback_i18n.py tests/agent/test_i18n_locale.py`
+  - Result: `PASSED`.
+- Additional targeted lint check for semantic-routing core:
+  - `ruff check kabot/agent/cron_fallback_nlp.py kabot/agent/loop_core/tool_enforcement.py kabot/agent/loop_core/message_runtime.py kabot/agent/loop_core/execution_runtime.py kabot/agent/loop.py`
+  - Result: `PASSED`.
+- Additional targeted lint check for high-traffic tools:
+  - `ruff check kabot/agent/tools/stock.py kabot/agent/tools/speedtest.py kabot/agent/tools/update.py tests/agent/tools/test_stock.py tests/agent/tools/test_update.py tests/tools/test_weather_tool.py tests/tools/test_web_fetch.py`
+  - Result: `PASSED`.
+- Additional targeted lint check for channel lifecycle parity area:
+  - `ruff check kabot/channels/telegram.py kabot/channels/discord.py kabot/channels/slack.py kabot/channels/bridge_ws.py kabot/channels/whatsapp.py kabot/channels/qq.py kabot/channels/feishu.py kabot/channels/dingtalk.py tests/channels/test_telegram_typing_status.py tests/channels/test_discord_typing_status.py tests/channels/test_status_updates_cross_channel.py`
+  - Result: `PASSED`.
+- Additional targeted lint check for CLI + memory support area:
+  - `ruff check kabot/cli/commands.py kabot/cli/bridge_utils.py kabot/cli/setup_wizard.py kabot/memory/__init__.py kabot/memory/chroma_memory.py kabot/memory/memory_backend.py kabot/memory/memory_factory.py kabot/memory/vector_store.py tests/cli/test_setup_wizard_default_model.py tests/cli/test_setup_wizard_memory.py tests/memory/test_auto_unload.py tests/memory/test_hybrid_auto_unload.py tests/memory/test_memory_backend.py tests/memory/test_memory_factory.py tests/memory/test_memory_leak.py tests/memory/test_null_memory.py tests/memory/test_sqlite_memory.py`
+  - Result: `PASSED`.
+- Additional targeted lint check for providers/core/utils support area:
+  - `ruff check kabot/providers/litellm_provider.py kabot/services/update_service.py kabot/utils/doctor.py kabot/utils/skill_validator.py kabot/utils/workspace_templates.py tests/providers/test_litellm_provider_resolution.py tests/providers/test_registry.py tests/core/test_daemon.py tests/core/test_failover_error.py`
+  - Result: `PASSED`.
+- Broad regression suite:
+  - `pytest -q tests/agent tests/channels tests/tools tests/gateway`
+  - Result: `494 passed`.
+- Additional focused regression suite after lint hardening:
+  - `pytest -q tests/agent/test_cron_fallback_nlp.py tests/agent/test_tool_enforcement.py tests/agent/loop_core/test_message_runtime.py tests/agent/loop_core/test_execution_runtime.py tests/agent/test_fallback_i18n.py tests/agent/test_i18n_locale.py`
+  - Result: `130 passed`.
+- Additional tools-focused regression suite after lint hardening:
+  - `pytest -q tests/agent/tools/test_stock.py tests/agent/tools/test_update.py tests/tools/test_weather_tool.py tests/tools/test_web_fetch.py tests/tools/test_web_fetch_guard.py tests/tools/test_meta_graph_tool.py`
+  - Result: `62 passed`.
+- Additional channel parity regression suite after lint hardening:
+  - `pytest -q tests/channels/test_telegram_typing_status.py tests/channels/test_discord_typing_status.py tests/channels/test_status_updates_cross_channel.py`
+  - Result: `35 passed`.
+- Additional CLI/memory regression suite after lint hardening:
+  - `pytest -q tests/cli/test_setup_wizard_default_model.py tests/cli/test_setup_wizard_memory.py tests/memory/test_auto_unload.py tests/memory/test_hybrid_auto_unload.py tests/memory/test_memory_backend.py tests/memory/test_memory_factory.py tests/memory/test_memory_leak.py tests/memory/test_null_memory.py tests/memory/test_sqlite_memory.py`
+  - Result: `56 passed`.
+- Additional providers/core regression suite after lint hardening:
+  - `pytest -q tests/providers/test_litellm_provider_resolution.py tests/providers/test_registry.py tests/core/test_daemon.py tests/core/test_failover_error.py`
+  - Result: `51 passed`.
+- Global lint sweep:
+  - `ruff check --fix kabot tests` followed by `ruff check kabot tests`
+  - Result: `PASSED` (all global lint findings cleared).
+- Final broad regression suite after global lint cleanup:
+  - `pytest -q tests/agent tests/channels tests/tools tests/gateway tests/cli tests/memory tests/core tests/providers tests/config`
+  - Result: `906 passed`.
+- Full repository test sweep:
+  - `pytest -q`
+  - Result: `1332 passed, 6 skipped`.
+- Targeted multilingual hardcoded-string regression suite:
+  - `tests/agent/tools/test_stock.py`
+  - `tests/tools/test_weather_tool.py`
+  - `tests/tools/test_meta_graph_tool.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - Result: `94 passed` (targeted run).
+- Additional core-tool i18n regression suite:
+  - `tests/tools/test_tool_i18n_errors.py`
+  - Result: `4 passed` (targeted run).
+- Additional knowledge/memory + web_fetch i18n regression suite:
+  - `tests/tools/test_knowledge_memory_i18n.py`
+  - `tests/tools/test_web_fetch_i18n.py`
+  - `tests/tools/test_web_fetch.py`
+  - `tests/tools/test_web_fetch_guard.py`
+  - `tests/tools/test_memory_search.py`
+  - Result: `23 passed` (targeted run).
+- Additional routing/news-fallback regression suite:
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/tools/test_web_search.py`
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - Result: `63 passed` (targeted run).
+- Combined targeted multilingual + tool-fallback verification:
+  - `tests/agent/tools/test_stock.py`
+  - `tests/tools/test_weather_tool.py`
+  - `tests/tools/test_meta_graph_tool.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/tools/test_tool_i18n_errors.py`
+  - Result: `98 passed` (targeted run).
+- Additional stock/crypto parser and fallback verification:
+  - `tests/agent/tools/test_stock.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - Result: `66 passed` (targeted, including ADRO alias + IDX typo tolerance + multi-crypto fallback/tool behavior).
+- Additional short-followup payload + non-Latin weather-location regression verification:
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - `tests/agent/tools/test_stock.py`
+  - `tests/tools/test_weather_tool.py`
+  - Result: `84 passed` (targeted).
+- Additional stock global-resolver fallback/disambiguation verification:
+  - `tests/agent/tools/test_stock.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - Result: `82 passed` (targeted split runs: `26 + 56`).
+- Additional ambiguous-listing clarification verification:
+  - `tests/agent/tools/test_stock.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - Result: `83 passed` (targeted split runs: `27 + 56`).
+- Additional locale-aware ambiguity + resolver cache verification:
+  - `tests/agent/tools/test_stock.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/agent/loop_core/test_execution_runtime.py`
+  - Result: `152 passed` (targeted combined run).
+- Added regression tests to lock behavior for:
+  - low-information follow-up inference without keyword dependency,
+  - explicit tool query overriding stale pending follow-up tool context,
+  - weather/stock fallback preferring fresh raw user query over stale resolved metadata,
+  - conversational weather location extraction (`gimana/kalau/ya coba cek` patterns),
+  - update intent routing + update tool response formatting/version checks,
+  - standalone stop/abort shortcut detection + pending follow-up cleanup path,
+  - script-aware non-Latin follow-up handling,
+  - locale propagation into execution-phase status text,
+  - duplicate-initial-thinking suppression for status updates.
+- Relevant suites executed:
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/agent/loop_core/test_execution_runtime.py`
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/tools/test_update.py`
+  - Result: `100 passed` (targeted runtime/fallback/update coverage).
+- Additional post-fix tool/skills verification:
+  - `tests/tools`
+  - `tests/agent/tools`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/test_tool_name_uniqueness.py`
+  - `tests/agent/test_tool_runtime_guards.py`
+  - `tests/agent/loop_core/test_tool_loop_detection.py`
+  - `tests/test_tool_validation.py`
+  - `tests/agent/test_skills_entries_semantics.py`
+  - `tests/agent/test_skills_loader_precedence.py`
+  - `tests/agent/test_skills_matching.py`
+  - `tests/agent/test_skills_requirements_os.py`
+  - `tests/config/test_skills_settings.py`
+  - `tests/cli/test_skills_commands.py`
+  - `tests/cli/test_setup_wizard_skills.py`
+  - Result: `167 passed` (tools + skills targeted verification).
+- Additional regression for confirmation/follow-up safety:
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - Result: `60 passed` (follow-up inference + deterministic tool fallback).
+- Additional regression verification after stale-metadata/weather/channel fixes:
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - `tests/tools/test_weather_tool.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/channels/test_telegram_typing_status.py`
+  - `tests/agent/loop_core/test_execution_runtime.py`
+  - `tests/channels/test_discord_typing_status.py`
+  - `tests/channels/test_status_updates_cross_channel.py`
+  - `tests/channels/test_bridge_ws_channel.py`
+  - `tests/channels/test_whatsapp_bridge_runtime.py`
+  - Result: `165 passed` (targeted).
+- Additional hardening verification for typing + stock parser guard:
+  - `tests/channels/test_telegram_typing_status.py`
+  - `tests/channels/test_discord_typing_status.py`
+  - `tests/agent/tools/test_stock.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/channels/test_status_updates_cross_channel.py`
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/agent/loop_core/test_execution_runtime.py`
+  - Result: `138 passed` (targeted, combined run batches).
+- Additional intent scorer verification:
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - Result: `72 passed` (targeted, post-intent-scorer run).
+- Additional history-inference regression verification:
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - `tests/agent/test_loop_facade_compat.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - Result: all passed (targeted, post-follow-up-inference helper integration).
+- Additional typo-tolerance + multilingual routing verification:
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/agent/test_loop_facade_compat.py`
+  - Result: all passed (targeted, post-typo-tolerant intent scorer + time-action reminder inference update).
+- Additional gateway governance + dashboard control verification:
+  - `tests/gateway/test_webhooks.py`
+  - `tests/gateway/test_webhooks_meta.py`
+  - `tests/gateway`
+  - Result: `24 passed` (targeted, post-route-scope-policy + control-surface update).
+- Additional novice stock-alias regression verification:
+  - `tests/agent/tools/test_stock.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - Result: targeted pass (`7 passed` + `4 passed` + `1 passed` + combined `7 passed`), including TOBA alias, long company-phrase extraction, custom alias file support, and stock intent detection for novice company names.
+- Additional stock-parser unification regression verification:
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/tools/test_stock.py`
+  - Result: `52 passed` (targeted, post shared symbol-parser refactor).
+- Additional dashboard query-auth regression verification:
+  - `tests/gateway/test_webhooks.py`
+  - `tests/gateway/test_webhooks_meta.py`
+  - `tests/gateway`
+  - Result: `26 passed` (targeted, post dashboard query-token auth + dashboard-only restriction).
+- Additional natural-intent + Telegram status lifecycle verification:
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - `tests/tools/test_weather_tool.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/channels/test_telegram_typing_status.py`
+  - `tests/agent/tools/test_stock.py`
+  - Result: `83 passed` (targeted, post weather degree parsing + stock scorer/parser unification + stale status cleanup + keepalive tuning).
+- Additional cross-channel status-bubble parity verification:
+  - `tests/channels/test_discord_typing_status.py`
+  - `tests/channels/test_status_updates_cross_channel.py`
+  - `tests/channels/test_telegram_typing_status.py`
+  - Result: `33 passed` (Discord + Slack + Telegram status lifecycle parity).
+- Additional keepalive dedupe parity verification:
+  - `tests/channels/test_discord_typing_status.py`
+  - `tests/channels/test_telegram_typing_status.py`
+  - `tests/channels/test_status_updates_cross_channel.py`
+  - Result: `35 passed` (keepalive passthrough only on typing/activity-capable channels; dedupe on non-typing channels).
+- Additional runtime keepalive policy verification:
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/agent/loop_core/test_execution_runtime.py`
+  - `tests/channels/test_status_updates_cross_channel.py`
+  - `tests/channels/test_telegram_typing_status.py`
+  - `tests/channels/test_discord_typing_status.py`
+  - Result: `98 passed` (runtime keepalive loop only on passthrough-capable channels, with phase/status behavior preserved across tool and channel paths).
+- Additional status-phase metadata verification:
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/agent/loop_core/test_execution_runtime.py`
+  - `tests/channels/test_status_updates_cross_channel.py`
+  - `tests/channels/test_telegram_typing_status.py`
+  - `tests/channels/test_discord_typing_status.py`
+  - Result: `99 passed` (keepalive channel-awareness + explicit `tool` phase status metadata across runtime and channel dispatch).
+- Additional mutable-lane policy verification:
+  - `tests/agent/loop_core/test_message_runtime.py`
+  - `tests/agent/loop_core/test_execution_runtime.py`
+  - `tests/channels/test_status_updates_cross_channel.py`
+  - `tests/channels/test_telegram_typing_status.py`
+  - `tests/channels/test_discord_typing_status.py`
+  - Result: `102 passed` (non-mutable channels avoid thinking/done spam while mutable channels preserve full interactive status lifecycle).
+- Additional global stock-name resolver + intent regression verification:
+  - `tests/agent/test_cron_fallback_nlp.py`
+  - `tests/agent/test_tool_enforcement.py`
+  - `tests/agent/tools/test_stock.py`
+  - Result: `74 passed` (targeted, including Yahoo company-name lookup fallback + deterministic fallback guard + non-keyword stock intent routing).
 
 ## [0.5.8] - 2026-03-04 (P0 Delta)
 

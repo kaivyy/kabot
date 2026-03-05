@@ -3,6 +3,7 @@ from typing import Any
 
 from loguru import logger
 
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
 
 
@@ -47,7 +48,7 @@ class KnowledgeLearnTool(Tool):
 
         path = Path(file_path)
         if not path.exists():
-            return f"Error: File not found at {file_path}"
+            return i18n_t("knowledge.file_not_found", file_path, path=file_path)
 
         logger.info(f"KnowledgeLearnTool: Learning from {path.name}...")
         try:
@@ -56,10 +57,14 @@ class KnowledgeLearnTool(Tool):
             chunks = DocumentParser.chunk_text(text, chunk_size=1500, overlap=300)
         except Exception as e:
             logger.error(f"Failed to extract text from {file_path}: {e}")
-            return f"Error: Failed to extract text - {str(e)}"
+            return i18n_t(
+                "knowledge.extract_failed",
+                file_path,
+                error=str(e),
+            )
 
         if not chunks:
-            return "Error: No readable text found in the document."
+            return i18n_t("knowledge.no_readable_text", file_path)
 
         try:
             # Get the memory manager for the current workspace
@@ -87,4 +92,4 @@ class KnowledgeLearnTool(Tool):
             return f"Success! I have learned {len(chunks)} knowledge chunks from '{path.name}'. I will now remember this information in future conversations."
         except Exception as e:
             logger.error(f"Failed to inject knowledge into memory: {e}")
-            return f"Error: Failed to save to long-term memory - {str(e)}"
+            return i18n_t("knowledge.save_failed", file_path, error=str(e))

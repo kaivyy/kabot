@@ -2,10 +2,9 @@
 
 from kabot.agent.tools.tool_policy import (
     TOOL_GROUPS,
-    TOOL_PROFILES,
-    resolve_profile_policy,
     apply_tool_policy,
     is_owner_only_tool,
+    resolve_profile_policy,
 )
 
 

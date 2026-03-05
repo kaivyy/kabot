@@ -95,23 +95,25 @@ class QQChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through QQ."""
-        is_status_update, _phase, _status_text = self._status_update_payload(msg)
-        if is_status_update and self._should_skip_status_update(msg):
-            return
-        if not is_status_update:
-            self._clear_status_state(msg.chat_id)
+        chat_id_str = str(msg.chat_id)
+        async with self._get_chat_send_lock(chat_id_str):
+            is_status_update, _phase, _status_text = self._status_update_payload(msg)
+            if is_status_update and self._should_skip_status_update(msg):
+                return
+            if not is_status_update:
+                self._clear_status_state(msg.chat_id)
 
-        if not self._client:
-            logger.warning("QQ client not initialized")
-            return
-        try:
-            await self._client.api.post_c2c_message(
-                openid=msg.chat_id,
-                msg_type=0,
-                content=msg.content,
-            )
-        except Exception as e:
-            logger.error(f"Error sending QQ message: {e}")
+            if not self._client:
+                logger.warning("QQ client not initialized")
+                return
+            try:
+                await self._client.api.post_c2c_message(
+                    openid=msg.chat_id,
+                    msg_type=0,
+                    content=msg.content,
+                )
+            except Exception as e:
+                logger.error(f"Error sending QQ message: {e}")
 
     async def _on_message(self, data: "C2CMessage") -> None:
         """Handle incoming message from QQ."""

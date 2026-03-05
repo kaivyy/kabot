@@ -47,7 +47,7 @@ class ToolRegistry:
             List of tool definitions filtered by policy if specified.
         """
         if policy_profile:
-            from kabot.agent.tools.tool_policy import resolve_profile_policy, apply_tool_policy
+            from kabot.agent.tools.tool_policy import apply_tool_policy, resolve_profile_policy
 
             policy = resolve_profile_policy(policy_profile)
             tool_names = list(self._tools.keys())

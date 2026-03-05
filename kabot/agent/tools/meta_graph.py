@@ -6,6 +6,7 @@ import json
 import os
 from typing import Any
 
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
 from kabot.integrations.meta_graph import MetaGraphClient
 
@@ -112,6 +113,7 @@ class MetaGraphTool(Tool):
         extra: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> str:
+        source_text = str(kwargs.get("context_text") or text or action or "").strip()
         if threads_user_id:
             self.threads_user_id = str(threads_user_id).strip() or self.threads_user_id
         if instagram_user_id:
@@ -128,12 +130,7 @@ class MetaGraphTool(Tool):
             self._access_token = token_to_use
 
         if self.client is None:
-            return (
-                "Error: Meta integration is missing access token. "
-                "Provide `access_token` in the call, set "
-                "`THREADS_ACCESS_TOKEN`/`KABOT_META_ACCESS_TOKEN`, or set "
-                "`integrations.meta.access_token` in `~/.kabot/config.json`."
-            )
+            return i18n_t("meta.missing_access_token", source_text)
 
         action_map = {
             "threads_create": self._build_threads_create,
@@ -143,7 +140,7 @@ class MetaGraphTool(Tool):
         }
 
         if action not in action_map:
-            return f"Error: Unsupported action '{action}'."
+            return i18n_t("meta.unsupported_action", source_text, action=action)
 
         try:
             method, path, payload = action_map[action](
@@ -158,7 +155,7 @@ class MetaGraphTool(Tool):
             result = await self.client.request(method, path, payload)
             return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as exc:
-            return f"Error: {exc}"
+            return i18n_t("meta.error", source_text, error=str(exc))
 
     def _resolve_access_token(self, inline_token: str | None = None) -> str:
         """Resolve token with precedence: inline > configured-env > env > current > config."""

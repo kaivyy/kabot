@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
 
 
@@ -45,16 +46,16 @@ class ReadFileTool(Tool):
         try:
             file_path = _resolve_path(path, self._allowed_dir)
             if not file_path.exists():
-                return f"Error: File not found: {path}"
+                return i18n_t("filesystem.file_not_found", path, path=path)
             if not file_path.is_file():
-                return f"Error: Not a file: {path}"
+                return i18n_t("filesystem.not_file", path, path=path)
 
             content = file_path.read_text(encoding="utf-8")
             return content
         except PermissionError as e:
-            return f"Error: {e}"
+            return i18n_t("filesystem.permission_denied", path, error=str(e))
         except Exception as e:
-            return f"Error reading file: {str(e)}"
+            return i18n_t("filesystem.read_error", path, error=str(e))
 
 
 class WriteFileTool(Tool):
@@ -95,9 +96,9 @@ class WriteFileTool(Tool):
             file_path.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {path}"
         except PermissionError as e:
-            return f"Error: {e}"
+            return i18n_t("filesystem.permission_denied", path, error=str(e))
         except Exception as e:
-            return f"Error writing file: {str(e)}"
+            return i18n_t("filesystem.write_error", path, error=str(e))
 
 
 class EditFileTool(Tool):
@@ -139,36 +140,32 @@ class EditFileTool(Tool):
         try:
             file_path = _resolve_path(path, self._allowed_dir)
             if not file_path.exists():
-                return f"Error: File not found: {path}"
+                return i18n_t("filesystem.file_not_found", path, path=path)
 
             content = file_path.read_text(encoding="utf-8")
 
             if old_text not in content:
                 # Check for common whitespace issues
                 if old_text.strip() in content:
-                    return "Error: old_text not found exactly. Found a similar string but with different leading/trailing whitespace. Please be exact."
+                    return i18n_t("filesystem.old_text_not_found_exact", old_text)
 
                 # Provide a snippet of the file to help the AI find the right context
                 snippet = content[:500] + "..." if len(content) > 500 else content
-                return (
-                    f"Error: old_text not found in {path}. It must match EXACTLY, including indentation.\n\n"
-                    f"FILE CONTENT PREVIEW:\n---\n{snippet}\n---\n"
-                    "HINT: Use 'read_file' to get the full content and copy the exact block you want to replace."
-                )
+                return i18n_t("filesystem.old_text_not_found", old_text, path=path, snippet=snippet)
 
             # Count occurrences
             count = content.count(old_text)
             if count > 1:
-                return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
+                return i18n_t("filesystem.old_text_ambiguous", old_text, count=count)
 
             new_content = content.replace(old_text, new_text, 1)
             file_path.write_text(new_content, encoding="utf-8")
 
             return f"Successfully edited {path}"
         except PermissionError as e:
-            return f"Error: {e}"
+            return i18n_t("filesystem.permission_denied", path, error=str(e))
         except Exception as e:
-            return f"Error editing file: {str(e)}"
+            return i18n_t("filesystem.edit_error", path, error=str(e))
 
 
 class ListDirTool(Tool):
@@ -202,9 +199,9 @@ class ListDirTool(Tool):
         try:
             dir_path = _resolve_path(path, self._allowed_dir)
             if not dir_path.exists():
-                return f"Error: Directory not found: {path}"
+                return i18n_t("filesystem.directory_not_found", path, path=path)
             if not dir_path.is_dir():
-                return f"Error: Not a directory: {path}"
+                return i18n_t("filesystem.not_directory", path, path=path)
 
             items = []
             for item in sorted(dir_path.iterdir()):
@@ -212,10 +209,10 @@ class ListDirTool(Tool):
                 items.append(f"{prefix}{item.name}")
 
             if not items:
-                return f"Directory {path} is empty"
+                return i18n_t("filesystem.directory_empty", path, path=path)
 
             return "\n".join(items)
         except PermissionError as e:
-            return f"Error: {e}"
+            return i18n_t("filesystem.permission_denied", path, error=str(e))
         except Exception as e:
-            return f"Error listing directory: {str(e)}"
+            return i18n_t("filesystem.list_error", path, error=str(e))

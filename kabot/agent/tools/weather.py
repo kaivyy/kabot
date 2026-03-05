@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 from urllib.parse import quote_plus
@@ -11,12 +12,15 @@ from loguru import logger
 
 from kabot.agent.cron_fallback_nlp import extract_weather_location
 from kabot.agent.fallback_i18n import detect_language
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
 
 _WTTR_FORMATS = {
     "simple": "%l:+%c+%t",
     "full": "%l:+%c+%t+%h+%w",
 }
+
+_WEATHER_REQUEST_TIMEOUT_SECONDS = 3.0
 
 _EMOJI_MAP = {
     "\u2600\ufe0f": "[Sunny]",
@@ -266,7 +270,7 @@ async def fetch_wttr(location: str, format: str = "simple") -> str | None:
         encoded = quote_plus(location)
         url = f"https://wttr.in/{encoded}?format={wttr_format}"
         async with _weather_client() as client:
-            response = await client.get(url, timeout=8.0)
+            response = await client.get(url, timeout=_WEATHER_REQUEST_TIMEOUT_SECONDS)
             if response.status_code != 200:
                 logger.debug(
                     "Weather wttr failed status={} location={}",
@@ -293,7 +297,7 @@ async def fetch_openmeteo(location: str) -> str | None:
             f"?name={encoded}&count=1&language=en&format=json"
         )
         async with _weather_client() as client:
-            geo_response = await client.get(geo_url, timeout=8.0)
+            geo_response = await client.get(geo_url, timeout=_WEATHER_REQUEST_TIMEOUT_SECONDS)
             if geo_response.status_code != 200:
                 logger.debug(
                     "Weather geocode failed status={} location={}",
@@ -317,7 +321,7 @@ async def fetch_openmeteo(location: str) -> str | None:
                 "https://api.open-meteo.com/v1/forecast"
                 f"?latitude={lat}&longitude={lon}&current_weather=true"
             )
-            weather_response = await client.get(weather_url, timeout=8.0)
+            weather_response = await client.get(weather_url, timeout=_WEATHER_REQUEST_TIMEOUT_SECONDS)
             if weather_response.status_code != 200:
                 logger.debug(
                     "Weather forecast failed status={} location={}",
@@ -383,18 +387,21 @@ class WeatherTool(Tool):
         """Fetch weather for the given location."""
         normalized = normalize_location(location)
         if not normalized:
-            return "Error: Could not determine weather location. Please provide a city name."
+            return i18n_t("weather.need_location", context_text or location)
 
         try:
             if format == "simple":
-                # Prefer Open-Meteo for structured and more stable current-weather data.
-                result = await fetch_openmeteo(normalized)
-                if result:
-                    result = attach_source(result, "Open-Meteo (current_weather)")
+                # Run providers in parallel to reduce tail latency on slow networks.
+                openmeteo_result, wttr_result = await asyncio.gather(
+                    fetch_openmeteo(normalized),
+                    fetch_wttr(normalized, format),
+                    return_exceptions=False,
+                )
+                if openmeteo_result:
+                    result = attach_source(openmeteo_result, "Open-Meteo (current_weather)")
                     return attach_care_advice(result, context_text or location)
-                result = await fetch_wttr(normalized, format)
-                if result and not result.startswith("Error"):
-                    result = attach_source(result, "wttr.in")
+                if wttr_result and not str(wttr_result).startswith("Error"):
+                    result = attach_source(str(wttr_result), "wttr.in")
                     return attach_care_advice(result, context_text or location)
             else:
                 result = await fetch_wttr(normalized, format)
@@ -404,9 +411,6 @@ class WeatherTool(Tool):
                     result = attach_source(result, "wttr.in")
                     return attach_care_advice(result, context_text or location)
 
-            return (
-                f"Error: Could not fetch weather for {normalized}. "
-                "Please try a different city name."
-            )
+            return i18n_t("weather.fetch_failed", context_text or location, location=normalized)
         except Exception as exc:
-            return f"Error fetching weather: {str(exc)}"
+            return i18n_t("weather.error", context_text or location, error=str(exc))

@@ -1,9 +1,13 @@
 """Speedtest tool for checking internet connection quality."""
 
-from typing import Any
 import asyncio
+from typing import Any
+
 from loguru import logger
+
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
+
 
 class SpeedtestTool(Tool):
     """Tool to perform internet speed test (Ping, Download, Upload)."""
@@ -18,6 +22,7 @@ class SpeedtestTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         """Run speedtest. This takes about 20-30 seconds."""
+        context_text = str(kwargs.get("context_text") or "").strip()
         try:
             logger.info("Starting internet speedtest...")
 
@@ -28,7 +33,7 @@ class SpeedtestTool(Tool):
             return result
         except Exception as e:
             logger.error(f"Speedtest failed: {e}")
-            return f"Failed to perform speedtest: {str(e)}"
+            return i18n_t("speedtest.failed", context_text, error=str(e))
 
     def _run_speedtest(self) -> str:
         """Synchronous speedtest execution using speedtest-cli library."""
@@ -56,7 +61,7 @@ class SpeedtestTool(Tool):
             country = results['server']['country']
 
             output = [
-                f"### Speedtest Results",
+                "### Speedtest Results",
                 f"• **Ping**: {ping:.1f} ms",
                 f"• **Download**: {download_mbps:.2f} Mbps",
                 f"• **Upload**: {upload_mbps:.2f} Mbps",
@@ -66,6 +71,6 @@ class SpeedtestTool(Tool):
             return "\n".join(output)
 
         except ImportError:
-            return "Error: speedtest-cli is not installed. Please run 'pip install speedtest-cli' on the host."
+            return i18n_t("speedtest.missing_dependency")
         except Exception as e:
-            return f"Error during speedtest: {str(e)}"
+            return i18n_t("speedtest.error", error=str(e))

@@ -11,7 +11,6 @@ from pathlib import Path
 
 from kabot.utils.skill_validator import validate_skill
 
-
 _IGNORED_PARTS = {".git", ".hg", ".svn", "node_modules", ".venv", "__pycache__"}
 
 

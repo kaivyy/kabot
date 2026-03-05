@@ -1,6 +1,6 @@
 ﻿"""Tests for Model Registry and Metadata."""
 from kabot.providers.models import ModelMetadata, ModelPricing
-from kabot.providers.registry import ModelRegistry, PROVIDERS
+from kabot.providers.registry import PROVIDERS, ModelRegistry
 
 
 def test_model_metadata_creation():

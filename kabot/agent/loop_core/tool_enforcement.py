@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -27,6 +28,11 @@ from kabot.agent.cron_fallback_nlp import (
     make_unique_schedule_title as nlp_make_unique_schedule_title,
 )
 from kabot.agent.fallback_i18n import t as i18n_t
+from kabot.agent.tools.stock import (
+    extract_crypto_ids,
+    extract_stock_name_candidates,
+    extract_stock_symbols,
+)
 from kabot.bus.events import InboundMessage
 
 
@@ -59,7 +65,63 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_crypto_tool=loop.tools.has("crypto"),
         has_server_monitor_tool=loop.tools.has("server_monitor"),
         has_web_search_tool=loop.tools.has("web_search"),
+        has_check_update_tool=loop.tools.has("check_update"),
+        has_system_update_tool=loop.tools.has("system_update"),
     )
+
+
+def infer_required_tool_from_history_for_loop(
+    loop: Any,
+    followup_text: str,
+    history: list[dict[str, Any]] | None,
+    *,
+    max_scan: int = 8,
+) -> tuple[str | None, str | None]:
+    """
+    Infer required tool for low-information follow-up turns from recent user intent.
+
+    Rules:
+    - only trigger for short/low-information follow-up text
+    - scan recent history from newest to oldest
+    - only consider user turns
+    - skip low-information prior user turns ("ya", "oke", etc.)
+    """
+    normalized_followup = _normalize_text(followup_text)
+    if not normalized_followup:
+        return None, None
+    if not _is_low_information_followup(followup_text):
+        return None, None
+    if not isinstance(history, list) or not history:
+        return None, None
+
+    resolver = getattr(loop, "_required_tool_for_query", None)
+    if not callable(resolver):
+        def _resolver(candidate: str) -> str | None:
+            return required_tool_for_query_for_loop(loop, candidate)
+
+        resolver = _resolver
+
+    for item in reversed(history[-max_scan:]):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "") or "").strip().lower()
+        if role != "user":
+            continue
+        candidate = str(item.get("content", "") or "").strip()
+        if not candidate:
+            continue
+
+        candidate_norm = _normalize_text(candidate)
+        if not candidate_norm or candidate_norm == normalized_followup:
+            continue
+        if _is_low_information_followup(candidate, max_tokens=3, max_chars=24):
+            continue
+
+        inferred = resolver(candidate)
+        if inferred:
+            return inferred, candidate
+
+    return None, None
 
 
 def make_unique_schedule_title_for_loop(loop: Any, base_title: str) -> str:
@@ -71,21 +133,207 @@ def build_group_id_for_loop(loop: Any, title: str) -> str:
     return nlp_build_group_id(title, now_ms=stamp)
 
 
+def _normalize_text(value: str) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _is_low_information_followup(value: str, *, max_tokens: int = 6, max_chars: int = 64) -> bool:
+    """
+    Detect short confirmation/follow-up turns without language-specific keywords.
+
+    This keeps behavior multilingual and avoids parsing stale assistant metadata
+    as fresh user intent.
+    """
+    normalized = _normalize_text(value)
+    if not normalized:
+        return False
+    if len(normalized) > max_chars:
+        return False
+    tokens = [part for part in normalized.split(" ") if part]
+    if len(tokens) == 0 or len(tokens) > max_tokens:
+        return False
+    if any(mark in value for mark in ("?", "？", "¿", "؟")):
+        return False
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if re.search(r"[@#]\w+", normalized):
+        return False
+    if re.search(r"\d{4,}", normalized):
+        return False
+    return True
+
+
+def _looks_like_verbose_non_query_text(value: str) -> bool:
+    """
+    Detect assistant-style/stale metadata blobs that are unlikely to be direct user queries.
+
+    This intentionally uses structural signals (length + sentence/list formatting)
+    to stay language-agnostic.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    normalized = _normalize_text(raw)
+    if len(normalized) < 80:
+        return False
+    tokens = [part for part in normalized.split(" ") if part]
+    if len(tokens) < 14:
+        return False
+    sentence_like = raw.count(".") + raw.count("!") + raw.count("?") >= 2
+    structured = any(marker in raw for marker in ("\n", "•", "|"))
+    return sentence_like or structured
+
+
+def _query_has_tool_payload(tool_name: str, text: str) -> bool:
+    """Check whether raw user text carries explicit payload for a required tool."""
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    tool = str(tool_name or "").strip().lower()
+    if tool == "stock":
+        return bool(extract_stock_symbols(raw) or extract_stock_name_candidates(raw))
+    if tool == "crypto":
+        return bool(extract_crypto_ids(raw))
+    if tool == "weather":
+        return bool(extract_weather_location(raw))
+    return False
+
+
+def _format_update_tool_output(required_tool: str, raw_result: Any, source_text: str) -> str:
+    """Convert JSON tool payload to localized user-facing update message."""
+    text_result = str(raw_result or "").strip()
+    if not text_result:
+        return text_result
+    try:
+        payload = json.loads(text_result)
+    except Exception:
+        return text_result
+
+    if required_tool == "check_update":
+        error = str(payload.get("error") or "").strip()
+        if error:
+            return i18n_t("update.check.error", source_text, error=error)
+
+        latest_version = str(payload.get("latest_version") or "unknown")
+        current_version = str(payload.get("current_version") or "unknown")
+        update_available = bool(payload.get("update_available"))
+
+        lines: list[str] = []
+        if update_available:
+            lines.append(
+                i18n_t(
+                    "update.check.available",
+                    source_text,
+                    latest_version=latest_version,
+                    current_version=current_version,
+                )
+            )
+            commits_behind = int(payload.get("commits_behind") or 0)
+            if commits_behind > 0:
+                lines.append(
+                    i18n_t(
+                        "update.check.commits_behind",
+                        source_text,
+                        commits_behind=commits_behind,
+                    )
+                )
+        else:
+            lines.append(
+                i18n_t(
+                    "update.check.up_to_date",
+                    source_text,
+                    current_version=current_version,
+                )
+            )
+
+        release_url = str(payload.get("release_url") or "").strip()
+        if release_url:
+            lines.append(f"Release: {release_url}")
+        return "\n".join(lines)
+
+    if required_tool == "system_update":
+        if not bool(payload.get("success")):
+            reason = str(payload.get("reason") or "").strip()
+            if reason == "dirty_working_tree":
+                return i18n_t("update.install.dirty_tree", source_text)
+            error = str(payload.get("message") or reason or "unknown error")
+            return i18n_t("update.install.failed", source_text, error=error)
+
+        old_version = str(payload.get("updated_from") or "unknown")
+        new_version = str(payload.get("updated_to") or "unknown")
+        lines = [
+            i18n_t(
+                "update.install.success",
+                source_text,
+                old_version=old_version,
+                new_version=new_version,
+            )
+        ]
+        if bool(payload.get("restart_required")):
+            lines.append(i18n_t("update.install.restart_confirm", source_text))
+        release_url = str(payload.get("release_url") or "").strip()
+        if release_url:
+            lines.append(f"Release: {release_url}")
+        return "\n".join(lines)
+
+    return text_result
+
+
 async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: InboundMessage) -> str | None:
     """Deterministic fallback when model skips required tools repeatedly."""
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
     resolved_query = str(metadata.get("required_tool_query") or "").strip()
-    source_text = resolved_query or str(msg.content or "")
+    raw_text = str(msg.content or "").strip()
+    source_text = resolved_query or raw_text
+    stale_metadata_dropped = False
+
+    # Prefer fresh raw user intent when it clearly maps to the same required tool.
+    # This protects against stale carried metadata when users switch tasks quickly.
+    if resolved_query and raw_text:
+        try:
+            raw_required_tool = required_tool_for_query_for_loop(loop, raw_text)
+        except Exception:
+            raw_required_tool = None
+        if raw_required_tool == required_tool:
+            source_text = raw_text
+
+    # Generic stale-metadata guard for short follow-up turns.
+    # Example: user sends "iya/ok/gas", but metadata accidentally carries a long
+    # assistant paragraph from the previous turn.
+    if (
+        resolved_query
+        and raw_text
+        and _is_low_information_followup(raw_text)
+        and _looks_like_verbose_non_query_text(resolved_query)
+    ):
+        source_text = raw_text
+        stale_metadata_dropped = True
+
+    # If user sends a short follow-up that contains a concrete tool payload
+    # (e.g., "adaro mana", "ethereum berapa", "cuaca di 東京"), prefer it over
+    # stale carried query metadata.
+    if resolved_query and raw_text and _query_has_tool_payload(required_tool, raw_text):
+        source_text = raw_text
 
     if required_tool == "web_search":
         query = source_text.strip()
         if not query:
-            return "Please provide a search query."
+            return i18n_t("web_search.need_query", source_text)
+        if stale_metadata_dropped:
+            return i18n_t("web_search.need_topic", source_text)
         result = await loop.tools.execute(
             "web_search",
             {"query": query, "count": 5, "context_text": query},
         )
         return str(result)
+
+    if required_tool == "check_update":
+        result = await loop.tools.execute("check_update", {})
+        return _format_update_tool_output(required_tool, result, source_text)
+
+    if required_tool == "system_update":
+        result = await loop.tools.execute("system_update", {"confirm_restart": False})
+        return _format_update_tool_output(required_tool, result, source_text)
 
     if required_tool == "weather":
         location = extract_weather_location(source_text)
@@ -126,33 +374,50 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         return str(result)
 
     if required_tool == "stock":
+        # Guard against stale assistant-style metadata being reused as ticker query
+        # when user only sends a short confirmation like "iya/ok/gas".
+        raw_text_norm = _normalize_text(raw_text)
+        if (
+            resolved_query
+            and raw_text_norm
+            and _is_low_information_followup(raw_text)
+            and len(resolved_query) > 80
+        ):
+            source_text = raw_text
+
         q_lower = source_text.lower()
-        # Default for "top 10 indonesia" or similar general queries
-        symbol = "TOP10_ID"
-
-        # Try to extract ticker symbols (e.g. "harga AAPL", "cek BBCA.JK")
-        tickers = re.findall(r"\b([A-Z]{3,5}(?:\.[A-Z]{1,2})?)\b", source_text)
+        tickers = extract_stock_symbols(source_text)
         if tickers:
-            symbol = ",".join(tickers)
-        elif "crypto" in q_lower or "btc" in q_lower or "eth" in q_lower:
-             # Redirect to crypto if stock was required but content looks like crypto
-             required_tool = "crypto"
-
-        if required_tool == "stock":
-            result = await loop.tools.execute("stock", {"symbol": symbol})
+            result = await loop.tools.execute("stock", {"symbol": ",".join(tickers)})
             return str(result)
 
+        if "crypto" in q_lower or "btc" in q_lower or "eth" in q_lower:
+            required_tool = "crypto"
+        else:
+            # For ranking/list-style requests without explicit ticker, use web search directly.
+            stock_research_markers = ("top", "best", "teratas", "unggulan", "rekomendasi", "list", "daftar")
+            if loop.tools.has("web_search") and any(marker in q_lower for marker in stock_research_markers):
+                result = await loop.tools.execute(
+                    "web_search",
+                    {"query": source_text.strip(), "count": 5, "context_text": source_text},
+                )
+                return str(result)
+            name_candidates = extract_stock_name_candidates(source_text)
+            if not name_candidates:
+                return i18n_t("stock.need_symbol", source_text)
+            stock_result = await loop.tools.execute("stock", {"symbol": source_text})
+            stock_text = str(stock_result)
+            if (
+                stock_text == i18n_t("stock.need_symbol", source_text)
+                or "No valid stock ticker found" in stock_text
+            ):
+                return i18n_t("stock.need_symbol", source_text)
+            return stock_text
+
     if required_tool == "crypto":
-        q_lower = source_text.lower()
-        coin = "bitcoin" # default
-
-        # Simple extraction
-        for c in ["bitcoin", "ethereum", "solana", "doge", "btc", "eth", "sol"]:
-            if c in q_lower:
-                coin = c
-                break
-
-        result = await loop.tools.execute("crypto", {"coin": coin})
+        coins = extract_crypto_ids(source_text)
+        coin_arg = ",".join(coins) if coins else "bitcoin"
+        result = await loop.tools.execute("crypto", {"coin": coin_arg})
         return str(result)
 
     if required_tool == "cleanup_system":

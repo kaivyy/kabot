@@ -1,5 +1,6 @@
 """Tests for Discord typing keepalive behavior with status updates."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -32,6 +33,31 @@ async def test_discord_send_keeps_typing_for_status_updates():
 
     channel._stop_typing.assert_not_awaited()
     channel._http.post.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_discord_status_update_ensures_typing_when_running():
+    channel = DiscordChannel(DiscordConfig(enabled=True, token="test-token"), MessageBus())
+    channel._running = True
+    channel._ensure_typing = AsyncMock()
+    channel._http = SimpleNamespace(
+        post=AsyncMock(return_value=SimpleNamespace(status_code=200, json=lambda: {"id": "status-1"})),
+        patch=AsyncMock(return_value=SimpleNamespace(status_code=200)),
+        delete=AsyncMock(return_value=SimpleNamespace(status_code=204)),
+    )
+    channel._stop_typing = AsyncMock()
+
+    msg = OutboundMessage(
+        channel="discord",
+        chat_id="1234567890",
+        content="Queued. Preparing your request...",
+        metadata={"type": "status_update", "phase": "queued"},
+    )
+
+    await channel.send(msg)
+
+    channel._ensure_typing.assert_awaited_once_with("1234567890")
+    channel._stop_typing.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -198,3 +224,66 @@ async def test_discord_regular_message_transient_delete_keeps_status_message_for
     channel._http.delete.assert_awaited_once()
     channel._http.post.assert_awaited_once()
     assert channel._status_message_ids["1234567890"] == "status-1"
+
+
+@pytest.mark.asyncio
+async def test_discord_typing_loop_stops_after_repeated_failures(monkeypatch):
+    import kabot.channels.discord as discord_module
+
+    monkeypatch.setattr(discord_module, "_DISCORD_TYPING_RETRY_DELAY_SECONDS", 0.01)
+    monkeypatch.setattr(discord_module, "_DISCORD_TYPING_MAX_CONSECUTIVE_FAILURES", 2)
+
+    channel = DiscordChannel(DiscordConfig(enabled=True, token="test-token"), MessageBus())
+    channel._running = True
+    channel._http = SimpleNamespace(post=AsyncMock(side_effect=RuntimeError("boom")))
+
+    await channel._start_typing("1234567890")
+    task = channel._typing_tasks["1234567890"]
+    await asyncio.wait_for(task, timeout=1.0)
+    channel._running = False
+
+    assert "1234567890" not in channel._typing_tasks
+
+
+@pytest.mark.asyncio
+async def test_discord_final_message_cleans_stale_status_bubbles_after_patch_failure():
+    channel = DiscordChannel(DiscordConfig(enabled=True, token="test-token"), MessageBus())
+    channel._http = SimpleNamespace(
+        post=AsyncMock(
+            side_effect=[
+                SimpleNamespace(status_code=200, json=lambda: {"id": "status-1"}),
+                SimpleNamespace(status_code=200, json=lambda: {"id": "status-2"}),
+                SimpleNamespace(status_code=200, json=lambda: {}),
+            ]
+        ),
+        patch=AsyncMock(return_value=SimpleNamespace(status_code=400)),
+        delete=AsyncMock(return_value=SimpleNamespace(status_code=204)),
+    )
+    channel._stop_typing = AsyncMock()
+
+    await channel.send(
+        OutboundMessage(
+            channel="discord",
+            chat_id="1234567890",
+            content="Queued...",
+            metadata={"type": "status_update", "phase": "queued"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="discord",
+            chat_id="1234567890",
+            content="Thinking...",
+            metadata={"type": "status_update", "phase": "thinking"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="discord",
+            chat_id="1234567890",
+            content="Final answer",
+        )
+    )
+
+    deleted_ids = {str(call.args[0]).rsplit("/", 1)[-1] for call in channel._http.delete.await_args_list}
+    assert deleted_ids == {"status-1", "status-2"}

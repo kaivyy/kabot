@@ -1,12 +1,42 @@
 """Update tools for checking and applying Kabot updates."""
+import importlib.metadata as importlib_metadata
 import json
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
 import httpx
 from loguru import logger
+
 from kabot.agent.tools.base import Tool
+
+
+def _normalize_version(value: str | None) -> str:
+    """Normalize version values like 'v0.5.9' -> '0.5.9'."""
+    normalized = str(value or "").strip()
+    if normalized.lower().startswith("v"):
+        normalized = normalized[1:]
+    return normalized
+
+
+def _read_installed_version() -> str:
+    """Read currently installed package version from distribution metadata."""
+    for pkg_name in ("kabot", "kabot-ai"):
+        try:
+            version = importlib_metadata.version(pkg_name)
+            normalized = str(version or "").strip()
+            if normalized:
+                return normalized
+        except importlib_metadata.PackageNotFoundError:
+            continue
+        except Exception:
+            continue
+    try:
+        from kabot import __version__
+        return str(__version__)
+    except Exception:
+        return "unknown"
 
 
 class CheckUpdateTool(Tool):
@@ -69,11 +99,7 @@ RETURNS: JSON with current_version, latest_version, update_available, commits_be
 
     def _get_current_version(self) -> str:
         """Get current Kabot version."""
-        try:
-            from kabot import __version__
-            return __version__
-        except:
-            return "unknown"
+        return _read_installed_version()
 
     async def _fetch_github_release(self) -> dict:
         """Fetch latest release from GitHub API."""
@@ -107,9 +133,11 @@ RETURNS: JSON with current_version, latest_version, update_available, commits_be
 
     def _compare_versions(self, current: str, latest: str) -> bool:
         """Compare version strings."""
-        if current == "unknown" or latest == "unknown":
+        current_norm = _normalize_version(current)
+        latest_norm = _normalize_version(latest)
+        if current_norm == "unknown" or latest_norm == "unknown":
             return False
-        return current != latest
+        return current_norm != latest_norm
 
 
 class SystemUpdateTool(Tool):
@@ -150,13 +178,16 @@ RETURNS: JSON with success, updated_from, updated_to, restart_required"""
         try:
             install_method = self._detect_install_method()
             kabot_dir = Path(__file__).parent.parent.parent.parent
+            latest_version, release_url = await self._fetch_latest_release()
 
             # Check if can update
             if install_method == "git" and not self._can_update_git(kabot_dir):
                 return json.dumps({
                     "success": False,
                     "reason": "dirty_working_tree",
-                    "message": "Git working tree has uncommitted changes. Commit or stash first."
+                    "message": "Git working tree has uncommitted changes. Commit or stash first.",
+                    "notify_user": True,
+                    "notify_message": "Update failed: working tree is dirty. Commit or stash first.",
                 })
 
             current_version = self._get_current_version()
@@ -168,12 +199,41 @@ RETURNS: JSON with success, updated_from, updated_to, restart_required"""
                 success, message = self._pip_update()
 
             if not success:
-                return json.dumps({"success": False, "reason": "update_failed", "message": message})
+                return json.dumps({
+                    "success": False,
+                    "reason": "update_failed",
+                    "message": message,
+                    "latest_version": latest_version,
+                    "release_url": release_url,
+                    "notify_user": True,
+                    "notify_message": f"Update failed: {message}",
+                })
 
             # Install dependencies
             self._install_dependencies(kabot_dir)
 
             updated_version = self._get_current_version()
+            updated_norm = _normalize_version(updated_version)
+            latest_norm = _normalize_version(latest_version)
+
+            # For pip installs, enforce best-effort "latest release" guarantee when release data is available.
+            if install_method == "pip" and latest_norm and latest_norm != "unknown" and updated_norm != latest_norm:
+                mismatch_message = (
+                    f"Update completed but installed version ({updated_version}) does not match latest release "
+                    f"({latest_version}). Please retry or verify index mirror."
+                )
+                return json.dumps({
+                    "success": False,
+                    "reason": "not_latest_after_update",
+                    "message": mismatch_message,
+                    "updated_from": current_version,
+                    "updated_to": updated_version,
+                    "latest_version": latest_version,
+                    "release_url": release_url,
+                    "notify_user": True,
+                    "notify_message": mismatch_message,
+                    "restart_required": False,
+                })
 
             # Handle restart
             if confirm_restart:
@@ -186,22 +246,48 @@ RETURNS: JSON with success, updated_from, updated_to, restart_required"""
                 "success": True,
                 "updated_from": current_version,
                 "updated_to": updated_version,
-                "restart_required": True
+                "latest_version": latest_version,
+                "release_url": release_url,
+                "restart_required": True,
+                "notify_user": True,
+                "notify_message": (
+                    f"Update completed on server: {current_version} -> {updated_version}. "
+                    "Restart is required to fully apply the new runtime."
+                ),
             })
         except Exception as e:
             logger.error(f"Update error: {e}")
-            return json.dumps({"success": False, "reason": "exception", "message": str(e)})
+            return json.dumps({
+                "success": False,
+                "reason": "exception",
+                "message": str(e),
+                "notify_user": True,
+                "notify_message": f"Update failed: {e}",
+            })
 
     def _detect_install_method(self) -> str:
         kabot_dir = Path(__file__).parent.parent.parent.parent
         return "git" if (kabot_dir / ".git").exists() else "pip"
 
     def _get_current_version(self) -> str:
+        return _read_installed_version()
+
+    async def _fetch_latest_release(self) -> tuple[str, str]:
+        """Fetch latest release info for best-effort latest-version guarantee."""
         try:
-            from kabot import __version__
-            return __version__
-        except:
-            return "unknown"
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    "https://api.github.com/repos/kaivyy/kabot/releases/latest"
+                )
+                if response.status_code == 200:
+                    payload = response.json()
+                    return (
+                        str(payload.get("tag_name") or "unknown"),
+                        str(payload.get("html_url") or ""),
+                    )
+        except Exception as e:
+            logger.warning(f"GitHub latest-release check failed: {e}")
+        return "unknown", ""
 
     def _can_update_git(self, kabot_dir: Path) -> bool:
         """Check if git working tree is clean."""
@@ -214,7 +300,7 @@ RETURNS: JSON with success, updated_from, updated_to, restart_required"""
                 timeout=5
             )
             return result.returncode == 0 and not result.stdout.strip()
-        except:
+        except Exception:
             return False
 
     def _git_update(self, kabot_dir: Path) -> tuple[bool, str]:

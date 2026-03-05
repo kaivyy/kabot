@@ -41,11 +41,16 @@ WEATHER_TERMS = (
     "weather",
     "temperature",
     "forecast",
+    "degree",
+    "degrees",
+    "celsius",
+    "fahrenheit",
     # Indonesian
     "cuaca",
     "suhu",
     "temperatur",
     "prakiraan",
+    "derajat",
     # Malay
     "ramalan",
     # Thai
@@ -110,6 +115,12 @@ STOCK_TERMS = (
     "stock", "saham", "ticker", "price", "harga", "market", "ihsg", "idx",
     "market cap", "dividend", "yield", "ratio", "pe ratio",
     "bursa", "efek", "obligasi", "surat berharga",
+    # Multilingual anchors
+    "stocks", "equity", "shares",
+    "หุ้น", "ราคา หุ้น",
+    "株", "株価",
+    "股票", "股价",
+    "주식", "주가",
 )
 
 CRYPTO_TERMS = (

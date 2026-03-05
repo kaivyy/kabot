@@ -15,7 +15,6 @@ _ID_MARKERS = (
     "pengingat",
     "hapus",
     "ubah",
-    "tolong",
     "besok",
     "cuaca",
     "suhu",
@@ -36,11 +35,15 @@ _ID_MARKERS = (
     "aku",
     "kamu",
     "saya",
+    "berapa",
+    "sekarang",
+    "harga",
 )
 
 _MS_MARKERS = (
     "jadual",
     "peringatan",
+    "tetapkan",
     "esok",
     "minit",
     "padam",

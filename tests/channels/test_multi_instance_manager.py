@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from kabot.bus.queue import MessageBus
 from kabot.bus.events import OutboundMessage
+from kabot.bus.queue import MessageBus
 from kabot.channels.base import BaseChannel
 from kabot.channels.manager import ChannelManager
 from kabot.config.schema import ChannelInstance, ChannelsConfig, Config

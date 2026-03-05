@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 # Tool groups for easier policy management
 TOOL_GROUPS = {
     "fs": ["read_file", "write_file", "edit_file", "list_dir"],

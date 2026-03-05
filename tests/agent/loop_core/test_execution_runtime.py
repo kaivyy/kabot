@@ -136,6 +136,45 @@ async def test_process_tool_calls_preserves_assistant_tool_calls_with_content(tm
 
 
 @pytest.mark.asyncio
+async def test_process_tool_calls_emits_tool_phase_status_metadata(tmp_path):
+    bus = SimpleNamespace(publish_outbound=AsyncMock(return_value=None))
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=AsyncMock(return_value="done")),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: "Checking weather now...",
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=bus,
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek cuaca")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_weather", name="weather", arguments={"location": "Jakarta"})],
+    )
+
+    await process_tool_calls(loop, msg, [{"role": "user", "content": msg.content}], response, session=SimpleNamespace(metadata={}))
+
+    outbound = [call.args[0] for call in bus.publish_outbound.await_args_list]
+    tool_status = next(item for item in outbound if (item.metadata or {}).get("type") == "status_update")
+    assert tool_status.metadata.get("phase") == "tool"
+    assert tool_status.metadata.get("lane") == "status"
+
+
+@pytest.mark.asyncio
 async def test_call_llm_with_fallback_uses_immutable_chain_snapshot():
     provider = SimpleNamespace(chat=AsyncMock(side_effect=[Exception("401 unauthorized"), Exception("429 rate limit")]))
     loop = SimpleNamespace(
@@ -486,6 +525,139 @@ async def test_run_agent_loop_status_text_comes_from_i18n_translator(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_run_agent_loop_status_text_uses_runtime_locale_from_message_metadata(monkeypatch):
+    published = []
+    seen_locales = []
+
+    async def _publish(msg):
+        published.append(msg)
+
+    def _fake_t(key: str, text: str | None = None, **kwargs) -> str:
+        seen_locales.append(kwargs.get("locale"))
+        return f"<{kwargs.get('locale')}:{key}>"
+
+    monkeypatch.setattr(execution_runtime_module, "t", _fake_t)
+
+    raw_result = "weather: 28C"
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "weather",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="unused"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(side_effect=_publish)),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user",
+        content="cek cuaca",
+        metadata={"runtime_locale": "id"},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    statuses = [m for m in published if (m.metadata or {}).get("type") == "status_update"]
+    contents = [m.content for m in statuses]
+    assert result == raw_result
+    assert any(text.startswith("<id:runtime.status.") for text in contents)
+    assert "id" in seen_locales
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_skips_thinking_and_done_phases_when_status_lane_not_mutable(monkeypatch):
+    published = []
+
+    async def _publish(msg):
+        published.append(msg)
+
+    def _fake_t(key: str, text: str | None = None, **kwargs) -> str:
+        return f"<{key}>"
+
+    monkeypatch.setattr(execution_runtime_module, "t", _fake_t)
+
+    raw_result = "weather: 28C"
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "weather",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="unused"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(side_effect=_publish)),
+    )
+
+    msg = InboundMessage(
+        channel="whatsapp",
+        chat_id="chat-1",
+        sender_id="user",
+        content="cek cuaca",
+        metadata={"status_mutable_lane": False},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    statuses = [m for m in published if (m.metadata or {}).get("type") == "status_update"]
+    phases = [m.metadata.get("phase") for m in statuses]
+    assert result == raw_result
+    assert "tool" in phases
+    assert "thinking" not in phases
+    assert "done" not in phases
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_skips_initial_thinking_phase_when_already_bootstrapped_by_message_runtime(monkeypatch):
+    published = []
+
+    async def _publish(msg):
+        published.append(msg)
+
+    def _fake_t(key: str, text: str | None = None, **kwargs) -> str:
+        return f"<{key}>"
+
+    monkeypatch.setattr(execution_runtime_module, "t", _fake_t)
+
+    raw_result = "weather: 28C"
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "weather",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="unused"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(side_effect=_publish)),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user",
+        content="cek cuaca",
+        metadata={"suppress_initial_thinking_status": True},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    statuses = [m for m in published if (m.metadata or {}).get("type") == "status_update"]
+    phases = [m.metadata.get("phase") for m in statuses]
+    assert result == raw_result
+    assert "thinking" not in phases
+    assert "tool" in phases
+    assert "done" in phases
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_direct_process_memory_returns_raw_without_summary_chat():
     raw_result = "ProcessName Id RAM_MB\npython 123 420.0"
     bus = SimpleNamespace(publish_outbound=AsyncMock(return_value=None))
@@ -562,6 +734,58 @@ async def test_run_agent_loop_direct_web_search_returns_raw_without_summary_chat
 
     assert result == raw_result
     loop._execute_required_tool_fallback.assert_awaited_once_with("web_search", msg)
+    loop._plan_task.assert_not_awaited()
+    loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_direct_system_update_returns_raw_without_summary_chat():
+    raw_result = "Berhasil update dari 0.5.8 ke 0.5.9. Restart diperlukan."
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "system_update",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="update kabot sekarang")
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == raw_result
+    loop._execute_required_tool_fallback.assert_awaited_once_with("system_update", msg)
+    loop._plan_task.assert_not_awaited()
+    loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_direct_weather_returns_raw_without_summary_chat():
+    raw_result = "Purwokerto: [Cloudy] +27C\nSaran: Bawa payung."
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "weather",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek suhu purwokerto sekarang")
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == raw_result
+    loop._execute_required_tool_fallback.assert_awaited_once_with("weather", msg)
     loop._plan_task.assert_not_awaited()
     loop.provider.chat.assert_not_awaited()
 

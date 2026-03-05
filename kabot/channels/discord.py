@@ -16,6 +16,10 @@ from kabot.config.schema import DiscordConfig
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB
+_DISCORD_TYPING_INTERVAL_SECONDS = 8.0
+_DISCORD_TYPING_RETRY_DELAY_SECONDS = 3.0
+_DISCORD_TYPING_MAX_DURATION_SECONDS = 120.0
+_DISCORD_TYPING_MAX_CONSECUTIVE_FAILURES = 6
 
 
 class DiscordChannel(BaseChannel):
@@ -32,7 +36,17 @@ class DiscordChannel(BaseChannel):
         self._typing_tasks: dict[str, asyncio.Task] = {}
         # Keep one mutable status message per channel for phase updates.
         self._status_message_ids: dict[str, str] = {}
+        # Track stale status bubbles that must be cleaned before/after final reply.
+        self._stale_status_message_ids: dict[str, set[str]] = {}
         self._http: httpx.AsyncClient | None = None
+
+    def _allow_keepalive_passthrough(self) -> bool:
+        """Discord uses keepalive pulses to keep typing/status lane responsive."""
+        return True
+
+    def _uses_mutable_status_lane(self) -> bool:
+        """Discord updates a mutable status message across phases."""
+        return True
 
     @staticmethod
     def _is_transient_http_status(status_code: int) -> bool:
@@ -70,6 +84,8 @@ class DiscordChannel(BaseChannel):
         for task in self._typing_tasks.values():
             task.cancel()
         self._typing_tasks.clear()
+        self._status_message_ids.clear()
+        self._stale_status_message_ids.clear()
         if self._ws:
             await self._ws.close()
             self._ws = None
@@ -77,18 +93,51 @@ class DiscordChannel(BaseChannel):
             await self._http.aclose()
             self._http = None
 
+    def _mark_stale_status(self, chat_id: str, message_id: str | None) -> None:
+        if not message_id:
+            return
+        bucket = self._stale_status_message_ids.setdefault(str(chat_id), set())
+        bucket.add(str(message_id))
+
+    async def _cleanup_stale_status_messages(
+        self,
+        chat_id_str: str,
+        url: str,
+        headers: dict[str, str],
+    ) -> None:
+        stale_ids = sorted(self._stale_status_message_ids.get(chat_id_str, set()))
+        if not stale_ids or self._http is None:
+            return
+
+        remaining: set[str] = set()
+        for stale_id in stale_ids:
+            try:
+                response = await self._http.delete(f"{url}/{stale_id}", headers=headers)
+                if 200 <= response.status_code < 300 or response.status_code == 404:
+                    continue
+                if self._is_transient_http_status(response.status_code):
+                    remaining.add(stale_id)
+                    continue
+            except Exception:
+                # Keep stale id for retry on next final send.
+                remaining.add(stale_id)
+
+        if remaining:
+            self._stale_status_message_ids[chat_id_str] = remaining
+        else:
+            self._stale_status_message_ids.pop(chat_id_str, None)
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Discord REST API."""
         if not self._http:
             logger.warning("Discord HTTP client not initialized")
             return
+        chat_id_str = str(msg.chat_id)
         is_progress_update, _phase, _status_text = self._status_update_payload(msg)
-        if is_progress_update and self._should_skip_status_update(msg):
-            return
         if not is_progress_update:
             self._clear_status_state(msg.chat_id)
 
-        url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
+        url = f"{DISCORD_API_BASE}/channels/{chat_id_str}/messages"
         payload: dict[str, Any] = {"content": msg.content}
         components = None
         if isinstance(msg.metadata, dict):
@@ -106,51 +155,58 @@ class DiscordChannel(BaseChannel):
 
         try:
             if is_progress_update:
-                status_content = str(msg.content or "").strip()
-                if not status_content:
-                    return
-                status_payload = {"content": status_content}
-                existing_status_id = self._status_message_ids.get(msg.chat_id)
-                if existing_status_id:
-                    update_url = f"{url}/{existing_status_id}"
-                    try:
-                        response = await self._http.patch(update_url, headers=headers, json=status_payload)
-                        if 200 <= response.status_code < 300:
-                            return
-                        if response.status_code == 404:
-                            self._status_message_ids.pop(msg.chat_id, None)
-                        elif self._is_transient_http_status(response.status_code):
-                            return
-                        else:
-                            self._status_message_ids.pop(msg.chat_id, None)
-                    except Exception:
-                        # Keep existing status id on transport issues to avoid duplicate status bubbles.
+                await self._ensure_typing(chat_id_str)
+                async with self._get_chat_send_lock(chat_id_str):
+                    if self._should_skip_status_update(msg):
                         return
-                created = await self._http.post(url, headers=headers, json=status_payload)
-                if not (200 <= created.status_code < 300):
-                    logger.warning(
-                        f"Discord status update failed: status={created.status_code} chat_id={msg.chat_id}"
-                    )
-                    return
-                try:
-                    created_data = created.json()
-                except Exception:
-                    created_data = {}
-                created_id = created_data.get("id")
-                if created_id:
-                    self._status_message_ids[msg.chat_id] = str(created_id)
+                    status_content = str(msg.content or "").strip()
+                    if not status_content:
+                        return
+                    status_payload = {"content": status_content}
+                    existing_status_id = self._status_message_ids.get(chat_id_str)
+                    if existing_status_id:
+                        update_url = f"{url}/{existing_status_id}"
+                        try:
+                            response = await self._http.patch(update_url, headers=headers, json=status_payload)
+                            if 200 <= response.status_code < 300:
+                                return
+                            if response.status_code == 404:
+                                self._status_message_ids.pop(chat_id_str, None)
+                            elif self._is_transient_http_status(response.status_code):
+                                return
+                            else:
+                                self._mark_stale_status(chat_id_str, existing_status_id)
+                                self._status_message_ids.pop(chat_id_str, None)
+                        except Exception:
+                            # Keep existing status id on transport issues to avoid duplicate status bubbles.
+                            return
+                    created = await self._http.post(url, headers=headers, json=status_payload)
+                    if not (200 <= created.status_code < 300):
+                        logger.warning(
+                            f"Discord status update failed: status={created.status_code} chat_id={chat_id_str}"
+                        )
+                        return
+                    try:
+                        created_data = created.json()
+                    except Exception:
+                        created_data = {}
+                    created_id = created_data.get("id")
+                    if created_id:
+                        self._status_message_ids[chat_id_str] = str(created_id)
                 return
 
-            existing_status_id = self._status_message_ids.get(msg.chat_id)
-            if existing_status_id:
-                try:
-                    response = await self._http.delete(f"{url}/{existing_status_id}", headers=headers)
-                    if 200 <= response.status_code < 300 or response.status_code == 404:
-                        self._status_message_ids.pop(msg.chat_id, None)
-                    elif not self._is_transient_http_status(response.status_code):
-                        self._status_message_ids.pop(msg.chat_id, None)
-                except Exception:
-                    pass
+            async with self._get_chat_send_lock(chat_id_str):
+                existing_status_id = self._status_message_ids.get(chat_id_str)
+                if existing_status_id:
+                    try:
+                        response = await self._http.delete(f"{url}/{existing_status_id}", headers=headers)
+                        if 200 <= response.status_code < 300 or response.status_code == 404:
+                            self._status_message_ids.pop(chat_id_str, None)
+                        elif not self._is_transient_http_status(response.status_code):
+                            self._status_message_ids.pop(chat_id_str, None)
+                    except Exception:
+                        pass
+                await self._cleanup_stale_status_messages(chat_id_str, url, headers)
 
             # 1. Send text only
             if not msg.media:
@@ -377,14 +433,45 @@ class DiscordChannel(BaseChannel):
         async def typing_loop() -> None:
             url = f"{DISCORD_API_BASE}/channels/{channel_id}/typing"
             headers = {"Authorization": f"Bot {self.config.token}"}
+            loop = asyncio.get_running_loop()
+            started_at = loop.time()
+            consecutive_failures = 0
+            current_task = asyncio.current_task()
             while self._running:
+                if (loop.time() - started_at) >= float(_DISCORD_TYPING_MAX_DURATION_SECONDS):
+                    logger.debug(f"Discord typing TTL reached for channel={channel_id}; stopping loop")
+                    break
                 try:
+                    if self._http is None:
+                        break
                     await self._http.post(url, headers=headers)
+                    consecutive_failures = 0
                 except Exception:
-                    pass
-                await asyncio.sleep(8)
+                    consecutive_failures += 1
+                    if consecutive_failures >= int(_DISCORD_TYPING_MAX_CONSECUTIVE_FAILURES):
+                        logger.warning(
+                            "Discord typing stopped after repeated failures "
+                            f"channel={channel_id} failures={consecutive_failures}"
+                        )
+                        break
+                    await asyncio.sleep(float(_DISCORD_TYPING_RETRY_DELAY_SECONDS))
+                    continue
+                await asyncio.sleep(float(_DISCORD_TYPING_INTERVAL_SECONDS))
+
+            existing = self._typing_tasks.get(channel_id)
+            if existing is current_task:
+                self._typing_tasks.pop(channel_id, None)
 
         self._typing_tasks[channel_id] = asyncio.create_task(typing_loop())
+
+    async def _ensure_typing(self, channel_id: str) -> None:
+        """Ensure typing keepalive is active for progress updates."""
+        if not self._running:
+            return
+        task = self._typing_tasks.get(channel_id)
+        if task and not task.done():
+            return
+        await self._start_typing(channel_id)
 
     async def _stop_typing(self, channel_id: str) -> None:
         """Stop typing indicator for a channel."""

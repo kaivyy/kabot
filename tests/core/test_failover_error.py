@@ -3,9 +3,8 @@
 from kabot.core.failover_error import (
     FailoverError,
     resolve_failover_reason,
-    FailoverReason,
-    should_retry,
     should_fallback,
+    should_retry,
 )
 
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from kabot.memory.memory_backend import MemoryBackend
 
 from .ollama_embeddings import OllamaEmbeddingProvider
 from .reranker import Reranker
@@ -17,8 +18,6 @@ from .sentence_embeddings import SentenceEmbeddingProvider
 from .smart_router import SmartRouter
 from .sqlite_store import SQLiteMetadataStore
 
-
-from kabot.memory.memory_backend import MemoryBackend
 
 class HybridMemoryManager(MemoryBackend):
     """

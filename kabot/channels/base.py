@@ -1,5 +1,6 @@
 ﻿"""Base channel interface for chat platforms."""
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -33,6 +34,8 @@ class BaseChannel(ABC):
         # Per-chat status phase cache used to dedupe interim status updates.
         self._status_phase_cache: dict[str, str] = {}
         self._status_text_cache: dict[str, str] = {}
+        # Per-chat send locks prevent status/final message races.
+        self._chat_send_locks: dict[str, asyncio.Lock] = {}
 
     @abstractmethod
     async def start(self) -> None:
@@ -257,7 +260,7 @@ class BaseChannel(ABC):
         metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
         # Keepalive pulses must pass through even when phase/text are unchanged,
         # otherwise typing/activity indicators can appear stalled on long turns.
-        if bool(metadata.get("keepalive", False)):
+        if bool(metadata.get("keepalive", False)) and self._allow_keepalive_passthrough():
             return False
         if not text:
             return True
@@ -276,5 +279,32 @@ class BaseChannel(ABC):
         chat_key = str(chat_id)
         self._status_phase_cache.pop(chat_key, None)
         self._status_text_cache.pop(chat_key, None)
+
+    def _allow_keepalive_passthrough(self) -> bool:
+        """
+        Whether keepalive status pulses should bypass dedupe.
+
+        Default is False to prevent duplicate "processing" messages on channels
+        that do not support mutable status bubbles or typing activity hints.
+        """
+        return False
+
+    def _uses_mutable_status_lane(self) -> bool:
+        """
+        Whether status phases are rendered as a mutable lane (edit/update style).
+
+        Channels returning False should prefer minimal phase emissions to avoid
+        user-facing status spam.
+        """
+        return False
+
+    def _get_chat_send_lock(self, chat_id: str) -> asyncio.Lock:
+        """Return per-chat send lock for serialized outbound updates."""
+        chat_key = str(chat_id)
+        lock = self._chat_send_locks.get(chat_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._chat_send_locks[chat_key] = lock
+        return lock
 
 

@@ -5,12 +5,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telegram.error import Conflict, NetworkError
 
+import kabot.channels.telegram as telegram_module
 from kabot.bus.events import OutboundMessage
 from kabot.bus.queue import MessageBus
 from kabot.channels.telegram import TelegramChannel
 from kabot.config.schema import TelegramConfig
-from telegram.error import Conflict, NetworkError
 
 
 @pytest.mark.asyncio
@@ -217,6 +218,45 @@ async def test_telegram_typing_loop_recovers_after_transient_failure():
 
 
 @pytest.mark.asyncio
+async def test_telegram_typing_loop_stops_after_repeated_failures(monkeypatch):
+    monkeypatch.setattr(telegram_module, "_TELEGRAM_TYPING_RETRY_DELAY_SECONDS", 0.01)
+    monkeypatch.setattr(telegram_module, "_TELEGRAM_TYPING_MAX_CONSECUTIVE_FAILURES", 2)
+
+    async def _send_chat_action(*, chat_id: int, action: str) -> None:
+        raise RuntimeError("temporary telegram timeout")
+
+    channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
+    channel._app = SimpleNamespace(bot=SimpleNamespace(send_chat_action=_send_chat_action))
+
+    task = asyncio.create_task(channel._typing_loop("123456"))
+    channel._typing_tasks["123456"] = task
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert "123456" not in channel._typing_tasks
+
+
+@pytest.mark.asyncio
+async def test_telegram_typing_loop_stops_on_ttl(monkeypatch):
+    monkeypatch.setattr(telegram_module, "_TELEGRAM_TYPING_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(telegram_module, "_TELEGRAM_TYPING_MAX_DURATION_SECONDS", 0.03)
+
+    attempts: list[int] = []
+
+    async def _send_chat_action(*, chat_id: int, action: str) -> None:
+        attempts.append(chat_id)
+
+    channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
+    channel._app = SimpleNamespace(bot=SimpleNamespace(send_chat_action=_send_chat_action))
+
+    task = asyncio.create_task(channel._typing_loop("123456"))
+    channel._typing_tasks["123456"] = task
+    await asyncio.wait_for(task, timeout=1.0)
+
+    assert attempts
+    assert "123456" not in channel._typing_tasks
+
+
+@pytest.mark.asyncio
 async def test_telegram_polling_conflict_triggers_single_shutdown():
     channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
     channel._running = True
@@ -321,3 +361,92 @@ async def test_telegram_regular_message_transient_delete_keeps_status_message_fo
     channel._app.bot.delete_message.assert_awaited_once_with(chat_id=123456, message_id=42)
     channel._app.bot.send_message.assert_awaited_once()
     assert channel._status_message_ids["123456"] == 42
+
+
+@pytest.mark.asyncio
+async def test_telegram_final_message_cleans_stale_status_bubbles_after_edit_failure():
+    send_calls = [
+        SimpleNamespace(message_id=700),  # first status bubble
+        SimpleNamespace(message_id=701),  # replacement status bubble
+        SimpleNamespace(message_id=999),  # final assistant reply
+    ]
+    channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
+    channel._app = SimpleNamespace(
+        bot=SimpleNamespace(
+            send_message=AsyncMock(side_effect=send_calls),
+            edit_message_text=AsyncMock(side_effect=Exception("Bad Request: message is too old to edit")),
+            delete_message=AsyncMock(),
+        )
+    )
+    channel._stop_typing = MagicMock()
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="Queued...",
+            metadata={"type": "status_update", "phase": "queued"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="Thinking...",
+            metadata={"type": "status_update", "phase": "thinking"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="Final answer",
+        )
+    )
+
+    deleted_ids = {call.kwargs["message_id"] for call in channel._app.bot.delete_message.await_args_list}
+    assert deleted_ids == {700, 701}
+
+
+@pytest.mark.asyncio
+async def test_telegram_concurrent_status_updates_use_single_status_message():
+    class _Bot:
+        def __init__(self) -> None:
+            self.sent_calls = 0
+            self.edit_calls = 0
+
+        async def send_message(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.sent_calls += 1
+            # Keep first send in-flight longer so concurrent update races are visible.
+            await asyncio.sleep(0.02)
+            return SimpleNamespace(message_id=900 + self.sent_calls)
+
+        async def edit_message_text(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.edit_calls += 1
+            return None
+
+        async def delete_message(self, **kwargs):  # type: ignore[no-untyped-def]
+            return None
+
+    bot = _Bot()
+    channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
+    channel._app = SimpleNamespace(bot=bot)
+
+    status_1 = OutboundMessage(
+        channel="telegram",
+        chat_id="123456",
+        content="Queued...",
+        metadata={"type": "status_update", "phase": "queued"},
+    )
+    status_2 = OutboundMessage(
+        channel="telegram",
+        chat_id="123456",
+        content="Thinking...",
+        metadata={"type": "status_update", "phase": "thinking"},
+    )
+
+    await asyncio.gather(channel.send(status_1), channel.send(status_2))
+
+    assert bot.sent_calls == 1
+    assert bot.edit_calls >= 1
+    assert channel._status_message_ids["123456"] >= 901

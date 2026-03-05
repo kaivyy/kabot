@@ -1,5 +1,6 @@
 """Tests for MemoryBackend abstract protocol."""
 import pytest
+
 from kabot.memory.memory_backend import MemoryBackend
 
 

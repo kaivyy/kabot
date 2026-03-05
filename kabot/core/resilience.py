@@ -225,7 +225,7 @@ class ResilienceLayer:
                 "reason": FailoverReason,
             }
         """
-        from kabot.core.failover_error import resolve_failover_reason, should_retry, should_fallback
+        from kabot.core.failover_error import resolve_failover_reason, should_fallback
 
         error_str = str(error)
         reason = resolve_failover_reason(status=status_code, message=error_str)

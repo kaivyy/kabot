@@ -2,6 +2,7 @@
 
 from typing import Any, Awaitable, Callable
 
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
 from kabot.bus.events import OutboundMessage
 
@@ -72,12 +73,13 @@ class MessageTool(Tool):
     ) -> str:
         channel = channel or self._default_channel
         chat_id = chat_id or self._default_chat_id
+        context_text = str(kwargs.get("context_text") or content or "").strip()
 
         if not channel or not chat_id:
-            return "Error: No target channel/chat specified"
+            return i18n_t("message.no_target", context_text)
 
         if not self._send_callback:
-            return "Error: Message sending not configured"
+            return i18n_t("message.not_configured", context_text)
 
         msg = OutboundMessage(
             channel=channel,
@@ -90,4 +92,4 @@ class MessageTool(Tool):
             await self._send_callback(msg)
             return f"Message sent to {channel}:{chat_id}"
         except Exception as e:
-            return f"Error sending message: {str(e)}"
+            return i18n_t("message.send_error", context_text, error=str(e))

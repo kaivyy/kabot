@@ -27,6 +27,11 @@ class SlackChannel(BaseChannel):
         self._socket_client: SocketModeClient | None = None
         self._bot_user_id: str | None = None
         self._status_message_ts: dict[str, str] = {}
+        self._stale_status_message_ts: dict[str, set[str]] = {}
+
+    def _uses_mutable_status_lane(self) -> bool:
+        """Slack updates a mutable status message across phases."""
+        return True
 
     @staticmethod
     def _is_not_modified_update_error(exc: Exception) -> bool:
@@ -88,6 +93,8 @@ class SlackChannel(BaseChannel):
     async def stop(self) -> None:
         """Stop the Slack client."""
         self._running = False
+        self._status_message_ts.clear()
+        self._stale_status_message_ts.clear()
         if self._socket_client:
             try:
                 await self._socket_client.close()
@@ -95,14 +102,43 @@ class SlackChannel(BaseChannel):
                 logger.warning(f"Slack socket close failed: {e}")
             self._socket_client = None
 
+    def _mark_stale_status(self, chat_id: str, ts: str | None) -> None:
+        if not ts:
+            return
+        bucket = self._stale_status_message_ts.setdefault(str(chat_id), set())
+        bucket.add(str(ts))
+
+    async def _cleanup_stale_status_messages(self, chat_id_str: str, channel: str) -> None:
+        if not self._web_client:
+            return
+        stale_ts = sorted(self._stale_status_message_ts.get(chat_id_str, set()))
+        if not stale_ts:
+            return
+
+        remaining: set[str] = set()
+        for ts in stale_ts:
+            try:
+                await self._web_client.chat_delete(channel=channel, ts=ts)
+            except Exception as exc:
+                if self._is_message_not_found_error(exc):
+                    continue
+                if self._is_transient_update_error(exc):
+                    remaining.add(ts)
+                    continue
+                continue
+
+        if remaining:
+            self._stale_status_message_ts[chat_id_str] = remaining
+        else:
+            self._stale_status_message_ts.pop(chat_id_str, None)
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Slack."""
         if not self._web_client:
             logger.warning("Slack client not running")
             return
+        chat_id_str = str(msg.chat_id)
         is_status_update, _phase, status_text = self._status_update_payload(msg)
-        if is_status_update and self._should_skip_status_update(msg):
-            return
         if not is_status_update:
             self._clear_status_state(msg.chat_id)
 
@@ -110,49 +146,55 @@ class SlackChannel(BaseChannel):
         use_thread = bool(thread_ts)
         try:
             if is_status_update:
-                if not status_text:
-                    return
-                existing_ts = self._status_message_ts.get(msg.chat_id)
-                if existing_ts:
-                    try:
-                        await self._web_client.chat_update(
-                            channel=msg.chat_id,
-                            ts=existing_ts,
-                            text=status_text,
-                        )
+                async with self._get_chat_send_lock(chat_id_str):
+                    if self._should_skip_status_update(msg):
                         return
-                    except Exception as exc:
-                        if self._is_not_modified_update_error(exc):
+                    if not status_text:
+                        return
+                    existing_ts = self._status_message_ts.get(chat_id_str)
+                    if existing_ts:
+                        try:
+                            await self._web_client.chat_update(
+                                channel=msg.chat_id,
+                                ts=existing_ts,
+                                text=status_text,
+                            )
                             return
-                        if self._is_transient_update_error(exc):
-                            return
-                        if self._is_message_not_found_error(exc):
-                            self._status_message_ts.pop(msg.chat_id, None)
-                        else:
-                            self._status_message_ts.pop(msg.chat_id, None)
-                created = await self._web_client.chat_postMessage(
-                    channel=msg.chat_id,
-                    text=status_text,
-                    thread_ts=thread_ts if use_thread else None,
-                )
-                created_ts = created.get("ts") if isinstance(created, dict) else None
-                if isinstance(created_ts, str) and created_ts.strip():
-                    self._status_message_ts[msg.chat_id] = created_ts
+                        except Exception as exc:
+                            if self._is_not_modified_update_error(exc):
+                                return
+                            if self._is_transient_update_error(exc):
+                                return
+                            if self._is_message_not_found_error(exc):
+                                self._status_message_ts.pop(chat_id_str, None)
+                            else:
+                                self._mark_stale_status(chat_id_str, existing_ts)
+                                self._status_message_ts.pop(chat_id_str, None)
+                    created = await self._web_client.chat_postMessage(
+                        channel=msg.chat_id,
+                        text=status_text,
+                        thread_ts=thread_ts if use_thread else None,
+                    )
+                    created_ts = created.get("ts") if isinstance(created, dict) else None
+                    if isinstance(created_ts, str) and created_ts.strip():
+                        self._status_message_ts[chat_id_str] = created_ts
                 return
 
-            existing_ts = self._status_message_ts.get(msg.chat_id)
-            if existing_ts:
-                try:
-                    await self._web_client.chat_delete(
-                        channel=msg.chat_id,
-                        ts=existing_ts,
-                    )
-                    self._status_message_ts.pop(msg.chat_id, None)
-                except Exception as exc:
-                    if self._is_message_not_found_error(exc):
-                        self._status_message_ts.pop(msg.chat_id, None)
-                    elif not self._is_transient_update_error(exc):
-                        self._status_message_ts.pop(msg.chat_id, None)
+            async with self._get_chat_send_lock(chat_id_str):
+                existing_ts = self._status_message_ts.get(chat_id_str)
+                if existing_ts:
+                    try:
+                        await self._web_client.chat_delete(
+                            channel=msg.chat_id,
+                            ts=existing_ts,
+                        )
+                        self._status_message_ts.pop(chat_id_str, None)
+                    except Exception as exc:
+                        if self._is_message_not_found_error(exc):
+                            self._status_message_ts.pop(chat_id_str, None)
+                        elif not self._is_transient_update_error(exc):
+                            self._status_message_ts.pop(chat_id_str, None)
+                await self._cleanup_stale_status_messages(chat_id_str, msg.chat_id)
 
             # 1. Send files if present
             if msg.media:

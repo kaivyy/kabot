@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 
 from kabot.cli.skill_repo_installer import (
+    install_skill_from_git,
     list_skill_candidate_details_from_git,
     list_skill_candidates_from_git,
-    install_skill_from_git,
     resolve_skill_source_dir,
 )
 from kabot.utils.skill_validator import validate_skill_trust

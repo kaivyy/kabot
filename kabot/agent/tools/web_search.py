@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from html import unescape
 from typing import Any
 from urllib.parse import quote_plus
@@ -22,6 +23,26 @@ PERPLEXITY_ENDPOINT = "https://api.perplexity.ai/chat/completions"
 XAI_ENDPOINT = "https://api.x.ai/v1/responses"
 KIMI_ENDPOINT = "https://api.moonshot.ai/v1/chat/completions"
 GOOGLE_NEWS_RSS_ENDPOINT = "https://news.google.com/rss/search"
+_NEWS_QUERY_STOPWORDS = {
+    "news",
+    "latest",
+    "breaking",
+    "headline",
+    "headlines",
+    "berita",
+    "terbaru",
+    "terkini",
+    "cari",
+    "carikan",
+    "search",
+    "find",
+    "cek",
+    "check",
+    "update",
+    "now",
+    "sekarang",
+    "today",
+}
 
 
 class WebSearchTool(Tool):
@@ -91,6 +112,8 @@ class WebSearchTool(Tool):
             return "grok"
         if preferred == "kimi" and has_keys["kimi"]:
             return "kimi"
+        if preferred == "google_news_rss":
+            return "google_news_rss"
 
         if preferred and preferred not in {"brave", "perplexity", "grok", "kimi"}:
             logger.warning(f"Unknown web_search provider '{preferred}', using best available provider")
@@ -334,6 +357,27 @@ class WebSearchTool(Tool):
             deduped.append(url)
         return deduped
 
+    def _extract_relevance_terms(self, query: str) -> list[str]:
+        terms: list[str] = []
+        seen: set[str] = set()
+        for token in re.findall(r"[^\W_]+", str(query or "").lower(), flags=re.UNICODE):
+            cleaned = token.strip()
+            if len(cleaned) < 3:
+                continue
+            if cleaned in _NEWS_QUERY_STOPWORDS:
+                continue
+            if cleaned in seen:
+                continue
+            seen.add(cleaned)
+            terms.append(cleaned)
+        return terms
+
+    def _score_news_item(self, title: str, description: str, query_terms: list[str]) -> int:
+        if not query_terms:
+            return 0
+        haystack = f"{title} {description}".lower()
+        return sum(1 for term in query_terms if term in haystack)
+
     async def _search_google_news_rss(self, query: str, count: int) -> str:
         """Fallback search provider that works without API keys."""
         encoded_query = quote_plus(query)
@@ -350,11 +394,24 @@ class WebSearchTool(Tool):
         if not items:
             return f"No results for: {query}"
 
-        lines = [f"Results for: {query}\n"]
-        for index, item in enumerate(items[:count], 1):
+        query_terms = self._extract_relevance_terms(query)
+        ranked_items: list[tuple[int, int, str, str, str]] = []
+        for item_index, item in enumerate(items):
             title = unescape((item.findtext("title") or "").strip())
+            description = unescape((item.findtext("description") or "").strip())
+            score = self._score_news_item(title, description, query_terms)
             link = (item.findtext("link") or "").strip()
             pub_date = (item.findtext("pubDate") or "").strip()
+            ranked_items.append((score, item_index, title, link, pub_date))
+
+        if query_terms:
+            relevant = [entry for entry in ranked_items if entry[0] > 0]
+            if relevant:
+                ranked_items = relevant
+                ranked_items.sort(key=lambda item: (-item[0], item[1]))
+
+        lines = [f"Results for: {query}\n"]
+        for index, (_score, _item_index, title, link, pub_date) in enumerate(ranked_items[:count], 1):
             if title:
                 lines.append(f"{index}. {title}")
             if link:

@@ -1,11 +1,12 @@
+import base64
+import json
+
 import pytest
 from litellm.exceptions import InvalidRequestError
 
+import kabot.providers.litellm_provider as litellm_provider_mod
 from kabot.providers.base import LLMResponse
 from kabot.providers.litellm_provider import LiteLLMProvider
-import kabot.providers.litellm_provider as litellm_provider_mod
-import base64
-import json
 
 
 def test_qwen_portal_model_resolves_to_dashscope_model_name():

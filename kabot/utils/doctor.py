@@ -297,8 +297,8 @@ class KabotDoctor:
         }
 
     def _adapter_registry_status(self) -> dict[str, Any]:
-        from kabot.channels.adapters import AdapterRegistry
         from kabot.bus.queue import MessageBus
+        from kabot.channels.adapters import AdapterRegistry
 
         feature_flags = {}
         if self.config is not None:

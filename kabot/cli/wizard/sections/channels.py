@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
@@ -14,7 +12,6 @@ from rich.prompt import Confirm, Prompt
 from kabot.cli.fleet_templates import FLEET_TEMPLATES, get_template_roles
 from kabot.cli.wizard.channel_menu import build_channel_menu_options
 from kabot.cli.wizard.ui import ClackUI
-from kabot.config.loader import load_config
 from kabot.config.schema import AgentBinding, AgentBindingMatch, AgentConfig, ChannelInstance
 from kabot.utils.workspace_templates import ensure_workspace_templates
 
@@ -984,8 +981,8 @@ def _configure_whatsapp(self):
             get_bridge_dir,
             is_bridge_reachable,
             run_bridge_login,
-            stop_bridge_processes,
             start_bridge_background,
+            stop_bridge_processes,
         )
 
         # Check/Install Bridge

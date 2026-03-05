@@ -1,8 +1,7 @@
+import os
 from types import SimpleNamespace
 
 from kabot.cli.commands import _inject_skill_env
-
-import os
 
 
 def test_inject_skill_env_reads_entries_format(monkeypatch):

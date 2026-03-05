@@ -1,7 +1,6 @@
 """Tests for NullMemory (disabled backend)."""
-import pytest
-from kabot.memory.null_memory import NullMemory
 from kabot.memory.memory_backend import MemoryBackend
+from kabot.memory.null_memory import NullMemory
 
 
 def test_null_memory_is_memory_backend():

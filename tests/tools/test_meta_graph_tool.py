@@ -2,6 +2,7 @@
 
 import pytest
 
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.meta_graph import MetaGraphTool
 
 
@@ -102,3 +103,26 @@ async def test_meta_graph_uses_configured_env_token_name(monkeypatch):
 
     assert "creation-4" in out
     assert created["access_token"] == "token-from-custom-env"
+
+
+@pytest.mark.asyncio
+async def test_meta_graph_localizes_missing_access_token_error():
+    tool = MetaGraphTool(meta_config=None, client=None)
+    tool._resolve_access_token = lambda inline_token=None: ""  # type: ignore[assignment]
+    query = "kirim ke threads sekarang"
+
+    result = await tool.execute(action="threads_create", text=query, context_text=query)
+    assert result == i18n_t("meta.missing_access_token", query)
+
+
+@pytest.mark.asyncio
+async def test_meta_graph_localizes_unsupported_action_error():
+    class FakeClient:
+        async def request(self, method, path, payload):  # noqa: ANN001
+            return {"ok": True}
+
+    tool = MetaGraphTool(client=FakeClient())
+    query = "tolong jalankan aksi yang tidak ada"
+    result = await tool.execute(action="invalid_action", context_text=query)
+
+    assert result == i18n_t("meta.unsupported_action", query, action="invalid_action")

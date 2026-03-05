@@ -5,17 +5,14 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import questionary
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from kabot.cli.fleet_templates import FLEET_TEMPLATES, get_template_roles
-from kabot.cli.wizard.channel_menu import build_channel_menu_options
 from kabot.cli.wizard import skills_prompts
 from kabot.cli.wizard.ui import ClackUI
-from kabot.config.loader import load_config
 from kabot.config.skills_settings import (
     iter_skill_env_pairs,
     normalize_skills_settings,
@@ -25,7 +22,6 @@ from kabot.config.skills_settings import (
     set_skill_entry_enabled,
     set_skill_entry_env,
 )
-from kabot.config.schema import AgentConfig, ChannelInstance
 from kabot.utils.workspace_templates import ensure_workspace_templates
 
 console = Console()

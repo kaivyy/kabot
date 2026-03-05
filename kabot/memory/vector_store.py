@@ -3,8 +3,6 @@
 from dataclasses import dataclass
 
 
-
-
 @dataclass
 class SearchResult:
     """Result from vector search."""

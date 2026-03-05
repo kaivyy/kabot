@@ -1,8 +1,10 @@
-import pytest
 import asyncio
+
 import psutil
-import os
+import pytest
+
 from kabot.memory.sentence_embeddings import SentenceEmbeddingProvider
+
 
 @pytest.mark.asyncio
 async def test_no_memory_leak_after_unload():

@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 MOJIBAKE_MARKERS = ("â”", "âœ", "â—", "ðŸ", "Ã—")
 
 

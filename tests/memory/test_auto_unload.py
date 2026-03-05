@@ -1,6 +1,9 @@
-import pytest
 import asyncio
+
+import pytest
+
 from kabot.memory.sentence_embeddings import SentenceEmbeddingProvider
+
 
 @pytest.mark.asyncio
 async def test_model_auto_unloads_after_timeout():
@@ -56,7 +59,7 @@ async def test_auto_unload_disabled_when_timeout_zero():
 async def test_model_reloads_after_unload():
     """Model should reload after unload."""
     provider = SentenceEmbeddingProvider(auto_unload_seconds=0)
-    result1 = await provider.embed("test query 1")
+    await provider.embed("test query 1")
 
     provider.unload_model()
     assert not provider._is_subprocess_alive()

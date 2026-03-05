@@ -21,7 +21,7 @@ def test_memory_in_simple_menu_options():
 
 def test_configure_memory_updates_backend_without_crash(monkeypatch):
     """Memory config flow should persist backend selection without import errors."""
-    from kabot.cli.setup_wizard import SetupWizard, ClackUI
+    from kabot.cli.setup_wizard import ClackUI, SetupWizard
 
     wizard = SetupWizard()
     saved = {}
@@ -40,7 +40,7 @@ def test_configure_memory_updates_backend_without_crash(monkeypatch):
 
 def test_configure_memory_sets_embedding_provider_for_hybrid(monkeypatch):
     """Hybrid backend should prompt and store embedding provider selection."""
-    from kabot.cli.setup_wizard import SetupWizard, ClackUI
+    from kabot.cli.setup_wizard import ClackUI, SetupWizard
 
     wizard = SetupWizard()
     saved = {}

@@ -7,8 +7,10 @@ from kabot.bus.events import OutboundMessage
 from kabot.bus.queue import MessageBus
 from kabot.channels.bridge_ws import BridgeWebSocketChannel
 from kabot.channels.email import EmailChannel
+from kabot.channels.qq import QQChannel
 from kabot.channels.slack import SlackChannel
-from kabot.config.schema import EmailConfig, SignalConfig, SlackConfig
+from kabot.channels.whatsapp import WhatsAppChannel
+from kabot.config.schema import EmailConfig, QQConfig, SignalConfig, SlackConfig, WhatsAppConfig
 
 
 @pytest.mark.asyncio
@@ -108,6 +110,44 @@ async def test_slack_final_message_transient_delete_keeps_status_message_for_ret
 
 
 @pytest.mark.asyncio
+async def test_slack_final_message_cleans_stale_status_messages_after_update_failure():
+    channel = SlackChannel(SlackConfig(enabled=True, bot_token="x", app_token="y"), MessageBus())
+    channel._web_client = SimpleNamespace(
+        chat_postMessage=AsyncMock(side_effect=[{"ts": "status-1"}, {"ts": "status-2"}, {"ts": "final-1"}]),
+        chat_update=AsyncMock(side_effect=Exception("invalid_blocks")),
+        chat_delete=AsyncMock(return_value={}),
+        files_upload_v2=AsyncMock(return_value={}),
+    )
+
+    await channel.send(
+        OutboundMessage(
+            channel="slack",
+            chat_id="C123",
+            content="Queued...",
+            metadata={"type": "status_update", "phase": "queued"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="slack",
+            chat_id="C123",
+            content="Thinking...",
+            metadata={"type": "status_update", "phase": "thinking"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="slack",
+            chat_id="C123",
+            content="Final answer",
+        )
+    )
+
+    deleted_ts = {str(call.kwargs["ts"]) for call in channel._web_client.chat_delete.await_args_list}
+    assert deleted_ts == {"status-1", "status-2"}
+
+
+@pytest.mark.asyncio
 async def test_bridge_ws_status_updates_are_deduped():
     channel = BridgeWebSocketChannel(
         SignalConfig(enabled=True, bridge_url="ws://localhost:3011"),
@@ -158,6 +198,45 @@ async def test_bridge_ws_keepalive_status_updates_are_not_deduped():
 
     # Keepalive pulses should pass through for typing/activity continuity.
     assert channel._ws.send.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_keepalive_status_updates_are_deduped():
+    channel = WhatsAppChannel(WhatsAppConfig(enabled=True, bridge_url="ws://localhost:3001"), MessageBus())
+    channel._connected = True
+    channel._ws = SimpleNamespace(send=AsyncMock(return_value=None))
+
+    keepalive_status = OutboundMessage(
+        channel="whatsapp",
+        chat_id="6281234567890@s.whatsapp.net",
+        content="Processing your request...",
+        metadata={"type": "status_update", "phase": "thinking", "keepalive": True},
+    )
+
+    await channel.send(keepalive_status)
+    await channel.send(keepalive_status)
+
+    assert channel._ws.send.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_qq_keepalive_status_updates_are_deduped():
+    channel = QQChannel(QQConfig(enabled=True, app_id="app", secret="secret"), MessageBus())
+    channel._client = SimpleNamespace(
+        api=SimpleNamespace(post_c2c_message=AsyncMock(return_value=None))
+    )
+
+    keepalive_status = OutboundMessage(
+        channel="qq",
+        chat_id="user-1",
+        content="Processing your request...",
+        metadata={"type": "status_update", "phase": "thinking", "keepalive": True},
+    )
+
+    await channel.send(keepalive_status)
+    await channel.send(keepalive_status)
+
+    channel._client.api.post_c2c_message.assert_awaited_once()
 
 
 @pytest.mark.asyncio

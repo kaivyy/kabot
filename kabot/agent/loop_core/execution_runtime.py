@@ -47,68 +47,41 @@ def _runtime_quotas_cfg(loop: Any) -> Any:
     return getattr(loop, "runtime_quotas", None)
 
 
-_SHORT_CONFIRMATION_TOKENS = {
-    "ya",
-    "yes",
-    "y",
-    "iya",
-    "ok",
-    "oke",
-    "sip",
-    "sure",
-    "go ahead",
-    "do it",
-    "proceed",
-    "continue",
-    "lanjut",
-    "lanjutkan",
-    "jalankan",
-    "jalankan sekarang",
-    "lakukan",
-    "lakukan sekarang",
-    "ya lakukan",
-    "ambil sekarang",
-    "gas",
-    "gaskeun",
-    "terusin",
-    "teruskan",
-    "si",
-    "oui",
-    "ja",
-    "baik",
-}
-_SHORT_CONFIRMATION_PREFIXES = (
-    "ya ",
-    "yes ",
-    "ok ",
-    "oke ",
-    "lanjut ",
-    "jalankan ",
-    "lakukan ",
-    "ambil ",
-    "gas ",
-    "terusin ",
-    "teruskan ",
-)
-
-
 def _normalize_text(text: str) -> str:
     return " ".join(str(text or "").strip().lower().split())
 
 
-def _looks_like_short_confirmation(text: str) -> bool:
-    normalized = _normalize_text(text)
+def _is_low_information_turn(text: str, *, max_tokens: int, max_chars: int) -> bool:
+    raw_text = str(text or "")
+    normalized = _normalize_text(raw_text)
     if not normalized:
         return False
     if normalized.startswith("/"):
         return False
-    if normalized in _SHORT_CONFIRMATION_TOKENS:
-        return True
-    if len(normalized) <= 64 and any(
-        normalized.startswith(prefix) for prefix in _SHORT_CONFIRMATION_PREFIXES
-    ):
-        return True
-    return False
+    if "?" in raw_text:
+        return False
+    tokens = normalized.split()
+    if len(tokens) == 0 or len(tokens) > max_tokens:
+        return False
+    if len(normalized) > max_chars:
+        return False
+    if not any(ch.isspace() for ch in raw_text):
+        if re.search(r"[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\u0E00-\u0E7F\u0600-\u06FF]", raw_text):
+            if len(raw_text) >= 5:
+                return False
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if re.search(r"[@#]\w+", normalized):
+        return False
+    if re.search(r"\d{3,}", normalized):
+        return False
+    if any(ch in raw_text for ch in "{}[]=`\\/"):
+        return False
+    return True
+
+
+def _looks_like_short_confirmation(text: str) -> bool:
+    return _is_low_information_turn(text, max_tokens=4, max_chars=40)
 
 
 def _looks_like_live_research_query(text: str) -> bool:
@@ -449,6 +422,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     question_text = effective_content or raw_user_text
     question_word_count = len([part for part in question_text.split() if part])
     route_profile = str(message_metadata.get("route_profile", "")).strip().upper()
+    runtime_locale = str(message_metadata.get("runtime_locale") or "").strip() or None
     tools_registry = getattr(loop, "tools", None)
     has_tool = getattr(tools_registry, "has", None)
     resolved_required_tool = str(message_metadata.get("required_tool") or "").strip()
@@ -510,13 +484,23 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     def _phase_text(phase: str) -> str:
         key = f"runtime.status.{phase}"
         fallback = "runtime.status.thinking" if phase == "thinking" else key
-        translated = t(key, text=question_text)
+        translated = t(key, locale=runtime_locale, text=question_text)
         if translated == key and fallback != key:
-            return t(fallback, text=question_text)
+            return t(fallback, locale=runtime_locale, text=question_text)
         return translated
 
     async def _publish_phase(phase: str) -> None:
         if is_background_task:
+            return
+        mutable_status_lane = message_metadata.get("status_mutable_lane")
+        if (
+            isinstance(mutable_status_lane, bool)
+            and not mutable_status_lane
+            and phase in {"thinking", "done", "error"}
+        ):
+            return
+        if phase == "thinking" and bool(message_metadata.get("suppress_initial_thinking_status", False)):
+            message_metadata["suppress_initial_thinking_status"] = False
             return
         bus = getattr(loop, "bus", None)
         publish = getattr(bus, "publish_outbound", None)
@@ -604,14 +588,35 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
 
     # === FAST PATH: Execute deterministic tools directly, skip LLM tool-call step ===
     # This bypasses fragile tool-call protocols for deterministic intents.
-    _DIRECT_TOOLS = {"get_process_memory", "get_system_info", "cleanup_system", "web_search", "weather", "speedtest", "stock", "crypto", "server_monitor"}
-    _RAW_DIRECT_TOOLS = {"cleanup_system", "get_process_memory", "web_search"}
-    if required_tool and required_tool in _DIRECT_TOOLS:
+    direct_tools = {
+        "get_process_memory",
+        "get_system_info",
+        "cleanup_system",
+        "web_search",
+        "weather",
+        "speedtest",
+        "stock",
+        "crypto",
+        "server_monitor",
+        "check_update",
+        "system_update",
+    }
+    raw_direct_tools = {
+        "cleanup_system",
+        "get_process_memory",
+        "web_search",
+        "check_update",
+        "system_update",
+        "weather",
+        "stock",
+        "crypto",
+    }
+    if required_tool and required_tool in direct_tools:
         await _publish_phase("tool")
         direct_result = await loop._execute_required_tool_fallback(required_tool, msg)
         if direct_result is not None:
             logger.info(f"Direct tool execution (bypassed LLM tool-call): {required_tool}")
-            if required_tool in _RAW_DIRECT_TOOLS:
+            if required_tool in raw_direct_tools:
                 return await _return_with_phase(direct_result)
             # Read-only direct tools still get an LLM-formatted summary.
             summary_messages = messages + [
@@ -1188,7 +1193,10 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
         if status and status not in sent_status_updates:
             sent_status_updates.add(status)
             await loop.bus.publish_outbound(OutboundMessage(
-                channel=msg.channel, chat_id=msg.chat_id, content=f"_{status}_", metadata={"type": "status_update"}
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content=f"_{status}_",
+                metadata={"type": "status_update", "phase": "tool", "lane": "status"},
             ))
 
         if tc.name == "weather":

@@ -3,8 +3,7 @@
 import json
 from pathlib import Path
 
-from kabot.config.loader import load_config
-from kabot.config.loader import _migrate_config, convert_keys
+from kabot.config.loader import _migrate_config, convert_keys, load_config
 from kabot.config.schema import Config
 
 

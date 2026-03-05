@@ -223,7 +223,7 @@ If something fails, diagnose immediately and fix it â€” do not wait for use
 ## Cross-Platform Execution
 Detect the OS and use appropriate commands:
 - Windows: powershell.exe commands
-- Linux/VPS: bash commands 
+- Linux/VPS: bash commands
 - macOS: bash commands
 - Termux (Android): bash with limited command set
 Always check platform before writing scripts."""

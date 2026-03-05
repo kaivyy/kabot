@@ -1,7 +1,7 @@
 """Tests for multi-platform daemon support (Phase 12 - Task 37)."""
 
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from kabot.core.daemon import (

@@ -250,3 +250,156 @@ async def test_dashboard_status_api_uses_runtime_status_provider(aiohttp_client)
     assert data["model"] == "openai-codex/gpt-5.3-codex"
     assert data["channels_enabled"] == ["telegram"]
     assert data["cron_jobs"] == 2
+
+
+@pytest.mark.asyncio
+async def test_operator_write_scope_implies_dashboard_read(aiohttp_client):
+    """operator.write should be sufficient for read-only dashboard endpoints."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.write")
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+async def test_dashboard_control_api_requires_operator_write_scope(aiohttp_client):
+    """Control API should reject read-only operators and allow write operators."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    read_only_server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.read")
+    read_only_client = await aiohttp_client(read_only_server.app)
+    forbidden = await read_only_client.post(
+        "/dashboard/api/control",
+        json={"action": "runtime.ping"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert forbidden.status == 403
+
+    writable_server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.write")
+    writable_client = await aiohttp_client(writable_server.app)
+    unavailable = await writable_client.post(
+        "/dashboard/api/control",
+        json={"action": "runtime.ping"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert unavailable.status == 501
+    payload = await unavailable.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "control_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_control_api_executes_control_handler(aiohttp_client):
+    """Control API should call configured handler and return result payload."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    called = {}
+
+    def control_handler(action: str, args: dict):
+        called["action"] = action
+        called["args"] = args
+        return {"pong": True}
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        control_handler=control_handler,
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.post(
+        "/dashboard/api/control",
+        json={"action": "runtime.ping", "args": {"source": "test"}},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    payload = await resp.json()
+    assert payload["ok"] is True
+    assert payload["action"] == "runtime.ping"
+    assert payload["result"] == {"pong": True}
+    assert called == {"action": "runtime.ping", "args": {"source": "test"}}
+
+
+@pytest.mark.asyncio
+async def test_dashboard_control_partial_post_requires_operator_write_scope(aiohttp_client):
+    """HTMX control endpoint should enforce operator.write scope."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    read_server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.read")
+    read_client = await aiohttp_client(read_server.app)
+    forbidden = await read_client.post(
+        "/dashboard/partials/control",
+        data={"action": "runtime.ping"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert forbidden.status == 403
+
+    write_server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.write")
+    write_client = await aiohttp_client(write_server.app)
+    unavailable = await write_client.post(
+        "/dashboard/partials/control",
+        data={"action": "runtime.ping"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert unavailable.status == 501
+
+
+@pytest.mark.asyncio
+async def test_dashboard_supports_query_token_auth(aiohttp_client):
+    """Dashboard routes should allow token query auth for easier browser access."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.read")
+    client = await aiohttp_client(server.app)
+
+    unauthorized = await client.get("/dashboard")
+    assert unauthorized.status == 401
+
+    ok_page = await client.get("/dashboard?token=test-token")
+    assert ok_page.status == 200
+    page_text = await ok_page.text()
+    assert "token=test-token" in page_text
+
+    ok_partial = await client.get("/dashboard/partials/summary?token=test-token")
+    assert ok_partial.status == 200
+
+
+@pytest.mark.asyncio
+async def test_query_token_auth_not_allowed_for_webhook_ingress(aiohttp_client):
+    """Query token auth must stay dashboard-only and never authorize webhook ingress."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(bus=mock_bus, auth_token="test-token|ingress.write")
+    client = await aiohttp_client(server.app)
+
+    payload = {
+        "event": "message.received",
+        "data": {"content": "Hello", "sender": "external_system"},
+    }
+
+    resp = await client.post("/webhooks/trigger?token=test-token", json=payload)
+    assert resp.status == 401

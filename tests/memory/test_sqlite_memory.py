@@ -1,8 +1,9 @@
 """Tests for SQLiteMemory (lightweight backend)."""
+
 import pytest
-from pathlib import Path
-from kabot.memory.sqlite_memory import SQLiteMemory
+
 from kabot.memory.memory_backend import MemoryBackend
+from kabot.memory.sqlite_memory import SQLiteMemory
 
 
 @pytest.fixture

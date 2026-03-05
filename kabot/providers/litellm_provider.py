@@ -62,8 +62,14 @@ def _ensure_litellm_symbols() -> tuple[Any, Any, Any, Any, Any, Any]:
     if any(x is None for x in (APIConnectionError, InvalidRequestError, RateLimitError, ServiceUnavailableError)):
         from litellm.exceptions import (
             APIConnectionError as _APIConnectionError,
+        )
+        from litellm.exceptions import (
             InvalidRequestError as _InvalidRequestError,
+        )
+        from litellm.exceptions import (
             RateLimitError as _RateLimitError,
+        )
+        from litellm.exceptions import (
             ServiceUnavailableError as _ServiceUnavailableError,
         )
 

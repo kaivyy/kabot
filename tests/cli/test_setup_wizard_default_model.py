@@ -3,9 +3,9 @@ import json
 import shutil
 from pathlib import Path
 
-from kabot.providers.models import ModelMetadata
 from kabot.cli.setup_wizard import SetupWizard
 from kabot.config.schema import AgentModelConfig, AuthProfile
+from kabot.providers.models import ModelMetadata
 
 
 def test_apply_post_login_defaults_does_not_inject_hardcoded_models():

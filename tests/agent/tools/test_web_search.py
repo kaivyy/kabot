@@ -36,6 +36,31 @@ class _DummyAsyncClient:
         return _DummyResponse(self._payload, status_code=self._status_code)
 
 
+class _DummyTextResponse:
+    def __init__(self, text: str, status_code: int = 200):
+        self.text = text
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _DummyRSSAsyncClient:
+    def __init__(self, xml_text: str, status_code: int = 200):
+        self._xml_text = xml_text
+        self._status_code = status_code
+
+    async def __aenter__(self) -> "_DummyRSSAsyncClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def get(self, *args: Any, **kwargs: Any) -> _DummyTextResponse:
+        return _DummyTextResponse(self._xml_text, status_code=self._status_code)
+
+
 def test_web_search_provider_explicit_kimi():
     tool = WebSearchTool(provider="kimi", kimi_api_key="kimi-key-1")
     assert tool.provider == "kimi"
@@ -119,3 +144,37 @@ async def test_web_search_no_keys_falls_back_to_google_news_rss(monkeypatch):
 
     result = await tool.execute("berita terbaru 2026 sekarang", count=5)
     assert "rss-fallback-ok:berita terbaru 2026 sekarang:5" in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_google_news_rss_filters_irrelevant_items(monkeypatch):
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<rss><channel>
+  <item>
+    <title>US-Iran war risk rises after new strikes</title>
+    <link>https://example.com/relevant</link>
+    <pubDate>Wed, 04 Mar 2026 16:24:17 GMT</pubDate>
+  </item>
+  <item>
+    <title>100 Lagu tentang Persahabatan Bahasa Inggris</title>
+    <link>https://example.com/irrelevant</link>
+    <pubDate>Tue, 24 Jun 2025 07:00:00 GMT</pubDate>
+  </item>
+</channel></rss>"""
+
+    monkeypatch.setattr(
+        "kabot.agent.tools.web_search.httpx.AsyncClient",
+        lambda: _DummyRSSAsyncClient(xml),
+    )
+
+    tool = WebSearchTool(
+        provider="google_news_rss",
+        api_key="",
+        perplexity_api_key="",
+        xai_api_key="",
+        kimi_api_key="",
+    )
+
+    result = await tool._search_google_news_rss("carikan berita perang iran", count=5)
+    assert "US-Iran war risk rises after new strikes" in result
+    assert "100 Lagu tentang Persahabatan Bahasa Inggris" not in result

@@ -1,8 +1,9 @@
 """Tests for MemoryFactory — config-driven backend creation."""
+
 import pytest
-from pathlib import Path
-from kabot.memory.memory_factory import MemoryFactory
+
 from kabot.memory.memory_backend import MemoryBackend
+from kabot.memory.memory_factory import MemoryFactory
 from kabot.memory.null_memory import NullMemory
 
 

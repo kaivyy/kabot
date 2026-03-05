@@ -97,73 +97,75 @@ class WhatsAppChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through WhatsApp."""
-        is_status_update, _phase, _text = self._status_update_payload(msg)
-        if is_status_update and self._should_skip_status_update(msg):
-            return
-        if not is_status_update:
-            self._clear_status_state(msg.chat_id)
+        chat_id_str = str(msg.chat_id)
+        async with self._get_chat_send_lock(chat_id_str):
+            is_status_update, _phase, _text = self._status_update_payload(msg)
+            if is_status_update and self._should_skip_status_update(msg):
+                return
+            if not is_status_update:
+                self._clear_status_state(msg.chat_id)
 
-        if not self._ws or not self._connected:
-            logger.warning("WhatsApp bridge not connected")
-            return
+            if not self._ws or not self._connected:
+                logger.warning("WhatsApp bridge not connected")
+                return
 
-        try:
-            # 1. Send text if no media
-            if not msg.media and msg.content:
-                payload = {
-                    "type": "send",
-                    "to": msg.chat_id,
-                    "text": msg.content
-                }
-                await self._ws.send(json.dumps(payload))
+            try:
+                # 1. Send text if no media
+                if not msg.media and msg.content:
+                    payload = {
+                        "type": "send",
+                        "to": msg.chat_id,
+                        "text": msg.content
+                    }
+                    await self._ws.send(json.dumps(payload))
 
-            # 2. Send media if present
-            if msg.media:
-                for file_path in msg.media:
-                    try:
-                        import mimetypes
-                        from pathlib import Path
+                # 2. Send media if present
+                if msg.media:
+                    for file_path in msg.media:
+                        try:
+                            import mimetypes
+                            from pathlib import Path
 
-                        path = Path(file_path)
-                        if not path.exists():
-                            logger.error(f"File not found: {file_path}")
-                            continue
+                            path = Path(file_path)
+                            if not path.exists():
+                                logger.error(f"File not found: {file_path}")
+                                continue
 
-                        # Guess media type
-                        mime_type, _ = mimetypes.guess_type(file_path)
-                        media_type = "document"
-                        if mime_type:
-                            if mime_type.startswith("image/"):
-                                media_type = "image"
-                            elif mime_type.startswith("video/"):
-                                media_type = "video"
-                            elif mime_type.startswith("audio/"):
-                                media_type = "audio"
+                            # Guess media type
+                            mime_type, _ = mimetypes.guess_type(file_path)
+                            media_type = "document"
+                            if mime_type:
+                                if mime_type.startswith("image/"):
+                                    media_type = "image"
+                                elif mime_type.startswith("video/"):
+                                    media_type = "video"
+                                elif mime_type.startswith("audio/"):
+                                    media_type = "audio"
 
-                        # Construct absolute path for the bridge to read
-                        abs_path = str(path.resolve())
+                            # Construct absolute path for the bridge to read
+                            abs_path = str(path.resolve())
 
-                        payload = {
-                            "type": "send_media",
-                            "to": msg.chat_id,
-                            "mediaType": media_type,
-                            "path": abs_path,
-                            "caption": msg.content if msg.content and media_type != "audio" else None,
-                            "fileName": path.name,
-                            "mimetype": mime_type
-                        }
+                            payload = {
+                                "type": "send_media",
+                                "to": msg.chat_id,
+                                "mediaType": media_type,
+                                "path": abs_path,
+                                "caption": msg.content if msg.content and media_type != "audio" else None,
+                                "fileName": path.name,
+                                "mimetype": mime_type
+                            }
 
-                        logger.info(f"Sending media ({media_type}) to WhatsApp: {abs_path}")
-                        await self._ws.send(json.dumps(payload))
+                            logger.info(f"Sending media ({media_type}) to WhatsApp: {abs_path}")
+                            await self._ws.send(json.dumps(payload))
 
-                        # Clear content to avoid double sending if it was used as caption
-                        msg.content = ""
+                            # Clear content to avoid double sending if it was used as caption
+                            msg.content = ""
 
-                    except Exception as e:
-                        logger.error(f"Failed to send media {file_path}: {e}")
+                        except Exception as e:
+                            logger.error(f"Failed to send media {file_path}: {e}")
 
-        except Exception as e:
-            logger.error(f"Error sending WhatsApp message: {e}")
+            except Exception as e:
+                logger.error(f"Error sending WhatsApp message: {e}")
 
     async def _handle_bridge_message(self, raw: str) -> None:
         """Handle a message from the bridge."""

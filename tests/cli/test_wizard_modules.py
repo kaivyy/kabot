@@ -1,6 +1,5 @@
-from kabot.config.schema import ChannelInstance, ChannelsConfig
-
 from kabot.cli.wizard.channel_menu import build_channel_menu_options
+from kabot.config.schema import ChannelInstance, ChannelsConfig
 
 
 def test_build_channel_menu_options_uses_plain_status_labels():

@@ -6,17 +6,14 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
 
 import questionary
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from kabot.cli.fleet_templates import FLEET_TEMPLATES, get_template_roles
 from kabot.cli.wizard import ClackUI
-from kabot.cli.wizard.channel_menu import build_channel_menu_options
 from kabot.config.loader import load_config
-from kabot.config.schema import AgentConfig, ChannelInstance, Config
+from kabot.config.schema import Config
 from kabot.providers.registry import ModelRegistry
 from kabot.utils.environment import detect_runtime_environment, recommended_gateway_mode
 
@@ -28,6 +25,7 @@ if hasattr(sys.stdout, 'encoding') and sys.stdout.encoding:
             pass
 
 console = Console()
+__all__ = ["SetupWizard", "run_interactive_setup", "ClackUI", "Confirm", "Prompt"]
 
 class SetupWizard:
     def __init__(self):
@@ -393,9 +391,14 @@ class SetupWizard:
 
     # Section methods extracted to kabot.cli.wizard.setup_sections.
 
-from kabot.cli.wizard.setup_sections import bind_setup_wizard_sections
 
-bind_setup_wizard_sections(SetupWizard)
+def _bind_setup_wizard_sections() -> None:
+    from kabot.cli.wizard.setup_sections import bind_setup_wizard_sections
+
+    bind_setup_wizard_sections(SetupWizard)
+
+
+_bind_setup_wizard_sections()
 
 
 def run_interactive_setup() -> Config:

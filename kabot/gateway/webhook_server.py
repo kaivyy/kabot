@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import html
+import inspect
+import json
 import time
 from typing import Any, Callable
+from urllib.parse import quote
 
 from aiohttp import web
 
@@ -14,6 +17,17 @@ from kabot.integrations.meta_webhook import parse_meta_inbound, verify_meta_sign
 
 
 class WebhookServer:
+    _ROUTE_SCOPE_RULES: tuple[tuple[str, str, str], ...] = (
+        ("GET", "/dashboard", "operator.read"),
+        ("GET", "/dashboard/partials/*", "operator.read"),
+        ("GET", "/dashboard/api/status", "operator.read"),
+        ("GET", "/dashboard/api/control", "operator.read"),
+        ("POST", "/dashboard/partials/control", "operator.write"),
+        ("POST", "/dashboard/api/control", "operator.write"),
+        ("POST", "/webhooks/trigger", "ingress.write"),
+        ("POST", "/webhooks/meta", "ingress.write"),
+    )
+
     def __init__(
         self,
         bus: MessageBus,
@@ -23,6 +37,7 @@ class WebhookServer:
         strict_transport_security: bool = False,
         strict_transport_security_value: str = "max-age=31536000; includeSubDomains",
         status_provider: Callable[[], dict[str, Any]] | None = None,
+        control_handler: Callable[[str, dict[str, Any]], Any] | None = None,
     ):
         self.bus = bus
         self.auth_token, self.auth_scopes = self._parse_auth_token(auth_token)
@@ -36,6 +51,7 @@ class WebhookServer:
         ) or "max-age=31536000; includeSubDomains"
         self.started_at = time.time()
         self.status_provider = status_provider
+        self.control_handler = control_handler
 
         @web.middleware
         async def security_headers_middleware(
@@ -52,7 +68,11 @@ class WebhookServer:
         self.app.router.add_get("/dashboard", self.handle_dashboard)
         self.app.router.add_get("/dashboard/partials/summary", self.handle_dashboard_summary)
         self.app.router.add_get("/dashboard/partials/runtime", self.handle_dashboard_runtime)
+        self.app.router.add_get("/dashboard/partials/control", self.handle_dashboard_control)
         self.app.router.add_get("/dashboard/api/status", self.handle_dashboard_status_api)
+        self.app.router.add_get("/dashboard/api/control", self.handle_dashboard_control_info)
+        self.app.router.add_post("/dashboard/api/control", self.handle_dashboard_control_api)
+        self.app.router.add_post("/dashboard/partials/control", self.handle_dashboard_control_action)
         self.app.router.add_post("/webhooks/trigger", self.handle_trigger)
         self.app.router.add_get("/webhooks/meta", self.handle_meta_verify)
         self.app.router.add_post("/webhooks/meta", self.handle_meta_event)
@@ -79,6 +99,19 @@ class WebhookServer:
             return ""
         return auth_header[len(prefix):].strip()
 
+    def _allow_query_token_auth(self, request: web.Request) -> bool:
+        path = str(getattr(request, "path", "") or "")
+        return path.startswith("/dashboard")
+
+    def _extract_query_token(self, request: web.Request) -> str:
+        if not self._allow_query_token_auth(request):
+            return ""
+        for key in ("token", "auth", "access_token"):
+            value = str(request.query.get(key, "") or "").strip()
+            if value:
+                return value
+        return ""
+
     def _has_scope(self, required_scope: str) -> bool:
         if not required_scope:
             return True
@@ -86,17 +119,24 @@ class WebhookServer:
             # Backward compatibility: plain bearer token grants full access.
             return True
         normalized = str(required_scope).strip().lower()
+        family = normalized.split(".", 1)[0] if "." in normalized else normalized
+        write_variant = f"{family}.write" if normalized.endswith(".read") else ""
         return (
             normalized in self.auth_scopes
             or "*" in self.auth_scopes
             or "admin" in self.auth_scopes
             or "operator.admin" in self.auth_scopes
+            or f"{family}.*" in self.auth_scopes
+            or f"{family}.admin" in self.auth_scopes
+            or bool(write_variant and write_variant in self.auth_scopes)
         )
 
     def _authorize(self, request: web.Request, required_scope: str = "") -> web.Response | None:
         if not self.auth_token:
             return None
         bearer = self._extract_bearer(request)
+        if not bearer:
+            bearer = self._extract_query_token(request)
         if bearer != self.auth_token:
             return web.Response(text="Unauthorized", status=401)
         if required_scope and not self._has_scope(required_scope):
@@ -119,6 +159,31 @@ class WebhookServer:
 
         return False
 
+    def _required_scope_for_route(self, request: web.Request) -> str:
+        method = str(getattr(request, "method", "")).strip().upper()
+        path = str(getattr(request, "path", "")).strip()
+        if not method or not path:
+            return ""
+        for rule_method, rule_path, rule_scope in self._ROUTE_SCOPE_RULES:
+            if method != rule_method:
+                continue
+            if rule_path.endswith("*"):
+                if path.startswith(rule_path[:-1]):
+                    return rule_scope
+                continue
+            if path == rule_path:
+                return rule_scope
+        return ""
+
+    def _authorize_route(self, request: web.Request) -> web.Response | None:
+        return self._authorize(request, required_scope=self._required_scope_for_route(request))
+
+    def _dashboard_token_suffix(self, request: web.Request) -> str:
+        token = self._extract_query_token(request)
+        if not token:
+            return ""
+        return f"?token={quote(token, safe='')}"
+
     def _read_dashboard_status(self) -> dict[str, Any]:
         payload: dict[str, Any]
         if callable(self.status_provider):
@@ -136,10 +201,11 @@ class WebhookServer:
         raise web.HTTPFound("/dashboard")
 
     async def handle_dashboard(self, request: web.Request) -> web.Response:
-        unauthorized = self._authorize(request, required_scope="operator.read")
+        unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
 
+        token_suffix = self._dashboard_token_suffix(request)
         body = """<!doctype html>
 <html lang="en">
 <head>
@@ -166,23 +232,29 @@ class WebhookServer:
     </div>
     <div
       class="card"
-      hx-get="/dashboard/partials/summary"
+      hx-get="/dashboard/partials/summary__TOKEN_SUFFIX__"
       hx-trigger="load, every 5s"
       hx-swap="innerHTML"
     >Loading summary...</div>
     <div
       class="card"
-      hx-get="/dashboard/partials/runtime"
+      hx-get="/dashboard/partials/runtime__TOKEN_SUFFIX__"
       hx-trigger="load, every 5s"
       hx-swap="innerHTML"
     >Loading runtime...</div>
+    <div
+      class="card"
+      hx-get="/dashboard/partials/control__TOKEN_SUFFIX__"
+      hx-trigger="load, every 15s"
+      hx-swap="innerHTML"
+    >Loading control...</div>
   </main>
 </body>
-</html>"""
+</html>""".replace("__TOKEN_SUFFIX__", token_suffix)
         return web.Response(text=body, content_type="text/html")
 
     async def handle_dashboard_summary(self, request: web.Request) -> web.Response:
-        unauthorized = self._authorize(request, required_scope="operator.read")
+        unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
 
@@ -210,7 +282,7 @@ class WebhookServer:
         return web.Response(text=fragment, content_type="text/html")
 
     async def handle_dashboard_runtime(self, request: web.Request) -> web.Response:
-        unauthorized = self._authorize(request, required_scope="operator.read")
+        unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
 
@@ -220,7 +292,7 @@ class WebhookServer:
             for key, value in status.items()
             if key not in {"status", "uptime_seconds", "channels_enabled", "cron_jobs", "model"}
         }
-        pretty = html.escape(str(extra or {}))
+        pretty = html.escape(json.dumps(extra or {}, ensure_ascii=False, indent=2))
         fragment = (
             "<h2>Runtime Details</h2>"
             "<div class='muted'>Structured payload from runtime status provider.</div>"
@@ -229,14 +301,129 @@ class WebhookServer:
         return web.Response(text=fragment, content_type="text/html")
 
     async def handle_dashboard_status_api(self, request: web.Request) -> web.Response:
-        unauthorized = self._authorize(request, required_scope="operator.read")
+        unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
         return web.json_response(self._read_dashboard_status())
 
+    async def handle_dashboard_control(self, request: web.Request) -> web.Response:
+        unauthorized = self._authorize_route(request)
+        if unauthorized is not None:
+            return unauthorized
+
+        token_suffix = self._dashboard_token_suffix(request)
+        controls_enabled = callable(self.control_handler)
+        description = (
+            "Control actions are available."
+            if controls_enabled
+            else "Control actions are disabled (no control handler configured)."
+        )
+        button_disabled = "" if controls_enabled else " disabled"
+        fragment = (
+            "<h2>Control</h2>"
+            f"<div class='muted'>{html.escape(description)}</div>"
+            f"<form hx-post='/dashboard/partials/control{token_suffix}' hx-target='#control-result' hx-swap='innerHTML'>"
+            "<input type='hidden' name='action' value='runtime.ping' />"
+            f"<button type='submit'{button_disabled}>Ping Runtime</button>"
+            "</form>"
+            "<div id='control-result' class='mono muted' style='margin-top:8px;'></div>"
+        )
+        return web.Response(text=fragment, content_type="text/html")
+
+    def _normalize_control_action(self, action: Any) -> str:
+        normalized = str(action or "").strip().lower()
+        if not normalized:
+            return ""
+        allowed = set("abcdefghijklmnopqrstuvwxyz0123456789._-")
+        if any(ch not in allowed for ch in normalized):
+            return ""
+        return normalized
+
+    async def _run_control_action(
+        self,
+        action: str,
+        args: dict[str, Any] | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        normalized_action = self._normalize_control_action(action)
+        if not normalized_action:
+            return 400, {
+                "ok": False,
+                "error": "invalid_action",
+                "message": "Missing or invalid control action",
+            }
+
+        payload_args = args if isinstance(args, dict) else {}
+        if not callable(self.control_handler):
+            return 501, {
+                "ok": False,
+                "action": normalized_action,
+                "error": "control_unavailable",
+                "message": "Control handler is not configured",
+            }
+
+        try:
+            maybe_result = self.control_handler(normalized_action, payload_args)
+            if inspect.isawaitable(maybe_result):
+                maybe_result = await maybe_result
+            return 200, {
+                "ok": True,
+                "action": normalized_action,
+                "result": maybe_result if maybe_result is not None else {},
+            }
+        except Exception as exc:
+            return 500, {
+                "ok": False,
+                "action": normalized_action,
+                "error": "control_failed",
+                "message": str(exc),
+            }
+
+    async def handle_dashboard_control_info(self, request: web.Request) -> web.Response:
+        unauthorized = self._authorize_route(request)
+        if unauthorized is not None:
+            return unauthorized
+        return web.json_response(
+            {
+                "enabled": callable(self.control_handler),
+                "actions": ["runtime.ping"],
+            }
+        )
+
+    async def handle_dashboard_control_api(self, request: web.Request) -> web.Response:
+        unauthorized = self._authorize_route(request)
+        if unauthorized is not None:
+            return unauthorized
+
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        status_code, result = await self._run_control_action(
+            action=payload.get("action", ""),
+            args=payload.get("args", {}) if isinstance(payload, dict) else {},
+        )
+        return web.json_response(result, status=status_code)
+
+    async def handle_dashboard_control_action(self, request: web.Request) -> web.Response:
+        unauthorized = self._authorize_route(request)
+        if unauthorized is not None:
+            return unauthorized
+
+        data = await request.post()
+        status_code, result = await self._run_control_action(
+            action=data.get("action", ""),
+            args={},
+        )
+        message = html.escape(json.dumps(result, ensure_ascii=False))
+        if status_code == 200:
+            body = f"<span style='color:#065f46;'>{message}</span>"
+        else:
+            body = f"<span style='color:#b91c1c;'>{message}</span>"
+        return web.Response(text=body, content_type="text/html", status=status_code)
+
     async def handle_trigger(self, request: web.Request) -> web.Response:
         """Handle incoming webhook trigger."""
-        unauthorized = self._authorize(request, required_scope="ingress.write")
+        unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
 
@@ -286,7 +473,7 @@ class WebhookServer:
 
     async def handle_meta_event(self, request: web.Request) -> web.Response:
         """Handle Meta webhook event ingress."""
-        unauthorized = self._authorize(request, required_scope="ingress.write")
+        unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
 

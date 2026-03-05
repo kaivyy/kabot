@@ -3,19 +3,13 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
-from typing import Any, Optional
 
 import questionary
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from kabot.cli.fleet_templates import FLEET_TEMPLATES, get_template_roles
-from kabot.cli.wizard.channel_menu import build_channel_menu_options
 from kabot.cli.wizard.ui import ClackUI
-from kabot.config.loader import load_config
-from kabot.config.schema import AgentConfig, ChannelInstance
 
 console = Console()
 

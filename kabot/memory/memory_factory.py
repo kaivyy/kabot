@@ -8,7 +8,6 @@ from loguru import logger
 
 from kabot.memory.memory_backend import MemoryBackend
 
-
 # Supported backends — add new entries here to register new engines.
 SUPPORTED_BACKENDS = {"hybrid", "sqlite_only", "disabled"}
 DEFAULT_AUTO_UNLOAD_SECONDS = 300

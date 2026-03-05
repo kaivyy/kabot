@@ -184,44 +184,46 @@ class DingTalkChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through DingTalk."""
-        is_status_update, _phase, _status_text = self._status_update_payload(msg)
-        if is_status_update and self._should_skip_status_update(msg):
-            return
-        if not is_status_update:
-            self._clear_status_state(msg.chat_id)
+        chat_id_str = str(msg.chat_id)
+        async with self._get_chat_send_lock(chat_id_str):
+            is_status_update, _phase, _status_text = self._status_update_payload(msg)
+            if is_status_update and self._should_skip_status_update(msg):
+                return
+            if not is_status_update:
+                self._clear_status_state(msg.chat_id)
 
-        token = await self._get_access_token()
-        if not token:
-            return
+            token = await self._get_access_token()
+            if not token:
+                return
 
-        # oToMessages/batchSend: sends to individual users (private chat)
-        # https://open.dingtalk.com/document/orgapp/robot-batch-send-messages
-        url = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
+            # oToMessages/batchSend: sends to individual users (private chat)
+            # https://open.dingtalk.com/document/orgapp/robot-batch-send-messages
+            url = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
 
-        headers = {"x-acs-dingtalk-access-token": token}
+            headers = {"x-acs-dingtalk-access-token": token}
 
-        data = {
-            "robotCode": self.config.client_id,
-            "userIds": [msg.chat_id],  # chat_id is the user's staffId
-            "msgKey": "sampleMarkdown",
-            "msgParam": json.dumps({
-                "text": msg.content,
-                "title": "Nanobot Reply",
-            }),
-        }
+            data = {
+                "robotCode": self.config.client_id,
+                "userIds": [msg.chat_id],  # chat_id is the user's staffId
+                "msgKey": "sampleMarkdown",
+                "msgParam": json.dumps({
+                    "text": msg.content,
+                    "title": "Nanobot Reply",
+                }),
+            }
 
-        if not self._http:
-            logger.warning("DingTalk HTTP client not initialized, cannot send")
-            return
+            if not self._http:
+                logger.warning("DingTalk HTTP client not initialized, cannot send")
+                return
 
-        try:
-            resp = await self._http.post(url, json=data, headers=headers)
-            if resp.status_code != 200:
-                logger.error(f"DingTalk send failed: {resp.text}")
-            else:
-                logger.debug(f"DingTalk message sent to {msg.chat_id}")
-        except Exception as e:
-            logger.error(f"Error sending DingTalk message: {e}")
+            try:
+                resp = await self._http.post(url, json=data, headers=headers)
+                if resp.status_code != 200:
+                    logger.error(f"DingTalk send failed: {resp.text}")
+                else:
+                    logger.debug(f"DingTalk message sent to {msg.chat_id}")
+            except Exception as e:
+                logger.error(f"Error sending DingTalk message: {e}")
 
     async def _on_message(self, content: str, sender_id: str, sender_name: str) -> None:
         """Handle incoming message (called by NanobotDingTalkHandler).

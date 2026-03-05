@@ -1,9 +1,7 @@
 """Tests for tool loop detection."""
 
-import pytest
 from kabot.agent.loop_core.tool_loop_detection import (
     LoopDetector,
-    LoopDetectionResult,
 )
 
 
