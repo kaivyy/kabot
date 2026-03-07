@@ -89,6 +89,39 @@ def test_next_cli_reminder_delay_seconds_respects_max_window():
     shutil.rmtree(store_path.parent, ignore_errors=True)
 
 
+def test_next_cli_reminder_delay_seconds_can_filter_by_job_ids():
+    store_path = _make_store_path()
+    cron = CronService(store_path)
+
+    now_ms = int(time.time() * 1000)
+    first_job = cron.add_job(
+        name="first",
+        schedule=CronSchedule(kind="at", at_ms=now_ms + 2000),
+        message="first",
+        deliver=True,
+        channel="cli",
+        to="direct",
+    )
+    cron.add_job(
+        name="second",
+        schedule=CronSchedule(kind="at", at_ms=now_ms + 20000),
+        message="second",
+        deliver=True,
+        channel="cli",
+        to="direct",
+    )
+
+    delay = _next_cli_reminder_delay_seconds(
+        cron,
+        max_wait_seconds=10,
+        job_ids={first_job.id},
+    )
+    assert delay is not None
+    assert 0 <= delay <= 10
+
+    shutil.rmtree(store_path.parent, ignore_errors=True)
+
+
 def test_strip_reminder_context_removes_history_suffix():
     message = "ingat makan\n\nRecent context:\n- User: halo\n- Assistant: ok"
     assert _strip_reminder_context(message) == "ingat makan"

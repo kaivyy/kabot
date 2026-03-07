@@ -38,6 +38,8 @@ _ID_MARKERS = (
     "berapa",
     "sekarang",
     "harga",
+    "berangin",
+    "angin",
 )
 
 _MS_MARKERS = (

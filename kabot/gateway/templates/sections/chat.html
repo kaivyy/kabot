@@ -1,0 +1,12 @@
+<section id="sec-chat" class="tab-section">
+    <div class="config-section-hero">
+        <h2 class="config-section-hero__title">Interactive Chat</h2>
+        <p class="config-section-hero__desc">Send prompts directly to the primary agent session from this gateway view.
+        </p>
+    </div>
+    <div id="panel-chat" class="config-section-card"
+        style="height: calc(100vh - 180px); display:flex; flex-direction:column;"
+        hx-get="/dashboard/partials/chat__TOKEN_SUFFIX__" hx-trigger="load" hx-swap="innerHTML">
+        <div style="padding:22px; color:var(--muted); font-size:13px;">Loading chat...</div>
+    </div>
+</section>

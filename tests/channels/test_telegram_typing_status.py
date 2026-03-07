@@ -338,7 +338,7 @@ async def test_telegram_status_keepalive_transient_edit_error_keeps_existing_sta
 
 
 @pytest.mark.asyncio
-async def test_telegram_regular_message_transient_delete_keeps_status_message_for_retry():
+async def test_telegram_regular_message_transient_delete_clears_active_status_slot():
     channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
     channel._app = SimpleNamespace(
         bot=SimpleNamespace(
@@ -358,9 +358,10 @@ async def test_telegram_regular_message_transient_delete_keeps_status_message_fo
         )
     )
 
-    channel._app.bot.delete_message.assert_awaited_once_with(chat_id=123456, message_id=42)
+    # One delete attempt for active status + one best-effort retry from stale-cleanup queue.
+    assert channel._app.bot.delete_message.await_count == 2
     channel._app.bot.send_message.assert_awaited_once()
-    assert channel._status_message_ids["123456"] == 42
+    assert "123456" not in channel._status_message_ids
 
 
 @pytest.mark.asyncio

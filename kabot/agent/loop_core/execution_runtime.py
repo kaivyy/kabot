@@ -12,7 +12,13 @@ from typing import Any
 
 from loguru import logger
 
+from kabot.agent.cron_fallback_nlp import required_tool_for_query
 from kabot.agent.fallback_i18n import t
+from kabot.agent.tools.stock import (
+    extract_crypto_ids,
+    extract_stock_name_candidates,
+    extract_stock_symbols,
+)
 from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.core.failover_error import resolve_failover_reason
 from kabot.utils.text_safety import ensure_utf8_text
@@ -45,6 +51,11 @@ def _runtime_observability_cfg(loop: Any) -> Any:
 
 def _runtime_quotas_cfg(loop: Any) -> Any:
     return getattr(loop, "runtime_quotas", None)
+
+
+def _should_skip_memory_persistence(msg: InboundMessage) -> bool:
+    metadata = getattr(msg, "metadata", None)
+    return bool(isinstance(metadata, dict) and metadata.get("probe_mode"))
 
 
 def _normalize_text(text: str) -> str:
@@ -123,6 +134,360 @@ def _looks_like_live_research_query(text: str) -> bool:
         if any(marker in normalized for marker in news_context_markers):
             return True
     return False
+
+
+_GUARDED_TOOL_CALLS = {
+    "read_file",
+    "web_search",
+    "stock",
+    "crypto",
+    "cron",
+    "weather",
+    "get_system_info",
+    "get_process_memory",
+    "cleanup_system",
+    "speedtest",
+    "server_monitor",
+    "check_update",
+    "system_update",
+}
+_IMAGE_TOOL_NAME_RE = re.compile(
+    r"(?i)(^|_)(image|img|picture|photo|illustration|art|draw|render|generate_image|image_gen)(_|$)"
+)
+_TTS_TOOL_NAME_RE = re.compile(
+    r"(?i)(^|_)(tts|text_to_speech|speech|voice|speak|narrat|audio|say)(_|$)"
+)
+_REMINDER_MARKER_RE = re.compile(
+    r"(?i)\b(remind|reminder|ingat|ingatkan|pengingat|jadwal|schedule|alarm|timer|cron)\b"
+)
+_REMINDER_STRUCTURE_RE = re.compile(
+    r"(?i)(\b\d+\s*(menit|jam|detik|hari|min(?:ute)?s?|hour(?:s)?|sec(?:ond)?s?|day(?:s)?)\b|\b\d{1,2}(?::\d{2})\b)"
+)
+_FILELIKE_QUERY_RE = re.compile(
+    r"\b[\w\-]+\.(json|ya?ml|toml|ini|cfg|conf|env|md|txt|csv|log|pdf|docx?|xlsx?|py|js|ts|tsx|jsx|html|css|xml)\b",
+    re.IGNORECASE,
+)
+_PATHLIKE_QUERY_RE = re.compile(r"([a-zA-Z]:\\|\\\\|/[\w\-./]+|[\w\-./]+\\[\w\-./]+)")
+_WEATHER_MARKER_RE = re.compile(
+    r"(?i)\b(weather|temperature|forecast|cuaca|suhu|temperatur|prakiraan|ramalan)\b"
+)
+_IMAGE_MARKER_RE = re.compile(
+    r"(?i)\b(image|gambar|photo|foto|picture|draw|sketch|illustrat(?:e|ion)|render|generate\s+image|buat(?:kan)?\s+gambar)\b"
+)
+_TTS_MARKER_RE = re.compile(
+    r"(?i)\b(tts|text\s*to\s*speech|voice|suara|audio|narrat(?:e|ion)|bacakan|read\s+aloud|speak|ucapkan)\b"
+)
+_NON_ACTION_MARKER_RE = re.compile(
+    r"(?i)\b(stop|hentikan|berhenti|jangan|bukan|dont|don't|do not|cancel|batalkan|ga usah|gak usah|nggak usah|tidak usah|no need)\b"
+)
+_NON_ACTION_STOCK_TOPIC_RE = re.compile(
+    r"(?i)\b(stock|saham|ticker|market|harga|price|idx|ihsg)\b"
+)
+_SKILL_CREATION_GUARDED_TOOLS = {"write_file", "edit_file", "exec"}
+
+
+def _tools_has(loop: Any, tool_name: str, *, default: bool = True) -> bool:
+    tools_registry = getattr(loop, "tools", None)
+    has_method = getattr(tools_registry, "has", None)
+    if callable(has_method):
+        try:
+            return bool(has_method(tool_name))
+        except Exception:
+            return default
+    return default
+
+
+def _is_image_like_tool(tool_name: str) -> bool:
+    normalized = str(tool_name or "").strip().lower()
+    if not normalized:
+        return False
+    return bool(_IMAGE_TOOL_NAME_RE.search(normalized))
+
+
+def _is_tts_like_tool(tool_name: str) -> bool:
+    normalized = str(tool_name or "").strip().lower()
+    if not normalized:
+        return False
+    return bool(_TTS_TOOL_NAME_RE.search(normalized))
+
+
+def _resolve_query_text_from_message(msg: InboundMessage) -> str:
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    effective = str(metadata.get("effective_content") or "").strip()
+    if effective:
+        return effective
+    return str(msg.content or "").strip()
+
+
+def _skill_creation_status_phase(message_metadata: dict[str, Any] | None) -> str | None:
+    if not isinstance(message_metadata, dict):
+        return None
+    guard = message_metadata.get("skill_creation_guard")
+    if not isinstance(guard, dict):
+        return None
+    if not bool(guard.get("active")):
+        return None
+    if bool(guard.get("approved")):
+        return "executing"
+    stage = str(guard.get("stage") or "discovery").strip().lower() or "discovery"
+    if stage == "planning":
+        return "planning"
+    return "discovery"
+
+
+def _resolve_expected_tool_for_query(loop: Any, msg: InboundMessage) -> str | None:
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    cached_expected_tool = str(metadata.get("_expected_tool_for_guard") or "").strip()
+    if cached_expected_tool:
+        return cached_expected_tool
+
+    explicit_required_tool = str(metadata.get("required_tool") or "").strip()
+    if explicit_required_tool:
+        metadata["_expected_tool_for_guard"] = explicit_required_tool
+        return explicit_required_tool
+
+    query_text = _resolve_query_text_from_message(msg)
+    if not query_text:
+        return None
+
+    expected = required_tool_for_query(
+        question=query_text,
+        has_weather_tool=_tools_has(loop, "weather"),
+        has_cron_tool=_tools_has(loop, "cron"),
+        has_system_info_tool=_tools_has(loop, "get_system_info"),
+        has_cleanup_tool=_tools_has(loop, "cleanup_system"),
+        has_speedtest_tool=_tools_has(loop, "speedtest"),
+        has_process_memory_tool=_tools_has(loop, "get_process_memory"),
+        has_stock_tool=_tools_has(loop, "stock"),
+        has_stock_analysis_tool=_tools_has(loop, "stock_analysis"),
+        has_crypto_tool=_tools_has(loop, "crypto"),
+        has_server_monitor_tool=_tools_has(loop, "server_monitor"),
+        has_web_search_tool=_tools_has(loop, "web_search"),
+        has_read_file_tool=_tools_has(loop, "read_file"),
+        has_check_update_tool=_tools_has(loop, "check_update"),
+        has_system_update_tool=_tools_has(loop, "system_update"),
+    )
+    if expected:
+        metadata["_expected_tool_for_guard"] = expected
+    return expected
+
+
+def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> bool:
+    normalized_tool = str(tool_name or "").strip().lower()
+    text = str(query_text or "").strip()
+    if not text:
+        return False
+
+    if normalized_tool in {"stock", "stock_analysis"}:
+        symbols = extract_stock_symbols(text)
+        if symbols:
+            return True
+
+        normalized = _normalize_text(text)
+        if _NON_ACTION_MARKER_RE.search(normalized) and _NON_ACTION_STOCK_TOPIC_RE.search(normalized):
+            return False
+
+        if _FILELIKE_QUERY_RE.search(text) or _PATHLIKE_QUERY_RE.search(text):
+            return False
+
+        names = extract_stock_name_candidates(text)
+        if not names:
+            return False
+
+        stock_markers = (
+            "stock",
+            "saham",
+            "ticker",
+            "quote",
+            "harga",
+            "price",
+            "market",
+            "idx",
+            "ihsg",
+        )
+        value_markers = ("berapa", "how much", "nilai", "worth", "berapa rupiah")
+        news_conflict_markers = (
+            "berita",
+            "news",
+            "headline",
+            "breaking",
+            "war",
+            "perang",
+            "konflik",
+            "conflict",
+            "politik",
+            "politic",
+            "iran",
+            "israel",
+            "gaza",
+            "ukraine",
+            "russia",
+            "amerika",
+            "america",
+            "usa",
+        )
+        if any(marker in normalized for marker in stock_markers):
+            return True
+        if any(marker in normalized for marker in news_conflict_markers):
+            return False
+        if any(marker in normalized for marker in value_markers):
+            return True
+
+        # Allow concise company-only asks from novice users ("adaro", "toyota").
+        token_count = len([token for token in normalized.split(" ") if token])
+        if token_count <= 3:
+            return True
+        return False
+    if normalized_tool == "crypto":
+        return bool(extract_crypto_ids(text))
+    if normalized_tool == "cron":
+        if _REMINDER_MARKER_RE.search(text):
+            return True
+        return bool(_REMINDER_STRUCTURE_RE.search(text))
+    if normalized_tool == "weather":
+        return bool(_WEATHER_MARKER_RE.search(text))
+    if normalized_tool == "read_file":
+        return bool(_FILELIKE_QUERY_RE.search(text) or _PATHLIKE_QUERY_RE.search(text))
+    if normalized_tool == "web_search":
+        normalized = _normalize_text(text)
+        if len([part for part in normalized.split(" ") if part]) < 3:
+            return False
+        if _looks_like_live_research_query(text):
+            return True
+        search_markers = (
+            "search",
+            "find",
+            "look up",
+            "lookup",
+            "cari",
+            "carikan",
+            "telusuri",
+            "googling",
+            "google",
+            "browse",
+            "berita",
+            "news",
+            "headline",
+            "headlines",
+            "latest",
+            "terbaru",
+            "update",
+        )
+        return any(marker in normalized for marker in search_markers)
+    if _is_image_like_tool(normalized_tool):
+        return bool(_IMAGE_MARKER_RE.search(text))
+    if _is_tts_like_tool(normalized_tool):
+        return bool(_TTS_MARKER_RE.search(text))
+    # For guarded deterministic tools outside specialized parsers, require
+    # router-level expected-tool agreement instead of permissive payload guess.
+    return False
+
+
+def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name: str) -> str | None:
+    normalized_tool = str(tool_name or "").strip().lower()
+    is_guarded = (
+        normalized_tool in _GUARDED_TOOL_CALLS
+        or _is_image_like_tool(normalized_tool)
+        or _is_tts_like_tool(normalized_tool)
+    )
+    if not is_guarded:
+        return None
+
+    query_text = _resolve_query_text_from_message(msg)
+    expected_tool = _resolve_expected_tool_for_query(loop, msg)
+
+    if expected_tool and expected_tool != normalized_tool:
+        return f"expected '{expected_tool}'"
+    if expected_tool and expected_tool == normalized_tool:
+        # When runtime/router already pinned the required tool, trust that
+        # decision so multilingual prompts are not blocked by lexical payload
+        # heuristics (especially for web-search/news across non-Latin scripts).
+        return None
+
+    if _query_has_explicit_payload_for_tool(normalized_tool, query_text):
+        return None
+
+    if _is_low_information_turn(query_text, max_tokens=6, max_chars=64):
+        return "low-information turn"
+
+    return "missing explicit payload for current query"
+
+
+def _skill_creation_guard_reason(msg: InboundMessage, tool_name: str) -> str | None:
+    if str(tool_name or "").strip().lower() not in _SKILL_CREATION_GUARDED_TOOLS:
+        return None
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    guard = metadata.get("skill_creation_guard")
+    if not isinstance(guard, dict):
+        return None
+    if not bool(guard.get("active")):
+        return None
+    if bool(guard.get("approved")):
+        return None
+    stage = str(guard.get("stage") or "discovery").strip().lower() or "discovery"
+    if stage == "planning":
+        return "skill plan not approved yet"
+    return "skill discovery/planning still in progress"
+
+
+_TOOL_RESULT_HARD_CAP_BY_CHANNEL: dict[str, int] = {
+    "telegram": 8000,
+    "whatsapp": 8000,
+    "line": 9000,
+    "discord": 12000,
+    "slack": 12000,
+    "feishu": 12000,
+    "cli": 24000,
+}
+_TOOL_RESULT_HARD_CAP_DEFAULT = 16000
+_TOOL_RESULT_HARD_CAP_BY_CHANNEL_HEMAT: dict[str, int] = {
+    "telegram": 6000,
+    "whatsapp": 6000,
+    "line": 7000,
+    "discord": 9000,
+    "slack": 9000,
+    "feishu": 9000,
+    "cli": 18000,
+}
+_TOOL_RESULT_HARD_CAP_DEFAULT_HEMAT = 12000
+
+
+def _resolve_token_mode(perf_cfg: Any) -> str:
+    raw = str(
+        getattr(perf_cfg, "token_mode", None)
+        or getattr(perf_cfg, "economy_mode", None)
+        or "boros"
+    ).strip().lower()
+    if raw in {"hemat", "economy", "eco", "saving", "enabled", "on", "true", "1"}:
+        return "hemat"
+    return "boros"
+
+
+def _apply_channel_tool_result_hard_cap(
+    content: str,
+    *,
+    channel: str | None,
+    tool_name: str,
+    token_mode: str = "boros",
+) -> str:
+    raw = str(content or "")
+    channel_key = str(channel or "").strip().lower()
+    if str(token_mode or "").strip().lower() == "hemat":
+        cap = _TOOL_RESULT_HARD_CAP_BY_CHANNEL_HEMAT.get(channel_key, _TOOL_RESULT_HARD_CAP_DEFAULT_HEMAT)
+    else:
+        cap = _TOOL_RESULT_HARD_CAP_BY_CHANNEL.get(channel_key, _TOOL_RESULT_HARD_CAP_DEFAULT)
+    if len(raw) <= cap:
+        return raw
+
+    removed = len(raw) - cap
+    notice = (
+        f"\n\n[... truncated {removed} chars for {str(channel or 'default').lower()} "
+        f"tool-result budget ({tool_name}) ...]"
+    )
+    keep = max(0, cap - len(notice))
+    if keep <= 0:
+        return raw[:cap]
+    return f"{raw[:keep]}{notice}"
 
 
 def _redact_observability_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -256,11 +621,21 @@ def _check_quota_guard(
 
 
 def _apply_response_quota_usage(loop: Any, response: Any) -> None:
+    usage_data = getattr(response, "usage", None) if response is not None else None
+    if isinstance(usage_data, dict):
+        # Capture raw usage for persistence regardless of quota settings
+        setattr(loop, "last_usage", {
+            "prompt_tokens": int(usage_data.get("prompt_tokens", 0) or 0),
+            "completion_tokens": int(usage_data.get("completion_tokens", 0) or 0),
+            "total_tokens": int(usage_data.get("total_tokens", 0) or 0),
+            "model": getattr(response, "model", None) or getattr(loop, "model", None)
+        })
+
     quotas = _runtime_quotas_cfg(loop)
     if not quotas or not bool(getattr(quotas, "enabled", False)):
         return
+
     usage = _quota_bucket(loop)
-    usage_data = getattr(response, "usage", None) if response is not None else None
     if isinstance(usage_data, dict):
         total_tokens = int(usage_data.get("total_tokens", 0) or 0)
         if total_tokens > 0:
@@ -360,6 +735,9 @@ def _schedule_memory_write(loop: Any, coro: Any, *, label: str) -> None:
         pending.discard(done_task)
         try:
             done_task.result()
+        except asyncio.CancelledError:
+            # Expected during shutdown when pending memory writes are cancelled.
+            return
         except Exception as exc:
             logger.warning(f"Background memory write failed ({label}): {exc}")
 
@@ -415,7 +793,8 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     status_updates_sent: set[str] = set()
     draft_updates_sent: set[str] = set()
     reasoning_updates_sent: set[str] = set()
-    required_tool = loop._required_tool_for_query(msg.content)
+    suppress_required_tool_inference = bool(message_metadata.get("suppress_required_tool_inference", False))
+    required_tool = None if suppress_required_tool_inference else loop._required_tool_for_query(msg.content)
     raw_user_text = str(msg.content or "").strip()
     raw_user_word_count = len([part for part in raw_user_text.split() if part])
     effective_content = str(message_metadata.get("effective_content") or "").strip()
@@ -435,6 +814,8 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 required_tool = resolved_required_tool
         else:
             required_tool = resolved_required_tool
+    elif suppress_required_tool_inference:
+        required_tool = None
     has_web_search_tool = False
     if callable(has_tool):
         try:
@@ -444,7 +825,12 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     if not required_tool and has_web_search_tool and _looks_like_live_research_query(raw_user_text):
         required_tool = "web_search"
         logger.info("Live-research safety latch: forcing required_tool=web_search")
-    if not required_tool and route_profile == "RESEARCH" and has_web_search_tool:
+    if (
+        not required_tool
+        and route_profile == "RESEARCH"
+        and has_web_search_tool
+        and _looks_like_live_research_query(question_text)
+    ):
         required_tool = "web_search"
         logger.info("Research route safety latch: forcing required_tool=web_search")
     # OpenClaw-like responsiveness: skip expensive critic retries for short/chat/required-tool turns.
@@ -480,10 +866,18 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     critic_threshold = 5 if is_weak_model else 7
 
     first_score = None
+    skill_creation_phase = _skill_creation_status_phase(message_metadata)
 
     def _phase_text(phase: str) -> str:
         key = f"runtime.status.{phase}"
-        fallback = "runtime.status.thinking" if phase == "thinking" else key
+        fallback_map = {
+            "thinking": "runtime.status.thinking",
+            "discovery": "runtime.status.thinking",
+            "planning": "runtime.status.thinking",
+            "executing": "runtime.status.thinking",
+            "verified": "runtime.status.done",
+        }
+        fallback = fallback_map.get(phase, key)
         translated = t(key, locale=runtime_locale, text=question_text)
         if translated == key and fallback != key:
             return t(fallback, locale=runtime_locale, text=question_text)
@@ -581,14 +975,17 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             return
 
     async def _return_with_phase(content: str, *, phase: str = "done") -> str:
+        if phase == "done" and skill_creation_phase == "executing":
+            phase = "verified"
         await _publish_phase(phase)
         return content
 
-    await _publish_phase("thinking")
+    await _publish_phase(skill_creation_phase or "thinking")
 
     # === FAST PATH: Execute deterministic tools directly, skip LLM tool-call step ===
     # This bypasses fragile tool-call protocols for deterministic intents.
     direct_tools = {
+        "read_file",
         "get_process_memory",
         "get_system_info",
         "cleanup_system",
@@ -602,6 +999,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         "system_update",
     }
     raw_direct_tools = {
+        "read_file",
         "cleanup_system",
         "get_process_memory",
         "web_search",
@@ -1083,14 +1481,15 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
         )
 
     tc_data = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in response.tool_calls]
-    if _should_defer_memory_write(loop):
-        _schedule_memory_write(
-            loop,
-            loop.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data),
-            label="tool-assistant-envelope",
-        )
-    else:
-        await loop.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data)
+    if not _should_skip_memory_persistence(msg):
+        if _should_defer_memory_write(loop):
+            _schedule_memory_write(
+                loop,
+                loop.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data),
+                label="tool-assistant-envelope",
+            )
+        else:
+            await loop.memory.add_message(msg.session_key, "assistant", response.content or "", tool_calls=tc_data)
 
     permissions = loop._get_tool_permissions(session)
     if permissions.get("auto_approve") or loop.exec_auto_approve:
@@ -1103,6 +1502,7 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
         )
 
     sent_status_updates: set[str] = set()
+    token_mode = _resolve_token_mode(_runtime_performance_cfg(loop))
     for tc in response.tool_calls:
         args_raw = tc.arguments
         tool_params = args_raw if isinstance(args_raw, dict) else {}
@@ -1160,6 +1560,108 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
             messages = loop.context.add_tool_result(messages, tc.id, tc.name, cached_result)
             continue
 
+        skill_creation_guard_reason = _skill_creation_guard_reason(msg, tc.name)
+        if skill_creation_guard_reason:
+            blocked_result = (
+                "TOOL_CALL_BLOCKED_SKILL_CREATION_APPROVAL: "
+                f"'{tc.name}' blocked ({skill_creation_guard_reason}). "
+                "Stay in discovery/planning mode, present a short implementation plan, and wait for explicit approval before writing files or running code."
+            )
+            if loop._should_log_verbose(session):
+                token_count = loop.truncator._count_tokens(blocked_result)
+                blocked_result = loop._format_verbose_output(
+                    tc.name,
+                    blocked_result,
+                    token_count,
+                )
+            logger.warning(
+                f"tool_call_blocked=1 tool={tc.name} reason={skill_creation_guard_reason} "
+                f"turn_id={turn_id} chat_id={msg.chat_id}"
+            )
+            result_for_llm = loop._format_tool_result(blocked_result)
+            result_for_llm = _apply_channel_tool_result_hard_cap(
+                result_for_llm,
+                channel=msg.channel,
+                tool_name=tc.name,
+                token_mode=token_mode,
+            )
+            messages = loop.context.add_tool_result(messages, tc.id, tc.name, result_for_llm)
+            if dedupe_enabled:
+                expires_at = time.time() + ttl_seconds
+                payload_cache[payload_key] = (expires_at, result_for_llm)
+                call_id_cache[tc.id] = (expires_at, result_for_llm)
+            if not _should_skip_memory_persistence(msg):
+                if _should_defer_memory_write(loop):
+                    _schedule_memory_write(
+                        loop,
+                        loop.memory.add_message(
+                            msg.session_key,
+                            "tool",
+                            blocked_result,
+                            tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": blocked_result[:1000]}],
+                        ),
+                        label="tool-blocked-skill-creation",
+                    )
+                else:
+                    await loop.memory.add_message(
+                        msg.session_key,
+                        "tool",
+                        blocked_result,
+                        tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": blocked_result[:1000]}],
+                    )
+            continue
+
+        mismatch_reason = _tool_call_intent_mismatch_reason(loop, msg, tc.name)
+        if mismatch_reason:
+            blocked_result = (
+                "TOOL_CALL_BLOCKED_INTENT_MISMATCH: "
+                f"'{tc.name}' blocked ({mismatch_reason}). "
+                "Re-evaluate current user intent and choose the correct tool or respond without tool calls."
+            )
+            if loop._should_log_verbose(session):
+                token_count = loop.truncator._count_tokens(blocked_result)
+                blocked_result = loop._format_verbose_output(
+                    tc.name,
+                    blocked_result,
+                    token_count,
+                )
+            logger.warning(
+                f"tool_call_blocked=1 tool={tc.name} reason={mismatch_reason} "
+                f"turn_id={turn_id} chat_id={msg.chat_id}"
+            )
+            result_for_llm = loop._format_tool_result(blocked_result)
+            result_for_llm = _apply_channel_tool_result_hard_cap(
+                result_for_llm,
+                channel=msg.channel,
+                tool_name=tc.name,
+                token_mode=token_mode,
+            )
+            messages = loop.context.add_tool_result(messages, tc.id, tc.name, result_for_llm)
+            if dedupe_enabled:
+                expires_at = time.time() + ttl_seconds
+                payload_cache[payload_key] = (expires_at, result_for_llm)
+                call_id_cache[tc.id] = (expires_at, result_for_llm)
+            if not _should_skip_memory_persistence(msg):
+                if _should_defer_memory_write(loop):
+                    _schedule_memory_write(
+                        loop,
+                        loop.memory.add_message(
+                            msg.session_key,
+                            "tool",
+                            blocked_result,
+                            tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": blocked_result[:1000]}],
+                        ),
+                        label="tool-blocked",
+                    )
+                else:
+                    await loop.memory.add_message(
+                        msg.session_key,
+                        "tool",
+                        blocked_result,
+                        tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": blocked_result[:1000]}],
+                    )
+            continue
+
         # Check for tool loops before execution
         loop_result = loop.loop_detector.check(tc.name, tool_params)
         if loop_result.stuck:
@@ -1168,22 +1670,23 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
                 error_msg = f"WARNING: Tool loop detected: {loop_result.message}"
                 logger.warning(f"Tool loop blocked: {tc.name} - {loop_result.message}")
                 messages = loop.context.add_tool_result(messages, tc.id, tc.name, error_msg)
-                if _should_defer_memory_write(loop):
-                    _schedule_memory_write(
-                        loop,
-                        loop.memory.add_message(
-                            msg.session_key,
-                            "tool",
-                            error_msg,
+                if not _should_skip_memory_persistence(msg):
+                    if _should_defer_memory_write(loop):
+                        _schedule_memory_write(
+                            loop,
+                            loop.memory.add_message(
+                                msg.session_key,
+                                "tool",
+                                error_msg,
+                                tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": error_msg}],
+                            ),
+                            label="tool-loop-block",
+                        )
+                    else:
+                        await loop.memory.add_message(
+                            msg.session_key, "tool", error_msg,
                             tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": error_msg}],
-                        ),
-                        label="tool-loop-block",
-                    )
-                else:
-                    await loop.memory.add_message(
-                        msg.session_key, "tool", error_msg,
-                        tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": error_msg}],
-                    )
+                        )
                 continue
             else:
                 # Warning level - log but allow execution
@@ -1226,26 +1729,33 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
             truncated_result += verbose_output
 
         result_for_llm = loop._format_tool_result(truncated_result)
+        result_for_llm = _apply_channel_tool_result_hard_cap(
+            result_for_llm,
+            channel=msg.channel,
+            tool_name=tc.name,
+            token_mode=token_mode,
+        )
         messages = loop.context.add_tool_result(messages, tc.id, tc.name, result_for_llm)
         if dedupe_enabled:
             expires_at = time.time() + ttl_seconds
             payload_cache[payload_key] = (expires_at, result_for_llm)
             call_id_cache[tc.id] = (expires_at, result_for_llm)
 
-        if _should_defer_memory_write(loop):
-            _schedule_memory_write(
-                loop,
-                loop.memory.add_message(
+        if not _should_skip_memory_persistence(msg):
+            if _should_defer_memory_write(loop):
+                _schedule_memory_write(
+                    loop,
+                    loop.memory.add_message(
+                        msg.session_key, "tool", str(result),
+                        tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": str(result)[:1000]}],
+                    ),
+                    label="tool-result",
+                )
+            else:
+                await loop.memory.add_message(
                     msg.session_key, "tool", str(result),
                     tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": str(result)[:1000]}],
-                ),
-                label="tool-result",
-            )
-        else:
-            await loop.memory.add_message(
-                msg.session_key, "tool", str(result),
-                tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": str(result)[:1000]}],
-            )
+                )
     return messages
 
 

@@ -25,11 +25,12 @@ Standard workflow for creating high-quality skills in Kabot.
 ## Phase 3: Execution (After Approval Only)
 - **Goal**: Build the skill according to the approved plan.
 - **Actions**:
-  - Run `init_skill.py` to scaffold the directory structure.
+  - Create/scaffold the skill inside the active workspace `skills/` directory.
   - Write `SKILL.md` — keep concise (< 100 lines if possible).
   - Implement scripts in `scripts/` with `argparse` CLI interfaces (if needed).
   - Add documentation in `references/` for complex APIs (if needed).
-  - Install any required dependencies.
+  - For API skills, declare `requires.env` and `primaryEnv`; read secrets from env/config instead of hardcoding them.
+  - Install any required dependencies only when needed and approved.
 
 ## Phase 4: Verification
 - **Goal**: Confirm the skill works and is discoverable.
@@ -41,10 +42,10 @@ Standard workflow for creating high-quality skills in Kabot.
 
 ## Directory Convention
 
-Skills are created in the builtin skills directory:
+Skills are created in the active workspace skills directory:
 ```
-kabot/skills/<skill-name>/
+skills/<skill-name>/
 ```
 
-The `SkillsLoader` scans this directory automatically.
+The `SkillsLoader` scans workspace skills automatically.
 New skills are immediately available after creation.

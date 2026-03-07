@@ -17,6 +17,11 @@ def _defer_memory_writes(loop: Any) -> bool:
     return bool(getattr(perf_cfg, "fast_first_response", True))
 
 
+def _is_probe_mode_message(msg: InboundMessage) -> bool:
+    metadata = getattr(msg, "metadata", None)
+    return bool(isinstance(metadata, dict) and metadata.get("probe_mode"))
+
+
 def _schedule_memory_write(loop: Any, coro: Any, *, label: str) -> None:
     task = asyncio.create_task(coro)
     pending = getattr(loop, "_pending_memory_tasks", None)
@@ -29,6 +34,9 @@ def _schedule_memory_write(loop: Any, coro: Any, *, label: str) -> None:
         pending.discard(done_task)
         try:
             done_task.result()
+        except asyncio.CancelledError:
+            # Expected during one-shot CLI shutdown when background writes are cancelled.
+            return
         except Exception as exc:
             logger.warning(f"Background memory write failed ({label}): {exc}")
 
@@ -62,15 +70,16 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
     )
 
     session = loop.sessions.get_or_create(session_key)
-    loop.memory.create_session(session_key, msg.channel, msg.chat_id, msg.sender_id)
-    if _defer_memory_writes(loop):
-        _schedule_memory_write(
-            loop,
-            loop.memory.add_message(session_key, "user", msg.content),
-            label="user-message",
-        )
-    else:
-        await loop.memory.add_message(session_key, "user", msg.content)
+    if not _is_probe_mode_message(msg):
+        loop.memory.create_session(session_key, msg.channel, msg.chat_id, msg.sender_id)
+        if _defer_memory_writes(loop):
+            _schedule_memory_write(
+                loop,
+                loop.memory.add_message(session_key, "user", msg.content),
+                label="user-message",
+            )
+        else:
+            await loop.memory.add_message(session_key, "user", msg.content)
 
     for tool_name in ["message", "spawn", "cron"]:
         tool = loop.tools.get(tool_name)
@@ -130,7 +139,11 @@ async def finalize_session(
     final_content: str | None,
 ) -> OutboundMessage:
     """Persist final session state and produce outbound response."""
-    if final_content and not final_content.startswith("I've completed"):
+    if (
+        final_content
+        and not final_content.startswith("I've completed")
+        and not _is_probe_mode_message(msg)
+    ):
         if _defer_memory_writes(loop):
             _schedule_memory_write(
                 loop,
@@ -143,7 +156,19 @@ async def finalize_session(
     if not msg.session_key.startswith("background:"):
         session.add_message("user", msg.content)
         if final_content:
-            session.add_message("assistant", final_content)
+            # Capture usage from loop if available
+            usage_metadata = getattr(loop, "last_usage", None)
+            if isinstance(usage_metadata, dict):
+                session.add_message(
+                    "assistant",
+                    final_content,
+                    usage=usage_metadata,
+                    model=usage_metadata.get("model")
+                )
+                # Clear for next turn
+                setattr(loop, "last_usage", None)
+            else:
+                session.add_message("assistant", final_content)
         try:
             loop.sessions.save(session)
         except Exception as exc:

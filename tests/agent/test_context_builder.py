@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from kabot.agent.context import ContextBuilder, TokenBudget
 from kabot.memory.graph_memory import GraphMemory
 
@@ -91,3 +93,49 @@ def test_context_builder_skips_skills_summary_for_heartbeat(tmp_path: Path):
 
     assert called["summary"] == 0
     assert "Available Skills (Reference Documents)" not in prompt
+
+
+def test_token_budget_accepts_component_overrides():
+    budget = TokenBudget(
+        model="gpt-4",
+        max_context=8192,
+        component_overrides={"history": 0.18, "current": 0.14},
+    )
+
+    # History budget should downshift from default 0.30.
+    assert budget.budgets["history"] < 0.30
+    # Current-message budget should be larger than default 0.10.
+    assert budget.budgets["current"] > 0.10
+    # Total distribution stays normalized.
+    assert sum(budget.budgets.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_build_messages_exposes_dropped_history_summary(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    history = [{"role": "system", "content": "sys"}]
+    for idx in range(20):
+        history.append({"role": "user", "content": f"pesan lama user {idx} " + ("x" * 180)})
+        history.append({"role": "assistant", "content": f"balasan lama {idx} " + ("y" * 180)})
+
+    builder.build_messages(
+        history=history,
+        current_message="lanjut",
+        max_context=700,
+        budget_hints={"load_level": "high"},
+    )
+    summary_meta = builder.consume_last_truncation_summary()
+
+    assert isinstance(summary_meta, dict)
+    assert int(summary_meta.get("dropped_count", 0)) > 0
+    assert "summary" in summary_meta
+    assert len(str(summary_meta.get("summary") or "").strip()) > 0
+
+
+def test_context_builder_budget_overrides_support_token_mode_hemat(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+
+    overrides = builder._resolve_budget_overrides({"token_mode": "hemat"})
+
+    assert isinstance(overrides, dict)
+    assert overrides["history"] < 0.30
+    assert overrides["current"] > 0.10

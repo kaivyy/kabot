@@ -5,24 +5,42 @@
     <b>Resilient Memory. Methodical Execution. Native Reasoning.</b>
   </p>
   <p>
-    <a href="https://pypi.org/project/kabot/"><img src="https://img.shields.io/pypi/v/kabot?style=flat-square" alt="PyPI"></a>
-    <img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square" alt="Python">
-    <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
-    <a href="#"><img src="https://img.shields.io/badge/Telegram-Bot-blue?style=flat-square&logo=telegram&logoColor=white" alt="Telegram"></a>
-    <a href="#"><img src="https://img.shields.io/badge/Discord-Bot-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
-    <a href="#"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"></a>
+    <a href="https://pypi.org/project/kabot/"><img src="https://img.shields.io/pypi/v/kabot?style=for-the-badge" alt="PyPI"></a>
+    <img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=for-the-badge" alt="Python">
+    <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="License">
+    <a href="#"><img src="https://img.shields.io/badge/Telegram-Bot-blue?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Discord-Bot-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="#"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"></a>
   </p>
 </div>
 
 ---
 
-**Kabot** is a _personal AI assistant_ engineered for **resilience**, **complex task execution**, and **long-term memory**. It isn't just a chatbot; it's an autonomous agent that runs on your own hardware, remembering context across restarts and methodically planning its actions.
-
-It bridges the gap between simple chatbots and autonomous software engineers. While typical agents operate blindly, Kabot implements a **Methodical Engineering Workflow** (Brainstorm → Plan → Execute) and relies on a proprietary **Hybrid Memory Architecture** (Smart Routing + LLM Episodic Extraction + Vector) to handle long-running projects with hyper-efficient token usage and zero "amnesia".
+> **Kabot** is a _personal AI assistant_ engineered for **resilience**, **complex task execution**, and **long-term memory**. It isn't just a chatbot; it's an autonomous agent that runs on your own hardware, remembering context across restarts and methodically planning its actions.
+> 
+> It bridges the gap between simple chatbots and autonomous software engineers. While typical agents operate blindly, Kabot implements a **Methodical Engineering Workflow** (Brainstorm → Plan → Execute) and relies on a proprietary **Hybrid Memory Architecture** (Smart Routing + LLM Episodic Extraction + Vector) to handle long-running projects with hyper-efficient token usage and zero "amnesia".
 
 If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
 
-[Website](https://kabot.ai) · [Docs](docs/) · [How-To-Use](HOW_TO_USE.MD) · [Getting Started](#quick-start) · [Telegram](https://t.me/kabot_support) · [FAQ](#faq)
+[Website](https://kabot.ai) · [Docs](docs/) · [How-To-Use](HOW_TO_USE.MD) · [Getting Started](#-quick-start) · [Telegram](https://t.me/kabot_support) · [FAQ](#faq)
+
+---
+
+## 📑 Table of Contents
+
+- [🚀 Quick Start](#-quick-start)
+- [🤖 Multi-Agent Orchestration](#-multi-agent-orchestration)
+- [🔌 Multi-Channel Instances](#-multi-channel-instances)
+- [🛠️ Operations & Plugin Lifecycle](#️-operations--plugin-lifecycle)
+- [🏗️ Architecture](#️-architecture)
+- [🤖 Supported Models](#-supported-models)
+- [⚙️ Configuration Reference](#️-configuration-reference)
+- [⚡ Slash Commands & Directives](#-slash-commands--directives)
+- [🎛️ Model Management Tutorial](#️-model-management-tutorial)
+- [🔒 Security](#-security)
+- [🤝 Development & Contributing](#-development--contributing)
+- [📜 Star History](#-star-history)
+- [🙌 Community](#-community)
 
 ---
 
@@ -85,6 +103,11 @@ In wizard:
 - paste API key/token,
 - save config.
 
+Notes:
+- `Google Suite` in setup wizard is Kabot's native Google auth path. It does not require npm, Node.js, or `gog`.
+- `Skills` in setup wizard manages skill config, env keys, and manual dependency install plans. It does not auto-run npm/brew installs for you.
+- When setup wizard syncs built-in skills, it is copying skill definitions (`SKILL.md`) into the workspace. That is separate from installing third-party runtimes or logging into external services.
+
 ### 3) Start Kabot
 
 ```bash
@@ -97,13 +120,35 @@ kabot gateway
 kabot agent -m "Hello Kabot"
 ```
 
-### 3 Commands You Should Remember
+### 4 Commands You Should Remember
 
 ```bash
 kabot config       # open setup wizard
 kabot gateway      # run the bot gateway
 kabot doctor --fix # auto-diagnose and repair common issues
+kabot doctor routing # validate routing/guard sanity before deploy
 ```
+
+### Runtime Token Mode (Boros vs Hemat)
+
+Default is `boros` (richer context, higher token usage).
+
+Quick toggle without opening full wizard:
+
+```bash
+kabot config --token-mode boros
+kabot config --token-mode hemat
+```
+
+Shortcut toggle:
+
+```bash
+kabot config --token-saver     # ON  -> hemat
+kabot config --no-token-saver  # OFF -> boros
+```
+
+You can also set this from setup wizard:
+`kabot config` -> `Tools & Sandbox` -> `Runtime Token Mode`.
 
 ### Core-Only Manual Install (Minimal Footprint)
 
@@ -155,6 +200,33 @@ Gateway runtime notes:
 - If gateway bind mode is set to `tailscale`, Kabot activates Tailscale Serve at startup and keeps gateway bind on loopback for safer exposure.
 - If `gateway.tailscale=true` (with non-tailscale bind mode), Kabot activates Tailscale Funnel at startup.
 - Lightweight dashboard is available at `/dashboard` (SSR + HTMX, low-RAM friendly).
+  - OpenClaw-style operator panels now available in the same surface:
+    - Chat panel (runtime prompt send + live log auto-refresh, now with SSE stream),
+      with per-message model controls:
+      - provider selector (all registered providers),
+      - model override input (`provider/model` or alias),
+      - model suggestions now auto-refresh by selected provider (from runtime model registry snapshot),
+      - fallback builder UI (add/remove chips) with provider-aware suggestions,
+      - channel/chat target passthrough for advanced operator routing.
+    - Sessions panel (recent session list + clear/delete actions, instant panel refresh after action),
+    - Nodes panel (runtime/channel node view + start/stop/restart actions, state-aware button disable, instant panel refresh after action),
+    - Config panel (safe token-mode quick edit + config snapshot),
+    - Control panel (runtime control actions).
+  - JSON endpoints:
+    - `/dashboard/api/status`
+    - `/dashboard/api/chat/history`
+    - `/dashboard/api/chat/stream` (SSE)
+    - `/dashboard/api/sessions`
+    - `POST /dashboard/api/sessions` (`sessions.clear` / `sessions.delete`)
+    - `/dashboard/api/nodes`
+    - `POST /dashboard/api/nodes` (`nodes.start` / `nodes.stop` / `nodes.restart`)
+    - `/dashboard/api/config`
+  - `POST /dashboard/api/chat` accepts optional model routing args:
+    - `provider`
+    - `model`
+    - `fallbacks` (comma-separated string or list)
+    - `channel`
+    - `chat_id`
 - `gateway.auth_token` supports scoped mode:
   - Plain: `my-token` (legacy full access)
   - Scoped: `my-token|operator.read,operator.write,ingress.write`
@@ -200,6 +272,7 @@ One brain, many bodies. Kabot acts as a central control plane.
 ---
 
 ## 🤖 Multi-Agent Orchestration
+<details><summary><b>Click to expand</b></summary>
 
 Kabot supports two advanced multi-agent systems that can work independently or together, enabling sophisticated task execution and context separation.
 
@@ -427,9 +500,13 @@ kabot mode set single --user-id user:telegram:research_chat
 - [Multi-Agent System Details](docs/multi-agent.md)
 - [Collaborative Orchestration Guide](docs/collaborative-orchestration.md)
 
+</details>
+
 ---
 
 ## 🔌 Multi-Channel Instances
+
+<details><summary><b>Click to expand</b></summary>
 
 Run multiple bot instances per platform with different configurations and agent bindings.
 
@@ -587,6 +664,8 @@ Legacy single-instance configs continue to work:
 - Both can coexist in the same configuration
 - Gradual migration path available
 
+</details>
+
 ---
 
 ## 🛠️ Operations & Plugin Lifecycle
@@ -715,6 +794,8 @@ This mode:
 - disables HTTP target guard restrictions for `web_fetch`,
 - keeps defaults available to switch back to secure mode.
 
+</details>
+
 ---
 
 ## 🏗️ Architecture
@@ -800,6 +881,9 @@ Kabot supports **Ollama** and **LM Studio** out of the box.
 Configuration is stored in `config.json` in your workspace root.
 You can edit this manually or use `kabot config`.
 
+Runtime dictionaries stay outside `config.json` so the main config stays small.
+Example: learned weather aliases are written to `~/.kabot/weather_aliases.json` after successful native-script weather resolutions such as `東京 -> Tokyo`.
+
 ### 1. Telegram Setup
 **Get Token**: Talk to `@BotFather` on Telegram.
 ```json
@@ -869,6 +953,8 @@ Unlock hidden capabilities by adding these tags to your message.
 ---
 
 ## 🎛️ Model Management Tutorial
+
+<details><summary><b>Click to expand</b></summary>
 
 Complete guide for switching models, setting up OAuth, and managing multiple AI providers.
 
@@ -1127,6 +1213,9 @@ kabot models reset
 # Check provider configuration
 kabot doctor
 
+# Check deterministic routing guard matrix
+kabot doctor routing
+
 # Verify OAuth token
 kabot config
 → Model / Auth → Provider Login → OpenAI → Check Status
@@ -1200,6 +1289,8 @@ kabot config
 - Use Groq for speed-critical applications
 - Use Claude/GPT-4o for quality-critical tasks
 - Set appropriate fallback chains
+
+</details>
 
 ---
 

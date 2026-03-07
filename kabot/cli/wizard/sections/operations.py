@@ -117,7 +117,7 @@ def _run_doctor(self):
     Prompt.ask("|\n*  Press Enter to return to menu")
 
 def _install_builtin_skills(self):
-    """Copy built-in skills to workspace if not present."""
+    """Copy built-in skill definitions to workspace if not present."""
     skills_src = self._builtin_skills_source_path()
     skills_dst = Path(self.config.agents.defaults.workspace) / "skills"
 
@@ -128,7 +128,7 @@ def _install_builtin_skills(self):
     # Ensure destination exists
     if not skills_dst.exists():
         os.makedirs(skills_dst, exist_ok=True)
-        console.print(f"|  [cyan]Initializing skills directory at {skills_dst}...[/cyan]")
+        console.print(f"|  [cyan]Initializing workspace skill definitions at {skills_dst}...[/cyan]")
 
     # Copy skills
     import shutil
@@ -144,11 +144,11 @@ def _install_builtin_skills(self):
                      console.print(f"|  [red]Failed to copy skill {item.name}: {e}[/red]")
 
     if count > 0:
-        console.print(f"|  [green]OK Installed {count} built-in skills to workspace[/green]")
+        console.print(f"|  [green]OK Synced {count} built-in skill definitions to workspace[/green]")
 
 def _install_builtin_skills_with_progress(self) -> bool:
-    """Install built-in skills with progress indicators and error handling."""
-    console.print("*  [cyan]Installing built-in skills...[/cyan]")
+    """Sync built-in skill definitions with progress indicators and error handling."""
+    console.print("*  [cyan]Syncing built-in skill definitions...[/cyan]")
 
     skills_src = self._builtin_skills_source_path()
     skills_dst = Path(self.config.agents.defaults.workspace) / "skills"
@@ -163,7 +163,7 @@ def _install_builtin_skills_with_progress(self) -> bool:
     try:
         if not skills_dst.exists():
             os.makedirs(skills_dst, exist_ok=True)
-            console.print(f"|  [cyan]Created skills directory: {skills_dst}[/cyan]")
+        console.print(f"|  [cyan]Created workspace skills directory: {skills_dst}[/cyan]")
     except Exception as e:
         console.print(f"|  [red]X Failed to create skills directory: {e}[/red]")
         console.print("|  [dim]Continuing without built-in skills installation[/dim]")
@@ -176,10 +176,10 @@ def _install_builtin_skills_with_progress(self) -> bool:
             available_skills.append(item)
 
     if not available_skills:
-        console.print("|  [yellow]! No built-in skills found to install[/yellow]")
+        console.print("|  [yellow]! No built-in skill definitions found to sync[/yellow]")
         return False
 
-    console.print(f"|  Found {len(available_skills)} built-in skills to install")
+    console.print(f"|  Found {len(available_skills)} built-in skill definitions to sync")
 
     # Install skills with progress feedback
     import shutil
@@ -197,7 +197,7 @@ def _install_builtin_skills_with_progress(self) -> bool:
             continue
 
         try:
-            console.print(f"|  [cyan]Installing {skill_name}...[/cyan]")
+            console.print(f"|  [cyan]Syncing {skill_name}...[/cyan]")
             shutil.copytree(skill_src, skill_dst)
             console.print(f"|  [green]OK {skill_name}[/green]")
             installed_count += 1
@@ -208,14 +208,14 @@ def _install_builtin_skills_with_progress(self) -> bool:
     # Summary
     console.print("|")
     if installed_count > 0:
-        console.print(f"|  [green]OK Successfully installed {installed_count} built-in skills[/green]")
+        console.print(f"|  [green]OK Successfully synced {installed_count} built-in skill definitions[/green]")
 
     if skipped_count > 0:
-        console.print(f"|  [dim]- Skipped {skipped_count} existing skills[/dim]")
+        console.print(f"|  [dim]- Skipped {skipped_count} existing skill definitions[/dim]")
 
     if failed_count > 0:
-        console.print(f"|  [yellow]! Failed to install {failed_count} skills[/yellow]")
-        console.print("|  [dim]Setup will continue - you can manually install these later[/dim]")
+        console.print(f"|  [yellow]! Failed to sync {failed_count} skill definitions[/yellow]")
+        console.print("|  [dim]Setup will continue - you can sync or reinstall these definitions later[/dim]")
 
     return installed_count > 0
 

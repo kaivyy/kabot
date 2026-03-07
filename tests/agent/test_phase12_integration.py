@@ -59,6 +59,10 @@ def test_directives_methods_exist(mock_agent_loop):
     assert callable(mock_agent_loop._get_tool_permissions)
 
 
+def test_default_tools_include_image_generation(mock_agent_loop):
+    assert mock_agent_loop.tools.has("image_gen")
+
+
 @pytest.mark.asyncio
 async def test_verbose_mode_integration(mock_agent_loop):
     """Verify that verbose mode actually appends debug output during tool execution."""

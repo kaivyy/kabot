@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,77 @@ def skills_checkbox(*args, **kwargs):
     """Compatibility wrapper so tests can patch either module path."""
     return skills_prompts.skills_checkbox(*args, **kwargs)
 
+
+def _detect_skill_auth_hint(loader: Any, skill_name: str) -> str | None:
+    try:
+        content = loader.load_skill(skill_name) or ""
+    except Exception:
+        return None
+    if not content:
+        return None
+
+    lowered = content.lower()
+    if "oauth" in lowered:
+        return "needs oauth"
+    auth_patterns = (
+        r"\bauth add\b",
+        r"\bauth credentials\b",
+        r"\bauthenticate\b",
+        r"\bsign[\s-]?in\b",
+        r"\blog[\s-]?in\b",
+        r"\brequires auth\b",
+        r"\brequires login\b",
+    )
+    if any(re.search(pattern, lowered) for pattern in auth_patterns):
+        return "needs login"
+    return None
+
+
+def _describe_skill_setup_hint(skill: dict[str, Any], loader: Any) -> str:
+    parts: list[str] = []
+    missing = skill.get("missing", {}) if isinstance(skill.get("missing"), dict) else {}
+    missing_bins = missing.get("bins", []) if isinstance(missing.get("bins"), list) else []
+    missing_env = missing.get("env", []) if isinstance(missing.get("env"), list) else []
+    install_specs = skill.get("install", []) if isinstance(skill.get("install"), list) else []
+
+    if missing_env:
+        parts.append("needs env")
+
+    auth_hint = _detect_skill_auth_hint(loader, str(skill.get("name") or ""))
+    if auth_hint:
+        parts.append(auth_hint)
+
+    if missing_bins:
+        parts.append("needs binary")
+
+    install_kinds = {
+        str(spec.get("kind") or "").strip().lower()
+        for spec in install_specs
+        if isinstance(spec, dict)
+    }
+    if "node" in install_kinds:
+        parts.append("needs node package")
+    elif "brew" in install_kinds:
+        parts.append("install via brew")
+    elif "uv" in install_kinds:
+        parts.append("install via uv")
+    elif "go" in install_kinds:
+        parts.append("install via go")
+    elif "download" in install_kinds:
+        parts.append("manual download")
+    elif install_specs:
+        parts.append("has install recipe")
+
+    # Keep ordering stable but avoid duplicate labels.
+    seen: set[str] = set()
+    deduped = []
+    for part in parts:
+        if part not in seen:
+            deduped.append(part)
+            seen.add(part)
+
+    return " | ".join(deduped) if deduped else "needs setup"
+
 def _configure_tools(self):
     ClackUI.section_start("Tools & Sandbox")
 
@@ -57,6 +129,10 @@ def _configure_tools(self):
                 f"Advanced API Keys (firecrawl={_state_label(self.config.tools.web.fetch.firecrawl_api_key)}, perplexity={_state_label(search_cfg.perplexity_api_key)}, kimi={_state_label(search_cfg.kimi_api_key)}, xai={_state_label(search_cfg.xai_api_key)})",
                 value="advanced",
             ),
+            questionary.Choice(
+                f"Runtime Token Mode ({_token_mode_label(self.config.runtime.performance.token_mode)})",
+                value="runtime_mode",
+            ),
             questionary.Choice("Back", value="back"),
         ]
 
@@ -71,6 +147,8 @@ def _configure_tools(self):
             _configure_tools_docker(self)
         elif choice == "advanced":
             _configure_tools_advanced_keys(self)
+        elif choice == "runtime_mode":
+            _configure_tools_runtime_mode(self)
 
     # Summary
     console.print("|")
@@ -87,6 +165,9 @@ def _configure_tools(self):
         console.print(f"|  [bold green]Military-grade tools active: {', '.join(adv_tools)}[/bold green]")
     else:
         console.print("|  [dim]Standard mode (all tools work with defaults)[/dim]")
+    console.print(
+        f"|  [dim]Token mode: {_token_mode_label(self.config.runtime.performance.token_mode)}[/dim]"
+    )
 
     # Mark as completed and save configuration
     docker_enabled = bool(self.config.tools.exec.docker.enabled)
@@ -95,7 +176,8 @@ def _configure_tools(self):
                          web_search_enabled=bool(self.config.tools.web.search.api_key),
                          docker_enabled=docker_enabled,
                          restrict_to_workspace=self.config.tools.restrict_to_workspace,
-                         freedom_mode=freedom_mode)
+                         freedom_mode=freedom_mode,
+                         token_mode=str(self.config.runtime.performance.token_mode or "boros"))
 
     ClackUI.section_end()
 
@@ -106,6 +188,40 @@ def _state_label(value: str) -> str:
 
 def _bool_label(enabled: bool) -> str:
     return "ON" if enabled else "OFF"
+
+
+def _token_mode_label(mode: str) -> str:
+    raw = str(mode or "").strip().lower()
+    return "HEMAT" if raw == "hemat" else "BOROS"
+
+
+def _configure_tools_runtime_mode(self) -> None:
+    current = str(self.config.runtime.performance.token_mode or "boros").strip().lower()
+    if current not in {"boros", "hemat"}:
+        current = "boros"
+
+    choice = ClackUI.clack_select(
+        "Select runtime token mode",
+        choices=[
+            questionary.Choice(
+                "BOROS (default) - more context, richer responses, higher token usage",
+                value="boros",
+            ),
+            questionary.Choice(
+                "HEMAT - tighter context + stricter truncation for lower token usage",
+                value="hemat",
+            ),
+            questionary.Choice("Back", value="back"),
+        ],
+        default=current,
+    )
+    if choice in {None, "back"}:
+        return
+
+    self.config.runtime.performance.token_mode = "hemat" if choice == "hemat" else "boros"
+    console.print(
+        f"|  [green]OK Runtime token mode set to {_token_mode_label(self.config.runtime.performance.token_mode)}[/green]"
+    )
 
 
 def _is_interactive_tty() -> bool:
@@ -1084,6 +1200,9 @@ def _configure_gateway(self):
 
 def _configure_skills(self):
     ClackUI.section_start("Skills")
+    console.print("|  [dim]This section configures skills and prepares dependency install plans.[/dim]")
+    console.print("|  [dim]Native Google setup lives in the separate Google Suite menu.[/dim]")
+    console.print("|  [dim]Any npm/pnpm/bun choice here only affects manual install hints for node-based skills.[/dim]")
 
     # Mark section as in progress
     self._save_setup_state("skills", completed=False, in_progress=True)
@@ -1195,23 +1314,16 @@ def _configure_skills(self):
             }
         ]
         for skill in installable:
-            missing_bins = ", ".join(skill.get("missing", {}).get("bins", []) or [])
-            install_specs = skill.get("install", []) if isinstance(skill.get("install"), list) else []
-            hint_parts = []
-            if missing_bins:
-                hint_parts.append(f"missing: {missing_bins}")
-            if install_specs:
-                hint_parts.append(f"{len(install_specs)} install option(s)")
             options.append(
                 {
                     "value": skill["name"],
                     "label": str(skill["name"]),
-                    "hint": " | ".join(hint_parts) if hint_parts else "needs setup",
+                    "hint": _describe_skill_setup_hint(skill, loader),
                 }
             )
 
         console.print("|")
-        console.print("*  Install missing skill dependencies")
+        console.print("*  Prepare skill dependency setup plans")
         selected_names = skills_checkbox("Select skills to prepare install plan for", options=options)
         selected_install_names = [name for name in selected_names if name not in {"skip", "back"}]
 
@@ -1225,7 +1337,7 @@ def _configure_skills(self):
         )
         if needs_node_manager:
             node_manager = ClackUI.clack_select(
-                "Preferred node manager for skill installs",
+                "Preferred node manager for manual skill install plans",
                 choices=[
                     questionary.Choice("npm", value="npm"),
                     questionary.Choice("pnpm", value="pnpm"),
@@ -1270,7 +1382,7 @@ def _configure_skills(self):
                 {
                     "value": s["name"],
                     "label": label,
-                    "hint": f"needs: {missing_env}" if missing_env else "needs env",
+                    "hint": f"needs env: {missing_env}" if missing_env else "needs env",
                 }
             )
 
@@ -1350,6 +1462,7 @@ def _inject_configured_skill_env(self) -> int:
 
 def bind_tools_gateway_skills_sections(cls):
     cls._configure_tools = _configure_tools
+    cls._configure_tools_runtime_mode = _configure_tools_runtime_mode
     cls._set_kabot_freedom_mode = _set_kabot_freedom_mode
     cls._configure_gateway = _configure_gateway
     cls._configure_skills = _configure_skills

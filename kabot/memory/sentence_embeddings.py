@@ -76,7 +76,14 @@ class SentenceEmbeddingProvider:
             # CRITICAL: -u flag forces unbuffered stdout on Windows.
             # Without it, stdout is fully buffered for piped processes,
             # causing readline() in the parent to hang indefinitely.
-            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+            env = {
+                **os.environ,
+                "PYTHONUNBUFFERED": "1",
+                "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+                "TOKENIZERS_PARALLELISM": "false",
+                "TRANSFORMERS_VERBOSITY": "error",
+                "HF_HUB_DISABLE_TELEMETRY": "1",
+            }
             self._process = subprocess.Popen(
                 [sys.executable, "-u", "-m", worker_module, self.model_name],
                 stdin=subprocess.PIPE,
@@ -84,8 +91,8 @@ class SentenceEmbeddingProvider:
                 # CRITICAL: stderr must NOT be PIPE — sentence-transformers writes
                 # progress bars + warnings during model load. If the pipe buffer fills
                 # (64KB on Windows), the subprocess blocks and never sends init to stdout.
-                # Using None (inherit) instead of DEVNULL to allow stderr output for debugging
-                stderr=None,
+                # DEVNULL keeps startup quiet without risking deadlocks from unread stderr.
+                stderr=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,
                 env=env,

@@ -473,6 +473,7 @@ class RuntimePerformanceConfig(BaseModel):
     embed_warmup_timeout_ms: int = 1200
     max_context_build_ms: int = 500
     max_first_response_ms_soft: int = 4000
+    token_mode: str = "boros"  # "boros" | "hemat"
 
 
 class RuntimeAutopilotConfig(BaseModel):

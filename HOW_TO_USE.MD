@@ -41,6 +41,16 @@ kabot config --edit
 
 Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use your keyboard arrows to navigate. Let's break down exactly what every option does and how to use it:
 
+### How the Setup Wizard really works
+Before we go section by section, this is the important mental model:
+
+1. **Model/Auth** connects Kabot to LLM providers.
+2. **Google Suite** is Kabot's **native** Google integration path.
+   - It does **not** require npm, Node.js, or `gog`.
+3. **Skills** manages skill definitions, skill env keys, and **manual dependency setup plans**.
+   - It does **not** auto-run `npm`, `pnpm`, `bun`, or `brew` installs for you.
+4. When wizard says built-in skills are installed/synced, it means Kabot copies the skill definitions (`SKILL.md`) into your workspace so the agent can discover them. It does **not** mean every external CLI/API dependency is already ready.
+
 ### a) Workspace (Set path + sessions)
 *   **What it does:** Defines the specific "identity" and memory bank of the AI agent you are currently talking to. You can easily create multiple distinct agents.
 *   **How to use it:** If you want a specialized team (e.g., a finance agent, a parenting agent, a coding agent), you create different workspaces. For example, create a workspace named "finance" and another named "parenting." *Crucially, each workspace has its own isolated memory.* Each agent stays focused on its own context.
@@ -101,14 +111,37 @@ Once you hit `Enter`, the interactive **Configuration Menu** will appear. Use yo
         *   `ingress.write` -> webhook ingress endpoints.
 *   **HSTS option:** For HTTPS deployments (or HTTPS reverse proxy), you can enable `Strict-Transport-Security` header and set custom value from Gateway setup.
 
-### e) Skills (Install & Configure)
-*   **What it does:** Injects "SOPs" (Standard Operating Procedures) or foundational expertise directly into the agent's initial prompt.
-*   **How to use it:** Useful if you download custom third-party "Skill Files" (Markdown scripts) that teach Kabot exactly how to behave or format its responses for specific career roles.
+### e) Skills (Configure & Setup Plans)
+*   **What it does:** Manages skill definitions, skill enable/disable state, skill environment variables, and dependency setup guidance.
+*   **What it does NOT do:** This menu does **not** automatically execute package installs like `npm install`, `pnpm add`, `bun add`, or `brew install`.
+*   **How to use it:**
+    *   Use it to enable or disable a skill.
+    *   Use it to fill in required env keys such as `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `NOTION_API_KEY`.
+    *   Use it to view manual setup plans for skills that need external binaries or packages.
+*   **What the labels mean inside the Skills menu:**
+    *   `needs env` -> the skill needs one or more environment variables or API keys.
+    *   `needs binary` -> the skill depends on an external CLI executable.
+    *   `needs oauth` / `needs login` -> the skill needs an account authorization flow.
+    *   `needs node package` -> the dependency is from the Node ecosystem, so the wizard may ask your preferred package manager for the **plan**.
+*   **Built-in skill sync:** When Kabot syncs built-in skills, it is copying the `SKILL.md` definitions into your workspace so the runtime can discover them. This is different from installing a third-party runtime dependency.
+*   **Create or install skills via chat:** You can also ask Kabot in natural language, for example:
+    *   `buat skill baru untuk Threads API`
+    *   `create a new capability for Gmail summaries`
+    *   `tolong install skill dari github repo owner/repo`
+    *   `show me installable curated skills`
+    *   Kabot should first stay in **discovery mode**:
+        *   for create/update requests -> clarify use case, scope, API/auth, and dependencies,
+        *   for install/update-from-repo requests -> clarify source repo/url, target (`workspace` or managed), trust/overwrite implications, and required env/dependencies.
+    *   Then it should present a short plan and wait for approval.
+    *   Only after approval should it scaffold/write files or run install/update execution steps.
+    *   User-created skills belong in the active workspace `skills/` directory, not the built-in package skill folder.
 
-### f) Google Suite (Auth & Credentials)
-*   **What it does:** Grants Kabot secure, native access to act on behalf of your Google Account.
-*   **How to use it:** Once authorized, Kabot can send emails, schedule Calendar meetings, and read/create files in Google Drive and Google Docs via the Google integrations. 
+### f) Google Suite (Native Auth, no npm)
+*   **What it does:** Grants Kabot secure, **native** access to act on behalf of your Google Account.
+*   **What it does NOT require:** npm, Node.js, or `gog`.
+*   **How to use it:** Once authorized, Kabot can send emails, schedule Calendar meetings, and read/create files in Google Drive and Google Docs via the built-in Google integrations.
     *   **The Process:** Provide the path to a `google_credentials.json` file (downloaded from your Google Cloud Console). Kabot opens a browser tab for consent, then stores the token locally. You can also run `kabot google-auth <path>` for the fastest setup.
+*   **Important distinction:** If later you choose to use a Google-related skill such as `gog`, that is an **advanced optional path** and separate from Kabot's native Google Suite menu.
 
 ### g) Channels (Telegram, WhatsApp, Slack)
 *   **What it does:** Connects Kabot's brain to your mobile phone so you don't have to stay glued to your computer terminal.

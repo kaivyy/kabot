@@ -258,6 +258,7 @@ class AgentLoop:
         # Phase 13: Crash Recovery
         sentinel_path = Path.home() / ".kabot" / "crash.sentinel"
         self.sentinel = CrashSentinel(sentinel_path)
+        self.last_usage: dict[str, Any] | None = None
 
     def _collect_api_keys(self, provider) -> list[str]:
         """Collect all available API keys from provider."""
@@ -462,6 +463,7 @@ class AgentLoop:
             ReadFileTool,
             WriteFileTool,
         )
+        from kabot.agent.tools.image_gen import ImageGenTool
         from kabot.agent.tools.knowledge import KnowledgeLearnTool
         from kabot.agent.tools.memory import GetMemoryTool, ListRemindersTool, SaveMemoryTool
         from kabot.agent.tools.memory_search import MemorySearchTool
@@ -549,6 +551,7 @@ class AgentLoop:
         self.tools.register(StockTool())
         self.tools.register(CryptoTool())
         self.tools.register(StockAnalysisTool())
+        self.tools.register(ImageGenTool(workspace=self.workspace, config=self.config))
         self.tools.register(MetaGraphTool(config=self.config))
 
         autoplanner = AutoPlanner(
@@ -961,8 +964,39 @@ class AgentLoop:
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
         return await loop_message_runtime.process_system_message(self, msg)
 
-    async def process_direct(self, content: str, session_key: str = "cli:direct", channel: str = "cli", chat_id: str = "direct") -> str:
-        msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content, _session_key=session_key)
+    async def process_direct(
+        self,
+        content: str,
+        session_key: str = "cli:direct",
+        channel: str = "cli",
+        chat_id: str = "direct",
+        model_override: str | None = None,
+        fallback_overrides: list[str] | None = None,
+        suppress_post_response_warmup: bool = False,
+        probe_mode: bool = False,
+    ) -> str:
+        metadata: dict[str, Any] = {}
+        model_text = str(model_override or "").strip()
+        if model_text:
+            metadata["model_override"] = model_text
+            metadata["model_override_source"] = "direct"
+        if isinstance(fallback_overrides, list):
+            normalized_fallbacks = [str(item).strip() for item in fallback_overrides if str(item).strip()]
+            if normalized_fallbacks:
+                metadata["model_fallbacks"] = normalized_fallbacks[:8]
+        if suppress_post_response_warmup:
+            metadata["suppress_post_response_warmup"] = True
+        if probe_mode:
+            metadata["probe_mode"] = True
+
+        msg = InboundMessage(
+            channel=channel,
+            sender_id="user",
+            chat_id=chat_id,
+            content=content,
+            _session_key=session_key,
+            metadata=metadata,
+        )
         response = await self._process_message(msg)
         return response.content if response else ""
 

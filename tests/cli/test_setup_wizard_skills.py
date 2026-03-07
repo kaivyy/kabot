@@ -64,6 +64,27 @@ def test_configure_skills_manual_mode_does_not_execute_subprocess(monkeypatch, t
     assert "echo install-demo" in output
 
 
+def test_configure_skills_explains_manual_plans_and_native_google_separation(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    monkeypatch.setattr("kabot.agent.skills.SkillsLoader", _FakeSkillsLoader)
+
+    wizard = SetupWizard()
+    monkeypatch.setattr(wizard, "_install_builtin_skills_with_progress", lambda: False)
+    monkeypatch.setattr(
+        "kabot.cli.wizard.skills_prompts.skills_checkbox",
+        lambda *args, **kwargs: ["skip"],
+    )
+    monkeypatch.setattr("kabot.cli.setup_wizard.Confirm.ask", lambda *args, **kwargs: True)
+
+    wizard._configure_skills()
+
+    output = capsys.readouterr().out
+    assert "This section configures skills and prepares dependency install plans." in output
+    assert "Native Google setup lives in the separate Google Suite menu." in output
+
+
 class _FakeNodeInstallSkillsLoader:
     def __init__(self, *_args, **_kwargs):
         pass
@@ -86,6 +107,61 @@ class _FakeNodeInstallSkillsLoader:
                 ],
             }
         ]
+
+
+class _FakeLabeledNeedsSkillsLoader:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def list_skills(self, filter_unavailable=False):
+        _ = filter_unavailable
+        return [
+            {
+                "name": "gog",
+                "eligible": False,
+                "primaryEnv": None,
+                "missing": {"bins": ["gog"], "env": [], "os": []},
+                "install": [
+                    {
+                        "id": "brew",
+                        "kind": "brew",
+                        "formula": "steipete/tap/gogcli",
+                        "label": "Install gog (brew)",
+                        "cmd": "brew install steipete/tap/gogcli",
+                    }
+                ],
+            },
+            {
+                "name": "node-skill",
+                "eligible": False,
+                "primaryEnv": None,
+                "missing": {"bins": ["node-skill-cli"], "env": [], "os": []},
+                "install": [
+                    {
+                        "id": "node",
+                        "kind": "node",
+                        "package": "@demo/node-skill",
+                        "label": "Install node skill",
+                    }
+                ],
+            },
+            {
+                "name": "env-skill",
+                "eligible": False,
+                "primaryEnv": "DEMO_API_KEY",
+                "missing": {"bins": [], "env": ["DEMO_API_KEY"], "os": []},
+                "install": {},
+            },
+        ]
+
+    def load_skill(self, name: str):
+        if name == "gog":
+            return "Use `gog` for Gmail. Requires OAuth setup.\n\nSetup: gog auth add ..."
+        if name == "node-skill":
+            return "Use node skill."
+        if name == "env-skill":
+            return "Needs API key."
+        return None
 
 
 def test_configure_skills_prompts_node_manager_only_for_node_installers(monkeypatch, tmp_path):
@@ -116,6 +192,40 @@ def test_configure_skills_prompts_node_manager_only_for_node_installers(monkeypa
     install_cfg = wizard.config.skills.get("install", {})
     assert install_cfg.get("node_manager") == "pnpm"
     assert any("Preferred node manager" in message for message in selected_messages)
+
+
+def test_configure_skills_requirement_hints_are_human_readable(monkeypatch, tmp_path):
+    monkeypatch.setattr("kabot.cli.setup_wizard.Path.home", lambda: Path(tmp_path))
+    monkeypatch.setattr("kabot.agent.skills.SkillsLoader", _FakeLabeledNeedsSkillsLoader)
+
+    wizard = SetupWizard()
+    monkeypatch.setattr(wizard, "_install_builtin_skills_with_progress", lambda: False)
+    captured_options = []
+
+    def _fake_checkbox(_message, options):
+        captured_options.append(options)
+        return ["skip"]
+
+    monkeypatch.setattr("kabot.cli.wizard.skills_prompts.skills_checkbox", _fake_checkbox)
+    monkeypatch.setattr("kabot.cli.setup_wizard.Confirm.ask", lambda *args, **kwargs: True)
+
+    wizard._configure_skills()
+
+    install_options = captured_options[0]
+    install_hints_by_value = {
+        option["value"]: option["hint"]
+        for option in install_options
+        if option["value"] not in {"skip", "back"}
+    }
+    env_options = captured_options[1]
+    env_hints_by_value = {
+        option["value"]: option["hint"]
+        for option in env_options
+        if option["value"] not in {"skip", "back"}
+    }
+    assert install_hints_by_value["gog"] == "needs oauth | needs binary | install via brew"
+    assert install_hints_by_value["node-skill"] == "needs binary | needs node package"
+    assert env_hints_by_value["env-skill"] == "needs env: DEMO_API_KEY"
 
 
 class _FakeEnvAwareSkillsLoader:

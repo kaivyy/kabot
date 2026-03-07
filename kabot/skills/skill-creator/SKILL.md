@@ -59,7 +59,8 @@ After Discovery is complete:
 2. Write `SKILL.md` based on the plan — keep concise (< 100 lines).
 3. Implement scripts in `scripts/` if needed — use `argparse` for CLI interfaces.
 4. Write documentation in `references/` if needed.
-5. Install dependencies if needed (`pip install ...`).
+5. If the skill uses an API, declare requirements in metadata (`requires.env`, `primaryEnv`) and read secrets from environment/config — NEVER hardcode secrets in files.
+6. Only install dependencies if explicitly needed and approved.
 
 ### Phase 4: Verification
 
@@ -70,10 +71,10 @@ After Discovery is complete:
 
 ## Structure Standards
 
-New skills are created inside `kabot/skills/` alongside existing builtin skills:
+New user-created skills are created inside the active workspace `skills/` directory so they remain editable and survive package updates:
 
 ```
-kabot/skills/<skill-name>/
+skills/<skill-name>/
 ├── SKILL.md              ← Main instructions (< 100 lines)
 ├── references/           ← (Optional) Documentation, API docs, examples
 │   └── ...
@@ -97,20 +98,22 @@ kabot/skills/<skill-name>/
 - Output JSON to stdout for structured data.
 - Use stderr for errors.
 - Handle exceptions gracefully.
+- Read API keys/tokens from `os.environ`.
+- Fail fast with a clear setup message when an API key is missing.
 
 ## Skill Types
 
 ### Type 1: Instruction-Only (most common)
 Just `SKILL.md` — teaches Kabot how to use existing tools (`exec`, `read_file`, etc.).
 ```
-kabot/skills/weather/
+skills/weather/
 └── SKILL.md    ← Instructions for using weather CLI
 ```
 
 ### Type 2: Instruction + References
 `SKILL.md` + docs for complex APIs or workflows.
 ```
-kabot/skills/discord/
+skills/discord/
 ├── SKILL.md
 └── references/
     ├── api-docs.md
@@ -120,7 +123,7 @@ kabot/skills/discord/
 ### Type 3: Full Skill (with scripts)
 For skills that need custom Python logic (API wrappers, OAuth flows, etc.).
 ```
-kabot/skills/meta-threads/
+skills/meta-threads/
 ├── SKILL.md
 ├── references/
 │   └── threads-api.md

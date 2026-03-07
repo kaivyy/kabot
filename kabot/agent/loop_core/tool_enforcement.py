@@ -35,6 +35,64 @@ from kabot.agent.tools.stock import (
 )
 from kabot.bus.events import InboundMessage
 
+_FILELIKE_QUERY_RE = re.compile(
+    r"\b[\w\-]+\.(json|ya?ml|toml|ini|cfg|conf|env|md|txt|csv|log|pdf|docx?|xlsx?|py|js|ts|tsx|jsx|html|css|xml)\b",
+    re.IGNORECASE,
+)
+_PATHLIKE_QUERY_RE = re.compile(
+    r"([a-zA-Z]:\\[^\s\"']+|\\\\[^\s\"']+|/[^\s\"']+|[\w\-./]+\\[\w\-./]+)"
+)
+_STOCK_TRACKING_MARKER_RE = re.compile(
+    r"(?i)\b("
+    r"track(?:ing)?|trend|movement|history|historical|chart|grafik|"
+    r"pergerakan|riwayat|naik turun|kinerja|performance|"
+    r"bulan terakhir|hari terakhir|minggu terakhir|"
+    r"\d+\s*(?:day|days|hari|week|weeks|minggu|month|months|bulan)|"
+    r"1m|3m|6m|1y"
+    r")\b"
+)
+_STOCK_DAYS_DAY_RE = re.compile(r"(?i)\b(\d{1,3})\s*(day|days|hari)\b")
+_STOCK_DAYS_WEEK_RE = re.compile(r"(?i)\b(\d{1,3})\s*(week|weeks|minggu)\b")
+_STOCK_DAYS_MONTH_RE = re.compile(r"(?i)\b(\d{1,2})\s*(month|months|bulan)\b")
+_STOCK_IDR_CONVERSION_MARKER_RE = re.compile(
+    r"(?i)\b(idr|rupiah|dirupiahkan|rupiahkan|konversi|convert(?:ed|ion)?)\b"
+)
+_GENERIC_STOCK_NAME_NOISE_WORDS = {
+    "harga",
+    "price",
+    "sekarang",
+    "today",
+    "now",
+    "berapa",
+    "how",
+    "much",
+    "dengan",
+    "dalam",
+    "untuk",
+    "kalau",
+    "jika",
+    "pakai",
+    "gunakan",
+    "dirupiahkan",
+    "rupiah",
+    "rupiahkan",
+    "kurs",
+    "konversi",
+    "convert",
+    "usd",
+    "idr",
+    "dollar",
+    "ke",
+    "to",
+}
+_WEB_SEARCH_TAIL_INSTRUCTION_RE = re.compile(
+    r"(?i)(?:[,:;.!?]\s*|\s+)(?:tolong|please)\s+(?:jawab|answer|respond)\b.*$"
+)
+_WEB_SEARCH_STYLE_CLAUSE_RE = re.compile(
+    r"(?i)\b(?:jawab|answer|respond)\s+(?:seperti|like|as)\b.*$"
+)
+_WEB_SEARCH_EXTRA_SPACE_RE = re.compile(r"\s+")
+
 
 def existing_schedule_titles(loop: Any) -> list[str]:
     """Collect existing grouped schedule titles from cron service."""
@@ -62,9 +120,11 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_speedtest_tool=loop.tools.has("speedtest"),
         has_process_memory_tool=loop.tools.has("get_process_memory"),
         has_stock_tool=loop.tools.has("stock"),
+        has_stock_analysis_tool=loop.tools.has("stock_analysis"),
         has_crypto_tool=loop.tools.has("crypto"),
         has_server_monitor_tool=loop.tools.has("server_monitor"),
         has_web_search_tool=loop.tools.has("web_search"),
+        has_read_file_tool=loop.tools.has("read_file"),
         has_check_update_tool=loop.tools.has("check_update"),
         has_system_update_tool=loop.tools.has("system_update"),
     )
@@ -190,13 +250,84 @@ def _query_has_tool_payload(tool_name: str, text: str) -> bool:
     if not raw:
         return False
     tool = str(tool_name or "").strip().lower()
-    if tool == "stock":
-        return bool(extract_stock_symbols(raw) or extract_stock_name_candidates(raw))
+    if tool in {"stock", "stock_analysis"}:
+        symbols = extract_stock_symbols(raw)
+        if symbols:
+            return True
+        if _FILELIKE_QUERY_RE.search(raw) or _PATHLIKE_QUERY_RE.search(raw):
+            return False
+        names = extract_stock_name_candidates(raw)
+        if not names:
+            return False
+        for candidate in names:
+            tokens = [token for token in _normalize_text(candidate).split(" ") if token]
+            if not tokens:
+                continue
+            if any(token not in _GENERIC_STOCK_NAME_NOISE_WORDS for token in tokens):
+                return True
+        return False
     if tool == "crypto":
         return bool(extract_crypto_ids(raw))
     if tool == "weather":
         return bool(extract_weather_location(raw))
+    if tool == "read_file":
+        return bool(_extract_read_file_path(raw))
     return False
+
+
+def _extract_read_file_path(text: str) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    # Prefer quoted paths first.
+    quoted = re.findall(r"[\"'`]+([^\"'`]+)[\"'`]+", raw)
+    for candidate in quoted:
+        cleaned = str(candidate).strip().rstrip(".,;:!?)]}")
+        if _FILELIKE_QUERY_RE.search(cleaned) or _PATHLIKE_QUERY_RE.search(cleaned):
+            return cleaned
+
+    # Then explicit path-like payloads.
+    path_match = _PATHLIKE_QUERY_RE.search(raw)
+    if path_match:
+        cleaned = str(path_match.group(1)).strip().rstrip(".,;:!?)]}")
+        if cleaned:
+            return cleaned
+
+    # Finally, plain filename.ext tokens.
+    file_match = _FILELIKE_QUERY_RE.search(raw)
+    if file_match:
+        cleaned = str(file_match.group(0)).strip().rstrip(".,;:!?)]}")
+        if cleaned:
+            return cleaned
+    return None
+
+
+def _looks_like_stock_tracking_query(text: str) -> bool:
+    return bool(_STOCK_TRACKING_MARKER_RE.search(str(text or "")))
+
+
+def _looks_like_stock_idr_conversion_query(text: str) -> bool:
+    return bool(_STOCK_IDR_CONVERSION_MARKER_RE.search(str(text or "")))
+
+
+def _extract_stock_analysis_days(text: str, *, default_days: int = 30) -> int:
+    raw = str(text or "")
+    match_day = _STOCK_DAYS_DAY_RE.search(raw)
+    if match_day:
+        return max(5, min(365, int(match_day.group(1))))
+
+    match_week = _STOCK_DAYS_WEEK_RE.search(raw)
+    if match_week:
+        days = int(match_week.group(1)) * 7
+        return max(5, min(365, days))
+
+    match_month = _STOCK_DAYS_MONTH_RE.search(raw)
+    if match_month:
+        days = int(match_month.group(1)) * 30
+        return max(5, min(365, days))
+
+    return max(5, min(365, int(default_days)))
 
 
 def _format_update_tool_output(required_tool: str, raw_result: Any, source_text: str) -> str:
@@ -279,6 +410,22 @@ def _format_update_tool_output(required_tool: str, raw_result: Any, source_text:
     return text_result
 
 
+def _compact_web_search_query(source_text: str) -> str:
+    """
+    Trim conversational answer-style tails from live-search queries.
+
+    Keep the original user text in `context_text`; only compact the actual
+    outbound search string so news prompts remain natural but searchable.
+    """
+    raw = str(source_text or "").strip()
+    if not raw:
+        return raw
+    compact = _WEB_SEARCH_TAIL_INSTRUCTION_RE.sub("", raw).strip(" ,;:.!?")
+    compact = _WEB_SEARCH_STYLE_CLAUSE_RE.sub("", compact).strip(" ,;:.!?")
+    compact = _WEB_SEARCH_EXTRA_SPACE_RE.sub(" ", compact).strip()
+    return compact or raw
+
+
 async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: InboundMessage) -> str | None:
     """Deterministic fallback when model skips required tools repeatedly."""
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
@@ -295,7 +442,10 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         except Exception:
             raw_required_tool = None
         if raw_required_tool == required_tool:
-            source_text = raw_text
+            raw_has_payload = _query_has_tool_payload(required_tool, raw_text)
+            resolved_has_payload = _query_has_tool_payload(required_tool, source_text)
+            if raw_has_payload or not resolved_has_payload:
+                source_text = raw_text
 
     # Generic stale-metadata guard for short follow-up turns.
     # Example: user sends "iya/ok/gas", but metadata accidentally carries a long
@@ -316,15 +466,22 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         source_text = raw_text
 
     if required_tool == "web_search":
-        query = source_text.strip()
+        query = _compact_web_search_query(source_text)
         if not query:
             return i18n_t("web_search.need_query", source_text)
         if stale_metadata_dropped:
             return i18n_t("web_search.need_topic", source_text)
         result = await loop.tools.execute(
             "web_search",
-            {"query": query, "count": 5, "context_text": query},
+            {"query": query, "count": 5, "context_text": source_text},
         )
+        return str(result)
+
+    if required_tool == "read_file":
+        path = _extract_read_file_path(source_text)
+        if not path:
+            return i18n_t("filesystem.need_path", source_text)
+        result = await loop.tools.execute("read_file", {"path": path})
         return str(result)
 
     if required_tool == "check_update":
@@ -336,7 +493,19 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         return _format_update_tool_output(required_tool, result, source_text)
 
     if required_tool == "weather":
-        location = extract_weather_location(source_text)
+        last_tool_context = metadata.get("last_tool_context") if isinstance(metadata.get("last_tool_context"), dict) else {}
+        fallback_location = str(last_tool_context.get("location") or "").strip()
+        short_weather_followup = bool(
+            raw_text
+            and len(str(raw_text).strip()) <= 24
+            and re.search(r"(?i)(wind|angin|weather|cuaca|[風风]|ลม)", str(raw_text))
+        )
+        if raw_text and (_is_low_information_followup(raw_text) or short_weather_followup) and fallback_location:
+            location = fallback_location
+        else:
+            location = extract_weather_location(source_text)
+            if not location and fallback_location:
+                location = fallback_location
         if not location:
             return i18n_t("weather.need_location", source_text)
         result = await loop.tools.execute(
@@ -373,6 +542,24 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         result = await loop.tools.execute("speedtest", {})
         return str(result)
 
+    if required_tool == "stock_analysis":
+        symbols = extract_stock_symbols(source_text)
+        days = _extract_stock_analysis_days(source_text, default_days=30)
+        if symbols:
+            result = await loop.tools.execute(
+                "stock_analysis",
+                {"symbol": symbols[0], "days": days},
+            )
+            return str(result)
+        name_candidates = extract_stock_name_candidates(source_text)
+        if not name_candidates:
+            return i18n_t("stock.need_symbol", source_text)
+        result = await loop.tools.execute(
+            "stock_analysis",
+            {"symbol": source_text, "days": days},
+        )
+        return str(result)
+
     if required_tool == "stock":
         # Guard against stale assistant-style metadata being reused as ticker query
         # when user only sends a short confirmation like "iya/ok/gas".
@@ -384,6 +571,46 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             and len(resolved_query) > 80
         ):
             source_text = raw_text
+
+        tracking_signal = _looks_like_stock_tracking_query(raw_text) or _looks_like_stock_tracking_query(source_text)
+        if tracking_signal and loop.tools.has("stock_analysis"):
+            combined_text = " ".join(part for part in (source_text, raw_text) if part).strip()
+            analysis_symbols = extract_stock_symbols(combined_text)
+            analysis_days = _extract_stock_analysis_days(raw_text or source_text, default_days=30)
+            if analysis_symbols:
+                result = await loop.tools.execute(
+                    "stock_analysis",
+                    {"symbol": analysis_symbols[0], "days": analysis_days},
+                )
+                return str(result)
+            analysis_name_candidates = extract_stock_name_candidates(combined_text)
+            if analysis_name_candidates:
+                result = await loop.tools.execute(
+                    "stock_analysis",
+                    {"symbol": combined_text, "days": analysis_days},
+                )
+                return str(result)
+
+        combined_parts: list[str] = []
+        seen_parts: set[str] = set()
+        for part in (source_text, raw_text):
+            normalized_part = str(part or "").strip()
+            if not normalized_part:
+                continue
+            dedupe_key = normalized_part.lower()
+            if dedupe_key in seen_parts:
+                continue
+            seen_parts.add(dedupe_key)
+            combined_parts.append(normalized_part)
+        combined_text = " ".join(combined_parts).strip()
+        if (
+            combined_text
+            and raw_text
+            and _looks_like_stock_idr_conversion_query(raw_text)
+            and combined_text != source_text
+        ):
+            result = await loop.tools.execute("stock", {"symbol": combined_text})
+            return str(result)
 
         q_lower = source_text.lower()
         tickers = extract_stock_symbols(source_text)

@@ -174,3 +174,53 @@ async def test_instance_agent_binding_forces_agent_model_and_fallbacks(tmp_path)
     # New behavior: per-agent fallbacks override global runtime fallbacks.
     models = loop._resolve_models_for_message(msg)
     assert models == ["openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4.1-mini"]
+
+
+@pytest.mark.asyncio
+async def test_message_metadata_model_override_takes_precedence(tmp_path):
+    """Per-message metadata override should take precedence over routed agent model chain."""
+    from datetime import datetime
+
+    from kabot.agent.loop import AgentLoop
+    from kabot.bus.events import InboundMessage
+    from kabot.bus.queue import MessageBus
+    from kabot.config.schema import AgentConfig, AgentsConfig, Config
+
+    config = Config()
+    config.agents = AgentsConfig(
+        agents=[
+            AgentConfig(id="default", default=True),
+        ]
+    )
+
+    bus = MessageBus()
+    provider = MagicMock()
+    provider.get_default_model = MagicMock(return_value="anthropic/claude-3-5-sonnet-20241022")
+    provider.chat = AsyncMock(return_value=MagicMock(content="Response", has_tool_calls=False))
+
+    loop = AgentLoop(
+        bus=bus,
+        provider=provider,
+        workspace=tmp_path,
+        config=config,
+        model="anthropic/claude-3-5-sonnet-20241022",
+        fallbacks=["openai/gpt-4o-mini"],
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="default_chat",
+        sender_id="user123",
+        content="Test message",
+        timestamp=datetime.now(),
+        metadata={
+            "model_override": "openrouter/auto",
+            "model_fallbacks": ["groq/llama3-70b-8192", "openai/gpt-4o-mini"],
+        },
+    )
+
+    assert loop._resolve_models_for_message(msg) == [
+        "openrouter/auto",
+        "groq/llama3-70b-8192",
+        "openai/gpt-4o-mini",
+    ]

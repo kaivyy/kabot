@@ -67,3 +67,33 @@ def test_configure_tools_advanced_menu_sets_only_selected_key(monkeypatch):
     assert wizard.config.tools.web.search.xai_api_key == ""
     assert wizard.config.tools.web.fetch.firecrawl_api_key == ""
 
+
+def test_configure_tools_runtime_mode_sets_hemat(monkeypatch):
+    wizard = SetupWizard()
+    wizard.config.runtime.performance.token_mode = "boros"
+
+    picks = iter(
+        [
+            "runtime_mode",
+            "hemat",
+            None,  # Back from tools menu
+        ]
+    )
+
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.tools_gateway_skills.ClackUI.clack_select",
+        lambda *_, **__: next(picks),
+    )
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.tools_gateway_skills.Prompt.ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Prompt.ask should not be called in this flow")),
+    )
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.tools_gateway_skills.Confirm.ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Confirm.ask should not be called in this flow")),
+    )
+    monkeypatch.setattr(wizard, "_save_setup_state", lambda *_, **__: None)
+
+    wizard._configure_tools()
+
+    assert wizard.config.runtime.performance.token_mode == "hemat"

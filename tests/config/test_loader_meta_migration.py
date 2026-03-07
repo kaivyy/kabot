@@ -94,6 +94,7 @@ def test_migrate_injects_runtime_resilience_and_performance_defaults():
     assert resilience["maxModelAttemptsPerTurn"] == 4
     assert performance["fastFirstResponse"] is True
     assert performance["embedWarmupTimeoutMs"] == 1200
+    assert performance["tokenMode"] == "boros"
     assert autopilot["enabled"] is True
     assert autopilot["maxActionsPerBeat"] == 1
     observability = runtime_cfg.get("observability", {})

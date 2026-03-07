@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 from kabot.agent.fallback_i18n import t as i18n_t
@@ -6,6 +8,7 @@ from kabot.agent.tools.stock import (
     StockTool,
     extract_crypto_ids,
     extract_stock_name_candidates,
+    extract_stock_symbols,
 )
 from kabot.agent.tools.stock_analysis import StockAnalysisTool
 
@@ -126,6 +129,21 @@ async def test_stock_tool_rejects_free_text_without_valid_tickers():
     assert result == i18n_t("stock.need_symbol", query)
 
 
+def test_extract_stock_symbols_ignores_file_like_extensions():
+    assert extract_stock_symbols("config.json") == []
+    assert extract_stock_symbols("baca file config.json") == []
+
+
+def test_extract_stock_symbols_supports_usd_idr_natural_language_queries():
+    assert extract_stock_symbols("1 usd berapa rupiah sekarang") == ["USDIDR=X"]
+    assert extract_stock_symbols("kurs usd ke idr hari ini") == ["USDIDR=X"]
+
+
+def test_extract_stock_name_candidates_trim_fx_conversion_filler_words():
+    query = "If Apple is around 260 dollars, roughly how much is that in Indonesian rupiah today?"
+    assert extract_stock_name_candidates(query) == ["Apple"]
+
+
 @pytest.mark.asyncio
 async def test_stock_tool_extracts_idx_symbols_from_natural_language_without_spam(monkeypatch):
     """Mixed natural-language queries should keep only valid explicit ticker candidates."""
@@ -210,6 +228,111 @@ async def test_stock_tool_extracts_toba_alias_from_natural_language(monkeypatch)
 
     assert requested == ["ADRO.JK", "TOBA.JK"]
     assert "TOBA.JK" in result
+
+
+@pytest.mark.asyncio
+async def test_stock_tool_extracts_usd_idr_alias_from_natural_language(monkeypatch):
+    tool = StockTool()
+    requested: list[str] = []
+
+    async def _fake_fetch(symbol: str) -> str:
+        requested.append(symbol)
+        return (
+            f"[STOCK] {symbol} (FX)\n"
+            "Price: 1.00 IDR\n"
+            "Change: +0.00 (+0.00%)\n"
+            "High: 1.00 IDR\n"
+            "Low: 1.00 IDR"
+        )
+
+    monkeypatch.setattr(tool, "_fetch_yahoo_finance", _fake_fetch)
+    result = await tool.execute("gunakan yahoo finance harga 1 usd berapa rupiah")
+
+    assert requested == ["USDIDR=X"]
+    assert "USDIDR=X" in result
+
+
+@pytest.mark.asyncio
+async def test_stock_tool_converts_natural_usd_prompt_to_rupiah(monkeypatch):
+    tool = StockTool()
+
+    async def _fake_snapshot(symbol: str):
+        if symbol == "USDIDR=X":
+            return {
+                "symbol": "USDIDR=X",
+                "currency": "IDR",
+                "exchange": "CCY",
+                "price": 15600.0,
+                "open_price": 15500.0,
+                "high_price": 15650.0,
+                "low_price": 15480.0,
+            }
+        if symbol == "AAPL":
+            return {
+                "symbol": "AAPL",
+                "currency": "USD",
+                "exchange": "NMS",
+                "price": 260.29,
+                "open_price": 259.0,
+                "high_price": 261.0,
+                "low_price": 257.0,
+            }
+        raise AssertionError(f"Unexpected symbol: {symbol}")
+
+    monkeypatch.setattr(tool, "_fetch_quote_snapshot", _fake_snapshot)
+    monkeypatch.setattr(tool, "_resolve_symbols_from_names", AsyncMock(return_value=(["AAPL"], None, None)))
+
+    result = await tool.execute(
+        "If Apple is around 260 dollars, roughly how much is that in Indonesian rupiah today?"
+    )
+
+    assert "USDIDR=X" in result
+    assert "AAPL" in result
+    assert "4,056,000.00 IDR" in result
+
+
+@pytest.mark.asyncio
+async def test_stock_tool_converts_natural_usd_prompt_to_rupiah_via_real_name_resolution(monkeypatch):
+    tool = StockTool()
+
+    async def _fake_snapshot(symbol: str):
+        if symbol == "USDIDR=X":
+            return {
+                "symbol": "USDIDR=X",
+                "currency": "IDR",
+                "exchange": "CCY",
+                "price": 15600.0,
+                "open_price": 15500.0,
+                "high_price": 15650.0,
+                "low_price": 15480.0,
+            }
+        if symbol == "AAPL":
+            return {
+                "symbol": "AAPL",
+                "currency": "USD",
+                "exchange": "NMS",
+                "price": 260.29,
+                "open_price": 259.0,
+                "high_price": 261.0,
+                "low_price": 257.0,
+            }
+        raise AssertionError(f"Unexpected symbol: {symbol}")
+
+    async def _fake_search(candidate: str, raw_query: str | None = None):
+        if candidate == "Apple":
+            return ["AAPL"]
+        return []
+
+    monkeypatch.setattr(tool, "_fetch_quote_snapshot", _fake_snapshot)
+    monkeypatch.setattr(tool, "_search_yahoo_symbols", _fake_search)
+
+    result = await tool.execute(
+        "If Apple is around 260 dollars, roughly how much is that in Indonesian rupiah today?"
+    )
+
+    assert "USDIDR=X" in result
+    assert "AAPL" in result
+    assert "4,056,000.00 IDR" in result
 
 
 @pytest.mark.asyncio
@@ -505,6 +628,127 @@ async def test_stock_tool_asks_clarification_when_company_name_is_ambiguous(monk
 
 
 @pytest.mark.asyncio
+async def test_stock_tool_prefers_primary_unsuffixed_listing_for_strong_company_match(monkeypatch):
+    tool = StockTool()
+    requested: list[str] = []
+
+    async def _fake_fetch(symbol: str) -> str:
+        requested.append(symbol)
+        return (
+            f"[STOCK] {symbol} (NMS)\n"
+            "Price: 410.68 USD\n"
+            "Change: +6.26 (+1.55%)\n"
+            "High: 411.61 USD\n"
+            "Low: 404.40 USD"
+        )
+
+    class _DummyResponse:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self) -> dict:
+            return self._payload
+
+    class _DummyClient:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url, headers=None, params=None, timeout=10.0):  # type: ignore[no-untyped-def]
+            if "finance/search" not in url:
+                raise AssertionError(f"Unexpected URL: {url}")
+            return _DummyResponse(
+                200,
+                {
+                    "quotes": [
+                        {
+                            "symbol": "MSFT",
+                            "quoteType": "EQUITY",
+                            "shortname": "Microsoft Corporation",
+                        },
+                        {
+                            "symbol": "MSHE.TO",
+                            "quoteType": "EQUITY",
+                            "shortname": "Microsoft CDR (CAD Hedged)",
+                        },
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(tool, "_fetch_yahoo_finance", _fake_fetch)
+    monkeypatch.setattr("kabot.agent.tools.stock.httpx.AsyncClient", lambda: _DummyClient())
+
+    result = await tool.execute("How much is Microsoft stock right now?")
+
+    assert requested == ["MSFT"]
+    assert "MSFT" in result
+    assert "multiple listings" not in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_stock_tool_resolves_free_style_indonesian_company_name_query(monkeypatch):
+    tool = StockTool()
+    requested: list[str] = []
+
+    async def _fake_fetch(symbol: str) -> str:
+        requested.append(symbol)
+        return (
+            f"[STOCK] {symbol} (NMS)\n"
+            "Price: 410.68 USD\n"
+            "Change: +6.26 (+1.55%)\n"
+            "High: 411.61 USD\n"
+            "Low: 404.40 USD"
+        )
+
+    class _DummyResponse:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self) -> dict:
+            return self._payload
+
+    class _DummyClient:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url, headers=None, params=None, timeout=10.0):  # type: ignore[no-untyped-def]
+            if "finance/search" not in url:
+                raise AssertionError(f"Unexpected URL: {url}")
+            return _DummyResponse(
+                200,
+                {
+                    "quotes": [
+                        {
+                            "symbol": "MSFT",
+                            "quoteType": "EQUITY",
+                            "shortname": "Microsoft Corporation",
+                        },
+                        {
+                            "symbol": "MSHE.TO",
+                            "quoteType": "ETF",
+                            "shortname": "Harvest Microsoft Enhanced High Income Shares ETF",
+                        },
+                    ]
+                },
+            )
+
+    monkeypatch.setattr(tool, "_fetch_yahoo_finance", _fake_fetch)
+    monkeypatch.setattr("kabot.agent.tools.stock.httpx.AsyncClient", lambda: _DummyClient())
+
+    result = await tool.execute("bro kira-kira saham microsoft sekarang berapa ya?")
+
+    assert requested == ["MSFT"]
+    assert "MSFT" in result
+
+
+@pytest.mark.asyncio
 async def test_stock_tool_ambiguous_clarification_is_localized_for_indonesian_query(monkeypatch):
     tool = StockTool()
 
@@ -739,6 +983,30 @@ def test_extract_crypto_ids_handles_multi_coin_phrases():
 
 def test_extract_stock_name_candidates_supports_non_latin_queries():
     assert extract_stock_name_candidates("トヨタ") == ["トヨタ"]
+
+
+def test_extract_stock_name_candidates_ignores_generic_trend_phrase():
+    assert extract_stock_name_candidates("cenderung naik atau turun?") == []
+
+
+def test_extract_stock_name_candidates_ignores_generic_advice_phrase():
+    assert extract_stock_name_candidates("saranmu apa") == []
+
+
+def test_extract_stock_name_candidates_ignores_non_market_topic_phrase():
+    assert extract_stock_name_candidates("adakah gejolak politik sekarang") == []
+
+
+def test_extract_stock_name_candidates_ignores_fx_wording_without_asset():
+    assert extract_stock_name_candidates("kalau dirupiahkan dengan harga sekarang berapa") == []
+
+
+def test_extract_stock_name_candidates_ignores_generic_product_advice_phrase():
+    assert extract_stock_name_candidates("sunscreen nya apa yang bagus") == []
+
+
+def test_extract_stock_name_candidates_trims_trailing_question_noise_from_company_name():
+    assert extract_stock_name_candidates("How much is Microsoft stock right now?") == ["Microsoft"]
 
 
 @pytest.mark.asyncio

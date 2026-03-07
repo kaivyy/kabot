@@ -2,6 +2,7 @@
 
 import asyncio
 import atexit
+import inspect
 import json
 import os
 import select
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import typer
+from loguru import logger
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -48,6 +50,19 @@ app = typer.Typer(
 
 console = Console()
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
+
+
+def _ensure_utf8_stdio() -> None:
+    """Best-effort UTF-8 stdio for Windows terminals (avoid cp1252 crashes)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+
+
+_ensure_utf8_stdio()
 
 # ---------------------------------------------------------------------------
 # Lightweight CLI input: readline for arrow keys / history, termios for flush
@@ -393,9 +408,34 @@ def setup(
 @app.command()
 def config(
     edit: bool = typer.Option(False, "--edit", "-e", help="Open configuration file in default editor"),
+    token_mode: str = typer.Option(
+        "",
+        "--token-mode",
+        help="Set runtime token mode directly: boros or hemat",
+    ),
+    token_saver: bool | None = typer.Option(
+        None,
+        "--token-saver/--no-token-saver",
+        help="Shortcut toggle: enabled=hemat, disabled=boros",
+    ),
 ):
     """Configure kabot settings."""
-    from kabot.config.loader import get_config_path
+    from kabot.config.loader import get_config_path, load_config, save_config
+
+    if str(token_mode or "").strip() or token_saver is not None:
+        raw_mode = str(token_mode or "").strip().lower()
+        if raw_mode:
+            if raw_mode not in {"boros", "hemat"}:
+                raise typer.BadParameter("Token mode must be boros or hemat.", param_hint="--token-mode")
+            resolved_mode = raw_mode
+        else:
+            resolved_mode = "hemat" if bool(token_saver) else "boros"
+
+        cfg = load_config()
+        cfg.runtime.performance.token_mode = resolved_mode
+        save_config(cfg)
+        console.print(f"[green]Runtime token mode set to {resolved_mode.upper()}[/green]")
+        return
 
     if edit:
         config_path = get_config_path()
@@ -1084,6 +1124,7 @@ def _next_cli_reminder_delay_seconds(
     channel: str = "cli",
     chat_id: str = "direct",
     max_wait_seconds: float | None = 300.0,
+    job_ids: set[str] | None = None,
 ) -> float | None:
     """Return earliest pending CLI reminder delay (seconds), or None."""
     import time
@@ -1094,6 +1135,8 @@ def _next_cli_reminder_delay_seconds(
         if not job.payload.deliver:
             continue
         if job.payload.channel != channel or job.payload.to != chat_id:
+            continue
+        if job_ids is not None and job.id not in job_ids:
             continue
         if not job.state.next_run_at_ms:
             continue
@@ -1110,6 +1153,966 @@ def _next_cli_reminder_delay_seconds(
     return next_delay
 
 
+def _collect_cli_delivery_job_ids(
+    cron_service,
+    channel: str = "cli",
+    chat_id: str = "direct",
+) -> set[str]:
+    """Collect current deliverable cron jobs for a specific CLI destination."""
+    ids: set[str] = set()
+    for job in cron_service.list_jobs(include_disabled=False):
+        if not job.payload.deliver:
+            continue
+        if job.payload.channel != channel or job.payload.to != chat_id:
+            continue
+        if not job.state.next_run_at_ms:
+            continue
+        ids.add(job.id)
+    return ids
+
+
+def _build_dashboard_config_summary(config: Any) -> dict[str, Any]:
+    """Build a safe config snapshot for dashboard display (without secrets)."""
+    gateway = getattr(config, "gateway", None)
+    runtime = getattr(config, "runtime", None)
+    tools = getattr(config, "tools", None)
+    providers_cfg = getattr(config, "providers", None)
+
+    default_model = ""
+    default_fallbacks: list[str] = []
+    try:
+        default_model, default_fallbacks = _resolve_model_runtime(config)
+    except Exception:
+        default_model = ""
+        default_fallbacks = []
+
+    provider_available: list[str] = []
+    provider_configured: list[str] = []
+    try:
+        from kabot.providers.registry import PROVIDERS
+
+        provider_available = sorted({str(spec.name).strip() for spec in PROVIDERS if str(spec.name).strip()})
+    except Exception:
+        provider_available = []
+
+    for provider_name in provider_available:
+        provider_cfg = getattr(providers_cfg, provider_name, None) if providers_cfg is not None else None
+        if provider_cfg is None:
+            continue
+        has_primary = bool(str(getattr(provider_cfg, "api_key", "") or "").strip())
+        has_setup_token = bool(str(getattr(provider_cfg, "setup_token", "") or "").strip())
+        has_profile_key = False
+        profiles = getattr(provider_cfg, "profiles", {})
+        if isinstance(profiles, dict):
+            for profile in profiles.values():
+                if bool(str(getattr(profile, "api_key", "") or "").strip()):
+                    has_profile_key = True
+                    break
+        if has_primary or has_setup_token or has_profile_key:
+            provider_configured.append(provider_name)
+
+    gateway_summary = {
+        "host": str(getattr(gateway, "host", "") or ""),
+        "port": int(getattr(gateway, "port", 0) or 0),
+        "bind_mode": str(getattr(gateway, "bind_mode", "") or ""),
+        "tailscale": bool(getattr(gateway, "tailscale", False)),
+        "auth_token_configured": bool(str(getattr(gateway, "auth_token", "") or "").strip()),
+    }
+
+    runtime_perf = getattr(runtime, "performance", None)
+    runtime_summary = {
+        "model": {
+            "primary": str(default_model or ""),
+            "fallbacks": [str(item).strip() for item in default_fallbacks if str(item).strip()],
+        },
+        "performance": {
+            "token_mode": str(getattr(runtime_perf, "token_mode", "boros") or "boros").strip().lower(),
+            "fast_first_response": bool(getattr(runtime_perf, "fast_first_response", True)),
+            "defer_memory_warmup": bool(getattr(runtime_perf, "defer_memory_warmup", True)),
+        }
+    }
+
+    web_tools = getattr(tools, "web", None)
+    web_search = getattr(web_tools, "search", None)
+    tools_summary = {
+        "web": {
+            "search_provider": str(getattr(web_search, "provider", "") or ""),
+            "max_results": int(getattr(web_search, "max_results", 0) or 0),
+            "api_key_configured": bool(str(getattr(web_search, "api_key", "") or "").strip()),
+        }
+    }
+
+    providers_summary = {
+        "available": provider_available,
+        "configured": sorted(set(provider_configured)),
+        "models_by_provider": _list_provider_models_for_dashboard(),
+    }
+
+    return {
+        "gateway": gateway_summary,
+        "runtime": runtime_summary,
+        "tools": tools_summary,
+        "providers": providers_summary,
+    }
+
+
+_DASHBOARD_PROVIDER_MODELS_CACHE_TS = 0.0
+_DASHBOARD_PROVIDER_MODELS_CACHE: dict[str, list[str]] = {}
+
+
+def _list_provider_models_for_dashboard(
+    *,
+    ttl_seconds: int = 300,
+    per_provider_limit: int = 200,
+) -> dict[str, list[str]]:
+    """Return lightweight provider->model mapping for dashboard model suggestions."""
+    global _DASHBOARD_PROVIDER_MODELS_CACHE_TS, _DASHBOARD_PROVIDER_MODELS_CACHE
+
+    now = time.time()
+    if (
+        _DASHBOARD_PROVIDER_MODELS_CACHE
+        and (now - _DASHBOARD_PROVIDER_MODELS_CACHE_TS) < max(10, int(ttl_seconds))
+    ):
+        return {
+            provider: list(models)
+            for provider, models in _DASHBOARD_PROVIDER_MODELS_CACHE.items()
+        }
+
+    mapping: dict[str, list[str]] = {}
+    try:
+        from kabot.providers.registry import ModelRegistry
+
+        registry = ModelRegistry()
+        for meta in registry.list_models():
+            provider = str(getattr(meta, "provider", "") or "").strip().lower()
+            model_id = str(getattr(meta, "id", "") or "").strip()
+            if not provider or not model_id:
+                continue
+            bucket = mapping.setdefault(provider, [])
+            if model_id in bucket:
+                continue
+            bucket.append(model_id)
+    except Exception:
+        mapping = {}
+
+    limit = max(20, int(per_provider_limit))
+    for provider_name, models in list(mapping.items()):
+        models.sort()
+        mapping[provider_name] = models[:limit]
+
+    _DASHBOARD_PROVIDER_MODELS_CACHE_TS = now
+    _DASHBOARD_PROVIDER_MODELS_CACHE = {
+        provider: list(models)
+        for provider, models in mapping.items()
+    }
+    return {
+        provider: list(models)
+        for provider, models in _DASHBOARD_PROVIDER_MODELS_CACHE.items()
+    }
+
+
+def _compose_model_override(model: str, provider: str) -> str:
+    model_text = str(model or "").strip()
+    provider_text = str(provider or "").strip().lower()
+    if not model_text:
+        return ""
+    if "/" in model_text or not provider_text:
+        return model_text
+    return f"{provider_text}/{model_text}"
+
+
+def _parse_model_fallbacks(raw: Any, provider: str = "") -> list[str]:
+    values: list[str] = []
+    if isinstance(raw, list):
+        values = [str(item).strip() for item in raw if str(item).strip()]
+    elif isinstance(raw, str):
+        # Support comma/newline separated values for form and API payloads.
+        values = [
+            token.strip()
+            for token in raw.replace("\n", ",").split(",")
+            if token and token.strip()
+        ]
+    elif raw is not None:
+        text = str(raw).strip()
+        if text:
+            values = [text]
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        composed = _compose_model_override(item, provider=provider)
+        if not composed or composed in seen:
+            continue
+        seen.add(composed)
+        normalized.append(composed)
+        if len(normalized) >= 8:
+            break
+    return normalized
+
+
+def _build_dashboard_nodes(channels: Any) -> list[dict[str, Any]]:
+    """Build lightweight runtime node list for dashboard node panel."""
+    nodes = [
+        {"id": "gateway", "kind": "runtime", "state": "running"},
+        {"id": "agent:main", "kind": "agent", "state": "running"},
+    ]
+    try:
+        channel_status = channels.get_status() if channels is not None else {}
+    except Exception:
+        channel_status = {}
+
+    if isinstance(channel_status, dict):
+        for name, payload in channel_status.items():
+            running = False
+            if isinstance(payload, dict):
+                running = bool(payload.get("running", False))
+            nodes.append(
+                {
+                    "id": f"channel:{name}",
+                    "kind": "channel",
+                    "state": "running" if running else "stopped",
+                }
+            )
+    return nodes
+
+
+def _build_dashboard_cost_payload(session_manager: Any) -> dict[str, Any]:
+    try:
+        from kabot.core.cost_tracker import CostTracker
+
+        tracker = CostTracker(session_manager.sessions_dir)
+        summary = tracker.get_summary()
+    except Exception as exc:
+        logger.warning(f"CostTracker failed: {exc}")
+        summary = {}
+
+    token_usage = summary.get("token_usage", {})
+    if not isinstance(token_usage, dict):
+        token_usage = {}
+
+    model_usage = summary.get("model_usage", {})
+    if not isinstance(model_usage, dict):
+        model_usage = {}
+
+    model_costs = summary.get("model_costs", {})
+    if not isinstance(model_costs, dict):
+        model_costs = {}
+
+    cost_history = summary.get("cost_history", [])
+    if not isinstance(cost_history, list):
+        cost_history = []
+
+    return {
+        "costs": {
+            "today": float(summary.get("today", 0) or 0),
+            "total": float(summary.get("total", 0) or 0),
+            "projected_monthly": float(summary.get("projected_monthly", 0) or 0),
+            "by_model": {
+                str(model): float(cost or 0)
+                for model, cost in model_costs.items()
+            },
+        },
+        "token_usage": {
+            "input": int(token_usage.get("input", 0) or 0),
+            "output": int(token_usage.get("output", 0) or 0),
+            "total": int(token_usage.get("total", 0) or 0),
+        },
+        "model_usage": {
+            str(model): int(tokens or 0)
+            for model, tokens in model_usage.items()
+        },
+        "cost_history": [
+            {
+                "date": str(item.get("date") or ""),
+                "cost": float(item.get("cost", 0) or 0),
+                "tokens": int(item.get("tokens", 0) or 0),
+            }
+            for item in cost_history
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def _format_dashboard_timestamp_ms(timestamp_ms: Any) -> str:
+    try:
+        ts_int = int(timestamp_ms or 0)
+    except Exception:
+        return "-"
+    if ts_int <= 0:
+        return "-"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts_int / 1000))
+    except Exception:
+        return "-"
+
+
+def _describe_dashboard_schedule(schedule: Any) -> str:
+    kind = str(getattr(schedule, "kind", "") or "").strip().lower()
+    if kind == "every":
+        every_ms = int(getattr(schedule, "every_ms", 0) or 0)
+        seconds = max(0, every_ms // 1000)
+        if seconds >= 3600 and seconds % 3600 == 0:
+            return f"every {seconds // 3600}h"
+        if seconds >= 60 and seconds % 60 == 0:
+            return f"every {seconds // 60}m"
+        return f"every {seconds}s"
+    if kind == "at":
+        return _format_dashboard_timestamp_ms(getattr(schedule, "at_ms", 0))
+    if kind == "cron":
+        return str(getattr(schedule, "expr", "") or "-")
+    return kind or "-"
+
+
+def _build_dashboard_channel_rows(channel_status: Any, enabled_channels: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if isinstance(channel_status, dict):
+        for name, payload in channel_status.items():
+            data = payload if isinstance(payload, dict) else {}
+            if bool(data.get("connected")):
+                state = "connected"
+            elif bool(data.get("running")):
+                state = "running"
+            else:
+                state = "stopped"
+            rows.append(
+                {
+                    "name": str(name),
+                    "type": str(data.get("type") or name),
+                    "state": state,
+                }
+            )
+    elif enabled_channels:
+        for name in enabled_channels:
+            rows.append({"name": str(name), "type": str(name), "state": "enabled"})
+    return rows
+
+
+def _build_dashboard_cron_snapshot(cron: Any, *, limit: int = 30) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    try:
+        cron_status = cron.status() if hasattr(cron, "status") else {}
+    except Exception:
+        cron_status = {}
+    if not isinstance(cron_status, dict):
+        cron_status = {}
+
+    try:
+        jobs = list(cron.list_jobs(include_disabled=True)) if hasattr(cron, "list_jobs") else []
+    except Exception:
+        jobs = []
+
+    rows: list[dict[str, Any]] = []
+    for job in jobs[: max(1, int(limit))]:
+        state = getattr(job, "state", None)
+        run_history = list(getattr(state, "run_history", []) or [])
+        latest_run = run_history[-1] if run_history else {}
+        rows.append(
+            {
+                "id": str(getattr(job, "id", "") or ""),
+                "name": str(getattr(job, "name", "") or ""),
+                "schedule": _describe_dashboard_schedule(getattr(job, "schedule", None)),
+                "state": "enabled" if bool(getattr(job, "enabled", False)) else "disabled",
+                "last_run": _format_dashboard_timestamp_ms(getattr(state, "last_run_at_ms", 0)),
+                "next_run": _format_dashboard_timestamp_ms(getattr(state, "next_run_at_ms", 0)),
+                "last_status": str(getattr(state, "last_status", "") or ""),
+                "last_error": str(getattr(state, "last_error", "") or ""),
+                "duration_ms": int(latest_run.get("duration_ms", 0) or 0) if isinstance(latest_run, dict) else 0,
+                "channel": str(getattr(getattr(job, "payload", None), "channel", "") or ""),
+                "to": str(getattr(getattr(job, "payload", None), "to", "") or ""),
+            }
+        )
+    return cron_status, rows
+
+
+def _build_dashboard_skills_snapshot(config: Any) -> list[dict[str, Any]]:
+    try:
+        from kabot.agent.skills import SkillsLoader
+
+        loader = SkillsLoader(
+            workspace=config.workspace_path,
+            skills_config=getattr(config, "skills", {}),
+        )
+        raw_skills = loader.list_skills(filter_unavailable=False)
+    except Exception as exc:
+        logger.warning(f"Skills snapshot failed: {exc}")
+        raw_skills = []
+
+    skills: list[dict[str, Any]] = []
+    for item in raw_skills[:30]:
+        if not isinstance(item, dict):
+            continue
+        missing = item.get("missing", {})
+        if not isinstance(missing, dict):
+            missing = {}
+        disabled = bool(item.get("disabled", False))
+        eligible = bool(item.get("eligible", False))
+        if disabled:
+            state = "disabled"
+        elif eligible:
+            state = "enabled"
+        elif missing.get("env"):
+            state = "missing_env"
+        elif missing.get("bins"):
+            state = "missing_bin"
+        elif missing.get("os"):
+            state = "unsupported_os"
+        else:
+            state = "available"
+        skills.append(
+            {
+                "name": str(item.get("name") or ""),
+                "skill_key": str(item.get("skill_key") or item.get("name") or ""),
+                "state": state,
+                "disabled": disabled,
+                "eligible": eligible,
+                "description": str(item.get("description") or ""),
+                "primary_env": str(item.get("primaryEnv") or ""),
+                "missing_env": [str(val) for val in missing.get("env", []) if str(val).strip()],
+                "missing_bins": [str(val) for val in missing.get("bins", []) if str(val).strip()],
+                "missing_os": [str(val) for val in missing.get("os", []) if str(val).strip()],
+            }
+        )
+    return skills
+
+
+def _build_dashboard_subagent_activity(agent: Any, *, limit: int = 10) -> list[dict[str, Any]]:
+    registry = getattr(getattr(agent, "subagents", None), "registry", None)
+    if registry is None or not hasattr(registry, "list_all"):
+        return []
+    try:
+        runs = list(registry.list_all())
+    except Exception:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for record in sorted(runs, key=lambda item: float(getattr(item, "created_at", 0) or 0), reverse=True)[:limit]:
+        created_at = float(getattr(record, "created_at", 0) or 0)
+        completed_at = float(getattr(record, "completed_at", 0) or 0)
+        duration_ms = int(max(0.0, completed_at - created_at) * 1000) if completed_at and created_at else 0
+        rows.append(
+            {
+                "run_id": str(getattr(record, "run_id", "") or ""),
+                "label": str(getattr(record, "label", "") or ""),
+                "task": str(getattr(record, "task", "") or ""),
+                "status": str(getattr(record, "status", "") or ""),
+                "created_at": created_at,
+                "completed_at": completed_at or None,
+                "duration_ms": duration_ms,
+                "result": str(getattr(record, "result", "") or ""),
+                "error": str(getattr(record, "error", "") or ""),
+                "parent_session_key": str(getattr(record, "parent_session_key", "") or ""),
+            }
+        )
+    return rows
+
+
+def _build_dashboard_git_log(workspace: Path, *, limit: int = 8) -> list[dict[str, str]]:
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "log",
+                f"-n{max(1, int(limit))}",
+                "--pretty=format:%h|%s|%cI|%an",
+            ],
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    rows: list[dict[str, str]] = []
+    for line in str(result.stdout or "").splitlines():
+        parts = line.split("|", 3)
+        if len(parts) != 4:
+            continue
+        sha, subject, timestamp, author = parts
+        rows.append(
+            {
+                "sha": sha.strip(),
+                "subject": subject.strip(),
+                "timestamp": timestamp.strip(),
+                "author": author.strip(),
+            }
+        )
+    return rows
+
+
+def _build_dashboard_status_payload(
+    *,
+    gateway_started_at: float,
+    runtime_model: str,
+    runtime_host: str,
+    runtime_port: int,
+    tailscale_mode: str,
+    session_manager: Any,
+    channels: Any,
+    cron: Any,
+    config: Any,
+    agent: Any,
+) -> dict[str, Any]:
+    try:
+        sessions = list(session_manager.list_sessions())[:20]
+    except Exception:
+        sessions = []
+    try:
+        channel_status = channels.get_status()
+    except Exception:
+        channel_status = {}
+
+    cron_status, cron_jobs_list = _build_dashboard_cron_snapshot(cron)
+    channels_enabled = list(getattr(channels, "enabled_channels", []))
+    cost_payload = _build_dashboard_cost_payload(session_manager)
+    skills = _build_dashboard_skills_snapshot(config)
+    subagent_activity = _build_dashboard_subagent_activity(agent)
+    git_log = _build_dashboard_git_log(config.workspace_path)
+
+    return {
+        "status": "running",
+        "uptime_seconds": max(0, int(time.time() - gateway_started_at)),
+        "model": runtime_model,
+        "version": __version__,
+        "channels_enabled": channels_enabled,
+        "channels_status": channel_status if isinstance(channel_status, dict) else {},
+        "channels": _build_dashboard_channel_rows(channel_status, channels_enabled),
+        "cron_jobs": int(cron_status.get("jobs", 0) or 0),
+        "cron_jobs_list": cron_jobs_list,
+        "host": runtime_host,
+        "port": runtime_port,
+        "tailscale_mode": tailscale_mode,
+        "sessions": sessions,
+        "nodes": _build_dashboard_nodes(channels),
+        "config": _build_dashboard_config_summary(config),
+        "system": {
+            "pid": os.getpid(),
+            "memory_mb": 0,
+        },
+        "skills": skills,
+        "subagent_activity": subagent_activity,
+        "git_log": git_log,
+        **cost_payload,
+    }
+
+
+async def _gateway_dashboard_control_action(
+    *,
+    action: str,
+    args: dict[str, Any],
+    config: Any,
+    save_config_fn: Callable[[Any], None],
+    agent: Any,
+    session_manager: Any,
+    channels: Any,
+    cron: Any | None = None,
+) -> dict[str, Any]:
+    """Runtime control actions used by dashboard surface."""
+    normalized = str(action or "").strip().lower()
+    payload = args if isinstance(args, dict) else {}
+
+    if normalized == "runtime.ping":
+        return {"ok": True, "pong": True, "timestamp": int(time.time())}
+
+    if normalized == "sessions.list":
+        sessions = []
+        try:
+            sessions = list(session_manager.list_sessions())
+        except Exception:
+            sessions = []
+        return {"ok": True, "sessions": sessions[:50]}
+
+    if normalized == "sessions.clear":
+        session_key = str(payload.get("session_key") or "").strip()
+        if not session_key:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "missing_session_key",
+                "message": "Missing session_key",
+            }
+        try:
+            session = session_manager.get_or_create(session_key)
+            session.clear()
+            session_manager.save(session)
+            return {
+                "ok": True,
+                "session_key": session_key,
+                "message": f"Cleared session {session_key}",
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status_code": 500,
+                "error": "session_clear_failed",
+                "message": str(exc),
+            }
+
+    if normalized == "sessions.delete":
+        session_key = str(payload.get("session_key") or "").strip()
+        if not session_key:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "missing_session_key",
+                "message": "Missing session_key",
+            }
+        try:
+            deleted = bool(session_manager.delete(session_key))
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status_code": 500,
+                "error": "session_delete_failed",
+                "message": str(exc),
+            }
+        if not deleted:
+            return {
+                "ok": False,
+                "status_code": 404,
+                "error": "session_not_found",
+                "message": f"Session not found: {session_key}",
+            }
+        return {
+            "ok": True,
+            "session_key": session_key,
+            "message": f"Deleted session {session_key}",
+        }
+
+    if normalized == "channels.status":
+        try:
+            status = channels.get_status()
+        except Exception:
+            status = {}
+        return {"ok": True, "channels": status if isinstance(status, dict) else {}}
+
+    if normalized in {"cron.enable", "cron.disable"}:
+        job_id = str(payload.get("job_id") or "").strip()
+        if not job_id:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "missing_job_id",
+                "message": "Missing job_id",
+            }
+        enable_job = getattr(cron, "enable_job", None)
+        if not callable(enable_job):
+            return {
+                "ok": False,
+                "status_code": 501,
+                "error": "cron_unavailable",
+                "message": "Cron service is unavailable",
+            }
+        enabled = normalized == "cron.enable"
+        try:
+            job = enable_job(job_id, enabled=enabled)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status_code": 500,
+                "error": "cron_update_failed",
+                "message": str(exc),
+            }
+        if job is None:
+            return {
+                "ok": False,
+                "status_code": 404,
+                "error": "cron_job_not_found",
+                "message": f"Cron job not found: {job_id}",
+            }
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "enabled": enabled,
+            "message": f"Cron job {'enabled' if enabled else 'disabled'}: {job_id}",
+        }
+
+    if normalized == "cron.run":
+        job_id = str(payload.get("job_id") or "").strip()
+        if not job_id:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "missing_job_id",
+                "message": "Missing job_id",
+            }
+        run_job = getattr(cron, "run_job", None)
+        if not callable(run_job):
+            return {
+                "ok": False,
+                "status_code": 501,
+                "error": "cron_unavailable",
+                "message": "Cron service is unavailable",
+            }
+        try:
+            result = run_job(job_id, force=True)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status_code": 500,
+                "error": "cron_run_failed",
+                "message": str(exc),
+            }
+        if not result:
+            return {
+                "ok": False,
+                "status_code": 404,
+                "error": "cron_job_not_found",
+                "message": f"Cron job not found: {job_id}",
+            }
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "message": f"Cron job executed: {job_id}",
+        }
+
+    if normalized == "cron.delete":
+        job_id = str(payload.get("job_id") or "").strip()
+        if not job_id:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "missing_job_id",
+                "message": "Missing job_id",
+            }
+        remove_job = getattr(cron, "remove_job", None)
+        if not callable(remove_job):
+            return {
+                "ok": False,
+                "status_code": 501,
+                "error": "cron_unavailable",
+                "message": "Cron service is unavailable",
+            }
+        try:
+            removed = bool(remove_job(job_id))
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status_code": 500,
+                "error": "cron_delete_failed",
+                "message": str(exc),
+            }
+        if not removed:
+            return {
+                "ok": False,
+                "status_code": 404,
+                "error": "cron_job_not_found",
+                "message": f"Cron job not found: {job_id}",
+            }
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "message": f"Cron job deleted: {job_id}",
+        }
+
+    if normalized in {"nodes.start", "nodes.stop", "nodes.restart"}:
+        node_id = str(payload.get("node_id") or "").strip()
+        if not node_id:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "missing_node_id",
+                "message": "Missing node_id",
+            }
+        if not node_id.startswith("channel:"):
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "unsupported_node_kind",
+                "message": "Only channel nodes are controllable",
+            }
+        channel_name = node_id.split(":", 1)[1].strip()
+        if not channel_name:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "invalid_node_id",
+                "message": "Invalid node_id",
+            }
+        get_channel = getattr(channels, "get_channel", None)
+        channel = get_channel(channel_name) if callable(get_channel) else None
+        if channel is None:
+            return {
+                "ok": False,
+                "status_code": 404,
+                "error": "node_not_found",
+                "message": f"Node not found: {node_id}",
+            }
+        try:
+            if normalized in {"nodes.stop", "nodes.restart"}:
+                stop_result = channel.stop()
+                if inspect.isawaitable(stop_result):
+                    await stop_result
+            if normalized in {"nodes.start", "nodes.restart"}:
+                start_result = channel.start()
+                if inspect.isawaitable(start_result):
+                    await start_result
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status_code": 500,
+                "error": "node_action_failed",
+                "message": str(exc),
+            }
+        state = "running" if normalized in {"nodes.start", "nodes.restart"} else "stopped"
+        return {
+            "ok": True,
+            "node_id": node_id,
+            "state": state,
+            "message": f"{normalized} executed for {node_id}",
+        }
+
+    if normalized == "config.set_token_mode":
+        mode = str(payload.get("token_mode") or "").strip().lower()
+        if mode not in {"boros", "hemat"}:
+            return {"ok": False, "status_code": 400, "error": "invalid_token_mode", "message": "token_mode must be boros or hemat"}
+        config.runtime.performance.token_mode = mode
+        save_config_fn(config)
+        return {"ok": True, "token_mode": mode, "message": f"Token mode set to {mode}"}
+
+    if normalized in {"skills.enable", "skills.disable"}:
+        from kabot.config.skills_settings import set_skill_entry_enabled
+
+        skill_key = str(payload.get("skill_key") or "").strip()
+        if not skill_key:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "missing_skill_key",
+                "message": "Missing skill_key",
+            }
+        enabled = normalized == "skills.enable"
+        config.skills = set_skill_entry_enabled(
+            config.skills,
+            skill_key,
+            enabled,
+            persist_true=True,
+        )
+        save_config_fn(config)
+        return {
+            "ok": True,
+            "skill_key": skill_key,
+            "enabled": enabled,
+            "message": f"Skill {'enabled' if enabled else 'disabled'}: {skill_key}",
+        }
+
+    if normalized == "skills.set_api_key":
+        from kabot.config.schema import SkillsConfig
+        from kabot.config.skills_settings import normalize_skills_settings
+
+        skill_key = str(payload.get("skill_key") or "").strip()
+        api_key = str(payload.get("api_key") or "").strip()
+        if not skill_key:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "missing_skill_key",
+                "message": "Missing skill_key",
+            }
+        if not api_key:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "error": "missing_api_key",
+                "message": "Missing api_key",
+            }
+        normalized_skills = normalize_skills_settings(config.skills)
+        entries = normalized_skills.setdefault("entries", {})
+        entry = entries.get(skill_key)
+        if not isinstance(entry, dict):
+            entry = {}
+            entries[skill_key] = entry
+        entry["api_key"] = api_key
+        config.skills = SkillsConfig.from_raw(normalized_skills)
+        save_config_fn(config)
+        return {
+            "ok": True,
+            "skill_key": skill_key,
+            "message": f"API key updated for skill: {skill_key}",
+        }
+
+    if normalized == "chat.send":
+        prompt = str(payload.get("prompt") or "").strip()
+        if not prompt:
+            return {"ok": False, "status_code": 400, "error": "missing_prompt", "message": "Missing chat prompt"}
+        session_key = str(payload.get("session_key") or "dashboard:web").strip() or "dashboard:web"
+        channel = str(payload.get("channel") or "dashboard").strip() or "dashboard"
+        chat_id = str(payload.get("chat_id") or "dashboard").strip() or "dashboard"
+        provider = str(payload.get("provider") or "").strip().lower()
+        model_input = str(payload.get("model") or "").strip()
+        model_override = _compose_model_override(model_input, provider=provider)
+        fallback_overrides = _parse_model_fallbacks(payload.get("fallbacks"), provider=provider)
+        process_direct = getattr(agent, "process_direct", None)
+        if not callable(process_direct):
+            return {"ok": False, "status_code": 501, "error": "chat_unavailable", "message": "Runtime chat handler unavailable"}
+        try:
+            result = process_direct(
+                prompt,
+                session_key=session_key,
+                channel=channel,
+                chat_id=chat_id,
+                model_override=model_override or None,
+                fallback_overrides=fallback_overrides or None,
+            )
+        except TypeError:
+            # Backward compatibility for custom runtimes with older signature.
+            result = process_direct(prompt, session_key=session_key, channel=channel, chat_id=chat_id)
+        if inspect.isawaitable(result):
+            result = await result
+        return {"ok": True, "content": str(result or "")}
+
+    return {"ok": False, "status_code": 400, "error": "unsupported_action", "message": f"Unsupported action: {normalized}"}
+
+
+def _gateway_dashboard_chat_history_provider(
+    *,
+    session_manager: Any,
+    session_key: str,
+    limit: int = 30,
+    config: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Read recent session messages for dashboard chat log/history views."""
+    _ = config  # Reserved for future filtering; kept for stable helper signature.
+
+    try:
+        limit_int = int(limit)
+    except Exception:
+        limit_int = 30
+    if limit_int < 1:
+        limit_int = 1
+    if limit_int > 200:
+        limit_int = 200
+
+    key = str(session_key or "").strip() or "dashboard:web"
+    try:
+        session = session_manager.get_or_create(key)
+    except Exception:
+        return []
+
+    raw_messages = getattr(session, "messages", [])
+    if not isinstance(raw_messages, list):
+        return []
+
+    items: list[dict[str, Any]] = []
+    for item in raw_messages[-limit_int:]:
+        if not isinstance(item, dict):
+            continue
+        payload_item = {
+            "role": str(item.get("role") or "").strip().lower() or "assistant",
+            "content": str(item.get("content") or ""),
+            "timestamp": str(item.get("timestamp") or ""),
+        }
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict) and metadata:
+            payload_item["metadata"] = metadata
+        items.append(payload_item)
+    return items
+
+
 # ============================================================================
 # Gateway / Server
 # ============================================================================
@@ -1121,7 +2124,7 @@ def gateway(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the kabot gateway."""
-    from kabot.config.loader import get_data_dir, load_config
+    from kabot.config.loader import get_data_dir, load_config, save_config
 
     boot_started = time.perf_counter()
     console.print(f"{__logo__} Booting kabot gateway...")
@@ -1260,17 +2263,38 @@ def gateway(
     gateway_started_at = time.time()
 
     def _gateway_status_provider() -> dict[str, Any]:
-        cron_status = cron.status() if hasattr(cron, "status") else {}
-        return {
-            "status": "running",
-            "uptime_seconds": max(0, int(time.time() - gateway_started_at)),
-            "model": runtime_model,
-            "channels_enabled": list(getattr(channels, "enabled_channels", [])),
-            "cron_jobs": int(cron_status.get("jobs", 0) or 0),
-            "host": runtime_host,
-            "port": runtime_port,
-            "tailscale_mode": tailscale_mode,
-        }
+        return _build_dashboard_status_payload(
+            gateway_started_at=gateway_started_at,
+            runtime_model=runtime_model,
+            runtime_host=runtime_host,
+            runtime_port=runtime_port,
+            tailscale_mode=tailscale_mode,
+            session_manager=session_manager,
+            channels=channels,
+            cron=cron,
+            config=config,
+            agent=agent,
+        )
+
+    async def _gateway_control_handler(action: str, args: dict[str, Any]) -> dict[str, Any]:
+        return await _gateway_dashboard_control_action(
+            action=action,
+            args=args,
+            config=config,
+            save_config_fn=lambda updated_cfg: save_config(updated_cfg),
+            agent=agent,
+            session_manager=session_manager,
+            channels=channels,
+            cron=cron,
+        )
+
+    def _gateway_chat_history_provider(session_key: str, limit: int = 30) -> list[dict[str, Any]]:
+        return _gateway_dashboard_chat_history_provider(
+            session_manager=session_manager,
+            session_key=session_key,
+            limit=limit,
+            config=config,
+        )
 
     gateway_security_headers = getattr(getattr(config.gateway, "http", None), "security_headers", None)
 
@@ -1294,6 +2318,8 @@ def gateway(
                 )
             ),
             status_provider=_gateway_status_provider,
+            chat_history_provider=_gateway_chat_history_provider,
+            control_handler=_gateway_control_handler,
         )
 
     # Check for restart recovery
@@ -1466,28 +2492,59 @@ def agent(
             return nullcontext()
         return console.status("[dim]kabot is thinking...[/dim]", spinner="dots")
 
+    def _one_shot_message_needs_cron(prompt: str) -> bool:
+        required_tool_for_query = getattr(agent_loop, "_required_tool_for_query", None)
+        if callable(required_tool_for_query):
+            try:
+                return required_tool_for_query(prompt) == "cron"
+            except Exception:
+                pass
+        return _should_use_reminder_fallback_impl(prompt)
+
     if message:
         # Single message mode
         async def run_once():
             cron_started = False
-            # Start cron so reminder jobs can also execute if due soon.
-            try:
-                await cron.start()
-                cron_started = True
-            except Exception as exc:
-                logger.warning(f"Cron unavailable in one-shot mode: {exc}")
-                console.print(
-                    "[yellow]Cron scheduler unavailable for this run. "
-                    "Reminders may be delivered by another running kabot instance.[/yellow]"
-                )
+            baseline_cli_jobs: set[str] = set()
+            # One-shot chat does not need the scheduler unless the prompt itself is
+            # about reminders. Avoid paying startup cost for ordinary live probes.
+            if _one_shot_message_needs_cron(message):
+                try:
+                    await cron.start()
+                    cron_started = True
+                    baseline_cli_jobs = _collect_cli_delivery_job_ids(
+                        cron,
+                        channel="cli",
+                        chat_id="direct",
+                    )
+                except Exception as exc:
+                    logger.warning(f"Cron unavailable in one-shot mode: {exc}")
+                    console.print(
+                        "[yellow]Cron scheduler unavailable for this run. "
+                        "Reminders may be delivered by another running kabot instance.[/yellow]"
+                    )
             try:
                 with _thinking_ctx():
-                    response = await agent_loop.process_direct(message, session_id)
+                    response = await agent_loop.process_direct(
+                        message,
+                        session_id,
+                        suppress_post_response_warmup=True,
+                        probe_mode=True,
+                    )
                 _print_agent_response(response, render_markdown=markdown)
 
                 # Keep process alive briefly when a CLI reminder is due soon,
                 # so one-shot calls like "ingatkan 2 menit lagi" can fire.
                 if cron_started:
+                    current_cli_jobs = _collect_cli_delivery_job_ids(
+                        cron,
+                        channel="cli",
+                        chat_id="direct",
+                    )
+                    new_cli_jobs = current_cli_jobs - baseline_cli_jobs
+                    if not new_cli_jobs:
+                        return
+
                     wait_budget_s = 5 * 60.0
                     elapsed_s = 0.0
                     while elapsed_s < wait_budget_s:
@@ -1497,6 +2554,7 @@ def agent(
                             channel="cli",
                             chat_id="direct",
                             max_wait_seconds=remaining_s,
+                            job_ids=new_cli_jobs,
                         )
                         if next_delay is None:
                             break
@@ -1513,6 +2571,7 @@ def agent(
                             channel="cli",
                             chat_id="direct",
                             max_wait_seconds=None,
+                            job_ids=new_cli_jobs,
                         )
                         if far_delay is not None and far_delay > wait_budget_s:
                             console.print(
@@ -2747,6 +3806,10 @@ def security_audit():
 
 @app.command("doctor")
 def doctor(
+    mode: str = typer.Argument(
+        "health",
+        help="Doctor mode: health|routing",
+    ),
     agent: str = typer.Option("main", "--agent", "-a", help="Agent ID to check"),
     fix: bool = typer.Option(False, "--fix", help="Automatically fix critical integrity issues"),
     parity_report: bool = typer.Option(
@@ -2767,10 +3830,26 @@ def doctor(
 ):
     """Run system health and integrity checks."""
     from kabot.utils.doctor import KabotDoctor
+
+    mode_normalized = str(mode or "health").strip().lower()
     doc = KabotDoctor(agent_id=agent)
     parity_json_path = parity_json.strip()
     if parity_json_path and not parity_report:
         console.print("[red]--parity-json requires --parity-report[/red]")
+        raise typer.Exit(1)
+    if mode_normalized == "routing":
+        if parity_report:
+            console.print("[red]routing mode cannot be combined with --parity-report[/red]")
+            raise typer.Exit(1)
+        if fix:
+            console.print("[yellow]--fix ignored in routing mode[/yellow]")
+        if bootstrap_sync:
+            console.print("[yellow]--bootstrap-sync ignored in routing mode[/yellow]")
+        doc.render_routing_report()
+        return
+    if mode_normalized not in {"health", "all"}:
+        console.print(f"[red]Unknown doctor mode: {mode}[/red]")
+        console.print("[dim]Supported modes: health, routing[/dim]")
         raise typer.Exit(1)
     if parity_report:
         if parity_json_path:

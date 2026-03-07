@@ -71,6 +71,23 @@ def test_web_search_provider_auto_uses_kimi_when_key_present():
     assert tool.provider == "kimi"
 
 
+def test_web_search_builds_priority_fallback_candidate_for_geopolitical_news():
+    tool = WebSearchTool(provider="google_news_rss")
+    candidates = tool._build_news_query_candidates(
+        "Adakah gejolak politik sekarang? Saya dengar ada konflik Iran vs US/Israel. Jawab ringkas dan sertakan sumber jika ada."
+    )
+
+    assert len(candidates) >= 2
+    assert any(
+        "iran" in candidate.lower()
+        and "israel" in candidate.lower()
+        and "us" in candidate.lower()
+        and "news" in candidate.lower()
+        for candidate in candidates
+    )
+    assert all("ringkas" not in candidate.lower() for candidate in candidates[1:])
+
+
 @pytest.mark.asyncio
 async def test_web_search_kimi_parses_text_and_sources(monkeypatch):
     payload = {
@@ -178,3 +195,60 @@ async def test_web_search_google_news_rss_filters_irrelevant_items(monkeypatch):
     result = await tool._search_google_news_rss("carikan berita perang iran", count=5)
     assert "US-Iran war risk rises after new strikes" in result
     assert "100 Lagu tentang Persahabatan Bahasa Inggris" not in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_google_news_rss_compacts_conversational_geopolitical_query(monkeypatch):
+    requested_urls: list[str] = []
+    raw_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<rss><channel>
+  <item>
+    <title>Unrelated lifestyle article</title>
+    <link>https://example.com/irrelevant</link>
+    <pubDate>Wed, 04 Mar 2026 16:24:17 GMT</pubDate>
+  </item>
+</channel></rss>"""
+    compact_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<rss><channel>
+  <item>
+    <title>Iran war live: US and Israeli strikes widen conflict</title>
+    <link>https://example.com/relevant</link>
+    <pubDate>Fri, 06 Mar 2026 06:33:10 GMT</pubDate>
+  </item>
+</channel></rss>"""
+
+    class _CapturingClient:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url, timeout=10.0):  # type: ignore[no-untyped-def]
+            requested_urls.append(str(url))
+            lowered = str(url).lower()
+            if "iran" in lowered and "israel" in lowered and "conflict" in lowered and "tolong" not in lowered:
+                return _DummyTextResponse(compact_xml)
+            return _DummyTextResponse(raw_xml)
+
+    monkeypatch.setattr(
+        "kabot.agent.tools.web_search.httpx.AsyncClient",
+        lambda: _CapturingClient(),
+    )
+
+    tool = WebSearchTool(
+        provider="google_news_rss",
+        api_key="",
+        perplexity_api_key="",
+        xai_api_key="",
+        kimi_api_key="",
+    )
+
+    result = await tool._search_google_news_rss(
+        "Adakah gejolak politik sekarang? Saya dengar ada konflik Iran vs US/Israel, tolong jawab singkat dan natural.",
+        count=5,
+    )
+
+    assert "Iran war live: US and Israeli strikes widen conflict" in result
+    assert any("tolong" in item.lower() for item in requested_urls)
+    assert any("conflict" in item.lower() and "tolong" not in item.lower() for item in requested_urls)

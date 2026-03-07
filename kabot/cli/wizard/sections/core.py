@@ -17,6 +17,8 @@ console = Console()
 def _configure_google(self):
     ClackUI.section_start("Google Suite Configuration")
     console.print("|  [dim]Setup native Google Suite integration (Gmail & Calendar)[/dim]")
+    console.print("|  [dim]No npm, Node.js skill install, or gog setup is required here.[/dim]")
+    console.print("|  [dim]Use this menu for Kabot's built-in Google auth flow.[/dim]")
 
     action = ClackUI.clack_select(
         "Google Suite action",

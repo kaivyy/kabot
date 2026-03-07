@@ -477,6 +477,10 @@ class TelegramChannel(BaseChannel):
                         if self._is_message_not_found_error(exc):
                             self._status_message_ids.pop(chat_id_str, None)
                         else:
+                            # Do not keep stale mutable status as "current" after a failed delete.
+                            # Track it for best-effort cleanup so old "processing" bubbles do not linger.
+                            self._mark_stale_status(chat_id_str, existing_status_id)
+                            self._status_message_ids.pop(chat_id_str, None)
                             logger.warning(f"Telegram status delete deferred for chat={chat_id_str}: {exc}")
                 await self._cleanup_stale_status_messages(chat_id_str, chat_id)
             reply_markup = None

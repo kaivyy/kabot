@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -79,6 +82,36 @@ _WEATHER_CODE_LABELS = {
 
 _TEMP_RE = re.compile(r"([+-]?\d+(?:\.\d+)?)\s*°?\s*C", re.IGNORECASE)
 _CONDITION_RE = re.compile(r"\[([^\]]+)\]")
+_LOCATION_ALIAS_VARIANTS: dict[str, tuple[str, ...]] = {
+    "東京": ("Tokyo",),
+    "東京都": ("Tokyo",),
+    "北京": ("Beijing",),
+    "北京市": ("Beijing",),
+    "กรุงเทพ": ("Bangkok",),
+    "กรุงเทพฯ": ("Bangkok",),
+    "กรุงเทพมหานคร": ("Bangkok",),
+}
+
+_WEATHER_ALIAS_ENV_PATH = "KABOT_WEATHER_ALIASES_PATH"
+_WEATHER_ALIAS_FILENAME = "weather_aliases.json"
+
+
+def _format_openmeteo_wind_suffix(current: dict[str, Any]) -> str:
+    wind_speed = current.get("windspeed")
+    wind_direction = current.get("winddirection")
+    if wind_speed is None:
+        return ""
+    try:
+        speed_value = float(wind_speed)
+    except Exception:
+        return ""
+    if wind_direction is None:
+        return f" | Wind: {speed_value:.1f} km/h"
+    try:
+        direction_value = float(wind_direction)
+    except Exception:
+        return f" | Wind: {speed_value:.1f} km/h"
+    return f" | Wind: {speed_value:.1f} km/h @ {direction_value:.0f}°"
 
 _CARE_COPY = {
     "en": {
@@ -171,6 +204,151 @@ def normalize_location(location: str) -> str:
     )
     candidate = re.sub(r"\s+", " ", candidate).strip(" .,!?:;")
     return candidate or raw
+
+
+def _normalize_alias_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list):
+        values = [str(item).strip() for item in value]
+    else:
+        return []
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        cleaned = str(item or "").strip()
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cleaned)
+    return deduped
+
+
+def _parse_alias_payload(payload: Any) -> dict[str, list[str]]:
+    source = (
+        payload.get("aliases")
+        if isinstance(payload, dict) and isinstance(payload.get("aliases"), dict)
+        else payload
+    )
+    if not isinstance(source, dict):
+        return {}
+
+    parsed: dict[str, list[str]] = {}
+    for raw_key, raw_value in source.items():
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        values = _normalize_alias_values(raw_value)
+        if values:
+            parsed[key] = values
+    return parsed
+
+
+def _get_user_weather_alias_path() -> Path:
+    override = str(os.environ.get(_WEATHER_ALIAS_ENV_PATH, "") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".kabot" / _WEATHER_ALIAS_FILENAME
+
+
+def _load_user_weather_aliases() -> dict[str, list[str]]:
+    path = _get_user_weather_alias_path()
+    if not path.is_file():
+        return {}
+    try:
+        with open(path, encoding="utf-8-sig") as handle:
+            return _parse_alias_payload(json.load(handle))
+    except Exception:
+        return {}
+
+
+def _load_weather_alias_map() -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = {
+        key: list(values) for key, values in _LOCATION_ALIAS_VARIANTS.items()
+    }
+    for key, values in _load_user_weather_aliases().items():
+        merged[key] = values
+    return merged
+
+
+def _extract_weather_result_location(weather_text: str) -> str:
+    raw = str(weather_text or "").strip()
+    if not raw:
+        return ""
+    return raw.split(":", 1)[0].strip()
+
+
+def _should_persist_weather_alias(raw_location: str, resolved_location: str) -> bool:
+    raw = str(raw_location or "").strip()
+    resolved = str(resolved_location or "").strip()
+    if not raw or not resolved:
+        return False
+    if raw.casefold() == resolved.casefold():
+        return False
+    if len(raw) > 64 or len(resolved) > 64:
+        return False
+    if not re.search(r"[^\x00-\x7F]", raw):
+        return False
+    return True
+
+
+def _persist_user_weather_alias(raw_location: str, resolved_location: str) -> None:
+    if not _should_persist_weather_alias(raw_location, resolved_location):
+        return
+
+    path = _get_user_weather_alias_path()
+    current = _load_user_weather_aliases()
+    existing = current.get(raw_location, [])
+    existing_keys = {item.casefold() for item in existing}
+    if resolved_location.casefold() in existing_keys:
+        return
+
+    current[raw_location] = (existing + [resolved_location])[:4]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"aliases": current}, handle, ensure_ascii=False, indent=2)
+
+
+def _weather_location_variants(location: str) -> list[str]:
+    """Generate compact fallback variants for noisy free-form locations."""
+    normalized = normalize_location(location)
+    if not normalized:
+        return []
+
+    variants: list[str] = [normalized]
+    for alias in _load_weather_alias_map().get(normalized, []):
+        variants.append(alias)
+    tokens = normalized.split()
+
+    if len(tokens) >= 2 and "," not in normalized:
+        variants.append(f"{tokens[0]}, {' '.join(tokens[1:])}")
+
+    if len(tokens) >= 2:
+        variants.append(tokens[0])
+
+    if "," in normalized:
+        head = normalized.split(",", 1)[0].strip()
+        if head:
+            variants.append(head)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in variants:
+        key = item.strip()
+        if not key:
+            continue
+        key_l = key.lower()
+        if key_l in seen:
+            continue
+        seen.add(key_l)
+        deduped.append(key)
+        if len(deduped) >= 4:
+            break
+    return deduped
 
 
 def _looks_like_wttr_error(text: str) -> bool:
@@ -338,7 +516,7 @@ async def fetch_openmeteo(location: str) -> str | None:
 
             if temp is None:
                 return None
-            return f"{city_name}: {condition} +{temp}C"
+            return f"{city_name}: {condition} +{temp}C{_format_openmeteo_wind_suffix(current)}"
     except Exception as exc:
         logger.debug("Weather Open-Meteo exception for location={}: {}", location, exc)
         return None
@@ -385,31 +563,46 @@ class WeatherTool(Tool):
         **kwargs: Any,
     ) -> str:
         """Fetch weather for the given location."""
-        normalized = normalize_location(location)
-        if not normalized:
+        candidates = _weather_location_variants(location)
+        if not candidates:
             return i18n_t("weather.need_location", context_text or location)
 
+        normalized = candidates[0]
+
         try:
-            if format == "simple":
-                # Run providers in parallel to reduce tail latency on slow networks.
-                openmeteo_result, wttr_result = await asyncio.gather(
-                    fetch_openmeteo(normalized),
-                    fetch_wttr(normalized, format),
-                    return_exceptions=False,
-                )
-                if openmeteo_result:
-                    result = attach_source(openmeteo_result, "Open-Meteo (current_weather)")
-                    return attach_care_advice(result, context_text or location)
-                if wttr_result and not str(wttr_result).startswith("Error"):
-                    result = attach_source(str(wttr_result), "wttr.in")
-                    return attach_care_advice(result, context_text or location)
-            else:
-                result = await fetch_wttr(normalized, format)
-                if result and not result.startswith("Error"):
-                    if format == "png":
-                        return result
-                    result = attach_source(result, "wttr.in")
-                    return attach_care_advice(result, context_text or location)
+            for candidate in candidates:
+                if format == "simple":
+                    # Run providers in parallel to reduce tail latency on slow networks.
+                    openmeteo_result, wttr_result = await asyncio.gather(
+                        fetch_openmeteo(candidate),
+                        fetch_wttr(candidate, format),
+                        return_exceptions=False,
+                    )
+                    if openmeteo_result:
+                        _persist_user_weather_alias(
+                            normalized,
+                            _extract_weather_result_location(openmeteo_result),
+                        )
+                        result = attach_source(openmeteo_result, "Open-Meteo (current_weather)")
+                        return attach_care_advice(result, context_text or location)
+                    if wttr_result and not str(wttr_result).startswith("Error"):
+                        _persist_user_weather_alias(
+                            normalized,
+                            _extract_weather_result_location(str(wttr_result)),
+                        )
+                        result = attach_source(str(wttr_result), "wttr.in")
+                        return attach_care_advice(result, context_text or location)
+                else:
+                    result = await fetch_wttr(candidate, format)
+                    if result and not result.startswith("Error"):
+                        _persist_user_weather_alias(
+                            normalized,
+                            _extract_weather_result_location(result),
+                        )
+                        if format == "png":
+                            return result
+                        result = attach_source(result, "wttr.in")
+                        return attach_care_advice(result, context_text or location)
 
             return i18n_t("weather.fetch_failed", context_text or location, location=normalized)
         except Exception as exc:

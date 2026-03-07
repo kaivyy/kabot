@@ -1,0 +1,963 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kabot Dashboard</title>
+    <meta name="description" content="Kabot AI Agent — Dashboard & Control Panel" />
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* ═══════════════════════════════════════════════════════════════
+           THEMES — 6 built-in (3 dark, 3 light)
+           ═══════════════════════════════════════════════════════════════ */
+        [data-theme="midnight"] {
+            --bg: #000000;
+            --bg-accent: #0f121a;
+            --bg-elevated: #11141d;
+            --bg-hover: #1f2434;
+            --panel: #0a0c10;
+            --border: #222635;
+            --border-strong: #32384e;
+            --text: #f0f3f9;
+            --muted: #8b92a5;
+            --accent: #0ea5e9;
+            --accent-hover: #0284c7;
+            --accent-subtle: rgba(14, 165, 233, .12);
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --card-shadow: 0 2px 12px rgba(0, 0, 0, .4);
+        }
+
+        [data-theme="charcoal"] {
+            --bg: #18181b;
+            --bg-accent: #1e1e22;
+            --bg-elevated: #27272a;
+            --bg-hover: #3f3f46;
+            --panel: #1c1c20;
+            --border: #3f3f46;
+            --border-strong: #52525b;
+            --text: #fafafa;
+            --muted: #a1a1aa;
+            --accent: #8b5cf6;
+            --accent-hover: #7c3aed;
+            --accent-subtle: rgba(139, 92, 246, .12);
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --card-shadow: 0 2px 12px rgba(0, 0, 0, .3);
+        }
+
+        [data-theme="ocean"] {
+            --bg: #0c1222;
+            --bg-accent: #111827;
+            --bg-elevated: #1e293b;
+            --bg-hover: #334155;
+            --panel: #0f172a;
+            --border: #334155;
+            --border-strong: #475569;
+            --text: #f1f5f9;
+            --muted: #94a3b8;
+            --accent: #38bdf8;
+            --accent-hover: #0ea5e9;
+            --accent-subtle: rgba(56, 189, 248, .12);
+            --success: #34d399;
+            --danger: #f87171;
+            --warning: #fbbf24;
+            --card-shadow: 0 2px 12px rgba(0, 0, 0, .5);
+        }
+
+        [data-theme="snow"] {
+            --bg: #ffffff;
+            --bg-accent: #f8fafc;
+            --bg-elevated: #ffffff;
+            --bg-hover: #f1f5f9;
+            --panel: #f8fafc;
+            --border: #e2e8f0;
+            --border-strong: #cbd5e1;
+            --text: #0f172a;
+            --muted: #64748b;
+            --accent: #0ea5e9;
+            --accent-hover: #0284c7;
+            --accent-subtle: rgba(14, 165, 233, .08);
+            --success: #059669;
+            --danger: #dc2626;
+            --warning: #d97706;
+            --card-shadow: 0 1px 4px rgba(0, 0, 0, .08);
+        }
+
+        [data-theme="cream"] {
+            --bg: #fefdfb;
+            --bg-accent: #faf8f5;
+            --bg-elevated: #ffffff;
+            --bg-hover: #f5f0eb;
+            --panel: #faf8f5;
+            --border: #e7e0d7;
+            --border-strong: #d4cbc0;
+            --text: #1c1917;
+            --muted: #78716c;
+            --accent: #d97706;
+            --accent-hover: #b45309;
+            --accent-subtle: rgba(217, 119, 6, .08);
+            --success: #059669;
+            --danger: #dc2626;
+            --warning: #d97706;
+            --card-shadow: 0 1px 4px rgba(0, 0, 0, .06);
+        }
+
+        [data-theme="mint"] {
+            --bg: #f0fdf4;
+            --bg-accent: #ecfdf5;
+            --bg-elevated: #ffffff;
+            --bg-hover: #dcfce7;
+            --panel: #ecfdf5;
+            --border: #bbf7d0;
+            --border-strong: #86efac;
+            --text: #14532d;
+            --muted: #4d7c5b;
+            --accent: #059669;
+            --accent-hover: #047857;
+            --accent-subtle: rgba(5, 150, 105, .08);
+            --success: #059669;
+            --danger: #dc2626;
+            --warning: #d97706;
+            --card-shadow: 0 1px 4px rgba(0, 0, 0, .06);
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           BASE RESET + TYPOGRAPHY
+           ═══════════════════════════════════════════════════════════════ */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+            line-height: 1.5;
+            font-size: 13px;
+        }
+
+        .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
+
+        a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           TOP METRICS BAR
+           ═══════════════════════════════════════════════════════════════ */
+        .kb-metrics-bar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 6px 20px;
+            background: var(--bg-accent);
+            border-bottom: 1px solid var(--border);
+            font-size: 11px;
+            color: var(--muted);
+            overflow-x: auto;
+            flex-shrink: 0;
+        }
+
+        .kb-metric {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+        }
+
+        .kb-metric-val {
+            font-weight: 600;
+            color: var(--text);
+            font-family: ui-monospace, monospace;
+        }
+
+        .kb-metric-bar {
+            width: 48px;
+            height: 5px;
+            border-radius: 3px;
+            background: var(--border);
+            overflow: hidden;
+        }
+
+        .kb-metric-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width .6s ease;
+        }
+
+        .kb-metric-fill.ok {
+            background: var(--success);
+        }
+
+        .kb-metric-fill.warn {
+            background: var(--warning);
+        }
+
+        .kb-metric-fill.crit {
+            background: var(--danger);
+        }
+
+        .kb-version {
+            margin-left: auto;
+            opacity: .7;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           HEADER
+           ═══════════════════════════════════════════════════════════════ */
+        .kb-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px;
+            background: var(--bg-accent);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .kb-header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .kb-header-logo {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent), #6366f1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            box-shadow: 0 0 16px rgba(14, 165, 233, .3);
+        }
+
+        .kb-header-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .kb-header-title {
+            font-size: 15px;
+            font-weight: 600;
+        }
+
+        .kb-header-sub {
+            font-size: 10px;
+            color: var(--muted);
+            font-family: ui-monospace, monospace;
+        }
+
+        .kb-header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .kb-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: kb-pulse 2s ease infinite;
+            flex-shrink: 0;
+        }
+
+        .kb-status-dot.online {
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+        }
+
+        .kb-status-dot.offline {
+            background: var(--danger);
+            box-shadow: 0 0 8px var(--danger);
+        }
+
+        @keyframes kb-pulse {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: .4
+            }
+        }
+
+        .kb-countdown {
+            font-size: 10px;
+            color: var(--muted);
+            font-family: ui-monospace, monospace;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .kb-theme-btn {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-size: 11px;
+            color: var(--muted);
+            cursor: pointer;
+            transition: all .15s;
+        }
+
+        .kb-theme-btn:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           ALERTS BANNER
+           ═══════════════════════════════════════════════════════════════ */
+        .kb-alerts {
+            padding: 0 20px;
+            flex-shrink: 0;
+        }
+
+        .kb-alert {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            border-radius: 8px;
+            margin-top: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            animation: fadeIn .3s ease;
+        }
+
+        .kb-alert.warn {
+            background: rgba(245, 158, 11, .1);
+            border: 1px solid rgba(245, 158, 11, .25);
+            color: #f59e0b;
+        }
+
+        .kb-alert.crit {
+            background: rgba(239, 68, 68, .1);
+            border: 1px solid rgba(239, 68, 68, .25);
+            color: #ef4444;
+        }
+
+        .kb-alert.info {
+            background: var(--accent-subtle);
+            border: 1px solid rgba(14, 165, 233, .25);
+            color: var(--accent);
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           LAYOUT: SIDEBAR + MAIN
+           ═══════════════════════════════════════════════════════════════ */
+        .kb-shell {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .kb-page {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .config-sidebar {
+            width: 240px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-accent);
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+        }
+
+        .config-nav {
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .config-nav__item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--muted);
+            font-size: 12.5px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all .15s;
+            text-decoration: none;
+        }
+
+        .config-nav__item:hover {
+            background: var(--bg-hover);
+            color: var(--text);
+        }
+
+        .config-nav__item.active {
+            background: var(--accent-subtle);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .config-nav__icon {
+            width: 18px;
+            height: 18px;
+            opacity: .7;
+        }
+
+        .config-nav__item.active .config-nav__icon {
+            opacity: 1;
+        }
+
+        .config-main {
+            flex: 1;
+            overflow-y: auto;
+            min-width: 0;
+            background: var(--panel);
+        }
+
+        .config-content {
+            padding: 20px 28px;
+            max-width: 1400px;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           SECTION CARDS & GRIDS
+           ═══════════════════════════════════════════════════════════════ */
+        .config-section-hero {
+            margin-bottom: 20px;
+        }
+
+        .config-section-hero__title {
+            font-size: 18px;
+            font-weight: 600;
+            margin: 0 0 4px;
+        }
+
+        .config-section-hero__desc {
+            font-size: 12px;
+            color: var(--muted);
+            margin: 0;
+        }
+
+        .config-section-card {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg-elevated);
+            overflow: hidden;
+            margin-bottom: 16px;
+            transition: border-color .15s;
+            box-shadow: var(--card-shadow);
+        }
+
+        .config-section-card:hover {
+            border-color: var(--border-strong);
+        }
+
+        .tab-section {
+            display: none;
+        }
+
+        .tab-section.active {
+            display: block;
+            animation: fadeIn .25s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(4px)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0)
+            }
+        }
+
+        /* ── Stat cards grid ─────────────────────────────────────────── */
+        .kb-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .kb-stat-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            transition: border-color .15s;
+            box-shadow: var(--card-shadow);
+        }
+
+        .kb-stat-card:hover {
+            border-color: var(--border-strong);
+        }
+
+        .kb-stat-label {
+            font-size: 10px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            font-weight: 600;
+        }
+
+        .kb-stat-value {
+            font-size: 22px;
+            font-weight: 700;
+            margin-top: 4px;
+            line-height: 1.2;
+        }
+
+        .kb-stat-sub {
+            font-size: 10px;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+
+        /* ── Two-col grid ────────────────────────────────────────────── */
+        .kb-grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 16px;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           TABLE STYLES
+           ═══════════════════════════════════════════════════════════════ */
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            color: var(--muted);
+            font-weight: 600;
+            font-size: 11px;
+            background: var(--bg-accent);
+        }
+
+        td {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            vertical-align: middle;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           FORM / INPUT STYLES
+           ═══════════════════════════════════════════════════════════════ */
+        input,
+        textarea,
+        select,
+        button {
+            background-color: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+            padding: 7px 12px;
+            font-size: 12px;
+            transition: border-color .15s, box-shadow .15s;
+            font-family: inherit;
+        }
+
+        input:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-subtle);
+        }
+
+        textarea {
+            min-height: 80px;
+            width: 100%;
+            resize: vertical;
+        }
+
+        button {
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        button:hover:not(:disabled) {
+            background-color: var(--accent-hover);
+        }
+
+        button:disabled {
+            opacity: .5;
+            cursor: not-allowed;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        pre {
+            background: var(--bg);
+            padding: 14px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            overflow-x: auto;
+            font-size: 12px;
+            margin: 0;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           BADGES / TAGS
+           ═══════════════════════════════════════════════════════════════ */
+        .kb-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 10px;
+            font-weight: 600;
+            border: 1px solid var(--border);
+            background: var(--bg);
+        }
+
+        .kb-badge.ok {
+            color: var(--success);
+            border-color: rgba(16, 185, 129, .3);
+            background: rgba(16, 185, 129, .08);
+        }
+
+        .kb-badge.warn {
+            color: var(--warning);
+            border-color: rgba(245, 158, 11, .3);
+            background: rgba(245, 158, 11, .08);
+        }
+
+        .kb-badge.err {
+            color: var(--danger);
+            border-color: rgba(239, 68, 68, .3);
+            background: rgba(239, 68, 68, .08);
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           SVG CHART AREA (generic)
+           ═══════════════════════════════════════════════════════════════ */
+        .kb-chart-area {
+            padding: 16px;
+        }
+
+        .kb-chart-area svg {
+            width: 100%;
+            height: auto;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           MOBILE / RESPONSIVE
+           ═══════════════════════════════════════════════════════════════ */
+        .mobile-header {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: var(--bg-accent);
+            border-bottom: 1px solid var(--border);
+        }
+
+        @media (max-width: 768px) {
+            .mobile-header {
+                display: flex;
+            }
+
+            .kb-header {
+                display: none;
+            }
+
+            .config-sidebar {
+                position: fixed;
+                top: 52px;
+                bottom: 0;
+                left: 0;
+                width: 100%;
+                z-index: 50;
+                transform: translateX(-100%);
+                transition: transform .25s ease;
+            }
+
+            .config-sidebar.open {
+                transform: translateX(0);
+            }
+
+            .config-content {
+                padding: 16px;
+            }
+
+            .kb-stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .kb-grid-2 {
+                grid-template-columns: 1fr;
+            }
+
+            .kb-metrics-bar {
+                padding: 6px 12px;
+                gap: 10px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .kb-stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="kb-page">
+
+        <!-- ═══ Top Metrics Bar ═══════════════════════════════════════════ -->
+        <div class="kb-metrics-bar" id="metrics-bar" hx-get="/dashboard/partials/metrics__TOKEN_SUFFIX__"
+            hx-trigger="load, every 10s" hx-swap="innerHTML">
+            <span class="kb-metric" style="color:var(--muted);">Loading metrics...</span>
+        </div>
+
+        <!-- ═══ Header ════════════════════════════════════════════════════ -->
+        <div class="kb-header">
+            <div class="kb-header-left">
+                <div class="kb-header-logo">K</div>
+                <div class="kb-header-info">
+                    <div class="kb-header-title">Kabot Dashboard</div>
+                    <div class="kb-header-sub" id="header-status">Gateway Active</div>
+                </div>
+                <div class="kb-status-dot online" id="status-dot"></div>
+            </div>
+            <div class="kb-header-right">
+                <div class="kb-countdown" id="countdown-display">
+                    <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span id="countdown-val">60s</span>
+                </div>
+                <select class="kb-theme-btn" id="theme-picker" onchange="setTheme(this.value)">
+                    <option value="midnight">🌙 Midnight</option>
+                    <option value="charcoal">🖤 Charcoal</option>
+                    <option value="ocean">🌊 Ocean</option>
+                    <option value="snow">☀️ Snow</option>
+                    <option value="cream">🍦 Cream</option>
+                    <option value="mint">🍃 Mint</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- ═══ Mobile Header ═════════════════════════════════════════════ -->
+        <div class="mobile-header">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <div class="kb-status-dot online"></div>
+                <span style="font-weight:600;font-size:14px;">Kabot</span>
+            </div>
+            <button id="mobile-menu-btn"
+                style="background:transparent;padding:4px 8px;border:1px solid var(--border);color:var(--text);font-size:11px;">☰
+                Menu</button>
+        </div>
+
+        <!-- ═══ Alerts Banner ═════════════════════════════════════════════ -->
+        <div class="kb-alerts" id="alerts-bar" hx-get="/dashboard/partials/alerts__TOKEN_SUFFIX__"
+            hx-trigger="load, every 15s" hx-swap="innerHTML">
+        </div>
+
+        <!-- ═══ Shell: Sidebar + Main ═════════════════════════════════════ -->
+        <div class="kb-shell">
+
+            <!-- Sidebar -->
+            <aside id="sidebar" class="config-sidebar">
+                <nav class="config-nav" id="sidebar-nav"></nav>
+            </aside>
+
+            <!-- Main Content -->
+            <main class="config-main">
+                <div class="config-content">
+                    __SECTION_OVERVIEW__
+                    __SECTION_CHAT__
+                    __SECTION_ENGINE__
+                    __SECTION_SETTINGS__
+                </div>
+            </main>
+
+        </div>
+    </div>
+
+    <script>
+        /* ═══ Theme Switcher ═══════════════════════════════════════════════ */
+        function setTheme(t) { document.documentElement.setAttribute('data-theme', t); try { localStorage.setItem('kb-theme', t) } catch (_) { } var p = document.getElementById('theme-picker'); if (p) p.value = t; }
+        (function () { try { var t = localStorage.getItem('kb-theme'); if (t) setTheme(t); } catch (_) { } })();
+
+        /* ═══ Auto-Refresh Countdown ═══════════════════════════════════════ */
+        (function () {
+            function refreshElement(el) {
+                if (!el || !window.htmx) return;
+                var refreshUrl = el.getAttribute('hx-get');
+                if (!refreshUrl) return;
+                if (el.dataset.kabotRefreshing === '1') return;
+                el.dataset.kabotRefreshing = '1';
+                var swapStyle = el.getAttribute('hx-swap') || 'innerHTML';
+                htmx.ajax('GET', refreshUrl, {
+                    target: el,
+                    swap: swapStyle,
+                    source: el
+                });
+                setTimeout(function () {
+                    try { el.dataset.kabotRefreshing = ''; } catch (_) { }
+                }, 1500);
+            }
+
+            function refreshActiveSectionPanels() {
+                var currentId = 'overview';
+                if (typeof activeNavId === 'string' && activeNavId) currentId = activeNavId;
+                var section = document.getElementById('sec-' + currentId);
+                if (!section) return;
+
+                if (currentId === 'chat') {
+                    var chatLog = document.getElementById('chat-log');
+                    if (chatLog && chatLog.getAttribute('hx-get')) {
+                        refreshElement(chatLog);
+                        if (typeof window.kabotScrollChatToLatest === 'function') {
+                            setTimeout(function () { window.kabotScrollChatToLatest(true); }, 80);
+                        }
+                        return;
+                    }
+                }
+
+                section.querySelectorAll('[hx-get]').forEach(function (node) {
+                    refreshElement(node);
+                });
+            }
+
+            function refreshDashboardPartials() {
+                if (typeof reloadInterval === 'number' && reloadInterval > 0) secs = reloadInterval;
+                if (el) {
+                    el.textContent = secs + 's';
+                    el.style.color = 'var(--accent)';
+                    setTimeout(function () {
+                        if (el) el.style.color = '';
+                    }, 1600);
+                }
+                refreshElement(document.getElementById('metrics-bar'));
+                refreshElement(document.getElementById('alerts-bar'));
+                refreshActiveSectionPanels();
+            }
+
+            window.__kabotRefreshDashboardPartials = refreshDashboardPartials;
+            var reloadInterval = 300; // 5 minutes
+            var secs = reloadInterval, el = document.getElementById('countdown-val');
+            setInterval(function () {
+                secs--;
+                if (secs <= 0) {
+                    setTimeout(refreshDashboardPartials, 500);
+                }
+                if (el) el.textContent = secs + 's';
+            }, 1000);
+
+            // Allow manual refresh by clicking the countdown
+            var cd = document.getElementById('countdown-display');
+            if (cd) {
+                cd.style.cursor = 'pointer';
+                cd.onclick = refreshDashboardPartials;
+                cd.title = "Click to refresh visible panels now";
+            }
+        })();
+
+        /* ═══ Sidebar Navigation ══════════════════════════════════════════ */
+        const navItems = [
+            { id: 'overview', name: 'Overview', icon: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>' },
+            { id: 'chat', name: 'Chat', icon: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>' },
+            { id: 'engine', name: 'Engine & Nodes', icon: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>' },
+            { id: 'settings', name: 'Settings', icon: '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>' },
+        ];
+        // Restore active tab from URL hash first, then localStorage, then overview
+        let activeNavId = 'overview';
+        try {
+            const hashTab = String(window.location.hash || '').replace(/^#/, '').trim().toLowerCase();
+            if (hashTab && navItems.find(i => i.id === hashTab)) {
+                activeNavId = hashTab;
+            } else {
+                const saved = localStorage.getItem('kb-active-tab');
+                if (saved && navItems.find(i => i.id === saved)) activeNavId = saved;
+            }
+        } catch (_) { }
+
+        const sidebarNav = document.getElementById('sidebar-nav');
+        function renderNav() {
+            sidebarNav.innerHTML = navItems.map(item => {
+                const cls = item.id === activeNavId ? 'config-nav__item active' : 'config-nav__item';
+                return '<a href="#" onclick="switchSection(\'' + item.id + '\');return false;" class="' + cls + '"><span class="config-nav__icon">' + item.icon + '</span>' + item.name + '</a>';
+            }).join('');
+        }
+        function switchSection(id) {
+            var old = document.getElementById('sec-' + activeNavId); if (old) old.classList.remove('active');
+            activeNavId = id;
+            try { localStorage.setItem('kb-active-tab', id); } catch (_) { }
+            try { window.location.hash = id; } catch (_) { }
+            var nw = document.getElementById('sec-' + id); if (nw) nw.classList.add('active');
+            renderNav();
+            if (id === 'chat' && typeof window.kabotScrollChatToLatest === 'function') {
+                setTimeout(function () { window.kabotScrollChatToLatest(true); }, 60);
+            }
+            var sb = document.getElementById('sidebar'); if (sb && window.innerWidth <= 768) sb.classList.remove('open');
+        }
+        renderNav();
+        // Trigger initial section visibility
+        switchSection(activeNavId);
+        window.addEventListener('hashchange', function () {
+            var hashTab = String(window.location.hash || '').replace(/^#/, '').trim().toLowerCase();
+            if (hashTab && hashTab !== activeNavId && navItems.find(i => i.id === hashTab)) {
+                switchSection(hashTab);
+            }
+        });
+
+        /* ═══ Mobile Menu ═════════════════════════════════════════════════ */
+        var menuBtn = document.getElementById('mobile-menu-btn'), sidebar = document.getElementById('sidebar');
+        if (menuBtn && sidebar) menuBtn.addEventListener('click', function () { sidebar.classList.toggle('open'); });
+    </script>
+</body>
+
+</html>

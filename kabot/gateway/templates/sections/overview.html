@@ -1,0 +1,38 @@
+<section id="sec-overview" class="tab-section active">
+    <div class="config-section-hero">
+        <h2 class="config-section-hero__title">System Overview</h2>
+        <p class="config-section-hero__desc">Health, costs, performance metrics, and system charts at a glance.</p>
+    </div>
+
+    <!-- Stat Cards Row -->
+    <div class="kb-stats-grid" id="stats-grid" hx-get="/dashboard/partials/health__TOKEN_SUFFIX__"
+        hx-trigger="load, every 5s" hx-swap="innerHTML">
+        <div class="kb-stat-card">
+            <div class="kb-stat-label">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Two-column grid: Summary + Runtime -->
+    <div class="kb-grid-2">
+        <div class="config-section-card" hx-get="/dashboard/partials/summary__TOKEN_SUFFIX__"
+            hx-trigger="load, every 5s" hx-swap="innerHTML">
+            <div style="padding:18px; color:var(--muted); font-size:12px;">Loading summary...</div>
+        </div>
+        <div class="config-section-card" hx-get="/dashboard/partials/runtime__TOKEN_SUFFIX__"
+            hx-trigger="load, every 5s" hx-swap="innerHTML">
+            <div style="padding:18px; color:var(--muted); font-size:12px;">Loading runtime...</div>
+        </div>
+    </div>
+
+    <!-- Cost & Charts Row -->
+    <div class="kb-grid-2" style="margin-top:4px;">
+        <div class="config-section-card" hx-get="/dashboard/partials/cost__TOKEN_SUFFIX__" hx-trigger="load, every 30s"
+            hx-swap="innerHTML">
+            <div style="padding:18px; color:var(--muted); font-size:12px;">Loading cost data...</div>
+        </div>
+        <div class="config-section-card" hx-get="/dashboard/partials/charts__TOKEN_SUFFIX__"
+            hx-trigger="load, every 30s" hx-swap="innerHTML">
+            <div style="padding:18px; color:var(--muted); font-size:12px;">Loading charts...</div>
+        </div>
+    </div>
+</section>

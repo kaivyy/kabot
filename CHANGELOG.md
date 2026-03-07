@@ -7,7 +7,231 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - Unreleased
 
+### Added
+- **Dashboard UI Improvements**:
+  - Added fixed max-height and scrollbar to the **Runtime Details** panel.
+  - Ensured all JSON previews are concise and scrollable to prevent page bloating.
+- **Real-time System Metrics**:
+  - Implemented `psutil` collection for CPU and RAM percentage.
+  - Added `shutil.disk_usage` for real disk metrics (Windows/Linux/Mac).
+  - Metrics bar now shows actual values, PID, memory usage, and OS info.
+  - Alerts banner now triggers based on real high-usage thresholds (>90%).
+- **Interactive Settings Panels**:
+  - Replaced broken Tailwind settings UI with modern inline CSS components.
+  - Added **Token Mode** toggle cards: "Verbose" (boros) and "Compact" (hemat).
+  - Translated all settings UI to **English**.
+  - Action buttons now in a grid with icons and descriptions.
+  - Automatic success/error message clearing for a cleaner experience.
+
+- **OpenClaw-style Dashboard Feature Parity**:
+  - **6 Themes**: 3 dark (Midnight, Charcoal, Ocean) + 3 light (Snow, Cream, Mint) — switchable from header dropdown, persisted in localStorage.
+  - **Top Metrics Bar**: Live CPU, RAM, disk usage with color-coded progress bars, gateway status badge, uptime counter, version display.
+  - **Header Bar**: Bot logo, status dot with pulse animation, auto-refresh countdown (60s), theme picker.
+  - **Alerts Banner**: Smart alerts for high CPU/RAM/disk (>90%), gateway offline status, custom alerts from `status_provider`.
+  - **System Health Stat Cards**: 6 cards showing status, uptime, sessions, nodes, channels, cron jobs count.
+  - **Cost & Usage Panel**: Today's cost, all-time cost, projected monthly, input/output token usage table.
+  - **SVG Charts Panel**: Model usage bar chart generated from `status_provider` data.
+  - **Channels Panel**: Channel name, type, state with colored badges.
+  - **Cron Jobs Panel**: Job name, schedule, state, last/next run times.
+  - **Available Models Grid**: Per-provider model listing with configured/available badges and tag-style model names.
+  - **Skills List**: Registered skills with active/disabled state badges.
+  - **Cron Operator Actions**: Cron panel now shows last status, duration, and inline `Run`, `Enable/Disable`, and `Delete` actions via HTMX partial refresh.
+  - **Skills Operator Actions**: Skills panel now shows env readiness, inline `Enable/Disable`, and `Save Key` actions for API-key based skills.
+  - **Sub-Agent Activity Panel**: Added dashboard panel for recent subagent runs with status and duration snapshots.
+  - **Git Log Panel**: Added dashboard panel for recent workspace commits.
+  - **Expanded Cost/Chart Monitoring**: Cost panel now includes per-model breakdown, while charts can render both cost history and model usage from enriched status payloads.
+  - **Sticky Chat UX**: Dashboard chat now restores the active tab after browser reload using URL-hash + local tab persistence, and chat logs auto-stick to the latest message after HTMX/SSE updates so operators do not need to scroll back down manually.
+  - **Settings Panel Hardening**: Settings/engine wrapper panels now load with `outerHTML` placeholders to avoid duplicate HTMX targets, skill toggles follow the real config `disabled` flag instead of readiness state, and read-only tokens now surface explicit operator-write requirements instead of showing dead action buttons.
+  - **Dashboard History Cleanup**: Chat history payloads preserve real metadata when present without injecting empty `metadata: {}` into every message.
+  - **Operator Feedback UX**: Dashboard action results now render friendly success/error summaries with expandable JSON details, while `Sessions`, `Nodes`, and `Chat` also show consistent read-only notices and fully disable write inputs when the token lacks `operator.write`.
+  - **Responsive Design**: Mobile/tablet support with hamburger menu, collapsible sidebar, adaptive grid layouts.
+  - **Auto-Refresh**: Countdown refresh now updates global bars plus the currently visible dashboard panels in place, so operators stay on the active tab instead of getting bounced back through a full page reload.
+  - 9 new GET `/dashboard/partials/*` routes serving HTMX fragments.
+
 ### Changed
+- Chat-driven skill creation is now more natural and multilingual without becoming rigid:
+  - semantic matching for `skill-creator` now catches broader phrasing such as new capabilities, integrations, and plugins across Indonesian, English, Thai, Japanese, and Chinese,
+  - runtime now force-loads `skill-creator` context when the turn clearly asks to create/update a skill, instead of depending only on brittle keyword overlap,
+  - skill-creation turns now carry a hidden workflow note that keeps the model in discovery/planning mode until explicit plan approval, preventing premature file creation while preserving conversational tone,
+  - skill-creator docs now align with real runtime behavior by targeting workspace `skills/` directories and documenting env-based API secrets instead of hardcoded credentials.
+- Manual skill scaffolding is now workspace-first instead of builtin-first:
+  - `kabot/skills/skill-creator/scripts/init_skill.py` now resolves the active workspace `skills/` directory before falling back to repo builtin skills,
+  - running the scaffold script from a workspace root with `skills/` now lands new skills in the same place that chat-driven `skill-creator` and `SkillsLoader` already expect,
+  - script output/help text was clarified so it no longer implies that user-created skills belong in the builtin package folder.
+- Skill-creation execution now has a runtime approval latch instead of relying only on prompt instructions:
+  - session metadata tracks `skill_creation_flow` stages (`discovery` -> `planning` -> `approved`) across short natural follow-ups,
+  - assistant responses that present concrete skill file plans now promote the flow into `planning`,
+  - short natural approvals like `oke lanjut` only unlock file-writing/runtime execution after a plan has actually been presented,
+  - destructive tool calls (`write_file`, `edit_file`, `exec`) are now blocked during unapproved skill-creation turns, so the model stays conversational without being allowed to jump straight into coding.
+- External skill install/update requests now use the same guarded conversational workflow:
+  - `skill-installer` gets semantic intent priority for natural requests such as installing from GitHub/repo URLs or listing curated installable skills,
+  - chat-driven install/update flows now reuse the same `discovery -> planning -> approved` latch before executing file or command mutations,
+  - short multilingual approvals like `oke lanjut` can continue an install flow naturally, but only after a written plan has been shown.
+- Skill workflow phases are now more visible across runtime status lanes and dashboard chat:
+  - approval turns now publish an explicit `approved` status before execution begins,
+  - dashboard chat history now preserves message metadata for runtime status events,
+  - status-like dashboard bubbles now render phase badges such as `approved` instead of flattening everything into plain assistant text.
+- **Refactored `webhook_server.py` into handler mixin modules**:
+  - Reduced `webhook_server.py` from 1425 lines to ~120 lines (init + route registration + start only).
+  - Created 8 handler modules in `kabot/gateway/handlers/`: `_base.py`, `dashboard.py`, `chat.py`, `sessions.py`, `nodes.py`, `config.py`, `control.py`, `webhooks.py`.
+  - Uses mixin composition pattern — each module contributes handler methods via Python multiple inheritance.
+  - Zero behavior change — pure code-move refactoring — all 31 gateway tests pass unmodified.
+- **Fixed chat delay after sending**:
+  - Restored HTMX polling interval (`every 3s`) on chat-log div with the new kb-bubble styled renderer.
+
+- Setup wizard Google/Skills boundaries are now explicit:
+  - main menu now labels Google as native auth (`no npm`) and Skills as configuration plus install plans,
+  - Google wizard section now explicitly states that native Google auth does not require npm, Node.js skill installs, or `gog`,
+  - Skills wizard section now explicitly states that it prepares manual dependency plans and that native Google setup lives in the separate Google Suite menu,
+  - skill dependency choices now use human-readable requirement hints such as `needs env`, `needs binary`, `needs oauth`, `needs node package`, and `install via brew`,
+  - built-in skill syncing wording was clarified so copying `SKILL.md` definitions into the workspace is no longer described like runtime dependency installation.
+- **Dashboard UI separated into section template files**:
+  - Each section tab is now its own HTML file in `kabot/gateway/templates/sections/` (`overview.html`, `chat.html`, `engine.html`, `settings.html`).
+  - `dashboard.html` is now a layout shell only; section content injected at serve-time via `__SECTION_*__` token replacement in `handle_dashboard`.
+  - `pyproject.toml` updated to include `kabot/gateway/templates/**/*.html` in build artifacts.
+  - All 31 gateway tests continue to pass after this refactoring.
+- **Chat UI model configuration improvements**:
+  - Added "Save Configuration" button to the chat settings dropdown with brief "Saved!" confirmation and auto-close behavior.
+  - Changing provider now clears the model input so the datalist refreshes with only provider-matching models.
+  - Fixed HTMX `hx-include` to ensure provider/model/fallbacks are serialized on form submit even when outside the `<form>` tag.
+
+- Semantic-first routing now suppresses stale deterministic tool forcing in more natural chat flows:
+  - advice/recommendation turns (for example sunscreen/product guidance) no longer get re-forced into weather just because the sentence contains hot-weather wording,
+  - short meta feedback like `kok lama` now clears stale pending stock/tool follow-up instead of accidentally continuing the previous action,
+  - execution runtime now respects upstream semantic suppression so `message_runtime` decisions are not immediately overridden again from raw text.
+- Structured last-tool context is now persisted and reused more safely:
+  - weather and stock follow-ups can reuse prior resolved context without requiring the user to restate ticker/location every turn,
+  - stock quote conversion follow-ups like `jadikan idr harganya` now work from structured context even when only the earlier quote symbol was known,
+  - weather follow-up location context now resists degradation from short wind/follow-up turns.
+- Natural-name and multilingual extraction were tightened:
+  - stock company-name extraction now trims trailing question noise (`Microsoft right now` -> `Microsoft`) so natural English company queries resolve more reliably,
+  - free-style Indonesian phrasing like `bro kira-kira saham microsoft sekarang berapa ya?` now resolves to the intended company instead of falling back to rigid ticker prompts,
+  - strong primary listings now auto-win for clear global-company matches (`Microsoft` -> `MSFT`) while genuinely ambiguous cases like Toyota still stay explicit,
+  - compact Japanese/Chinese/Thai weather phrasing now strips weather/time filler words more cleanly during location extraction,
+  - multilingual wind follow-ups now carry the previous weather location more reliably across non-Latin scripts,
+  - native-script weather lookups for common cities like `東京`, `北京`, and `กรุงเทพ` now fall back to provider-friendly aliases (`Tokyo`, `Beijing`, `Bangkok`) before failing.
+- Weather alias learning is now persisted in a separate user dictionary file instead of bloating main config:
+  - successful native-script weather resolutions can auto-write learned aliases into `~/.kabot/weather_aliases.json`,
+  - custom user alias overrides are merged from that dedicated file at runtime,
+  - `config.json` stays focused on settings rather than growing into a multilingual alias store.
+- CLI one-shot probe path is now cleaner and faster:
+  - sentence-embedding worker startup no longer leaks Hugging Face progress/warning noise into terminal output,
+  - LiteLLM message-sanitization debug output no longer prints raw `DEBUG:` lines to stdout,
+  - `kabot agent -m ...` no longer starts the cron scheduler for ordinary non-reminder prompts,
+  - one-shot CLI probe turns now run in lightweight probe mode so deferred hybrid-memory persistence/warmup does not keep the process alive after the answer is already ready.
+- Weather follow-ups are now materially less rigid in natural chat:
+  - short context-carrying turns like `berangin apa ga?` now reuse the last weather location instead of falling back to generic chat or web search,
+  - attached Indonesian location forms like `dibandung` are normalized into a valid place lookup,
+  - weather responses now include wind speed and direction in the Open-Meteo path for follow-up questions about wind.
+- Update-vs-weather intent disambiguation is now stricter:
+  - phrases like `cek update real time kondisi cuaca ... di Bandung` no longer misroute into Kabot update tooling just because they contain `cek update`,
+  - weather structural payload wins when the sentence clearly asks for live weather data.
+- Stock/FX follow-up continuity is now safer:
+  - follow-ups like `jadikan idr harganya` reuse the previously resolved symbol instead of demanding a fresh ticker,
+  - raw follow-up enrichment now avoids duplicate/noisy stock payload composition when combining current turn with prior symbol context.
+- General advice queries are no longer over-forced into live web search:
+  - research-route fallback now only auto-forces `web_search` for genuinely live/current-events style prompts,
+  - general advice prompts like sunscreen/product guidance stay in normal LLM answer flow.
+- Image-generation skill failure is now explicit and multilingual when provider config is missing:
+  - missing API key/provider state returns a clear setup error instead of vague failure text,
+  - error strings are catalog-driven across supported locales.
+- **Documentation**: Modernized `README.md` design with "for-the-badge" shields, Table of Contents, and collapsible details for advanced sections to improve scannability.
+- Stock/FX conversational routing is now less rigid on natural follow-ups:
+  - stock tracking/history prompts (`pergerakan`, `track`, `1 bulan`, etc.) are now routed to `stock_analysis` instead of quote-only `stock`,
+  - short ambiguous follow-ups no longer override a valid carried stock query unless the new turn contains explicit stock payload,
+  - natural FX phrasing (`1 usd berapa rupiah`, `kurs usd ke idr`) now resolves to Yahoo pair `USDIDR=X` without requiring explicit ticker input.
+- Added CLI doctor routing sanity mode:
+  - new command surface: `kabot doctor routing`,
+  - runs deterministic routing + guard matrix checks (news/weather/stock/crypto/update/reminder/non-action + wrong-tool blocks),
+  - intended as quick pre-deploy validation for regression detection in tool selection behavior.
+- Context-budget orchestration is now load-aware during message build:
+  - `process_message` passes `budget_hints` (`load_level`, history pressure, fast-path flags) into `ContextBuilder.build_messages(...)`,
+  - `TokenBudget` accepts component overrides and normalizes distribution safely.
+- Context truncation now writes a compact continuity fact into memory:
+  - when old history is dropped, context builder exposes a summary fingerprint,
+  - runtime persists a deduplicated `context_compression` fact (`remember_fact`) so long conversations keep intent continuity with lower token cost.
+- Tool-result context is now hard-capped per channel before re-injecting into LLM context:
+  - large tool outputs are clipped by channel budget (Telegram/WhatsApp stricter than CLI),
+  - prevents oversized tool payloads from flooding follow-up context and degrading responsiveness.
+- Runtime token mode is now user-configurable from both setup and direct CLI config:
+  - setup wizard (`kabot config` -> `Tools & Sandbox`) exposes `Runtime Token Mode (BOROS/HEMAT)`,
+  - direct quick toggle is available via `kabot config --token-mode boros|hemat`,
+  - direct saver alias is available via `kabot config --token-saver/--no-token-saver`,
+  - default remains `boros`.
+- CLI one-shot reminder waiting is now scoped to reminders created in the current turn:
+  - existing old reminders no longer trigger repeated `Reminder scheduled for later...` notices on unrelated chat requests.
+- Weather execution now retries compact location variants when free-form location text is long/noisy:
+  - e.g. `Purwokerto Jawa Tengah` now transparently falls back to `Purwokerto`/comma variants before failing,
+  - improves natural-language weather reliability without requiring rigid location format.
+- Pending follow-up execution is now safer on acknowledgement replies:
+  - short gratitude/closure messages (e.g. `thanks`, `makasih`, `terima kasih`) no longer force stale pending tool/intent execution,
+  - pending follow-up metadata is cleared on closing acknowledgement turns to prevent repeated accidental tool runs.
+- Pending follow-up execution now also ignores short greeting/opening small-talk turns:
+  - short greetings like `halo/hi/hello/selamat pagi` are treated as fresh chat openers,
+  - stale pending reminder/tool state is cleared instead of being auto-continued.
+- Pending follow-up continuation is now stricter for non-confirmation short turns:
+  - carry-over tool/intent continuation now activates on short confirmations only (e.g. `ya`, `gas`, `lanjut`), not generic short chat,
+  - short interrogative prompts (e.g. `saranmu apa`) are treated as new requests, preventing stale tool continuation bleed from previous turns (stock/weather/etc.).
+- Closing acknowledgement turns are now also excluded from history-based follow-up tool inference:
+  - short gratitude replies (e.g. `oke makasih ya`, `iya makasih`) no longer infer previous reminder intents from recent conversation history,
+  - prevents false cron fallback replies like reminder-time parsing errors after reminder completion.
+- Dashboard surface is upgraded toward OpenClaw-style control flow while keeping Kabot's lightweight SSR+HTMX stack:
+  - added dashboard panels for `Chat`, `Sessions`, `Nodes`, and `Config` on `/dashboard`,
+  - chat panel now includes auto-refresh live log (`/dashboard/partials/chat/log`) to show recent conversation state without full page reload,
+  - added SSE live stream endpoint for chat panel (`GET /dashboard/api/chat/stream`) with read-scope auth,
+  - added dashboard APIs:
+    - `GET /dashboard/api/chat/history`
+    - `GET /dashboard/api/chat/stream`
+    - `GET /dashboard/api/sessions`
+    - `GET /dashboard/api/nodes`
+    - `GET /dashboard/api/config`
+    - `POST /dashboard/api/chat`
+    - `POST /dashboard/api/config`
+  - added dashboard partial actions:
+    - `POST /dashboard/partials/sessions`
+    - `POST /dashboard/partials/chat`
+    - `POST /dashboard/partials/config`
+  - added session-management write surface for operator flows:
+    - `POST /dashboard/api/sessions` for structured `sessions.clear` / `sessions.delete` actions,
+    - Sessions panel now exposes inline clear/delete actions (write-scope gated, no full page reload),
+    - runtime control actions extended with `sessions.clear` and `sessions.delete`.
+  - added node-management write surface for operator flows:
+    - `POST /dashboard/api/nodes` for structured `nodes.start` / `nodes.stop` / `nodes.restart` actions,
+    - Nodes panel now exposes inline start/stop/restart actions for channel nodes (write-scope gated, no full page reload),
+    - runtime control action catalog now includes `nodes.start`, `nodes.stop`, and `nodes.restart`.
+  - Nodes panel action UX is now state-aware:
+    - `Start` is disabled when node state is already `running`,
+    - `Stop` is disabled when node state is already `stopped`,
+    - helps reduce accidental no-op control clicks in operator dashboard flow.
+  - Sessions/Nodes action responses now re-render full panel fragments:
+    - action forms target panel containers (`#panel-sessions`, `#panel-nodes`) directly,
+    - operator sees updated table/state immediately after POST action (without waiting periodic poll tick).
+  - added runtime gateway control handler actions:
+    - `runtime.ping`
+    - `chat.send`
+    - `sessions.list`
+    - `channels.status`
+    - `config.set_token_mode`
+  - dashboard status provider now includes enriched runtime payload (`sessions`, `nodes`, safe `config` snapshot, channel status map).
+- Dashboard parity work now goes deeper into monitoring/operator flows:
+  - added `POST /dashboard/partials/cron` and `POST /dashboard/partials/skills` for inline HTMX operator actions,
+  - added runtime dashboard control support for `cron.enable`, `cron.disable`, `cron.run`, `cron.delete`, `skills.enable`, `skills.disable`, and `skills.set_api_key`,
+  - added enriched dashboard payload fields for `cost_history`, per-model costs, `cron_jobs_list`, `skills`, `subagent_activity`, and `git_log`,
+  - dashboard control capability metadata now advertises cron/skills actions for operator clients.
+- Dashboard Chat panel now supports per-turn model/provider routing (OpenClaw-style operator flow):
+  - added provider selector fed from runtime provider registry snapshot,
+  - added model override input (`provider/model` or alias),
+  - model suggestions now refresh automatically based on selected provider (with merged shortlist fallback when provider is empty),
+  - replaced plain fallback text-only input with interactive fallback builder (add/remove model chips, serialized as fallback chain),
+  - fallback builder now includes provider-aware model suggestions and keyboard-friendly add/remove interactions,
+  - added channel/chat target passthrough fields for advanced control routing.
+- Dashboard chat API/action payloads now forward model routing args end-to-end:
+  - `provider`, `model`, `fallbacks`, `channel`, and `chat_id` are forwarded by `/dashboard/partials/chat` and `/dashboard/api/chat`,
+  - runtime control action `chat.send` now composes provider+model safely and passes optional fallback chain to agent runtime.
+- Runtime model selection now supports per-message override metadata:
+  - `process_direct(...)` accepts `model_override` and `fallback_overrides`,
+  - routing resolver prioritizes `msg.metadata.model_override` / `msg.metadata.model_fallbacks` over routed agent defaults for that turn only,
+  - `/model ...` directives now persist model override into message metadata so directive path and dashboard path share one routing mechanism.
 - Added explicit design + implementation planning docs for semantic-first routing rollout (without architectural rewrite):
   - `docs/plans/2026-03-05-semantic-intent-routing-design.md`
   - `docs/plans/2026-03-05-semantic-intent-routing-implementation.md`
@@ -16,6 +240,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - This section is now the canonical pending-release notes for the next repo/PyPI publication.
 - Deterministic tool/error responses are now more consistently multilingual and less hardcoded across fallback paths:
   - moved remaining literal fallback prompts for `web_search` into i18n keys (`web_search.need_query`, `web_search.need_topic`),
+  - web-search empty-result fallback is now catalog-driven and localized (`web_search.no_results`) instead of fixed English literal,
   - stock/weather/crypto tool-level failure responses now use i18n catalog keys instead of inline literals (`stock.fetch_failed`, `weather.fetch_failed`, `crypto.fetch_failed`, etc.),
   - Meta Graph tool errors are now catalog-driven (`meta.missing_access_token`, `meta.unsupported_action`, `meta.error`) with locale-aware wording.
 - Additional core-tool user-facing errors are now i18n-driven (reduced hardcoded English in cross-channel/tool-call paths):
@@ -98,6 +323,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - mixed natural-language input is filtered to valid ticker candidates only,
   - plain confirmation/chat text is rejected with a clear ticker guidance error,
   - avoids per-word Yahoo fetch spam when upstream routing payload is noisy or stale.
+- Stock company-name fallback parser is now stricter on generic advice/small-talk phrases:
+  - conversational prompts like `saranmu apa` no longer become fake company-name candidates,
+  - reduces accidental stock fetch attempts when user asks general advice after prior finance turns.
+- Semantic-first stock routing is now less dependent on weak keyword parsing:
+  - weak generic triggers like `price/harga/market` were removed from the global stock intent lexicon and no longer force `stock` by themselves,
+  - stock name-candidate extraction now requires stronger market/value/company structure for multi-word phrases, reducing false positives from non-market chat (`gejolak politik`, product advice, etc.),
+  - single-token novice lookups (`toyota`, `sap`) remain supported so user flow stays flexible and not rigid-format.
 - Deterministic required-tool routing now uses a scored intent layer (structure + confidence), not pure keyword matching:
   - added `score_required_tool_intents(...)` to rank candidates by multilingual lexical + structural signals,
   - added confidence/ambiguity gating to avoid forcing tools on unclear short chat text,
@@ -122,12 +354,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - removed duplicated ticker extraction logic from `tool_enforcement` fallback,
   - uses shared `extract_stock_symbols(...)` from `stock` tool as single source of truth,
   - keeps deterministic behavior while reducing hardcoded drift between routing and tool execution paths.
+- Stock ticker extraction now filters file-like suffixes to prevent filename misrouting:
+  - inputs such as `config.json` / `config.yaml` are no longer interpreted as stock tickers,
+  - deterministic tool routing no longer misclassifies config-file requests as `stock` intents.
+- Stock intent scoring now suppresses explicit non-action control phrases:
+  - prompts like `stop bahas saham` / `bukan tentang saham` no longer force stock tool execution,
+  - reduces rigid keyword-trigger behavior in multilingual conversational feedback turns.
+- Non-action/meta-feedback suppression is now applied more broadly across deterministic routing:
+  - weather/crypto/news/system-monitor/cleanup lexicon-only intents are suppressed on short negation-topic turns (e.g. `stop bahas cuaca`, `jangan bahas crypto`, `bukan tentang berita`),
+  - prevents tool forcing when users are correcting context instead of requesting action.
+- Pending follow-up continuation now also clears on short non-action feedback turns:
+  - turns like `stop bahas ...` no longer inherit stale `pending_followup_tool` context,
+  - avoids accidental tool execution loops after user correction messages.
+- Pending follow-up continuation is now blocked on explicit fresh-request payload turns:
+  - short turns containing file/config/path/URL payloads (e.g. `baca file config.json`) no longer inherit stale `pending_followup_tool` / `pending_followup_intent`,
+  - runtime clears stale pending continuation state on those explicit new requests to prevent cross-intent misrouting (stock/news/reminder/tool carry-over).
 - Stock intent scoring now also reuses the shared stock parser:
   - cron/intents scorer (`required_tool_for_query`) now consumes stock candidates from `extract_stock_symbols(...)`,
   - removes parser drift between routing score and execution fallback.
 - Stock parser fallback is now stricter for unknown bare symbols:
   - unknown bare ticker fallback now requires explicit uppercase token input,
   - prevents casual lowercase single words (e.g. `hai`) from being misread as stock symbols.
+- Crypto-vs-stock disambiguation is now safer for mixed natural prompts:
+  - explicit crypto symbols (`btc/eth/...`) now provide strong crypto intent score so prompts like `harga btc terbaru` route to `crypto` instead of `stock`,
+  - stock symbol scoring now ignores crypto-symbol tokens,
+  - stock company-name fallback is suppressed when crypto domain markers are present.
+- Added tool-call intent guard in execution runtime to prevent cross-intent hallucinated tool execution:
+  - deterministic tool calls are now validated against current turn intent/payload before execution (`stock`, `crypto`, `cron`, `weather`, `get_system_info`, `get_process_memory`, `cleanup_system`, `speedtest`, `server_monitor`, `check_update`, `system_update`),
+  - mismatched calls are blocked and fed back to the model as structured tool-result warnings instead of running the wrong tool,
+  - guard logic reuses semantic required-tool scoring + structural payload checks (multilingual), reducing brittle keyword-only misroutes,
+  - prevents regressions where general chat/file-read/news turns were accidentally routed into stock/reminder/weather/update flows.
+- Web-search guard now follows explicit search intent instead of running on generic advice chat:
+  - `web_search` joins guarded tool calls and only executes when current query has clear search/news/live-research intent,
+  - generic advice prompts (e.g. sunscreen recommendations) no longer get forced into noisy `No results` search paths.
+  - when runtime already pins `required_tool=web_search`, execution is allowed directly so multilingual/non-Latin search turns are not blocked by lexical marker heuristics.
+- Guard model coverage now extends to API-skill style tool invocations:
+  - image-generation family tools (e.g. `image_gen`) and TTS/voice family tools (e.g. `tts`, `text_to_speech`) now pass the same intent/payload guard before execution,
+  - non-matching turns are blocked as `TOOL_CALL_BLOCKED_INTENT_MISMATCH` instead of executing the wrong skill/tool,
+  - protects cross-skill fallback behavior when user intent is unrelated (e.g. market/news chat should not trigger image/TTS APIs).
+- Stock tool-call guard now also blocks explicit non-action stock feedback turns:
+  - turns like `stop bahas saham` are no longer treated as actionable stock payload at execution-guard stage,
+  - closes a gap where non-action stock-topic feedback could bypass guard and execute stock tool.
 - Stock alias coverage now includes `adaro` -> `ADRO.JK` for natural IDX phrasing.
 - Stock novice-name resolver now supports broader natural company references without rigid ticker input:
   - added common Indonesian company phrase aliases (e.g., `bank rakyat indonesia`, `bank central asia`, `bank mandiri`, `bank negara indonesia`, `adaro energy indonesia`, `toba bara`),
@@ -229,8 +496,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - query-token auth is restricted to `/dashboard*` only and is not accepted for webhook ingress routes.
 
 ### Verified
+- Focused RED->GREEN verification for newly added coverage:
+  - `pytest -q tests/agent/test_context_builder.py tests/agent/loop_core/test_message_runtime.py::test_process_message_persists_context_truncation_summary_and_passes_budget_hints tests/agent/loop_core/test_execution_runtime.py::test_process_tool_calls_applies_channel_hard_cap_to_tool_result`
+  - Result: `10 passed`.
+- Targeted runtime/context regression sweep:
+  - `pytest -q tests/agent/loop_core/test_message_runtime.py tests/agent/loop_core/test_execution_runtime.py tests/agent/test_context_builder.py`
+  - Result: `77 passed`.
+- Lint check for touched runtime/context files:
+  - `ruff check kabot/agent/context.py kabot/agent/loop_core/message_runtime.py kabot/agent/loop_core/execution_runtime.py tests/agent/test_context_builder.py tests/agent/loop_core/test_message_runtime.py tests/agent/loop_core/test_execution_runtime.py`
+  - Result: `PASSED`.
 - Added semantic-intent routing verification log for this phase:
   - `docs/logs/2026-03-05-semantic-intent-routing-verification.md`
+- Added runtime-token-mode CLI config verification:
+  - `pytest -q tests/cli/test_config_runtime_mode.py`
+  - Result: `3 passed`.
+- Additional focused regression sweep after token-mode CLI + acknowledgement follow-up guard:
+  - `pytest -q tests/agent/loop_core/test_message_runtime.py::test_process_message_short_followup_does_not_force_pending_cron_after_user_acknowledgement tests/cli/test_config_runtime_mode.py tests/cli/test_setup_wizard_tools_menu.py tests/config/test_runtime_resilience_schema.py tests/config/test_loader_meta_migration.py tests/agent/test_context_builder.py tests/agent/loop_core/test_execution_runtime.py`
+  - Result: `61 passed`.
+- Lint check for touched runtime/CLI/test files:
+  - `ruff check kabot/cli/commands.py kabot/agent/loop_core/message_runtime.py tests/cli/test_config_runtime_mode.py tests/cli/test_setup_wizard_tools_menu.py tests/config/test_runtime_resilience_schema.py tests/config/test_loader_meta_migration.py tests/agent/test_context_builder.py tests/agent/loop_core/test_execution_runtime.py tests/agent/loop_core/test_message_runtime.py`
+  - Result: `PASSED`.
+- Dashboard OpenClaw-like parity verification (web UI + control helpers):
+  - `pytest -q tests/gateway/test_webhooks.py tests/cli/test_gateway_dashboard_helpers.py tests/cli/test_gateway_tailscale_runtime.py tests/cli/test_config_runtime_mode.py tests/cli/test_setup_wizard_tools_menu.py`
+  - Result: `52 passed`.
+- Follow-up acknowledgement regression verification:
+  - `pytest -q tests/agent/loop_core/test_message_runtime.py tests/agent/loop_core/test_execution_runtime.py tests/agent/test_tool_enforcement.py`
+  - Result: `121 passed`.
+- Dashboard model/provider override + routing metadata verification:
+  - `pytest -q tests/agent/loop_core/test_execution_runtime.py tests/agent/loop_core/test_message_runtime.py tests/agent/test_tool_enforcement.py tests/agent/test_agent_model_switching.py tests/cli/test_gateway_dashboard_helpers.py tests/gateway/test_webhooks.py`
+  - Result: `165 passed`.
+- Lint check for dashboard/runtime control touched files:
+  - `ruff check kabot/gateway/webhook_server.py kabot/cli/commands.py tests/gateway/test_webhooks.py tests/cli/test_gateway_dashboard_helpers.py tests/cli/test_config_runtime_mode.py tests/cli/test_setup_wizard_tools_menu.py`
+  - Result: `PASSED`.
+- Additional lint check for dashboard model-routing path:
+  - `ruff check kabot/cli/commands.py kabot/gateway/webhook_server.py kabot/agent/loop.py kabot/agent/loop_core/routing_runtime.py kabot/agent/loop_core/message_runtime.py tests/cli/test_gateway_dashboard_helpers.py tests/gateway/test_webhooks.py tests/agent/test_agent_model_switching.py tests/agent/loop_core/test_message_runtime.py`
+  - Result: `PASSED`.
+- End-to-end runtime regression sweep for mixed chat flows + guard path:
+  - `pytest tests/agent/test_tool_enforcement.py tests/agent/loop_core/test_message_runtime.py tests/agent/loop_core/test_execution_runtime.py`
+  - Result: `137 passed`.
+- Expanded runtime regression after non-action stock-guard hardening:
+  - `pytest tests/agent/test_tool_enforcement.py tests/agent/loop_core/test_message_runtime.py tests/agent/loop_core/test_execution_runtime.py`
+  - Result: `138 passed`.
 - Lint baseline check:
   - `ruff check kabot tests`
   - Result: `FAILED` (`140` findings; repo-wide existing lint debt, not fully remediated in this batch).

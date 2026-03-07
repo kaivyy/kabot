@@ -11,6 +11,7 @@ def test_runtime_resilience_and_performance_defaults_present():
     assert cfg.runtime.performance.fast_first_response is True
     assert cfg.runtime.performance.defer_memory_warmup is True
     assert cfg.runtime.performance.max_first_response_ms_soft == 4000
+    assert cfg.runtime.performance.token_mode == "boros"
     assert cfg.runtime.autopilot.enabled is True
     assert cfg.runtime.autopilot.max_actions_per_beat == 1
     assert cfg.runtime.observability.enabled is True

@@ -84,6 +84,51 @@ def test_sanitize_error_replaces_invalid_surrogates():
 
 
 @pytest.mark.asyncio
+async def test_run_agent_loop_respects_suppressed_required_tool_inference():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: "weather"
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value="weather-result")
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(True, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda _name: False)
+    loop.max_iterations = 1
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content},
+        ]
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="sunscreen yang bagus buat cuaca panas apa ya?",
+        metadata={
+            "effective_content": "sunscreen yang bagus buat cuaca panas apa ya?",
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "suppress_required_tool_inference": True,
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert result == "fallback-response"
+    loop._execute_required_tool_fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_process_tool_calls_preserves_assistant_tool_calls_with_content(tmp_path):
     tool_executor = AsyncMock(return_value="scheduled")
     loop = SimpleNamespace(
@@ -172,6 +217,836 @@ async def test_process_tool_calls_emits_tool_phase_status_metadata(tmp_path):
     tool_status = next(item for item in outbound if (item.metadata or {}).get("type") == "status_update")
     assert tool_status.metadata.get("phase") == "tool"
     assert tool_status.metadata.get("lane") == "status"
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_applies_channel_hard_cap_to_tool_result(tmp_path):
+    very_large_output = "X" * 25000
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=AsyncMock(return_value=very_large_output)),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek cuaca")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_weather", name="weather", arguments={"location": "Jakarta"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    tool_messages = [m for m in updated if m.get("role") == "tool"]
+    assert tool_messages
+    # Telegram lane should be capped much lower than raw 25k chars for token safety.
+    assert len(str(tool_messages[-1].get("content") or "")) < 10000
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_stock_for_non_stock_file_query(tmp_path):
+    tool_executor = AsyncMock(return_value="[STOCK] CONFIG.JSON ...")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="baca file config.json")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_stock", name="stock", arguments={"symbol": "CONFIG.JSON"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_stock"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_write_file_before_skill_plan_approval(tmp_path):
+    tool_executor = AsyncMock(return_value="written")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="oke bikin skill threads sekarang",
+        metadata={
+            "skill_creation_guard": {
+                "active": True,
+                "stage": "planning",
+                "approved": False,
+                "request_text": "buat skill baru untuk Threads API",
+            }
+        },
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_write_skill", name="write_file", arguments={"path": "skills/meta-threads/SKILL.md", "content": "# Threads"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_write_skill"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_SKILL_CREATION_APPROVAL" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_allows_write_file_after_skill_plan_approval(tmp_path):
+    tool_executor = AsyncMock(return_value="written")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="oke, implementasikan sekarang",
+        metadata={
+            "skill_creation_guard": {
+                "active": True,
+                "stage": "approved",
+                "approved": True,
+                "request_text": "buat skill baru untuk Threads API",
+            }
+        },
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_write_skill", name="write_file", arguments={"path": "skills/meta-threads/SKILL.md", "content": "# Threads"})],
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    tool_executor.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_stock_for_non_action_stock_feedback(tmp_path):
+    tool_executor = AsyncMock(return_value="[STOCK] BBRI.JK ...")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="stop bahas saham")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_stock", name="stock", arguments={"symbol": "BBRI.JK"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_stock"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_stock_for_geopolitical_news_query(tmp_path):
+    tool_executor = AsyncMock(return_value="[STOCK] BBRI.JK ...")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="adakah gejolak politik sekarang? saya dengar perang iran vs us israel ya",
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_stock", name="stock", arguments={"symbol": "BBRI.JK"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_stock"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_stock_for_geopolitical_query_even_without_web_search_tool(tmp_path):
+    tool_executor = AsyncMock(return_value="[STOCK] BBRI.JK ...")
+
+    def _has_tool(name: str) -> bool:
+        # Simulate deployments where web_search is disabled/misconfigured.
+        return name != "web_search"
+
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=_has_tool),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="adakah gejolak politik sekarang? saya dengar perang iran vs us israel ya",
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_stock", name="stock", arguments={"symbol": "BBRI.JK"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_stock"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_web_search_for_general_advice_query(tmp_path):
+    tool_executor = AsyncMock(return_value="No results for: sunscreen")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="sunscreen nya apa yang bagus",
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_search", name="web_search", arguments={"query": msg.content})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_search"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_keeps_valid_web_search_execution(tmp_path):
+    tool_executor = AsyncMock(return_value="Results for: perang iran terbaru 2026")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="carikan berita perang iran terbaru 2026 sekarang",
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_search", name="web_search", arguments={"query": msg.content})],
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    tool_executor.assert_awaited_once_with("web_search", {"query": msg.content})
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_keeps_required_web_search_for_multilingual_query(tmp_path):
+    tool_executor = AsyncMock(return_value="Results for: ข่าวล่าสุดอิหร่าน")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="ข่าวล่าสุดอิหร่าน",
+        metadata={"required_tool": "web_search"},
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_search", name="web_search", arguments={"query": msg.content})],
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    tool_executor.assert_awaited_once_with("web_search", {"query": msg.content})
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_cron_for_low_information_greeting(tmp_path):
+    tool_executor = AsyncMock(return_value="reminder-set")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="halo")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_cron", name="cron", arguments={"action": "add", "message": "x"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_cron"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_keeps_valid_stock_execution(tmp_path):
+    tool_executor = AsyncMock(return_value="[STOCK] BBRI.JK ...")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek harga bbri sekarang")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_stock", name="stock", arguments={"symbol": "BBRI.JK"})],
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    tool_executor.assert_awaited_once_with("stock", {"symbol": "BBRI.JK"})
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_weather_for_non_weather_greeting(tmp_path):
+    tool_executor = AsyncMock(return_value="Jakarta: 30C")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="halo")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_weather", name="weather", arguments={"location": "Jakarta"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_weather"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_image_tool_for_non_image_intent(tmp_path):
+    tool_executor = AsyncMock(return_value="Image generated via provider")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek harga bbri sekarang")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_img", name="image_gen", arguments={"prompt": "car in forest"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_img"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_allows_image_tool_for_image_intent(tmp_path):
+    tool_executor = AsyncMock(return_value="Image generated via provider")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="buatkan gambar mobil di hutan",
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_img", name="image_gen", arguments={"prompt": "mobil di hutan"})],
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    tool_executor.assert_awaited_once_with("image_gen", {"prompt": "mobil di hutan"})
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_tts_tool_for_non_tts_intent(tmp_path):
+    tool_executor = AsyncMock(return_value="Audio generated")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="halo")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_tts", name="tts", arguments={"text": "hello"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_tts"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_update_tool_when_intent_is_not_update(tmp_path):
+    tool_executor = AsyncMock(return_value='{"update_available": false}')
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="apa kabar")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_update", name="check_update", arguments={})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_update"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+def test_tool_result_hard_cap_is_stricter_in_hemat_mode():
+    raw = "X" * 12000
+    boros = execution_runtime_module._apply_channel_tool_result_hard_cap(
+        raw,
+        channel="telegram",
+        tool_name="weather",
+        token_mode="boros",
+    )
+    hemat = execution_runtime_module._apply_channel_tool_result_hard_cap(
+        raw,
+        channel="telegram",
+        tool_name="weather",
+        token_mode="hemat",
+    )
+
+    assert len(hemat) < len(boros)
 
 
 @pytest.mark.asyncio
@@ -653,8 +1528,124 @@ async def test_run_agent_loop_skips_initial_thinking_phase_when_already_bootstra
     phases = [m.metadata.get("phase") for m in statuses]
     assert result == raw_result
     assert "thinking" not in phases
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_uses_planning_phase_for_unapproved_skill_workflow(monkeypatch):
+    published = []
+
+    async def _publish(msg):
+        published.append(msg)
+
+    def _fake_t(key: str, text: str | None = None, **kwargs) -> str:
+        return f"<{key}>"
+
+    monkeypatch.setattr(execution_runtime_module, "t", _fake_t)
+
+    loop = SimpleNamespace(
+        max_iterations=1,
+        context_guard=SimpleNamespace(check_overflow=lambda _messages, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(return_value=(LLMResponse(content="Plan dulu ya"), None)),
+        _execute_required_tool_fallback=AsyncMock(return_value=None),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="Plan dulu ya"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(side_effect=_publish)),
+        _should_log_verbose=lambda _session: False,
+        _self_evaluate=lambda _question, _response: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(True, "")),
+        _review_tool_output=AsyncMock(return_value=None),
+        _get_last_tool_context=lambda _session: None,
+        tools=SimpleNamespace(has=lambda _name: False),
+        context=SimpleNamespace(
+            add_assistant_message=lambda messages, content, tool_calls=None, reasoning_content=None: [
+                *messages,
+                {"role": "assistant", "content": content},
+            ],
+            add_tool_result=lambda messages, _id, _name, result: [*messages, {"role": "tool", "content": result}],
+        ),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user",
+        content="buat skill baru untuk Threads API",
+        metadata={
+            "runtime_locale": "en",
+            "route_profile": "GENERAL",
+            "skill_creation_guard": {
+                "active": True,
+                "stage": "planning",
+                "approved": False,
+                "request_text": "buat skill baru untuk Threads API",
+            },
+        },
+    )
+
+    session = SimpleNamespace(metadata={})
+
+    await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    statuses = [m for m in published if (m.metadata or {}).get("type") == "status_update"]
+    phases = [m.metadata.get("phase") for m in statuses]
+    assert "planning" in phases
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_uses_executing_and_verified_phases_for_approved_skill_workflow(monkeypatch):
+    published = []
+
+    async def _publish(msg):
+        published.append(msg)
+
+    def _fake_t(key: str, text: str | None = None, **kwargs) -> str:
+        return f"<{key}>"
+
+    monkeypatch.setattr(execution_runtime_module, "t", _fake_t)
+
+    raw_result = "Skill implemented."
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "read_file",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="unused"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(side_effect=_publish)),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user",
+        content="oke lanjut implementasi",
+        metadata={
+            "runtime_locale": "en",
+            "skill_creation_guard": {
+                "active": True,
+                "stage": "approved",
+                "approved": True,
+                "request_text": "buat skill baru untuk Threads API",
+            },
+        },
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    statuses = [m for m in published if (m.metadata or {}).get("type") == "status_update"]
+    phases = [m.metadata.get("phase") for m in statuses]
+    assert result == raw_result
+    assert "executing" in phases
+    assert "verified" in phases
     assert "tool" in phases
-    assert "done" in phases
 
 
 @pytest.mark.asyncio
@@ -1241,6 +2232,48 @@ async def test_run_agent_loop_forces_web_search_for_live_query_even_without_rese
     assert result == "live-result"
     loop._execute_required_tool_fallback.assert_awaited_once_with("web_search", msg)
     loop._call_llm_with_fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_research_route_does_not_force_web_search_for_general_advice_query():
+    response = LLMResponse(content="Kalau cuaca panas, cari sunscreen SPF 30-50 yang nyaman dipakai harian.")
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _execute_required_tool_fallback=AsyncMock(return_value="search-result"),
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(return_value=(response, None)),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(9, "ok")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, msgs, _resp, _sess: msgs),
+        context=SimpleNamespace(
+            add_assistant_message=lambda msgs, content, reasoning_content=None: msgs + [{"role": "assistant", "content": content}]
+        ),
+        context_guard=SimpleNamespace(check_overflow=lambda _m, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _is_weak_model=lambda _model: False,
+        tools=SimpleNamespace(has=lambda name: name == "web_search"),
+        provider=SimpleNamespace(),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="sunscreen nya apa yang bagus",
+        metadata={"route_profile": "RESEARCH"},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert "sunscreen" in result.lower()
+    loop._execute_required_tool_fallback.assert_not_awaited()
+    loop._call_llm_with_fallback.assert_awaited_once()
 
 
 @pytest.mark.asyncio

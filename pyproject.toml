@@ -70,6 +70,7 @@ include = [
     "kabot/**/*.py",
     "kabot/skills/**/*.md",
     "kabot/skills/**/*.sh",
+    "kabot/gateway/templates/**/*.html",
 ]
 
 [tool.hatch.build.targets.sdist]

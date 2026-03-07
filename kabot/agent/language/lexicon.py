@@ -112,7 +112,7 @@ CRON_MANAGEMENT_TERMS = (
 )
 
 STOCK_TERMS = (
-    "stock", "saham", "ticker", "price", "harga", "market", "ihsg", "idx",
+    "stock", "saham", "ticker", "ihsg", "idx",
     "market cap", "dividend", "yield", "ratio", "pe ratio",
     "bursa", "efek", "obligasi", "surat berharga",
     # Multilingual anchors

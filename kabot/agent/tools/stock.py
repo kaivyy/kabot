@@ -82,6 +82,17 @@ _BASE_IDX_ALIAS_TO_SYMBOL = {
     "TOBA": "TOBA.JK",
     "TOBA BARA": "TOBA.JK",
     "TOBA BARA SEJAHTRA": "TOBA.JK",
+    # FX aliases (Yahoo Finance format)
+    "USDIDR": "USDIDR=X",
+    "USD IDR": "USDIDR=X",
+    "USD TO IDR": "USDIDR=X",
+    "USD KE IDR": "USDIDR=X",
+    "USD KE RUPIAH": "USDIDR=X",
+    "KURS USD": "USDIDR=X",
+    "KURS DOLLAR": "USDIDR=X",
+    "DOLLAR KE RUPIAH": "USDIDR=X",
+    "1 USD BERAPA RUPIAH": "USDIDR=X",
+    "US DOLLAR TO RUPIAH": "USDIDR=X",
 }
 
 _KNOWN_IDX_SYMBOLS = {
@@ -126,10 +137,43 @@ _KNOWN_GLOBAL_SYMBOLS = {
 
 _PLACEHOLDER_ROOTS = {"XXXX", "TICKER", "SYMBOL", "EXAMPLE"}
 _EXPLICIT_SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,8}\.[A-Z]{1,4}$")
+_FX_SYMBOL_RE = re.compile(r"^[A-Z]{3,10}=X$")
 _BARE_SYMBOL_RE = re.compile(r"^[A-Z]{1,5}$")
 _GENERAL_SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-^=]{0,14}$")
 _COIN_ID_RE = re.compile(r"^[a-z0-9-]{2,64}$")
 _ALIAS_KEY_RE = re.compile(r"[^a-z0-9]+")
+_NON_TICKER_FILE_SUFFIXES = {
+    "JSON",
+    "YAML",
+    "YML",
+    "TOML",
+    "INI",
+    "CONF",
+    "CFG",
+    "TXT",
+    "MD",
+    "CSV",
+    "PDF",
+    "DOC",
+    "DOCX",
+    "XML",
+    "HTML",
+    "HTM",
+    "JS",
+    "TS",
+    "PY",
+    "GO",
+    "JAVA",
+    "C",
+    "CPP",
+    "H",
+    "HPP",
+    "SH",
+    "BAT",
+    "PS1",
+    "LOG",
+    "DB",
+}
 _STOCK_ALIAS_ENV_PATH = "KABOT_STOCK_ALIASES_PATH"
 _STOCK_ALIAS_DEFAULT_PATH = os.path.expanduser("~/.kabot/stock_aliases.json")
 _YAHOO_SEARCH_URLS = (
@@ -144,6 +188,14 @@ _STOCK_SEARCH_QUOTES_PER_QUERY = 8
 _STOCK_SEARCH_SYMBOLS_PER_QUERY = 2
 _STOCK_RESOLVE_CACHE_TTL_SECONDS = 600
 _STOCK_RESOLVE_CACHE_MAX_ITEMS = 256
+_SECONDARY_LISTING_MARKERS = (
+    " adr",
+    " ads",
+    " cdr",
+    " hedged",
+    " depositary",
+    " depository",
+)
 _MARKET_HINT_SUFFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("jepang", (".T",)),
     ("japan", (".T",)),
@@ -188,6 +240,10 @@ _STOCK_NAME_STOPWORDS = {
     "on",
     "of",
     "from",
+    "dengan",
+    "apa",
+    "nya",
+    "bagus",
     "dari",
     "yang",
     "itu",
@@ -199,11 +255,68 @@ _STOCK_NAME_STOPWORDS = {
     "bro",
     "sis",
     "broh",
+    "cenderung",
+    "naik",
+    "turun",
+    "trend",
+    "trending",
+    "movement",
+    "pergerakan",
+    "bullish",
+    "bearish",
+    "sideways",
+    "dirupiahkan",
+    "rupiahkan",
+    "if",
+    "around",
+    "about",
+    "roughly",
+    "approximately",
+    "approx",
+    "kira-kira",
+    "dollar",
+    "dollars",
+    "usd",
+    "idr",
+    "rupiah",
+    "indonesian",
+    "today",
+    "current",
+    "worth",
+    "convert",
+    "converted",
+    "conversion",
+    "much",
+    "how",
+    "is",
+    "that",
+    "in",
+    "right",
+    "currently",
+    "latest",
     "umur",
     "age",
     "old",
     "tahun",
     "year",
+}
+_COMPANY_HINT_TOKENS = {
+    "bank",
+    "inc",
+    "corp",
+    "corporation",
+    "company",
+    "co",
+    "ltd",
+    "plc",
+    "group",
+    "holding",
+    "holdings",
+    "tbk",
+    "pt",
+    "sa",
+    "se",
+    "ag",
 }
 _COMPANY_SPLIT_RE = re.compile(
     r"(?i)[,;]|(?:\b(?:and|dan|atau|or|plus|serta|with|vs)\b)"
@@ -217,6 +330,23 @@ _PERSONAL_CHAT_MARKERS = {
     "berapa umur",
     "how old",
 }
+_ADVICE_CHAT_MARKERS_RE = re.compile(
+    r"\b(saran(?:mu)?|advice|suggest(?:ion)?|recommend(?:ation)?)\b",
+    re.IGNORECASE,
+)
+_MARKET_CONTEXT_MARKERS_RE = re.compile(
+    r"\b(stock|saham|ticker|symbol|quote|market|harga|price|kurs|exchange)\b",
+    re.IGNORECASE,
+)
+_VALUE_QUERY_HINT_RE = re.compile(
+    r"\b(price|harga|quote|berapa|how much|rate|kurs)\b",
+    re.IGNORECASE,
+)
+_USD_AMOUNT_RE = re.compile(
+    r"(?i)\b(?:around|about|roughly|sekitar|kurang lebih|kira-kira)?\s*(\d+(?:[.,]\d+)?)\s*(usd|dollar|dollars)\b"
+)
+_USD_MARKER_RE = re.compile(r"(?i)\b(usd|dollar|dollars)\b")
+_IDR_MARKER_RE = re.compile(r"(?i)\b(idr|rupiah|indonesian rupiah|dirupiahkan|rupiahkan)\b")
 _NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
 
 _CRYPTO_ALIAS_TO_ID = {
@@ -293,6 +423,8 @@ def _normalize_stock_symbol(value: str) -> str | None:
     symbol = str(value or "").upper().strip()
     if not symbol:
         return None
+    if _FX_SYMBOL_RE.match(symbol):
+        return symbol
     if _EXPLICIT_SYMBOL_RE.match(symbol):
         left, right = symbol.split(".", 1)
         if right == "JK" and left not in _KNOWN_IDX_SYMBOLS:
@@ -374,7 +506,11 @@ def _looks_like_personal_small_talk(text: str) -> bool:
     normalized = " ".join(str(text or "").strip().lower().split())
     if not normalized:
         return False
-    return any(marker in normalized for marker in _PERSONAL_CHAT_MARKERS)
+    if any(marker in normalized for marker in _PERSONAL_CHAT_MARKERS):
+        return True
+    if _ADVICE_CHAT_MARKERS_RE.search(normalized) and not _MARKET_CONTEXT_MARKERS_RE.search(normalized):
+        return True
+    return False
 
 
 def _is_non_latin_compact_query(text: str) -> bool:
@@ -409,6 +545,9 @@ def extract_stock_name_candidates(raw: str) -> list[str]:
 
     cleaned = re.sub(r"[\(\)\[\]\{\}\"'`]+", " ", text)
     chunks = [part.strip() for part in _COMPANY_SPLIT_RE.split(cleaned) if part.strip()]
+    has_market_hint = bool(_MARKET_CONTEXT_MARKERS_RE.search(text))
+    has_value_hint = bool(_VALUE_QUERY_HINT_RE.search(text))
+    raw_token_count = len([token for token in re.split(r"\s+", cleaned.strip()) if token])
 
     candidates: list[str] = []
     seen: set[str] = set()
@@ -437,6 +576,27 @@ def extract_stock_name_candidates(raw: str) -> list[str]:
         phrase = " ".join(kept).strip(" .,:;!?-")
         if not phrase:
             continue
+        phrase_tokens = [token.lower() for token in re.split(r"\s+", phrase) if token]
+        if not phrase_tokens:
+            continue
+        if (
+            len(phrase_tokens) == 1
+            and raw_token_count > 2
+            and not (has_market_hint or has_value_hint)
+        ):
+            continue
+        if len(phrase_tokens) >= 2:
+            has_company_hint = any(token in _COMPANY_HINT_TOKENS for token in phrase_tokens)
+            has_title_like = any(bool(token[:1].isupper()) for token in kept if token)
+            has_non_latin = bool(_NON_ASCII_RE.search(phrase))
+            if not (
+                has_market_hint
+                or has_value_hint
+                or has_company_hint
+                or has_title_like
+                or has_non_latin
+            ):
+                continue
         key = phrase.casefold()
         if key in seen:
             continue
@@ -561,6 +721,8 @@ def extract_stock_symbols(raw: str) -> list[str]:
             left, right = symbol.split(".", 1)
             if left in _PLACEHOLDER_ROOTS:
                 continue
+            if right in _NON_TICKER_FILE_SUFFIXES and left not in _KNOWN_IDX_SYMBOLS and left not in _KNOWN_GLOBAL_SYMBOLS:
+                continue
             if len(set(left)) == 1 and len(left) >= 3:
                 continue
             if right == "JK" and left not in _KNOWN_IDX_SYMBOLS:
@@ -568,6 +730,10 @@ def extract_stock_symbols(raw: str) -> list[str]:
                 if corrected:
                     _add(f"{corrected}.JK")
                     continue
+            _add(symbol)
+            continue
+
+        if _FX_SYMBOL_RE.match(symbol):
             _add(symbol)
             continue
 
@@ -633,7 +799,7 @@ class StockTool(Tool):
     """Get current stock price and market information."""
 
     name = "stock"
-    description = "Get CURRENT STOCK PRICE only using Yahoo Finance API. Requires exact ticker symbol with exchange suffix (e.g., AAPL, BBCA.JK, 7203.T, SAP.DE). If you don't know the ticker, use web_search first to find it. For ANALYSIS and RECOMMENDATIONS, use stock_analysis tool instead."
+    description = "Get CURRENT STOCK PRICE only using Yahoo Finance API. Supports equity tickers (e.g., AAPL, BBCA.JK, 7203.T, SAP.DE) and FX symbols (e.g., USDIDR=X). If you don't know the ticker, use web_search first to find it. For ANALYSIS and RECOMMENDATIONS, use stock_analysis tool instead."
     parameters = {
         "type": "object",
         "properties": {
@@ -690,6 +856,10 @@ class StockTool(Tool):
             symbol: Stock ticker symbol or comma-separated list of symbols.
         """
         try:
+            conversion_result = await self._maybe_execute_currency_conversion(symbol)
+            if conversion_result is not None:
+                return conversion_result
+
             symbols = extract_stock_symbols(symbol)
             ambiguity_options: list[str] | None = None
             ambiguity_candidate: str | None = None
@@ -727,6 +897,87 @@ class StockTool(Tool):
 
         except Exception as e:
             return i18n_t("stock.error", symbol, error=str(e))
+
+    def _parse_numeric_amount(self, value: str) -> float | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        normalized = raw.replace(",", "")
+        try:
+            return float(normalized)
+        except ValueError:
+            return None
+
+    async def _maybe_execute_currency_conversion(self, raw_query: str) -> str | None:
+        text = str(raw_query or "").strip()
+        if not text:
+            return None
+        wants_idr = bool(_IDR_MARKER_RE.search(text))
+        wants_explicit_usd_to_idr = bool(_USD_MARKER_RE.search(text) and wants_idr)
+        if not wants_idr:
+            return None
+
+        explicit_symbols = [item for item in extract_stock_symbols(text) if item != "USDIDR=X"]
+        ambiguity_options: list[str] | None = None
+        ambiguity_candidate: str | None = None
+        if explicit_symbols:
+            resolved_symbols = explicit_symbols
+        else:
+            resolved_symbols, ambiguity_options, ambiguity_candidate = await self._resolve_symbols_from_names(text)
+
+        if ambiguity_options:
+            option_lines = "\n".join(f"- {item}" for item in ambiguity_options)
+            candidate_text = str(ambiguity_candidate or "that company").strip()
+            example = str(ambiguity_options[0] if ambiguity_options else "AAPL")
+            return i18n_t(
+                "stock.ambiguous_symbol",
+                text,
+                company=candidate_text,
+                options=option_lines,
+                example=example,
+            )
+        if not resolved_symbols:
+            return None
+
+        asset_snapshot = await self._fetch_quote_snapshot(resolved_symbols[0])
+        if not asset_snapshot:
+            return i18n_t("stock.fetch_failed", text, symbol=resolved_symbols[0])
+
+        asset_currency = str(asset_snapshot.get("currency") or "").strip().upper()
+        if not wants_explicit_usd_to_idr and asset_currency not in {"USD", "US$"}:
+            if asset_currency == "IDR":
+                reference_symbol = str(resolved_symbols[0]).upper()
+                return "\n".join(
+                    [
+                        f"[FX CONVERSION] {reference_symbol}",
+                        f"Amount: {float(asset_snapshot['price']):,.2f} IDR",
+                        "Approx: already quoted in IDR",
+                    ]
+                )
+            return None
+
+        fx_snapshot = await self._fetch_quote_snapshot("USDIDR=X")
+        if not fx_snapshot:
+            return i18n_t("stock.fetch_failed", text, symbol="USDIDR=X")
+
+        amount_match = _USD_AMOUNT_RE.search(text)
+        amount_usd = self._parse_numeric_amount(amount_match.group(1)) if amount_match else None
+        if amount_usd is None:
+            amount_usd = float(asset_snapshot["price"])
+
+        converted_idr = float(amount_usd) * float(fx_snapshot["price"])
+        reference_symbol = str(resolved_symbols[0]).upper()
+        lines = [
+            f"[FX CONVERSION] {reference_symbol} / USDIDR=X",
+            f"Amount: {amount_usd:,.2f} USD",
+            f"Approx: {converted_idr:,.2f} IDR",
+            f"Rate: 1 USD = {float(fx_snapshot['price']):,.2f} IDR",
+        ]
+        if asset_snapshot:
+            lines.append(
+                f"Reference: {reference_symbol} {float(asset_snapshot['price']):,.2f} {asset_snapshot['currency']}"
+            )
+        return "\n".join(lines)
 
     async def _resolve_symbols_from_names(self, raw_query: str) -> tuple[list[str], list[str] | None, str | None]:
         """Resolve probable company names to ticker symbols using Yahoo search."""
@@ -772,11 +1023,15 @@ class StockTool(Tool):
         return result
 
     def _extract_symbols_from_search_quotes(self, payload: dict[str, Any]) -> list[str]:
+        quotes = self._extract_search_quotes(payload)
+        return [item["symbol"] for item in quotes]
+
+    def _extract_search_quotes(self, payload: dict[str, Any]) -> list[dict[str, str]]:
         quotes = payload.get("quotes")
         if not isinstance(quotes, list):
             return []
 
-        out: list[str] = []
+        out: list[dict[str, str]] = []
         seen: set[str] = set()
         for quote in quotes:
             if not isinstance(quote, dict):
@@ -788,10 +1043,74 @@ class StockTool(Tool):
             if not symbol or symbol in seen:
                 continue
             seen.add(symbol)
-            out.append(symbol)
+            out.append(
+                {
+                    "symbol": symbol,
+                    "quote_type": quote_type,
+                    "shortname": str(
+                        quote.get("shortname")
+                        or quote.get("longname")
+                        or quote.get("displayName")
+                        or ""
+                    ).strip(),
+                }
+            )
             if len(out) >= _STOCK_SEARCH_SYMBOLS_PER_QUERY:
                 break
         return out
+
+    def _looks_like_secondary_listing_name(self, name: str) -> bool:
+        normalized = f" {_normalize_alias_key(name)} "
+        return any(marker in normalized for marker in _SECONDARY_LISTING_MARKERS)
+
+    def _select_strong_primary_symbol_from_quotes(
+        self,
+        quotes: list[dict[str, str]],
+        raw_query: str,
+    ) -> str | None:
+        if not quotes:
+            return None
+        if _preferred_market_suffixes(raw_query):
+            return None
+
+        top = quotes[0]
+        top_symbol = str(top.get("symbol") or "").upper().strip()
+        if not top_symbol or "." in top_symbol:
+            return None
+        if str(top.get("quote_type") or "").upper().strip() != "EQUITY":
+            return None
+
+        top_name = str(top.get("shortname") or "").strip()
+        if self._looks_like_secondary_listing_name(top_name):
+            return None
+
+        query_tokens = [
+            token
+            for token in _normalize_alias_key(raw_query).split()
+            if token and token not in _STOCK_NAME_STOPWORDS
+        ]
+        if not query_tokens:
+            return None
+
+        normalized_top_name = _normalize_alias_key(top_name)
+        if not normalized_top_name:
+            return None
+        if not any(token in normalized_top_name for token in query_tokens):
+            return None
+
+        for other in quotes[1:]:
+            other_symbol = str(other.get("symbol") or "").upper().strip()
+            other_type = str(other.get("quote_type") or "").upper().strip()
+            other_name = str(other.get("shortname") or "").strip()
+            if "." in other_symbol:
+                continue
+            if other_type != "EQUITY":
+                continue
+            if self._looks_like_secondary_listing_name(other_name):
+                continue
+            return None
+
+        return top_symbol
 
     def _extract_symbols_from_autoc(self, payload: dict[str, Any]) -> list[str]:
         result_set = payload.get("ResultSet")
@@ -841,7 +1160,14 @@ class StockTool(Tool):
                     if response.status_code != 200:
                         continue
                     payload = response.json()
-                    symbols = self._extract_symbols_from_search_quotes(payload)
+                    search_quotes = self._extract_search_quotes(payload)
+                    preferred_primary = self._select_strong_primary_symbol_from_quotes(
+                        search_quotes,
+                        raw_query or query_text,
+                    )
+                    if preferred_primary:
+                        return [preferred_primary]
+                    symbols = [item["symbol"] for item in search_quotes]
                     if symbols:
                         return _rank_symbols_for_query(symbols, raw_query or query_text)
 
@@ -861,10 +1187,9 @@ class StockTool(Tool):
         except Exception:
             return []
 
-    async def _fetch_yahoo_finance(self, symbol: str) -> str | None:
-        """Fetch stock data from Yahoo Finance."""
+    async def _fetch_quote_snapshot(self, symbol: str) -> dict[str, Any] | None:
+        """Fetch structured quote snapshot from Yahoo Finance."""
         try:
-            # Yahoo Finance chart API (provides real-time data)
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
 
             headers = {
@@ -885,11 +1210,10 @@ class StockTool(Tool):
                 result = data["chart"]["result"][0]
                 meta = result.get("meta", {})
 
-                symbol = meta.get("symbol", symbol)
+                resolved_symbol = meta.get("symbol", symbol)
                 currency = meta.get("currency", "USD")
                 exchange = meta.get("exchangeName", "Unknown")
 
-                # Get quote data
                 quote = result.get("indicators", {}).get("quote", [{}])[0]
 
                 if "close" in quote and quote["close"]:
@@ -898,40 +1222,55 @@ class StockTool(Tool):
                     high_price = max(quote["high"]) if "high" in quote and quote["high"] else current_price
                     low_price = min(quote["low"]) if "low" in quote and quote["low"] else current_price
 
-                    # Calculate change
-                    change = current_price - open_price
-                    change_percent = (change / open_price) * 100 if open_price else 0
+                    return {
+                        "symbol": resolved_symbol,
+                        "currency": currency,
+                        "exchange": exchange,
+                        "price": current_price,
+                        "open_price": open_price,
+                        "high_price": high_price,
+                        "low_price": low_price,
+                    }
 
-                    change_symbol = "+" if change >= 0 else ""
-
-                    return (
-                        f"[STOCK] {symbol} ({exchange})\n"
-                        f"Price: {current_price:.2f} {currency}\n"
-                        f"Change: {change_symbol}{change:.2f} ({change_symbol}{change_percent:.2f}%)\n"
-                        f"High: {high_price:.2f} {currency}\n"
-                        f"Low: {low_price:.2f} {currency}"
-                    )
-
-                # Fallback to meta data if quote not available
                 if "regularMarketPrice" in meta:
                     price = meta["regularMarketPrice"]
                     prev_close = meta.get("previousClose", price)
-                    change = price - prev_close
-                    change_percent = (change / prev_close) * 100 if prev_close else 0
-
-                    change_symbol = "+" if change >= 0 else ""
-
-                    return (
-                        f"[STOCK] {symbol} ({exchange})\n"
-                        f"Price: {price:.2f} {currency}\n"
-                        f"Change: {change_symbol}{change:.2f} ({change_symbol}{change_percent:.2f}%)\n"
-                        f"Market Closed"
-                    )
+                    return {
+                        "symbol": resolved_symbol,
+                        "currency": currency,
+                        "exchange": exchange,
+                        "price": price,
+                        "open_price": prev_close,
+                        "high_price": price,
+                        "low_price": price,
+                    }
 
                 return None
 
         except Exception:
             return None
+
+    async def _fetch_yahoo_finance(self, symbol: str) -> str | None:
+        """Fetch stock data from Yahoo Finance."""
+        snapshot = await self._fetch_quote_snapshot(symbol)
+        if not snapshot:
+            return None
+
+        current_price = float(snapshot["price"])
+        open_price = float(snapshot.get("open_price", current_price) or current_price)
+        high_price = float(snapshot.get("high_price", current_price) or current_price)
+        low_price = float(snapshot.get("low_price", current_price) or current_price)
+        change = current_price - open_price
+        change_percent = (change / open_price) * 100 if open_price else 0
+        change_symbol = "+" if change >= 0 else ""
+
+        return (
+            f"[STOCK] {snapshot['symbol']} ({snapshot['exchange']})\n"
+            f"Price: {current_price:.2f} {snapshot['currency']}\n"
+            f"Change: {change_symbol}{change:.2f} ({change_symbol}{change_percent:.2f}%)\n"
+            f"High: {high_price:.2f} {snapshot['currency']}\n"
+            f"Low: {low_price:.2f} {snapshot['currency']}"
+        )
 
 
 class CryptoTool(Tool):

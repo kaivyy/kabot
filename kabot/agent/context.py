@@ -1,6 +1,7 @@
 ﻿"""Context builder for assembling agent prompts."""
 
 import base64
+import hashlib
 import json
 import mimetypes
 import platform
@@ -18,7 +19,12 @@ from kabot.agent.skills import SkillsLoader
 class TokenBudget:
     """Manages token budgets for different context components."""
 
-    def __init__(self, model: str = "gpt-4", max_context: int = 128000):
+    def __init__(
+        self,
+        model: str = "gpt-4",
+        max_context: int = 128000,
+        component_overrides: dict[str, float] | None = None,
+    ):
         # Use tiktoken for accurate token counting
         self.encoder = None
         try:
@@ -43,6 +49,35 @@ class TokenBudget:
             "history": 0.30,     # 30% - Conversation history
             "current": 0.10,     # 10% - Current message + media
         }
+        self._apply_component_overrides(component_overrides)
+
+    def _apply_component_overrides(self, overrides: dict[str, float] | None) -> None:
+        if not isinstance(overrides, dict) or not overrides:
+            return
+
+        allowed_components = set(self.budgets.keys())
+        updated = dict(self.budgets)
+        changed = False
+        for raw_key, raw_value in overrides.items():
+            key = str(raw_key).strip().lower()
+            if key not in allowed_components:
+                continue
+            try:
+                value = float(raw_value)
+            except Exception:
+                continue
+            if value <= 0:
+                continue
+            updated[key] = value
+            changed = True
+
+        if not changed:
+            return
+
+        total = sum(updated.values())
+        if total <= 0:
+            return
+        self.budgets = {key: (value / total) for key, value in updated.items()}
 
     def count_tokens(self, text: str) -> int:
         """Count tokens in text."""
@@ -233,6 +268,7 @@ Always check platform before writing scripts."""
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, skills_config=skills_config)
+        self._last_truncation_summary: dict[str, Any] | None = None
         self.memory_config = memory_config
         self.graph_memory = None
         graph_enabled = True
@@ -484,6 +520,7 @@ If you are performing a multi-step task, start the first step NOW."""
         max_context: int | None = None,
         tool_names: list[str] | None = None,
         untrusted_context: dict[str, Any] | None = None,
+        budget_hints: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call with token budget management.
@@ -502,8 +539,14 @@ If you are performing a multi-step task, start the first step NOW."""
         Returns:
             List of messages including system prompt.
         """
+        self._last_truncation_summary = None
+
         # Initialize token budget
-        budget = TokenBudget(model, max_context or self._get_model_context(model))
+        budget = TokenBudget(
+            model,
+            max_context or self._get_model_context(model),
+            component_overrides=self._resolve_budget_overrides(budget_hints),
+        )
 
         messages = []
 
@@ -532,6 +575,9 @@ If you are performing a multi-step task, start the first step NOW."""
         if len(truncated_history) < len(history):
             dropped = len(history) - len(truncated_history)
             logger.warning(f"Dropped {dropped} oldest messages to fit token budget")
+            dropped_summary = self._summarize_dropped_history(history, truncated_history)
+            if dropped_summary:
+                self._last_truncation_summary = dropped_summary
 
         messages.extend(truncated_history)
 
@@ -578,6 +624,89 @@ If you are performing a multi-step task, start the first step NOW."""
             logger.error(f"Context overflow: {total_tokens} > {budget.available} tokens!")
 
         return messages
+
+    def consume_last_truncation_summary(self) -> dict[str, Any] | None:
+        """Return and clear latest history-truncation summary metadata."""
+        summary = self._last_truncation_summary
+        self._last_truncation_summary = None
+        return summary
+
+    def _resolve_budget_overrides(self, budget_hints: dict[str, Any] | None) -> dict[str, float] | None:
+        if not isinstance(budget_hints, dict):
+            return None
+
+        explicit = budget_hints.get("component_overrides")
+        if isinstance(explicit, dict) and explicit:
+            return explicit  # TokenBudget sanitizes keys/values.
+
+        token_mode = str(budget_hints.get("token_mode") or "").strip().lower()
+        if token_mode == "hemat":
+            return {
+                "system": 0.24,
+                "memory": 0.20,
+                "skills": 0.14,
+                "history": 0.14,
+                "current": 0.28,
+            }
+
+        load_level = str(budget_hints.get("load_level") or "").strip().lower()
+        fast_path = bool(budget_hints.get("fast_path", False))
+        history_limit = int(budget_hints.get("history_limit", 0) or 0)
+        dropped_count = int(budget_hints.get("dropped_count", 0) or 0)
+
+        if load_level in {"high", "critical"} or fast_path or history_limit <= 12 or dropped_count > 0:
+            # Bias toward current turn + memory signal under pressure.
+            return {
+                "system": 0.28,
+                "memory": 0.20,
+                "skills": 0.14,
+                "history": 0.18,
+                "current": 0.20,
+            }
+
+        return None
+
+    @staticmethod
+    def _summarize_dropped_history(
+        history: list[dict[str, Any]],
+        truncated_history: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        if not history or not truncated_history:
+            return None
+
+        dict_entries = [msg for msg in history[1:] if isinstance(msg, dict)]
+        kept_entries = [msg for msg in truncated_history[1:] if isinstance(msg, dict)]
+        kept_count = len(kept_entries)
+        if kept_count >= len(dict_entries):
+            return None
+
+        dropped_entries = dict_entries[: len(dict_entries) - kept_count]
+        snippets: list[str] = []
+        for msg in dropped_entries[-6:]:
+            role = str(msg.get("role") or "").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = str(msg.get("content") or "").strip()
+            if not content:
+                continue
+            compact = " ".join(content.split())
+            if len(compact) > 140:
+                compact = compact[:137].rstrip() + "..."
+            snippets.append(f"{role}: {compact}")
+
+        if not snippets:
+            return None
+
+        summary = " | ".join(snippets)
+        if len(summary) > 520:
+            summary = summary[:517].rstrip() + "..."
+
+        fingerprint = hashlib.sha1(summary.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        return {
+            "summary": summary,
+            "dropped_count": len(dropped_entries),
+            "fingerprint": fingerprint,
+        }
 
     def _get_model_context(self, model: str) -> int:
         """Get context window size for a model."""

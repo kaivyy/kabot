@@ -5,6 +5,16 @@ from pathlib import Path
 from kabot.cli.setup_wizard import SetupWizard
 
 
+def test_main_menu_disambiguates_skills_and_native_google():
+    wizard = SetupWizard()
+
+    choices = wizard._main_menu_choices()
+    labels = {choice.value: str(choice.title) for choice in choices}
+
+    assert labels["skills"] == "Skills (Configure & Install Plans)"
+    assert labels["google"] == "Google Suite (Native Auth, no npm)"
+
+
 def test_configure_workspace_back_from_action_menu(monkeypatch):
     wizard = SetupWizard()
     original_workspace = wizard.config.agents.defaults.workspace
@@ -44,6 +54,18 @@ def test_configure_google_back_before_auth_flow(monkeypatch):
     )
 
     wizard._configure_google()
+
+
+def test_configure_google_explains_native_no_npm(monkeypatch, capsys):
+    wizard = SetupWizard()
+
+    monkeypatch.setattr("kabot.cli.wizard.sections.core.ClackUI.clack_select", lambda *_, **__: None)
+
+    wizard._configure_google()
+
+    output = capsys.readouterr().out
+    assert "Setup native Google Suite integration" in output
+    assert "No npm, Node.js skill install, or gog setup is required here." in output
 
 
 def test_configure_google_keep_existing_credentials_returns_without_path_prompt(monkeypatch):

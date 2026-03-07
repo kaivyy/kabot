@@ -1,0 +1,36 @@
+<section id="sec-settings" class="tab-section">
+    <div class="config-section-hero">
+        <h2 class="config-section-hero__title">Settings & Configuration</h2>
+        <p class="config-section-hero__desc">Runtime config, control actions, available models, and installed skills.
+        </p>
+    </div>
+
+    <!-- Config + Control -->
+    <div class="kb-grid-2">
+        <div id="panel-config" class="config-section-card" hx-get="/dashboard/partials/config__TOKEN_SUFFIX__"
+            hx-trigger="load, every 10s" hx-swap="innerHTML">
+            <div style="padding:18px; color:var(--muted); font-size:12px;">Loading config...</div>
+        </div>
+        <div class="config-section-card" hx-get="/dashboard/partials/control__TOKEN_SUFFIX__"
+            hx-trigger="load, every 15s" hx-swap="innerHTML">
+            <div style="padding:18px; color:var(--muted); font-size:12px;">Loading control...</div>
+        </div>
+    </div>
+
+    <!-- Models + Skills -->
+    <div class="kb-grid-2">
+        <div class="config-section-card" hx-get="/dashboard/partials/models__TOKEN_SUFFIX__"
+            hx-trigger="load, every 30s" hx-swap="innerHTML">
+            <div style="padding:18px; color:var(--muted); font-size:12px;">Loading models...</div>
+        </div>
+        <div id="panel-skills" class="config-section-card" hx-get="/dashboard/partials/skills__TOKEN_SUFFIX__"
+            hx-trigger="load" hx-swap="outerHTML">
+            <div style="padding:18px; color:var(--muted); font-size:12px;">Loading skills...</div>
+        </div>
+    </div>
+
+    <div id="panel-git" class="config-section-card" hx-get="/dashboard/partials/git__TOKEN_SUFFIX__"
+        hx-trigger="load" hx-swap="outerHTML">
+        <div style="padding:18px; color:var(--muted); font-size:12px;">Loading recent commits...</div>
+    </div>
+</section>

@@ -149,3 +149,60 @@ async def test_weather_tool_normalizes_degree_phrasing(monkeypatch):
     assert "Purwokerto" in result
     openmeteo_mock.assert_awaited_once_with("Purwokerto")
     wttr_mock.assert_awaited_once_with("Purwokerto", "simple")
+
+
+@pytest.mark.asyncio
+async def test_fetch_openmeteo_includes_wind_details():
+    class _DummyResponse:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self) -> dict:
+            return self._payload
+
+    class _DummyClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url, timeout=10.0):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 1:
+                return _DummyResponse(
+                    200,
+                    {
+                        "results": [
+                            {
+                                "name": "Bandung",
+                                "latitude": -6.9175,
+                                "longitude": 107.6191,
+                            }
+                        ]
+                    },
+                )
+            return _DummyResponse(
+                200,
+                {
+                    "current_weather": {
+                        "temperature": 27.3,
+                        "weathercode": 3,
+                        "windspeed": 14.2,
+                        "winddirection": 225,
+                    }
+                },
+            )
+
+    weather_module._weather_client = lambda: _DummyClient()
+
+    result = await weather_module.fetch_openmeteo("Bandung")
+
+    assert "Bandung" in result
+    assert "27.3" in result
+    assert "14.2" in result
+    assert "225" in result or "SW" in result

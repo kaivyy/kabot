@@ -89,6 +89,32 @@ def resolve_models_for_message(loop: Any, msg: InboundMessage) -> list[str]:
         if agent_fallbacks:
             fallback_models = [loop.registry.resolve(m) for m in agent_fallbacks]
 
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    override_model = str(metadata.get("model_override") or "").strip()
+    if override_model:
+        primary = loop.registry.resolve(override_model)
+
+        override_fallbacks_raw = metadata.get("model_fallbacks")
+        override_fallbacks: list[str] = []
+        if isinstance(override_fallbacks_raw, list):
+            override_fallbacks = [
+                str(item).strip()
+                for item in override_fallbacks_raw
+                if str(item).strip()
+            ]
+        elif isinstance(override_fallbacks_raw, str):
+            override_fallbacks = [
+                token.strip()
+                for token in override_fallbacks_raw.split(",")
+                if token and token.strip()
+            ]
+
+        if override_fallbacks:
+            fallback_models = [
+                loop.registry.resolve(item)
+                for item in override_fallbacks[:8]
+            ]
+
     chain: list[str] = []
     seen: set[str] = set()
     for model in [primary, *fallback_models]:

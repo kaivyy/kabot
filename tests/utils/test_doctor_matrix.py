@@ -214,3 +214,27 @@ def test_doctor_parity_report_adapter_registry_marks_disabled_legacy(monkeypatch
     assert row["status"] == "not_ready"
     assert "adapter_disabled_by_flag" in row["reasons"]
     assert adapter["not_ready_legacy"] >= 1
+
+
+def test_doctor_routing_diagnostic_has_expected_sanity_matrix(tmp_path):
+    from kabot.utils.doctor import KabotDoctor
+
+    doctor = KabotDoctor(agent_id="main")
+    doctor.global_dir = tmp_path / "global"
+    doctor.agent_dir = doctor.global_dir / "agents" / "main"
+    doctor.workspace = doctor.agent_dir / "workspace"
+    doctor.workspace.mkdir(parents=True, exist_ok=True)
+
+    report = doctor.run_routing_diagnostic()
+
+    assert "routing" in report
+    assert "guard" in report
+
+    routing = report["routing"]
+    guard = report["guard"]
+
+    # Keep matrix stable as pre-deploy smoke baseline.
+    assert routing["total"] == 20
+    assert guard["total"] == 6
+    assert routing["failed"] == 0
+    assert guard["failed"] == 0

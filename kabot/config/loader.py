@@ -252,6 +252,7 @@ def _migrate_config(data: dict) -> dict:
         "embedWarmupTimeoutMs": 1200,
         "maxContextBuildMs": 500,
         "maxFirstResponseMsSoft": 4000,
+        "tokenMode": "boros",
     }
     autopilot_defaults = {
         "enabled": True,

@@ -514,10 +514,12 @@ class LiteLLMProvider(LLMProvider):
 
             sanitized_messages.append(new_msg)
 
-        # DEBUG: Print keys of the last message to verify sanitization
+        # Keep this in structured logs instead of polluting stdout for CLI/chat users.
         if sanitized_messages:
-            # We don't want to spam stdout in production, but keeping it for now as per original file
-            print(f"DEBUG: Last message keys sent to LLM: {list(sanitized_messages[-1].keys())}")
+            logger.debug(
+                "Last message keys sent to LLM: %s",
+                list(sanitized_messages[-1].keys()),
+            )
 
         # Construct list of models to try: primary -> fallbacks
         primary_model = model or self.default_model

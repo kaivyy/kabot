@@ -12,6 +12,7 @@ from xml.etree import ElementTree as ET
 import httpx
 from loguru import logger
 
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
 from kabot.agent.tools.web_cache import TTLCache
 
@@ -42,7 +43,84 @@ _NEWS_QUERY_STOPWORDS = {
     "now",
     "sekarang",
     "today",
+    "please",
+    "tolong",
+    "jawab",
+    "answer",
+    "respond",
+    "singkat",
+    "ringkas",
+    "short",
+    "natural",
+    "saya",
+    "aku",
+    "dengar",
+    "adakah",
+    "apakah",
+    "gimana",
+    "bagaimana",
+    "tentang",
+    "mohon",
+    "ada",
+    "dan",
+    "vs",
+    "sertakan",
+    "sumber",
+    "source",
+    "sources",
 }
+_NEWS_PRIORITY_TERMS = (
+    "war",
+    "perang",
+    "conflict",
+    "konflik",
+    "iran",
+    "israel",
+    "gaza",
+    "ukraine",
+    "russia",
+    "amerika",
+    "america",
+    "politics",
+    "politik",
+)
+_NEWS_ENTITY_TERMS = (
+    "iran",
+    "israel",
+    "us",
+    "america",
+    "amerika",
+    "gaza",
+    "ukraine",
+    "russia",
+)
+_NEWS_EVENT_TERMS = (
+    "war",
+    "conflict",
+    "politics",
+    "politik",
+)
+_NEWS_QUERY_NORMALIZATION = {
+    "konflik": "conflict",
+    "perang": "war",
+    "politik": "politics",
+    "amerika": "america",
+}
+_NEWS_QUERY_LIVE_MARKERS = (
+    "latest",
+    "breaking",
+    "today",
+    "now",
+    "current",
+    "headline",
+    "headlines",
+    "news",
+    "berita",
+    "terbaru",
+    "terkini",
+    "update",
+    "sekarang",
+)
 
 
 class WebSearchTool(Tool):
@@ -197,7 +275,7 @@ class WebSearchTool(Tool):
 
         results = r.json().get("web", {}).get("results", [])
         if not results:
-            return f"No results for: {query}"
+            return i18n_t("web_search.no_results", query, query=query)
 
         lines = [f"Results for: {query}\n"]
         for i, item in enumerate(results[:count], 1):
@@ -362,7 +440,7 @@ class WebSearchTool(Tool):
         seen: set[str] = set()
         for token in re.findall(r"[^\W_]+", str(query or "").lower(), flags=re.UNICODE):
             cleaned = token.strip()
-            if len(cleaned) < 3:
+            if len(cleaned) < 2:
                 continue
             if cleaned in _NEWS_QUERY_STOPWORDS:
                 continue
@@ -372,6 +450,79 @@ class WebSearchTool(Tool):
             terms.append(cleaned)
         return terms
 
+    def _build_news_query_candidates(self, query: str) -> list[str]:
+        raw = " ".join(str(query or "").strip().split())
+        if not raw:
+            return []
+
+        candidates: list[str] = [raw]
+        terms = self._extract_relevance_terms(raw)
+        if terms:
+            prioritized: list[str] = []
+            seen: set[str] = set()
+            for term in terms:
+                normalized_term = _NEWS_QUERY_NORMALIZATION.get(term, term)
+                if normalized_term in _NEWS_PRIORITY_TERMS or re.fullmatch(r"(19|20)\d{2}", normalized_term):
+                    if normalized_term not in seen:
+                        seen.add(normalized_term)
+                        prioritized.append(normalized_term)
+            for term in terms:
+                normalized_term = _NEWS_QUERY_NORMALIZATION.get(term, term)
+                if normalized_term in seen:
+                    continue
+                seen.add(normalized_term)
+                prioritized.append(normalized_term)
+                if len(prioritized) >= 8:
+                    break
+
+            lowered = raw.lower()
+            if (
+                any(marker in lowered for marker in _NEWS_QUERY_LIVE_MARKERS)
+                and "news" not in seen
+                and "berita" not in seen
+            ):
+                prioritized.append("news")
+
+            compact = " ".join(prioritized[:8]).strip()
+            if compact and compact.lower() != raw.lower():
+                candidates.append(compact)
+
+            geo_priority: list[str] = []
+            geo_seen: set[str] = set()
+            for term in prioritized:
+                if term in _NEWS_ENTITY_TERMS and term not in geo_seen:
+                    geo_seen.add(term)
+                    geo_priority.append(term)
+            for term in prioritized:
+                if term in _NEWS_EVENT_TERMS and term not in geo_seen:
+                    geo_seen.add(term)
+                    geo_priority.append(term)
+            for term in prioritized:
+                if re.fullmatch(r"(19|20)\d{2}", term) and term not in geo_seen:
+                    geo_seen.add(term)
+                    geo_priority.append(term)
+
+            if geo_priority:
+                lowered = raw.lower()
+                if any(marker in lowered for marker in _NEWS_QUERY_LIVE_MARKERS):
+                    if "latest" not in geo_seen:
+                        geo_priority.append("latest")
+                    if "news" not in geo_seen:
+                        geo_priority.append("news")
+                focused = " ".join(geo_priority[:8]).strip()
+                if focused and focused.lower() != raw.lower():
+                    candidates.append(focused)
+
+        deduped: list[str] = []
+        seen_queries: set[str] = set()
+        for item in candidates:
+            key = item.casefold()
+            if key in seen_queries:
+                continue
+            seen_queries.add(key)
+            deduped.append(item)
+        return deduped
+
     def _score_news_item(self, title: str, description: str, query_terms: list[str]) -> int:
         if not query_terms:
             return 0
@@ -380,42 +531,49 @@ class WebSearchTool(Tool):
 
     async def _search_google_news_rss(self, query: str, count: int) -> str:
         """Fallback search provider that works without API keys."""
-        encoded_query = quote_plus(query)
-        url = (
-            f"{GOOGLE_NEWS_RSS_ENDPOINT}?q={encoded_query}"
-            "&hl=en-US&gl=US&ceid=US:en"
-        )
+        candidates = self._build_news_query_candidates(query)
         async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=10.0)
-            r.raise_for_status()
+            for candidate in candidates:
+                encoded_query = quote_plus(candidate)
+                url = (
+                    f"{GOOGLE_NEWS_RSS_ENDPOINT}?q={encoded_query}"
+                    "&hl=en-US&gl=US&ceid=US:en"
+                )
+                r = await client.get(url, timeout=10.0)
+                r.raise_for_status()
 
-        root = ET.fromstring(r.text)
-        items = root.findall(".//item")
-        if not items:
-            return f"No results for: {query}"
+                root = ET.fromstring(r.text)
+                items = root.findall(".//item")
+                if not items:
+                    continue
 
-        query_terms = self._extract_relevance_terms(query)
-        ranked_items: list[tuple[int, int, str, str, str]] = []
-        for item_index, item in enumerate(items):
-            title = unescape((item.findtext("title") or "").strip())
-            description = unescape((item.findtext("description") or "").strip())
-            score = self._score_news_item(title, description, query_terms)
-            link = (item.findtext("link") or "").strip()
-            pub_date = (item.findtext("pubDate") or "").strip()
-            ranked_items.append((score, item_index, title, link, pub_date))
+                query_terms = self._extract_relevance_terms(candidate)
+                ranked_items: list[tuple[int, int, str, str, str]] = []
+                for item_index, item in enumerate(items):
+                    title = unescape((item.findtext("title") or "").strip())
+                    description = unescape((item.findtext("description") or "").strip())
+                    score = self._score_news_item(title, description, query_terms)
+                    link = (item.findtext("link") or "").strip()
+                    pub_date = (item.findtext("pubDate") or "").strip()
+                    ranked_items.append((score, item_index, title, link, pub_date))
 
-        if query_terms:
-            relevant = [entry for entry in ranked_items if entry[0] > 0]
-            if relevant:
-                ranked_items = relevant
-                ranked_items.sort(key=lambda item: (-item[0], item[1]))
+                if query_terms:
+                    relevant = [entry for entry in ranked_items if entry[0] > 0]
+                    if relevant:
+                        ranked_items = relevant
+                        ranked_items.sort(key=lambda item: (-item[0], item[1]))
+                    else:
+                        # Try the next compacted candidate before giving up.
+                        continue
 
-        lines = [f"Results for: {query}\n"]
-        for index, (_score, _item_index, title, link, pub_date) in enumerate(ranked_items[:count], 1):
-            if title:
-                lines.append(f"{index}. {title}")
-            if link:
-                lines.append(f"   {link}")
-            if pub_date:
-                lines.append(f"   Published: {pub_date}")
-        return "\n".join(lines)
+                lines = [f"Results for: {query}\n"]
+                for index, (_score, _item_index, title, link, pub_date) in enumerate(ranked_items[:count], 1):
+                    if title:
+                        lines.append(f"{index}. {title}")
+                    if link:
+                        lines.append(f"   {link}")
+                    if pub_date:
+                        lines.append(f"   Published: {pub_date}")
+                return "\n".join(lines)
+
+        return i18n_t("web_search.no_results", query, query=query)

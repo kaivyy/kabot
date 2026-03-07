@@ -44,3 +44,21 @@ def test_extract_weather_location_handles_degree_phrasing_without_weather_word()
 def test_extract_weather_location_handles_non_latin_city_name():
     query = "cuaca di 東京 sekarang"
     assert extract_weather_location(query) == "東京"
+def test_extract_weather_location_handles_attached_indonesian_di_prefix():
+    query = "dibandung berangin apa ga"
+    assert extract_weather_location(query) == "Bandung"
+
+
+def test_extract_weather_location_handles_japanese_compact_weather_question():
+    query = "東京の天気どう？"
+    assert extract_weather_location(query) == "東京"
+
+
+def test_extract_weather_location_handles_chinese_compact_weather_question():
+    query = "北京今天天气怎么样？"
+    assert extract_weather_location(query) == "北京"
+
+
+def test_extract_weather_location_handles_thai_compact_weather_question():
+    query = "อากาศกรุงเทพวันนี้เป็นยังไง"
+    assert extract_weather_location(query) == "กรุงเทพ"

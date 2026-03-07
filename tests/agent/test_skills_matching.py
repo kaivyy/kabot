@@ -130,6 +130,132 @@ def test_match_skills_understands_create_new_skill_intent_for_skill_creator(tmp_
     assert matches[0].startswith("skill-creator")
 
 
+def test_match_skills_understands_capability_creation_intent_for_skill_creator(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(
+        workspace / "skills",
+        "skill-creator",
+        "guide for creating a new skill workflow and SKILL.md structure",
+    )
+    _write_skill(
+        workspace / "skills",
+        "generic-dev",
+        "build app script code automation helper development",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    assert loader.match_skills("buat kemampuan baru buat kabot", profile="GENERAL")[0].startswith("skill-creator")
+    assert loader.match_skills(
+        "create a capability for posting to threads",
+        profile="GENERAL",
+    )[0].startswith("skill-creator")
+
+
+def test_match_skills_understands_skill_update_intent_for_skill_creator(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(
+        workspace / "skills",
+        "skill-creator",
+        "guide for creating or updating a skill workflow and SKILL.md structure",
+    )
+    _write_skill(
+        workspace / "skills",
+        "generic-dev",
+        "build app script code automation helper development",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    assert loader.match_skills("tolong update skill threads yang sudah ada", profile="GENERAL")[0].startswith("skill-creator")
+    assert loader.match_skills(
+        "please edit the existing threads skill",
+        profile="GENERAL",
+    )[0].startswith("skill-creator")
+
+
+def test_match_skills_understands_external_skill_install_intent_for_skill_installer(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(
+        workspace / "skills",
+        "skill-installer",
+        "install curated skills from GitHub repo URL catalog openai/skills",
+    )
+    _write_skill(
+        workspace / "skills",
+        "generic-dev",
+        "build app script code automation helper development",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    assert loader.match_skills(
+        "tolong install skill dari github repo owner/repo",
+        profile="GENERAL",
+    )[0].startswith("skill-installer")
+    assert loader.match_skills(
+        "show me installable curated skills from openai/skills",
+        profile="GENERAL",
+    )[0].startswith("skill-installer")
+
+
+def test_match_skills_understands_multilingual_skill_creation_intent(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(
+        workspace / "skills",
+        "skill-creator",
+        "guide for creating a new skill workflow and SKILL.md structure",
+    )
+    _write_skill(
+        workspace / "skills",
+        "generic-dev",
+        "build app script code automation helper development",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    for phrase in (
+        "ช่วยสร้างสกิลใหม่ไว้โพสต์ Threads",
+        "Threads投稿用の新しいスキルを作って",
+        "帮我创建一个新技能，用于发 Threads",
+    ):
+        matches = loader.match_skills(phrase, profile="GENERAL")
+        assert matches
+        assert matches[0].startswith("skill-creator")
+
+
 def test_list_skills_uses_snapshot_cache(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir(parents=True, exist_ok=True)

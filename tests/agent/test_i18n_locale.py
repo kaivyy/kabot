@@ -14,6 +14,10 @@ def test_detect_locale_for_indonesian_colloquial_markers():
     assert detect_locale("lumayan panas ya ternyata") == "id"
 
 
+def test_detect_locale_for_indonesian_weather_followup_markers():
+    assert detect_locale("dibandung berangin apa ga") == "id"
+
+
 def test_catalog_falls_back_to_english_when_locale_missing():
     message = tr("weather.need_location", locale="de")
     assert "location" in message.lower()

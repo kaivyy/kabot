@@ -93,3 +93,28 @@ def test_doctor_parity_report_writes_json_stdout(monkeypatch, runner):
 
     assert result.exit_code == 0
     assert "\"ok\": true" in result.output.lower()
+
+
+def test_doctor_routing_mode_uses_routing_renderer(monkeypatch, runner):
+    from kabot.cli.commands import app
+
+    called: dict[str, bool] = {"routing": False}
+
+    class _FakeDoctor:
+        def __init__(self, agent_id: str = "main") -> None:
+            self.agent_id = agent_id
+
+        def render_report(self, fix: bool = False, sync_bootstrap: bool = False) -> None:
+            _ = fix, sync_bootstrap
+
+        def render_parity_report(self) -> None:
+            raise AssertionError("render_parity_report should not be called for routing mode")
+
+        def render_routing_report(self) -> None:
+            called["routing"] = True
+
+    monkeypatch.setattr("kabot.utils.doctor.KabotDoctor", _FakeDoctor)
+    result = runner.invoke(app, ["doctor", "routing"])
+
+    assert result.exit_code == 0
+    assert called["routing"] is True

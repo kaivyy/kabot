@@ -272,3 +272,25 @@ async def test_chat_skips_openai_codex_when_jwt_already_expired(monkeypatch):
     assert result.content == "fallback-ok"
     assert calls == ["groq/llama3-70b-8192"]
 
+
+@pytest.mark.asyncio
+async def test_chat_does_not_print_debug_message_keys_to_stdout(monkeypatch, capsys):
+    provider = LiteLLMProvider(
+        api_key="test-key",
+        default_model="openai-codex/gpt-5.3-codex",
+    )
+
+    async def _fake_execute(model, messages, tools, max_tokens, temperature):
+        return LLMResponse(content="ok")
+
+    monkeypatch.setattr(provider, "_execute_model_call", _fake_execute)
+
+    result = await provider.chat(
+        messages=[{"role": "user", "content": "hello"}],
+        model="openai-codex/gpt-5.3-codex",
+    )
+
+    captured = capsys.readouterr()
+    assert result.content == "ok"
+    assert "Last message keys sent to LLM" not in captured.out
+

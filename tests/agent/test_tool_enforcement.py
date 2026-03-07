@@ -35,6 +35,13 @@ def agent_loop(tmp_path):
 def test_required_tool_for_query_detects_weather_and_reminder(agent_loop):
     assert agent_loop._required_tool_for_query("tolong cek suhu cilacap hari ini") == "weather"
     assert agent_loop._required_tool_for_query("purwokerto berapa derajat sekarang") == "weather"
+    assert agent_loop._required_tool_for_query("dibandung berangin apa ga") == "weather"
+    assert (
+        agent_loop._required_tool_for_query(
+            "ya itu cek update real time kondisi cuaca, kecepatan angin, arah angin di bandung"
+        )
+        == "weather"
+    )
     assert agent_loop._required_tool_for_query("ingatkan 2 menit lagi makan") == "cron"
     assert agent_loop._required_tool_for_query("tolong list jadwal reminder saya") == "cron"
     assert agent_loop._required_tool_for_query("cek update kabot sekarang") == "check_update"
@@ -76,6 +83,63 @@ def test_required_tool_for_query_detects_stock_from_explicit_tickers_without_sto
     assert agent_loop._required_tool_for_query("トヨタ 株価 いくら") == "stock"
     assert agent_loop._required_tool_for_query("iya kamu bener") is None
     assert agent_loop._required_tool_for_query("umur kamu berapa sekarang") is None
+
+
+def test_required_tool_for_query_detects_stock_tracking_and_fx_queries(agent_loop):
+    assert agent_loop._required_tool_for_query("dalam 1 bulan terakhir gimana pergerakan saham bri nya") == "stock_analysis"
+    assert agent_loop._required_tool_for_query("track apple stock movement 3 months") == "stock_analysis"
+    assert agent_loop._required_tool_for_query("1 usd berapa rupiah sekarang") == "stock"
+    assert agent_loop._required_tool_for_query("kurs usd ke idr hari ini") == "stock"
+    assert agent_loop._required_tool_for_query("kalau dirupiahkan dengan harga sekarang berapa") is None
+    assert (
+        agent_loop._required_tool_for_query(
+            "If Apple is around 260 dollars, roughly how much is that in Indonesian rupiah today?"
+        )
+        == "stock"
+    )
+    assert agent_loop._required_tool_for_query("cenderung turun atau naik?") is None
+
+
+def test_required_tool_for_query_chat_mix_matrix(agent_loop):
+    # End-to-end style routing expectations for common real-chat prompts.
+    cases = [
+        (
+            "adakah gejolak politik sekarang? saya dengar ada perang iran vs us israel ya",
+            "web_search",
+        ),
+        ("cek suhu purwokerto jawa tengah sekarang", "weather"),
+        ("cek harga saham bbri bbca bmri adaro", "stock"),
+        ("harga btc terbaru", "crypto"),
+        # Image/TTS should not be forced into deterministic stock/weather/cron paths.
+        ("buatkan gambar mobil di hutan", None),
+        ("tolong bacakan teks ini jadi suara", None),
+        ("halo apa kabar", None),
+    ]
+
+    for prompt, expected in cases:
+        assert agent_loop._required_tool_for_query(prompt) == expected
+
+
+def test_required_tool_for_query_does_not_misclassify_file_or_stop_messages_as_stock(agent_loop):
+    assert agent_loop._required_tool_for_query("baca file config.json") == "read_file"
+    assert agent_loop._required_tool_for_query("config.json coba baca isinya") == "read_file"
+    assert (
+        agent_loop._required_tool_for_query(
+            r"tolong baca file C:\\Users\\Arvy Kairi\\.kabot\\config.json"
+        )
+        == "read_file"
+    )
+    assert agent_loop._required_tool_for_query("tolong kirim email ke tim marketing") is None
+    assert agent_loop._required_tool_for_query("cek email terbaru dari client") is None
+    assert agent_loop._required_tool_for_query("buat draft email ke tim support") is None
+    assert agent_loop._required_tool_for_query("bikin excel laporan penjualan bulan ini") is None
+    assert agent_loop._required_tool_for_query("buat spreadsheet budget proyek xlsx") is None
+    assert agent_loop._required_tool_for_query("stop bahas saham") is None
+    assert agent_loop._required_tool_for_query("bukan tentang saham ini loh") is None
+    assert agent_loop._required_tool_for_query("stop bahas cuaca") is None
+    assert agent_loop._required_tool_for_query("jangan bahas crypto") is None
+    assert agent_loop._required_tool_for_query("bukan tentang berita") is None
+    assert agent_loop._required_tool_for_query("market cap bbca sekarang") == "stock"
 
 
 def test_required_tool_for_query_tolerates_common_typos_for_core_intents(agent_loop):
@@ -155,6 +219,24 @@ async def test_execute_required_tool_fallback_weather_calls_weather_tool(agent_l
 
 
 @pytest.mark.asyncio
+async def test_execute_required_tool_fallback_read_file_calls_read_file_tool(agent_loop):
+    execute_mock = AsyncMock(return_value='{"providers": {"openai": {"api_key": "***"}}}')
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="baca file config.json",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("read_file", msg)
+    assert "providers" in result
+    execute_mock.assert_awaited_once_with("read_file", {"path": "config.json"})
+
+
+@pytest.mark.asyncio
 async def test_execute_required_tool_fallback_weather_prefers_fresh_raw_query_over_stale_resolved_query(agent_loop):
     execute_mock = AsyncMock(return_value="Cilacap: 27C, cerah")
     agent_loop.tools.execute = execute_mock
@@ -196,6 +278,33 @@ async def test_execute_required_tool_fallback_web_search_calls_search_tool(agent
     assert tool_name == "web_search"
     assert params["query"] == msg.content
     assert params["count"] == 5
+    assert params["context_text"] == msg.content
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_web_search_compacts_conversational_live_news_query(agent_loop):
+    execute_mock = AsyncMock(return_value="1. Reuters ...")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content=(
+            "Adakah gejolak politik sekarang? Saya dengar ada konflik Iran vs US/Israel, "
+            "tolong jawab seperti asisten yang paham berita terbaru."
+        ),
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("web_search", msg)
+    assert "Reuters" in result
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "web_search"
+    assert "iran" in params["query"].lower()
+    assert "israel" in params["query"].lower()
+    assert "tolong jawab seperti asisten" not in params["query"].lower()
     assert params["context_text"] == msg.content
 
 
@@ -346,6 +455,52 @@ async def test_execute_required_tool_fallback_stock_prefers_fresh_raw_query_over
 
 
 @pytest.mark.asyncio
+async def test_execute_required_tool_fallback_stock_keeps_resolved_query_when_raw_followup_has_no_stock_payload(agent_loop):
+    execute_mock = AsyncMock(return_value="stock-ok")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="kalau dirupiahkan dengan harga sekarang berapa",
+        metadata={"required_tool_query": "saham apple berapa"},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("stock", msg)
+    assert result == "stock-ok"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "stock"
+    assert "apple" in params["symbol"].lower()
+    assert "dirupiahkan" in params["symbol"].lower()
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_stock_short_conversion_followup_combines_previous_symbol_context(agent_loop):
+    execute_mock = AsyncMock(return_value="stock-ok")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="ubah jadi idr harganya",
+        metadata={"required_tool_query": "msft"},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("stock", msg)
+    assert result == "stock-ok"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "stock"
+    assert "msft" in params["symbol"].lower()
+    assert "idr" in params["symbol"].lower()
+
+
+@pytest.mark.asyncio
 async def test_execute_required_tool_fallback_stock_short_followup_with_new_symbol_prefers_raw_text(agent_loop):
     execute_mock = AsyncMock(return_value="stock-ok")
     agent_loop.tools.execute = execute_mock
@@ -362,6 +517,42 @@ async def test_execute_required_tool_fallback_stock_short_followup_with_new_symb
     result = await agent_loop._execute_required_tool_fallback("stock", msg)
     assert result == "stock-ok"
     execute_mock.assert_awaited_once_with("stock", {"symbol": "ADRO.JK"})
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_stock_routes_tracking_requests_to_stock_analysis(agent_loop):
+    execute_mock = AsyncMock(return_value="analysis-ok")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="dalam 1 bulan terakhir gimana pergerakan saham bri nya",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("stock", msg)
+    assert result == "analysis-ok"
+    execute_mock.assert_awaited_once_with("stock_analysis", {"symbol": "BBRI.JK", "days": 30})
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_stock_routes_usd_idr_natural_query(agent_loop):
+    execute_mock = AsyncMock(return_value="stock-ok")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="gunakan yahoo finance harga 1 usd berapa rupiah",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("stock", msg)
+    assert result == "stock-ok"
+    execute_mock.assert_awaited_once_with("stock", {"symbol": "USDIDR=X"})
 
 
 @pytest.mark.asyncio

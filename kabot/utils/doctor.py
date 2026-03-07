@@ -39,6 +39,30 @@ _INSTANCE_BRIDGE_REQUIRED_TYPES = {
     "line",
 }
 _LEGACY_BRIDGE_REQUIRED_TYPES = {"whatsapp"}
+_ROUTING_DOCTOR_TOOL_SET = {
+    "weather",
+    "cron",
+    "get_system_info",
+    "cleanup_system",
+    "speedtest",
+    "get_process_memory",
+    "stock",
+    "crypto",
+    "server_monitor",
+    "web_search",
+    "check_update",
+    "system_update",
+}
+
+
+class _RoutingDoctorTools:
+    """Minimal tool registry probe for execution guard validation."""
+
+    def __init__(self, tool_names: set[str]):
+        self._tool_names = set(tool_names)
+
+    def has(self, name: str) -> bool:
+        return str(name or "").strip() in self._tool_names
 
 
 class KabotDoctor:
@@ -98,6 +122,112 @@ class KabotDoctor:
             "bridge_health": self._check_bridge_health(),
             "skills_precedence": self._skills_precedence_status(),
             "soak_gate": self._soak_gate_status(),
+            "generated_at": datetime.now().isoformat(),
+        }
+
+    def run_routing_diagnostic(self) -> dict[str, Any]:
+        """
+        Run deterministic routing and tool-guard sanity checks.
+
+        Focuses on high-frequency production prompts (news/weather/stock/crypto)
+        plus API-skill-like guard paths (image/TTS) to catch regressions before
+        deploy/restart.
+        """
+        from types import SimpleNamespace
+
+        from kabot.agent.cron_fallback_nlp import required_tool_for_query
+        from kabot.agent.loop_core.execution_runtime import _tool_call_intent_mismatch_reason
+        from kabot.bus.events import InboundMessage
+
+        route_cases: list[tuple[str, str | None]] = [
+            ("berita iran us israel terbaru sekarang", "web_search"),
+            ("news iran israel 2026 now", "web_search"),
+            ("carikan berita perang iran terbaru 2026", "web_search"),
+            ("cek suhu purwokerto jawa tengah sekarang", "weather"),
+            ("kalau suhu cilacap berapa sekarang", "weather"),
+            ("bbri bbca bmri adaro berapa now", "stock"),
+            ("harga btc terbaru", "crypto"),
+            ("harga ethereum sekarang", "crypto"),
+            ("\u0e2d\u0e32\u0e01\u0e32\u0e28\u0e01\u0e23\u0e38\u0e07\u0e40\u0e17\u0e1e\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49", "weather"),
+            ("\u4e24\u5206\u949f\u540e\u63d0\u9192\u6211\u5403\u996d", "cron"),
+            ("baca file config.json", None),
+            ("stop bahas saham", None),
+            ("bukan tentang berita", None),
+            ("halo apa kabar", None),
+            ("buatkan gambar mobil di hutan", None),
+            ("tolong bacakan teks ini jadi suara", None),
+            ("cek update kabot sekarang", "check_update"),
+            ("update kabot sekarang", "system_update"),
+            ("kapasitas ram berapa", "get_system_info"),
+            ("cek ram proses sekarang", "get_process_memory"),
+        ]
+
+        route_results: list[dict[str, Any]] = []
+        for prompt, expected in route_cases:
+            got = required_tool_for_query(
+                question=prompt,
+                has_weather_tool=True,
+                has_cron_tool=True,
+                has_system_info_tool=True,
+                has_cleanup_tool=True,
+                has_speedtest_tool=True,
+                has_process_memory_tool=True,
+                has_stock_tool=True,
+                has_crypto_tool=True,
+                has_server_monitor_tool=True,
+                has_web_search_tool=True,
+                has_check_update_tool=True,
+                has_system_update_tool=True,
+            )
+            route_results.append(
+                {
+                    "prompt": prompt,
+                    "expected": expected,
+                    "got": got,
+                    "pass": got == expected,
+                }
+            )
+
+        loop_probe = SimpleNamespace(tools=_RoutingDoctorTools(_ROUTING_DOCTOR_TOOL_SET))
+        guard_cases: list[tuple[str, str, bool]] = [
+            ("baca file config.json", "stock", True),
+            ("stop bahas saham", "stock", True),
+            ("halo", "cron", True),
+            ("harga btc terbaru", "image_gen", True),
+            ("buatkan gambar mobil di hutan", "image_gen", False),
+            ("tolong bacakan teks ini jadi suara", "tts", False),
+        ]
+        guard_results: list[dict[str, Any]] = []
+        for prompt, tool_name, should_block in guard_cases:
+            msg = InboundMessage(channel="telegram", chat_id="doctor", sender_id="doctor", content=prompt)
+            reason = _tool_call_intent_mismatch_reason(loop_probe, msg, tool_name)
+            blocked = reason is not None
+            guard_results.append(
+                {
+                    "prompt": prompt,
+                    "tool": tool_name,
+                    "should_block": should_block,
+                    "blocked": blocked,
+                    "reason": reason,
+                    "pass": blocked == should_block,
+                }
+            )
+
+        route_passed = sum(1 for item in route_results if item.get("pass"))
+        guard_passed = sum(1 for item in guard_results if item.get("pass"))
+        return {
+            "routing": {
+                "total": len(route_results),
+                "passed": route_passed,
+                "failed": len(route_results) - route_passed,
+                "cases": route_results,
+            },
+            "guard": {
+                "total": len(guard_results),
+                "passed": guard_passed,
+                "failed": len(guard_results) - guard_passed,
+                "cases": guard_results,
+            },
             "generated_at": datetime.now().isoformat(),
         }
 
@@ -648,3 +778,40 @@ class KabotDoctor:
                 f"- detail: {soak.get('detail')}"
             )
         console.print(Panel(soak_text, title=" Soak Gate (Alpha) ", border_style="dim", box=box.ROUNDED))
+
+    def render_routing_report(self) -> None:
+        """Render deterministic routing + guard sanity results."""
+        report = self.run_routing_diagnostic()
+        routing = report["routing"]
+        guard = report["guard"]
+
+        console.print("\n[bold cyan]+ Kabot doctor routing[/bold cyan]")
+        summary_text = (
+            f"- routing: {routing['passed']}/{routing['total']} passed\n"
+            f"- guard: {guard['passed']}/{guard['total']} passed\n"
+            f"- generated_at: {report.get('generated_at')}"
+        )
+        summary_style = "green" if routing["failed"] == 0 and guard["failed"] == 0 else "yellow"
+        console.print(Panel(summary_text, title=" Routing Sanity Summary ", border_style=summary_style, box=box.ROUNDED))
+
+        failed_lines: list[str] = []
+        for item in routing["cases"]:
+            if item.get("pass"):
+                continue
+            failed_lines.append(
+                f"- route FAIL | expected={item.get('expected')!r} got={item.get('got')!r} | {item.get('prompt')}"
+            )
+        for item in guard["cases"]:
+            if item.get("pass"):
+                continue
+            failed_lines.append(
+                f"- guard FAIL | tool={item.get('tool')} should_block={item.get('should_block')} "
+                f"blocked={item.get('blocked')} reason={item.get('reason')!r} | {item.get('prompt')}"
+            )
+
+        if failed_lines:
+            detail = "\n".join(failed_lines[:20])
+            console.print(Panel(detail, title=" Failed Cases ", border_style="red", box=box.ROUNDED))
+            console.print("[yellow]Tip: Fix routing/guard regressions before deploy or restart.[/yellow]")
+        else:
+            console.print("[green]Routing sanity checks passed. Safe to continue deploy/restart flow.[/green]")

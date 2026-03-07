@@ -253,6 +253,263 @@ async def test_dashboard_status_api_uses_runtime_status_provider(aiohttp_client)
 
 
 @pytest.mark.asyncio
+async def test_dashboard_shell_includes_subagent_and_git_panels(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: {"status": "running"},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "/dashboard/partials/subagents" in body
+    assert "/dashboard/partials/git" in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_shell_persists_active_tab_across_reload(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: {"status": "running"},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "window.location.hash" in body
+    assert "kb-active-tab" in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_shell_uses_partial_only_auto_refresh(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: {"status": "running"},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "__kabotRefreshDashboardPartials" in body
+    assert "htmx.ajax" in body
+    assert "window.location.assign" not in body
+    assert "cd.onclick = refreshDashboardPartials" in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_shell_uses_outerhtml_placeholders_for_wrapped_panels(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: {"status": "running"},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard?token=test-token",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert 'id="panel-nodes" class="config-section-card" hx-get="/dashboard/partials/nodes?token=test-token"' in body
+    assert 'hx-get="/dashboard/partials/nodes?token=test-token"' in body
+    assert 'hx-trigger="load" hx-swap="outerHTML"' in body
+    assert 'id="panel-sessions" class="config-section-card" hx-get="/dashboard/partials/sessions?token=test-token"' in body
+    assert 'id="panel-cron" class="config-section-card" hx-get="/dashboard/partials/cron?token=test-token"' in body
+    assert 'id="panel-skills" class="config-section-card" hx-get="/dashboard/partials/skills?token=test-token"' in body
+    assert 'id="panel-git" class="config-section-card" hx-get="/dashboard/partials/git?token=test-token"' in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_cron_partial_renders_duration_and_actions(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read,operator.write",
+        status_provider=lambda: {
+            "status": "running",
+            "cron_jobs_list": [
+                {
+                    "id": "job-1",
+                    "name": "Daily ping",
+                    "schedule": "every 1m",
+                    "state": "enabled",
+                    "last_status": "error",
+                    "last_run": "2026-03-07 10:00:00",
+                    "next_run": "2026-03-07 10:01:00",
+                    "duration_ms": 321,
+                }
+            ],
+        },
+        control_handler=lambda action, args: {"ok": True, "action": action, "args": args},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard/partials/cron",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "Daily ping" in body
+    assert "321ms" in body
+    assert "Run" in body
+    assert "Disable" in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_skills_partial_renders_env_and_actions(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read,operator.write",
+        status_provider=lambda: {
+            "status": "running",
+            "skills": [
+                {
+                    "name": "demo-skill",
+                    "skill_key": "demo-skill",
+                    "state": "missing_env",
+                    "disabled": True,
+                    "description": "Demo skill",
+                    "primary_env": "DEMO_SKILL_API_KEY",
+                    "missing_env": ["DEMO_SKILL_API_KEY"],
+                }
+            ],
+        },
+        control_handler=lambda action, args: {"ok": True, "action": action, "args": args},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard/partials/skills",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "demo-skill" in body
+    assert "DEMO_SKILL_API_KEY" in body
+    assert "Enable" in body
+    assert "Save Key" in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_skills_partial_toggle_uses_disabled_flag_not_readiness(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read,operator.write",
+        status_provider=lambda: {
+            "status": "running",
+            "skills": [
+                {
+                    "name": "demo-skill",
+                    "skill_key": "demo-skill",
+                    "state": "missing_env",
+                    "disabled": False,
+                    "description": "Demo skill",
+                    "primary_env": "DEMO_SKILL_API_KEY",
+                    "missing_env": ["DEMO_SKILL_API_KEY"],
+                }
+            ],
+        },
+        control_handler=lambda action, args: {"ok": True, "action": action, "args": args},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard/partials/skills",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "missing env" in body
+    assert "Disable" in body
+    assert "Enable" not in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_partial_post_routes_for_cron_and_skills_are_available(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read,operator.write",
+        status_provider=lambda: {
+            "status": "running",
+            "cron_jobs_list": [{"id": "job-1", "name": "Daily ping", "schedule": "every 1m", "state": "enabled"}],
+            "skills": [{"name": "demo-skill", "skill_key": "demo-skill", "state": "enabled"}],
+        },
+        control_handler=lambda action, args: {"ok": True, "action": action, "args": args},
+    )
+    client = await aiohttp_client(server.app)
+
+    cron_resp = await client.post(
+        "/dashboard/partials/cron",
+        data={"action": "cron.run", "job_id": "job-1"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert cron_resp.status == 200
+
+    skills_resp = await client.post(
+        "/dashboard/partials/skills",
+        data={"action": "skills.disable", "skill_key": "demo-skill"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert skills_resp.status == 200
+
+
+@pytest.mark.asyncio
 async def test_operator_write_scope_implies_dashboard_read(aiohttp_client):
     """operator.write should be sufficient for read-only dashboard endpoints."""
     from kabot.gateway.webhook_server import WebhookServer
@@ -298,6 +555,30 @@ async def test_dashboard_control_api_requires_operator_write_scope(aiohttp_clien
     payload = await unavailable.json()
     assert payload["ok"] is False
     assert payload["error"] == "control_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_control_info_lists_cron_and_skills_actions(aiohttp_client):
+    """Control info metadata should advertise dashboard cron/skills actions."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.read")
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard/api/control",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    payload = await resp.json()
+    actions = payload["actions"]
+    assert "cron.run" in actions
+    assert "cron.enable" in actions
+    assert "skills.enable" in actions
+    assert "skills.set_api_key" in actions
 
 
 @pytest.mark.asyncio
@@ -363,6 +644,180 @@ async def test_dashboard_control_partial_post_requires_operator_write_scope(aioh
 
 
 @pytest.mark.asyncio
+async def test_dashboard_control_partial_executes_control_handler(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+    called = {}
+
+    def control_handler(action: str, args: dict):
+        called["action"] = action
+        called["args"] = args
+        return {"pong": True}
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        control_handler=control_handler,
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.post(
+        "/dashboard/partials/control",
+        data={"action": "runtime.ping"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "Success" in body
+    assert "Action completed." in body
+    assert "pong" in body
+    assert called == {"action": "runtime.ping", "args": {}}
+
+
+@pytest.mark.asyncio
+async def test_dashboard_settings_panels_show_read_only_state_without_operator_write(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: {
+            "status": "running",
+            "skills": [
+                {
+                    "name": "demo-skill",
+                    "skill_key": "demo-skill",
+                    "state": "enabled",
+                    "disabled": False,
+                }
+            ],
+        },
+        control_handler=lambda action, args: {"ok": True, "action": action, "args": args},
+    )
+    client = await aiohttp_client(server.app)
+
+    control_resp = await client.get(
+        "/dashboard/partials/control",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert control_resp.status == 200
+    control_body = await control_resp.text()
+    assert "Read-only token" in control_body
+    assert "disabled" in control_body
+
+    config_resp = await client.get(
+        "/dashboard/partials/config",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert config_resp.status == 200
+    config_body = await config_resp.text()
+    assert "Read-only token" in config_body
+
+    skills_resp = await client.get(
+        "/dashboard/partials/skills",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert skills_resp.status == 200
+    skills_body = await skills_resp.text()
+    assert "read-only token" in skills_body.lower()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_engine_panels_show_read_only_state_without_operator_write(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: {
+            "status": "running",
+            "sessions": [{"key": "telegram:123", "updated_at": "2026-03-05T10:00:00"}],
+            "nodes": [{"id": "channel:telegram", "kind": "channel", "state": "running"}],
+        },
+        control_handler=lambda action, args: {"ok": True, "action": action, "args": args},
+    )
+    client = await aiohttp_client(server.app)
+
+    sessions_resp = await client.get(
+        "/dashboard/partials/sessions",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert sessions_resp.status == 200
+    sessions_body = await sessions_resp.text()
+    assert "read-only token" in sessions_body.lower()
+    assert ">read-only<" in sessions_body.lower()
+
+    nodes_resp = await client.get(
+        "/dashboard/partials/nodes",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert nodes_resp.status == 200
+    nodes_body = await nodes_resp.text()
+    assert "read-only token" in nodes_body.lower()
+    assert ">read-only<" in nodes_body.lower()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_chat_partial_disables_inputs_for_read_only_token(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        control_handler=lambda action, args: {"ok": True, "action": action, "args": args},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard/partials/chat",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "read-only token" in body.lower()
+    assert "textarea name='prompt'" in body
+    assert "textarea name='prompt'" in body and "disabled" in body
+    assert "select form='chat-form' name='provider'" in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_sessions_partial_renders_friendly_success_feedback(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        control_handler=lambda action, args: {"cleared": True, "session_key": args.get("session_key")},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.post(
+        "/dashboard/partials/sessions",
+        data={"action": "sessions.clear", "session_key": "telegram:123"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "Success" in body
+    assert "Action completed." in body
+    assert "telegram:123" in body
+
+
+@pytest.mark.asyncio
 async def test_dashboard_supports_query_token_auth(aiohttp_client):
     """Dashboard routes should allow token query auth for easier browser access."""
     from kabot.gateway.webhook_server import WebhookServer
@@ -403,3 +858,543 @@ async def test_query_token_auth_not_allowed_for_webhook_ingress(aiohttp_client):
 
     resp = await client.post("/webhooks/trigger?token=test-token", json=payload)
     assert resp.status == 401
+
+
+@pytest.mark.asyncio
+async def test_dashboard_page_includes_openclaw_like_sections(aiohttp_client):
+    """Dashboard HTML should expose chat/sessions/nodes/config panels."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.read")
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get("/dashboard?token=test-token")
+    assert resp.status == 200
+    body = await resp.text()
+    assert "id=\"panel-sessions\"" in body
+    assert "id=\"panel-nodes\"" in body
+    assert "/dashboard/partials/chat?token=test-token" in body
+    assert "/dashboard/partials/sessions?token=test-token" in body
+    assert "/dashboard/partials/nodes?token=test-token" in body
+    assert "/dashboard/partials/config?token=test-token" in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_new_status_apis_return_provider_data(aiohttp_client):
+    """Sessions/nodes/config APIs should reflect status provider payload."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    status_payload = {
+        "status": "running",
+        "sessions": [{"key": "telegram:123", "updated_at": "2026-03-05T10:00:00"}],
+        "nodes": [{"id": "gateway", "kind": "runtime", "state": "running"}],
+        "config": {"runtime": {"performance": {"token_mode": "boros"}}},
+    }
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: status_payload,
+    )
+    client = await aiohttp_client(server.app)
+
+    sessions_resp = await client.get("/dashboard/api/sessions", headers={"Authorization": "Bearer test-token"})
+    assert sessions_resp.status == 200
+    sessions_data = await sessions_resp.json()
+    assert sessions_data["sessions"] == status_payload["sessions"]
+
+    nodes_resp = await client.get("/dashboard/api/nodes", headers={"Authorization": "Bearer test-token"})
+    assert nodes_resp.status == 200
+    nodes_data = await nodes_resp.json()
+    assert nodes_data["nodes"] == status_payload["nodes"]
+
+    config_resp = await client.get("/dashboard/api/config", headers={"Authorization": "Bearer test-token"})
+    assert config_resp.status == 200
+    config_data = await config_resp.json()
+    assert config_data["config"] == status_payload["config"]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_sessions_partial_requires_operator_write_scope(aiohttp_client):
+    """Dashboard sessions action endpoint should enforce operator.write."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    read_server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.read")
+    read_client = await aiohttp_client(read_server.app)
+    forbidden = await read_client.post(
+        "/dashboard/partials/sessions",
+        data={"action": "sessions.clear", "session_key": "telegram:123"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert forbidden.status == 403
+
+
+@pytest.mark.asyncio
+async def test_dashboard_sessions_partial_executes_control_handler(aiohttp_client):
+    """Dashboard sessions partial should execute control handler with session args."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+    called = {}
+
+    def control_handler(action: str, args: dict):
+        called["action"] = action
+        called["args"] = args
+        return {"cleared": True, "session_key": args.get("session_key")}
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        control_handler=control_handler,
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.post(
+        "/dashboard/partials/sessions",
+        data={"action": "sessions.clear", "session_key": "telegram:123"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "<h2>Sessions</h2>" in body
+    assert "telegram:123" in body
+    assert called["action"] == "sessions.clear"
+    assert called["args"]["session_key"] == "telegram:123"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_sessions_api_write_executes_control_handler(aiohttp_client):
+    """Dashboard sessions write API should execute control handler actions."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+    called = {}
+
+    def control_handler(action: str, args: dict):
+        called["action"] = action
+        called["args"] = args
+        return {"deleted": True, "session_key": args.get("session_key")}
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        control_handler=control_handler,
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.post(
+        "/dashboard/api/sessions",
+        json={"action": "sessions.delete", "session_key": "telegram:123"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    payload = await resp.json()
+    assert payload["ok"] is True
+    assert called["action"] == "sessions.delete"
+    assert called["args"]["session_key"] == "telegram:123"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_nodes_partial_requires_operator_write_scope(aiohttp_client):
+    """Dashboard nodes action endpoint should enforce operator.write."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    read_server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.read")
+    read_client = await aiohttp_client(read_server.app)
+    forbidden = await read_client.post(
+        "/dashboard/partials/nodes",
+        data={"action": "nodes.restart", "node_id": "channel:telegram"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert forbidden.status == 403
+
+
+@pytest.mark.asyncio
+async def test_dashboard_nodes_partial_executes_control_handler(aiohttp_client):
+    """Dashboard nodes partial should execute control handler with node args."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+    called = {}
+
+    def control_handler(action: str, args: dict):
+        called["action"] = action
+        called["args"] = args
+        return {"restarted": True, "node_id": args.get("node_id")}
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        control_handler=control_handler,
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.post(
+        "/dashboard/partials/nodes",
+        data={"action": "nodes.restart", "node_id": "channel:telegram"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "<h2>Nodes</h2>" in body
+    assert "channel:telegram" in body
+    assert called["action"] == "nodes.restart"
+    assert called["args"]["node_id"] == "channel:telegram"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_nodes_and_sessions_partials_target_panel_for_live_refresh(aiohttp_client):
+    """Nodes/Sessions forms should target full panel containers for immediate refresh."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+    status_payload = {
+        "status": "running",
+        "sessions": [{"key": "telegram:123", "updated_at": "2026-03-05T10:00:00"}],
+        "nodes": [{"id": "channel:telegram", "kind": "channel", "state": "running"}],
+    }
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        status_provider=lambda: status_payload,
+        control_handler=lambda _action, _args: {"ok": True},
+    )
+    client = await aiohttp_client(server.app)
+
+    sessions_resp = await client.get("/dashboard/partials/sessions?token=test-token")
+    assert sessions_resp.status == 200
+    sessions_body = await sessions_resp.text()
+    assert "hx-target='#panel-sessions'" in sessions_body
+
+    nodes_resp = await client.get("/dashboard/partials/nodes?token=test-token")
+    assert nodes_resp.status == 200
+    nodes_body = await nodes_resp.text()
+    assert "hx-target='#panel-nodes'" in nodes_body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_nodes_api_write_executes_control_handler(aiohttp_client):
+    """Dashboard nodes write API should execute control handler actions."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+    called = {}
+
+    def control_handler(action: str, args: dict):
+        called["action"] = action
+        called["args"] = args
+        return {"restarted": True, "node_id": args.get("node_id")}
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        control_handler=control_handler,
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.post(
+        "/dashboard/api/nodes",
+        json={"action": "nodes.restart", "node_id": "channel:telegram"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    payload = await resp.json()
+    assert payload["ok"] is True
+    assert called["action"] == "nodes.restart"
+    assert called["args"]["node_id"] == "channel:telegram"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_nodes_partial_disables_state_incompatible_actions(aiohttp_client):
+    """Nodes panel should disable buttons that contradict current node state."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    status_payload = {
+        "status": "running",
+        "nodes": [
+            {"id": "channel:telegram", "kind": "channel", "state": "running"},
+            {"id": "channel:discord", "kind": "channel", "state": "stopped"},
+            {"id": "gateway", "kind": "runtime", "state": "running"},
+        ],
+    }
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        status_provider=lambda: status_payload,
+        control_handler=lambda _action, _args: {"ok": True},
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get("/dashboard/partials/nodes?token=test-token")
+    assert resp.status == 200
+    body = await resp.text()
+    assert "channel:telegram" in body
+    assert "channel:discord" in body
+    assert "gateway" in body
+    # Running channel should have Start disabled
+    assert "name='action' value='nodes.start'" in body
+    assert "<button type='submit' class='py-1 px-2 text-xs bg-emerald-500 hover:bg-emerald-600' disabled>Start</button>" in body
+    # Stopped channel should have Stop disabled
+    assert "name='action' value='nodes.stop'" in body
+    assert "<button type='submit' class='py-1 px-2 text-xs bg-red-500 hover:bg-red-600' disabled>Stop</button>" in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_chat_partial_requires_operator_write_scope(aiohttp_client):
+    """Dashboard chat send endpoint should enforce operator.write."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    read_server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.read")
+    read_client = await aiohttp_client(read_server.app)
+    forbidden = await read_client.post(
+        "/dashboard/partials/chat",
+        data={"prompt": "hello"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert forbidden.status == 403
+
+
+@pytest.mark.asyncio
+async def test_dashboard_chat_partial_executes_control_handler(aiohttp_client):
+    """Dashboard chat partial should call control handler via chat.send action."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+    called = {}
+
+    def control_handler(action: str, args: dict):
+        called["action"] = action
+        called["args"] = args
+        return {"content": "hello from runtime"}
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        control_handler=control_handler,
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.post(
+        "/dashboard/partials/chat",
+        data={
+            "prompt": "ping",
+            "session_key": "dashboard:chat",
+            "provider": "openrouter",
+            "model": "auto",
+            "fallbacks": "groq/llama3-70b-8192,openai/gpt-4o-mini",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "Success" in body
+    assert "Action completed." in body
+    assert called["action"] == "chat.send"
+    assert called["args"]["prompt"] == "ping"
+    assert called["args"]["session_key"] == "dashboard:chat"
+    assert called["args"]["provider"] == "openrouter"
+    assert called["args"]["model"] == "auto"
+    assert called["args"]["fallbacks"] == "groq/llama3-70b-8192,openai/gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_config_partial_renders_friendly_success_feedback(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    called = {}
+
+    def control_handler(action: str, args: dict):
+        called["action"] = action
+        called["args"] = args
+        return {"message": f"Token mode set to {args.get('token_mode')}"}
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.write",
+        control_handler=control_handler,
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.post(
+        "/dashboard/partials/config",
+        data={"action": "config.set_token_mode", "token_mode": "hemat"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "Success" in body
+    assert "Token mode set to hemat" in body
+    assert called == {"action": "config.set_token_mode", "args": {"token_mode": "hemat"}}
+
+
+@pytest.mark.asyncio
+async def test_dashboard_chat_partial_includes_live_log_stream_endpoint(aiohttp_client):
+    """Chat partial should include live-log stream endpoint for current session."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(bus=mock_bus, auth_token="test-token|operator.read")
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get("/dashboard/partials/chat?token=test-token")
+    assert resp.status == 200
+    body = await resp.text()
+    assert "/dashboard/partials/chat/log?" in body
+    assert "/dashboard/api/chat/stream?" in body
+    assert "session_key=dashboard%3Aweb" in body
+    assert "token=test-token" in body
+    assert "name='provider'" in body
+    assert "name='model'" in body
+    assert "name='fallbacks'" in body
+    assert "id='model-suggestions'" in body
+    assert "data-model-map=" in body
+    assert "id='fallback-builder'" in body
+    assert "id='fallback-input'" in body
+    assert "id='fallback-items'" in body
+    assert "id='fallback-add-btn'" in body
+    assert "kabotScrollChatToLatest" in body
+    assert "htmx:afterSwap" in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_chat_history_api_and_partial_use_history_provider(aiohttp_client):
+    """Chat history API/partial should render chat_history_provider payload."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    history_items = [
+        {"role": "user", "content": "hello", "timestamp": "2026-03-05T10:00:00"},
+        {"role": "assistant", "content": "hi there", "timestamp": "2026-03-05T10:00:01"},
+    ]
+
+    def _history_provider(session_key: str, limit: int):
+        assert session_key == "dashboard:web"
+        assert limit == 30
+        return history_items
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        chat_history_provider=_history_provider,
+    )
+    client = await aiohttp_client(server.app)
+
+    api_resp = await client.get(
+        "/dashboard/api/chat/history?session_key=dashboard:web",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert api_resp.status == 200
+    api_data = await api_resp.json()
+    assert api_data["session_key"] == "dashboard:web"
+    assert api_data["messages"] == [
+        {**item, "metadata": {}}
+        for item in history_items
+    ]
+
+    partial_resp = await client.get(
+        "/dashboard/partials/chat/log?session_key=dashboard:web",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert partial_resp.status == 200
+    partial_body = await partial_resp.text()
+    assert "hello" in partial_body
+    assert "hi there" in partial_body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_chat_partial_renders_status_phase_badge(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    history_items = [
+        {
+            "role": "assistant",
+            "content": "Plan approved.",
+            "timestamp": "2026-03-07T10:00:01",
+            "metadata": {"type": "status_update", "phase": "approved"},
+        },
+    ]
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        chat_history_provider=lambda _session_key, _limit: history_items,
+    )
+    client = await aiohttp_client(server.app)
+
+    partial_resp = await client.get(
+        "/dashboard/partials/chat/log?session_key=dashboard:web",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert partial_resp.status == 200
+    partial_body = await partial_resp.text()
+    assert "Plan approved." in partial_body
+    assert "approved" in partial_body
+    assert "kb-phase-badge" in partial_body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_chat_stream_api_returns_sse_snapshot(aiohttp_client):
+    """Chat stream endpoint should emit SSE snapshot from history provider."""
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    history_items = [
+        {"role": "user", "content": "hello", "timestamp": "2026-03-05T10:00:00"},
+        {"role": "assistant", "content": "hi there", "timestamp": "2026-03-05T10:00:01"},
+    ]
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        chat_history_provider=lambda _session_key, _limit: history_items,
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard/api/chat/stream?session_key=dashboard:web&once=1",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    assert "text/event-stream" in (resp.headers.get("Content-Type") or "")
+    body = await resp.text()
+    assert "event: snapshot" in body
+    assert "hello" in body
+    assert "hi there" in body
