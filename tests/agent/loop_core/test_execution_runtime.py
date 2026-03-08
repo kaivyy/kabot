@@ -1678,6 +1678,64 @@ async def test_run_agent_loop_direct_process_memory_returns_raw_without_summary_
 
 
 @pytest.mark.asyncio
+async def test_run_agent_loop_direct_read_file_analysis_returns_summary_via_provider_chat():
+    direct_result = '<style>body{font-family:"Consolas","Courier New",monospace;}</style>'
+    summarized = "Font yang dipakai adalah Consolas dengan fallback Courier New."
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "read_file",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=direct_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content=summarized))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="font di file ini",
+        metadata={"file_analysis_mode": True},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == summarized
+    loop._execute_required_tool_fallback.assert_awaited_once_with("read_file", msg)
+    loop.provider.chat.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_direct_list_dir_returns_raw_without_summary_chat():
+    raw_result = "📁 bot\n📁 openclaw\n📄 README.md"
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "list_dir",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek isi desktop")
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == raw_result
+    loop._execute_required_tool_fallback.assert_awaited_once_with("list_dir", msg)
+    loop._plan_task.assert_not_awaited()
+    loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_direct_read_only_tool_returns_summary_via_provider_chat():
     direct_result = "cpu=17%, mem=42%, disk=61%"
     summarized = "System looks healthy: CPU 17%, memory 42%, disk 61%."

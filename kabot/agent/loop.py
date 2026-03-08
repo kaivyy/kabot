@@ -167,10 +167,9 @@ class AgentLoop:
             str(workspace.expanduser().resolve()): self.context
         }
         self.sessions = session_manager or SessionManager(workspace)
-        from kabot.config.loader import load_config
         from kabot.memory.memory_factory import MemoryFactory
 
-        _cfg_obj = load_config()
+        _cfg_obj = self.config
         # Convert Pydantic model to dict for MemoryFactory
         _cfg = _cfg_obj.model_dump() if hasattr(_cfg_obj, "model_dump") else _cfg_obj.dict()
         # Allow constructor param to override config
@@ -974,6 +973,7 @@ class AgentLoop:
         fallback_overrides: list[str] | None = None,
         suppress_post_response_warmup: bool = False,
         probe_mode: bool = False,
+        persist_history: bool = False,
     ) -> str:
         metadata: dict[str, Any] = {}
         model_text = str(model_override or "").strip()
@@ -988,6 +988,8 @@ class AgentLoop:
             metadata["suppress_post_response_warmup"] = True
         if probe_mode:
             metadata["probe_mode"] = True
+        if persist_history:
+            metadata["persist_history"] = True
 
         msg = InboundMessage(
             channel=channel,

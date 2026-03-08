@@ -986,6 +986,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     # This bypasses fragile tool-call protocols for deterministic intents.
     direct_tools = {
         "read_file",
+        "list_dir",
         "get_process_memory",
         "get_system_info",
         "cleanup_system",
@@ -1000,6 +1001,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     }
     raw_direct_tools = {
         "read_file",
+        "list_dir",
         "cleanup_system",
         "get_process_memory",
         "web_search",
@@ -1014,7 +1016,13 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         direct_result = await loop._execute_required_tool_fallback(required_tool, msg)
         if direct_result is not None:
             logger.info(f"Direct tool execution (bypassed LLM tool-call): {required_tool}")
-            if required_tool in raw_direct_tools:
+            metadata = getattr(msg, "metadata", None)
+            summarize_file_analysis = bool(
+                required_tool == "read_file"
+                and isinstance(metadata, dict)
+                and metadata.get("file_analysis_mode")
+            )
+            if required_tool in raw_direct_tools and not summarize_file_analysis:
                 return await _return_with_phase(direct_result)
             # Read-only direct tools still get an LLM-formatted summary.
             summary_messages = messages + [
@@ -1022,8 +1030,10 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                     "role": "user",
                     "content": (
                         f"[TOOL RESULT: {required_tool}]\n{direct_result}\n\n"
-                        "Summarize this data in a clear, friendly response in the same language "
-                        "the user used. Be concise and highlight the most important information."
+                        "Use this tool result to answer the user's actual request in a clear, friendly "
+                        "response in the same language the user used. Do not ask the user to resend a "
+                        "path or repeat the same file reference. Be concise and highlight the most "
+                        "important information."
                     ),
                 }
             ]

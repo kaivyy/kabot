@@ -272,6 +272,21 @@ def test_filesystem_extractors_support_directory_queries_without_false_read_file
     assert _extract_list_dir_path("tampilkan isi folder /var/log") == "/var/log"
 
 
+def test_extract_read_file_path_trims_trailing_natural_language_after_file_extension():
+    assert (
+        _extract_read_file_path(
+            r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html font pada web ini"
+        )
+        == r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html"
+    )
+    assert (
+        _extract_read_file_path(
+            "C:/Users/Arvy Kairi/.kabot/workspace/landing_hacker.html what font is this"
+        )
+        == "C:/Users/Arvy Kairi/.kabot/workspace/landing_hacker.html"
+    )
+
+
 def test_filesystem_extractors_support_multilingual_directory_aliases(monkeypatch):
     monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
     expected_desktop = str(tool_enforcement_module.Path("/Users/Arvy Kairi") / "Desktop")
@@ -384,6 +399,33 @@ async def test_execute_required_tool_fallback_read_file_calls_read_file_tool(age
     result = await agent_loop._execute_required_tool_fallback("read_file", msg)
     assert "providers" in result
     execute_mock.assert_awaited_once_with("read_file", {"path": "config.json"})
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_read_file_uses_last_file_context_path(agent_loop):
+    execute_mock = AsyncMock(return_value="<html>...</html>")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="buka html ini",
+        timestamp=datetime.now(),
+        metadata={
+            "last_tool_context": {
+                "tool": "read_file",
+                "path": r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html",
+            }
+        },
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("read_file", msg)
+    assert "<html>" in result
+    execute_mock.assert_awaited_once_with(
+        "read_file",
+        {"path": r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html"},
+    )
 
 
 @pytest.mark.asyncio

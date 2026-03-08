@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from kabot.agent.cron_fallback_nlp import (
@@ -40,7 +41,7 @@ _FILELIKE_QUERY_RE = re.compile(
     re.IGNORECASE,
 )
 _PATHLIKE_QUERY_RE = re.compile(
-    r"([a-zA-Z]:\\[^\s\"']+|\\\\[^\s\"']+|/[^\s\"']+|[\w\-./]+\\[\w\-./]+)"
+    r"([a-zA-Z]:[\\/][^\n\r\"']+|\\\\[^\n\r\"']+|(?<![\w])/[^\"'\s]+|(?<![\w])~[\\/][^\s\"']+|[\w.\-]+\\[\w .\\/-]+)"
 )
 _STOCK_TRACKING_MARKER_RE = re.compile(
     r"(?i)\b("
@@ -92,6 +93,126 @@ _WEB_SEARCH_STYLE_CLAUSE_RE = re.compile(
     r"(?i)\b(?:jawab|answer|respond)\s+(?:seperti|like|as)\b.*$"
 )
 _WEB_SEARCH_EXTRA_SPACE_RE = re.compile(r"\s+")
+_FILESYSTEM_TARGET_MARKERS = (
+    "desktop",
+    "downloads",
+    "download",
+    "documents",
+    "document",
+    "docs",
+    "pictures",
+    "photos",
+    "music",
+    "videos",
+    "home",
+    "桌面",
+    "下载",
+    "下載",
+    "文档",
+    "文件档案",
+    "文件檔案",
+    "デスクトップ",
+    "ダウンロード",
+    "書類",
+    "ドキュメント",
+    "เดสก์ท็อป",
+    "ดาวน์โหลด",
+    "เอกสาร",
+)
+_FILESYSTEM_TRAILING_TAIL_RE = re.compile(
+    r"(?i)\s+(?:sekarang|now|please|tolong|tampilkan|tampilin|show|display|list|lihat|lihatkan|"
+    r"buka|open|masuk|enter|read|baca|dong|ya|lagi|again|pc)$"
+)
+_RELATIVE_DIRECTORY_QUERY_RE = re.compile(
+    r"(?i)(?:\b(?:subfolder|folder|direktori|directory|dir)\b|文件夹|文件夾|资料夹|資料夾|目录|目錄|フォルダ|ディレクトリ|โฟลเดอร์|ไดเรกทอรี)\s+(.+)$"
+)
+
+
+def _filesystem_home_dir() -> Path:
+    return Path.home()
+
+
+def _normalize_filesystem_candidate(value: str) -> str:
+    cleaned = str(value or "").strip().strip("\"'`").rstrip(".,;:!?)]}")
+    while cleaned:
+        next_cleaned = _FILESYSTEM_TRAILING_TAIL_RE.sub("", cleaned).strip().rstrip(".,;:!?)]}")
+        if next_cleaned == cleaned:
+            break
+        cleaned = next_cleaned
+    return cleaned
+
+
+def _trim_candidate_after_filelike(candidate: str) -> str:
+    raw = str(candidate or "").strip()
+    if not raw:
+        return ""
+    matches = list(_FILELIKE_QUERY_RE.finditer(raw))
+    if not matches:
+        return raw
+    last_match = matches[-1]
+    trailing = raw[last_match.end() :].strip()
+    if trailing:
+        return raw[: last_match.end()]
+    return raw
+
+
+def _extract_explicit_path_candidate(text: str) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    quoted = re.findall(r"[\"'`]+([^\"'`]+)[\"'`]+", raw)
+    for candidate in quoted:
+        cleaned = _trim_candidate_after_filelike(_normalize_filesystem_candidate(candidate))
+        if cleaned and (_FILELIKE_QUERY_RE.search(cleaned) or _PATHLIKE_QUERY_RE.search(cleaned)):
+            return cleaned
+
+    path_match = _PATHLIKE_QUERY_RE.search(raw)
+    if path_match:
+        cleaned = _trim_candidate_after_filelike(_normalize_filesystem_candidate(path_match.group(1)))
+        if cleaned:
+            return cleaned
+    return None
+
+
+def _resolve_special_directory_path(text: str) -> str | None:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return None
+    home = _filesystem_home_dir()
+    if re.search(r"(?i)\bdesktop\b|桌面|デスクトップ|เดสก์ท็อป", normalized):
+        return str(home / "Desktop")
+    if re.search(r"(?i)\bdownloads?\b|下载|下載|ダウンロード|ดาวน์โหลด", normalized):
+        return str(home / "Downloads")
+    if re.search(r"(?i)\bdocuments?\b|\bdocs\b|文档|文件档案|文件檔案|書類|ドキュメント|เอกสาร", normalized):
+        return str(home / "Documents")
+    if re.search(r"(?i)\bpictures?\b|\bphotos?\b", normalized):
+        return str(home / "Pictures")
+    if re.search(r"(?i)\bmusic\b", normalized):
+        return str(home / "Music")
+    if re.search(r"(?i)\bvideos?\b", normalized):
+        return str(home / "Videos")
+    if re.search(r"(?i)\bhome\b", normalized):
+        return str(home)
+    return None
+
+
+def _extract_relative_directory_candidate(text: str) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    match = _RELATIVE_DIRECTORY_QUERY_RE.search(raw)
+    if not match:
+        return None
+    candidate = _normalize_filesystem_candidate(match.group(1))
+    if not candidate:
+        return None
+    if any(sep in candidate for sep in ("/", "\\")):
+        return None
+    normalized = _normalize_text(candidate)
+    if normalized in _FILESYSTEM_TARGET_MARKERS:
+        return None
+    return candidate
 
 
 def existing_schedule_titles(loop: Any) -> list[str]:
@@ -125,6 +246,7 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_server_monitor_tool=loop.tools.has("server_monitor"),
         has_web_search_tool=loop.tools.has("web_search"),
         has_read_file_tool=loop.tools.has("read_file"),
+        has_list_dir_tool=loop.tools.has("list_dir"),
         has_check_update_tool=loop.tools.has("check_update"),
         has_system_update_tool=loop.tools.has("system_update"),
     )
@@ -272,6 +394,8 @@ def _query_has_tool_payload(tool_name: str, text: str) -> bool:
         return bool(extract_weather_location(raw))
     if tool == "read_file":
         return bool(_extract_read_file_path(raw))
+    if tool == "list_dir":
+        return bool(_extract_list_dir_path(raw) or _extract_relative_directory_candidate(raw))
     return False
 
 
@@ -280,26 +404,43 @@ def _extract_read_file_path(text: str) -> str | None:
     if not raw:
         return None
 
-    # Prefer quoted paths first.
-    quoted = re.findall(r"[\"'`]+([^\"'`]+)[\"'`]+", raw)
-    for candidate in quoted:
-        cleaned = str(candidate).strip().rstrip(".,;:!?)]}")
-        if _FILELIKE_QUERY_RE.search(cleaned) or _PATHLIKE_QUERY_RE.search(cleaned):
-            return cleaned
-
-    # Then explicit path-like payloads.
-    path_match = _PATHLIKE_QUERY_RE.search(raw)
-    if path_match:
-        cleaned = str(path_match.group(1)).strip().rstrip(".,;:!?)]}")
-        if cleaned:
-            return cleaned
+    explicit_path = _extract_explicit_path_candidate(raw)
+    if explicit_path:
+        return explicit_path
 
     # Finally, plain filename.ext tokens.
     file_match = _FILELIKE_QUERY_RE.search(raw)
     if file_match:
-        cleaned = str(file_match.group(0)).strip().rstrip(".,;:!?)]}")
+        cleaned = _normalize_filesystem_candidate(file_match.group(0))
         if cleaned:
             return cleaned
+    return None
+
+
+def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | None = None) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    fallback_path = ""
+    if isinstance(last_tool_context, dict):
+        fallback_path = str(last_tool_context.get("path") or "").strip()
+
+    explicit_path = _extract_explicit_path_candidate(raw)
+    if explicit_path:
+        return explicit_path
+
+    special_dir = _resolve_special_directory_path(raw)
+    if special_dir:
+        return special_dir
+
+    relative_dir = _extract_relative_directory_candidate(raw)
+    if relative_dir and fallback_path:
+        return str(Path(fallback_path) / relative_dir)
+
+    if fallback_path and _is_low_information_followup(raw):
+        return fallback_path
+
     return None
 
 
@@ -477,8 +618,25 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         )
         return str(result)
 
+    if required_tool == "list_dir":
+        last_tool_context = metadata.get("last_tool_context") if isinstance(metadata.get("last_tool_context"), dict) else {}
+        path = _extract_list_dir_path(source_text, last_tool_context=last_tool_context)
+        if not path:
+            return i18n_t("filesystem.need_path", source_text)
+        result = await loop.tools.execute("list_dir", {"path": path})
+        return str(result)
+
     if required_tool == "read_file":
         path = _extract_read_file_path(source_text)
+        if not path:
+            path = str(metadata.get("file_analysis_path") or "").strip()
+        if not path:
+            last_tool_context = (
+                metadata.get("last_tool_context")
+                if isinstance(metadata.get("last_tool_context"), dict)
+                else {}
+            )
+            path = str(last_tool_context.get("path") or "").strip()
         if not path:
             return i18n_t("filesystem.need_path", source_text)
         result = await loop.tools.execute("read_file", {"path": path})

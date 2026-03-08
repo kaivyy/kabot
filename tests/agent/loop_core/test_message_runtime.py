@@ -133,7 +133,7 @@ async def test_process_message_filesystem_location_query_uses_context_note_witho
         ),
         _resolve_context_for_message=lambda _msg: context_builder,
         context=context_builder,
-        tools=SimpleNamespace(tool_names=[]),
+        tools=SimpleNamespace(tool_names=["read_file"]),
         _required_tool_for_query=lambda _text: None,
         _run_simple_response=AsyncMock(return_value="Saat ini saya ada di workspace Kabot."),
         _run_agent_loop=AsyncMock(return_value="agent"),
@@ -202,7 +202,7 @@ async def test_process_message_uses_routed_context_builder():
         ),
         _resolve_context_for_message=lambda _msg: routed_context,
         context=default_context,
-        tools=SimpleNamespace(tool_names=[]),
+        tools=SimpleNamespace(tool_names=["read_file"]),
         _required_tool_for_query=lambda _text: None,
         _run_simple_response=AsyncMock(return_value="ok"),
         _run_agent_loop=AsyncMock(return_value="ok"),
@@ -257,7 +257,7 @@ async def test_process_message_skill_prompt_bypasses_fast_simple_context_to_keep
         ),
         _resolve_context_for_message=lambda _msg: routed_context,
         context=MagicMock(),
-        tools=SimpleNamespace(tool_names=[]),
+        tools=SimpleNamespace(tool_names=["read_file"]),
         _required_tool_for_query=lambda _text: None,
         _run_simple_response=AsyncMock(return_value="ok"),
         _run_agent_loop=AsyncMock(return_value="ok"),
@@ -315,7 +315,7 @@ async def test_process_message_plain_smalltalk_keeps_fast_simple_context():
         ),
         _resolve_context_for_message=lambda _msg: routed_context,
         context=MagicMock(),
-        tools=SimpleNamespace(tool_names=[]),
+        tools=SimpleNamespace(tool_names=["read_file"]),
         _required_tool_for_query=lambda _text: None,
         _run_simple_response=AsyncMock(return_value="ok"),
         _run_agent_loop=AsyncMock(return_value="ok"),
@@ -595,7 +595,7 @@ async def test_process_message_short_confirmation_does_not_infer_required_tool_f
         ),
         _resolve_context_for_message=lambda _msg: context_builder,
         context=context_builder,
-        tools=SimpleNamespace(tool_names=[]),
+        tools=SimpleNamespace(tool_names=["read_file"]),
         _required_tool_for_query=lambda _text: None,
         _run_simple_response=AsyncMock(return_value="simple"),
         _run_agent_loop=AsyncMock(return_value="agent"),
@@ -1534,7 +1534,7 @@ async def test_process_message_explicit_file_path_adds_file_analysis_note_for_ll
         ),
         _resolve_context_for_message=lambda _msg: context_builder,
         context=context_builder,
-        tools=SimpleNamespace(tool_names=[]),
+        tools=SimpleNamespace(tool_names=["read_file"]),
         _required_tool_for_query=lambda _text: None,
         _run_simple_response=AsyncMock(return_value="simple"),
         _run_agent_loop=AsyncMock(return_value="agent"),
@@ -1556,6 +1556,211 @@ async def test_process_message_explicit_file_path_adds_file_analysis_note_for_ll
     loop._run_agent_loop.assert_awaited_once()
     assert "[System Note: Explicit file reference]" in captured["current_message"]
     assert "landing_hacker.html" in captured["current_message"]
+    assert msg.metadata.get("required_tool") == "read_file"
+    assert "landing_hacker.html" in str(msg.metadata.get("required_tool_query") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_message_explicit_file_path_stores_last_file_context():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "x"}]
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=True))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["read_file"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content=r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html font pada web ini",
+    )
+    await process_message(loop, msg)
+
+    last_ctx = session.metadata.get("last_tool_context")
+    assert isinstance(last_ctx, dict)
+    assert last_ctx.get("tool") == "read_file"
+    assert "landing_hacker.html" in str(last_ctx.get("path") or "")
+    assert msg.metadata.get("file_analysis_mode") is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_file_context_followup_reuses_last_file_path_for_llm_note():
+    captured: dict[str, str] = {}
+
+    def _build_messages(**kwargs):
+        captured["current_message"] = str(kwargs.get("current_message") or "")
+        return [{"role": "user", "content": captured["current_message"]}]
+
+    context_builder = MagicMock()
+    context_builder.build_messages.side_effect = _build_messages
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "read_file",
+                "path": r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html",
+                "source": r"c:\users\arvy kairi\.kabot\workspace\landing_hacker.html font pada web ini",
+                "updated_at": time.time(),
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=True))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["read_file"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="buka html ini",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert "[System Note: Explicit file reference]" in captured["current_message"]
+    assert "landing_hacker.html" in captured["current_message"]
+    assert msg.metadata.get("required_tool") == "read_file"
+
+
+@pytest.mark.asyncio
+async def test_process_message_file_context_followup_uses_recent_history_when_session_context_missing():
+    captured: dict[str, str] = {}
+
+    def _build_messages(**kwargs):
+        captured["current_message"] = str(kwargs.get("current_message") or "")
+        return [{"role": "user", "content": captured["current_message"]}]
+
+    context_builder = MagicMock()
+    context_builder.build_messages.side_effect = _build_messages
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(metadata={})
+    history = [
+        {
+            "role": "user",
+            "content": r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html font pada web ini",
+        }
+    ]
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: history),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=True))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["read_file"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="buka html ini",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert "[System Note: Explicit file reference]" in captured["current_message"]
+    assert "landing_hacker.html" in captured["current_message"]
+    assert msg.metadata.get("required_tool") == "read_file"
+    last_ctx = session.metadata.get("last_tool_context")
+    assert isinstance(last_ctx, dict)
+    assert last_ctx.get("tool") == "read_file"
+    assert "landing_hacker.html" in str(last_ctx.get("path") or "")
 
 
 @pytest.mark.asyncio

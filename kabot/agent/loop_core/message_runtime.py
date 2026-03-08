@@ -61,6 +61,11 @@ def _is_probe_mode_message(msg: InboundMessage) -> bool:
     return bool(isinstance(metadata, dict) and metadata.get("probe_mode"))
 
 
+def _should_persist_probe_history(msg: InboundMessage) -> bool:
+    metadata = getattr(msg, "metadata", None)
+    return bool(isinstance(metadata, dict) and metadata.get("persist_history"))
+
+
 _PENDING_FOLLOWUP_TOOL_KEY = "pending_followup_tool"
 _PENDING_FOLLOWUP_INTENT_KEY = "pending_followup_intent"
 _PENDING_FOLLOWUP_TTL_SECONDS = 15 * 60
@@ -255,6 +260,22 @@ _WEATHER_CONTEXT_FOLLOWUP_MARKERS = (
     "rain",
     "humidity",
     "kelembapan",
+)
+_FILE_CONTEXT_FOLLOWUP_MARKERS = (
+    "file ini",
+    "berkas ini",
+    "this file",
+    "that file",
+    "html ini",
+    "css ini",
+    "config ini",
+    "font di file",
+    "font pada file",
+    "font yang dipakai",
+    "isi file ini",
+    "open this html",
+    "check this css",
+    "read this config",
 )
 _FILELIKE_EXTENSION_RE = re.compile(
     r"\b[\w\-]+\.(json|ya?ml|toml|ini|cfg|conf|env|md|txt|csv|log|pdf|docx?|xlsx?|py|js|ts|tsx|jsx|html|css|xml)\b",
@@ -608,6 +629,20 @@ def _looks_like_weather_context_followup(text: str) -> bool:
     return any(marker in normalized for marker in _WEATHER_CONTEXT_FOLLOWUP_MARKERS)
 
 
+def _looks_like_file_context_followup(text: str) -> bool:
+    raw = str(text or "")
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    if len(raw.strip()) > 120:
+        return False
+    if _extract_read_file_path(raw):
+        return False
+    return any(marker in normalized for marker in _FILE_CONTEXT_FOLLOWUP_MARKERS)
+
+
 def _looks_like_filesystem_location_query(text: str) -> bool:
     raw = str(text or "").strip()
     normalized = _normalize_text(raw)
@@ -742,6 +777,22 @@ def _looks_like_explicit_new_request(text: str) -> bool:
     ):
         return True
     return False
+
+
+def _infer_recent_file_path_from_history(history: list[dict[str, Any]]) -> str:
+    for item in reversed(history[-10:]):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(item.get("content", "") or "").strip()
+        if not content:
+            continue
+        path = _extract_read_file_path(content)
+        if path:
+            return path
+    return ""
 
 
 def _get_pending_followup_tool(session: Any, now_ts: float) -> dict[str, str] | None:
@@ -1322,13 +1373,14 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         history_limit = min(history_limit, 6)
 
     probe_mode = _is_probe_mode_message(msg)
+    persist_probe_history = _should_persist_probe_history(msg)
     conversation_history: list[dict[str, Any]] = []
     skip_history_for_speed = bool(
         perf_cfg
         and bool(getattr(perf_cfg, "fast_first_response", True))
         and _looks_like_live_research_query(effective_content)
     )
-    if not probe_mode and not fast_direct_context and not skip_history_for_speed:
+    if (not probe_mode or persist_probe_history) and not fast_direct_context and not skip_history_for_speed:
         conversation_history = loop.memory.get_conversation_context(msg.session_key, max_messages=history_limit)
         if conversation_history:
             conversation_history = [m for m in conversation_history if isinstance(m, dict)]
@@ -1353,6 +1405,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         if isinstance(pending_followup_tool_payload, dict)
         else ""
     )
+    recent_history_file_path = _infer_recent_file_path_from_history(conversation_history)
     last_tool_context = _get_last_tool_context(session, now_ts)
     pending_followup_intent = _get_pending_followup_intent(session, now_ts)
     is_short_confirmation = bool(not required_tool and _looks_like_short_confirmation(effective_content))
@@ -1363,6 +1416,16 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     is_weather_context_followup = bool(
         pending_followup_tool == "weather"
         and _looks_like_weather_context_followup(effective_content)
+    )
+    is_file_context_followup = bool(
+        (
+            (
+                isinstance(last_tool_context, dict)
+                and str(last_tool_context.get("tool") or "").strip() == "read_file"
+            )
+            or recent_history_file_path
+        )
+        and _looks_like_file_context_followup(effective_content)
     )
     is_explicit_new_request = bool(raw_is_explicit_new_request and not is_weather_context_followup)
     semantic_hint = arbitrate_semantic_intent(
@@ -1602,6 +1665,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     llm_current_message = effective_content
     filesystem_location_context_note = ""
     explicit_file_analysis_note = ""
+    file_analysis_path = ""
     skill_creation_stage = str((current_skill_flow or {}).get("stage") or "discovery").strip().lower() or "discovery"
     skill_workflow_kind = "install" if skill_install_intent else current_skill_flow_kind
     skill_creation_request_text = str((current_skill_flow or {}).get("request_text") or effective_content).strip()
@@ -1654,13 +1718,38 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     elif not required_tool and not skill_creation_intent and not skill_install_intent:
         explicit_file_path = _extract_read_file_path(effective_content)
         if explicit_file_path:
+            file_analysis_path = explicit_file_path
             explicit_file_analysis_note = _build_explicit_file_analysis_note(explicit_file_path)
             if explicit_file_analysis_note:
                 llm_current_message = f"{effective_content}\n\n{explicit_file_analysis_note}".strip()
+        elif is_file_context_followup:
+            last_file_path = str((last_tool_context or {}).get("path") or "").strip()
+            if not last_file_path:
+                last_file_path = recent_history_file_path
+            if last_file_path:
+                file_analysis_path = last_file_path
+                explicit_file_analysis_note = _build_explicit_file_analysis_note(last_file_path)
+                if explicit_file_analysis_note:
+                    llm_current_message = f"{effective_content}\n\n{explicit_file_analysis_note}".strip()
+
+        if (
+            explicit_file_analysis_note
+            and file_analysis_path
+            and _tool_registry_has(loop, "read_file")
+        ):
+            required_tool = "read_file"
+            required_tool_query = file_analysis_path
+            decision.is_complex = True
 
     if required_tool:
         _set_pending_followup_tool(session, required_tool, now_ts, str(required_tool_query or effective_content))
         _set_last_tool_context(session, required_tool, now_ts, str(required_tool_query or effective_content))
+    elif explicit_file_analysis_note and _extract_read_file_path(llm_current_message):
+        _set_last_tool_context(session, "read_file", now_ts, llm_current_message)
+    elif explicit_file_analysis_note and is_file_context_followup:
+        history_file_path = recent_history_file_path
+        if history_file_path:
+            _set_last_tool_context(session, "read_file", now_ts, history_file_path)
     elif not is_short_confirmation:
         _clear_pending_followup_tool(session)
 
@@ -1686,6 +1775,12 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             msg.metadata["last_tool_context"] = last_tool_context
         else:
             msg.metadata.pop("last_tool_context", None)
+        if explicit_file_analysis_note and file_analysis_path:
+            msg.metadata["file_analysis_mode"] = True
+            msg.metadata["file_analysis_path"] = file_analysis_path
+        else:
+            msg.metadata.pop("file_analysis_mode", None)
+            msg.metadata.pop("file_analysis_path", None)
         if semantic_hint.kind != "none":
             msg.metadata["semantic_intent_hint"] = semantic_hint.kind
         else:

@@ -32,9 +32,11 @@ def test_agent_one_shot_continues_when_cron_start_fails(monkeypatch, tmp_path):
             session_key,
             suppress_post_response_warmup=False,
             probe_mode=False,
+            persist_history=False,
         ):
             assert suppress_post_response_warmup is True
             assert probe_mode is True
+            assert persist_history is True
             return "ok"
 
     class _DummyCron:
@@ -84,9 +86,11 @@ def test_agent_one_shot_skips_cron_start_for_non_reminder_prompt(monkeypatch, tm
             session_key,
             suppress_post_response_warmup=False,
             probe_mode=False,
+            persist_history=False,
         ):
             assert suppress_post_response_warmup is True
             assert probe_mode is True
+            assert persist_history is True
             return "ok"
 
     starts = {"count": 0}

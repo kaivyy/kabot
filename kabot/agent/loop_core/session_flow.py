@@ -22,6 +22,11 @@ def _is_probe_mode_message(msg: InboundMessage) -> bool:
     return bool(isinstance(metadata, dict) and metadata.get("probe_mode"))
 
 
+def _should_persist_probe_history(msg: InboundMessage) -> bool:
+    metadata = getattr(msg, "metadata", None)
+    return bool(isinstance(metadata, dict) and metadata.get("persist_history"))
+
+
 def _schedule_memory_write(loop: Any, coro: Any, *, label: str) -> None:
     task = asyncio.create_task(coro)
     pending = getattr(loop, "_pending_memory_tasks", None)
@@ -70,9 +75,10 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
     )
 
     session = loop.sessions.get_or_create(session_key)
-    if not _is_probe_mode_message(msg):
+    persist_probe_history = _should_persist_probe_history(msg)
+    if not _is_probe_mode_message(msg) or persist_probe_history:
         loop.memory.create_session(session_key, msg.channel, msg.chat_id, msg.sender_id)
-        if _defer_memory_writes(loop):
+        if _defer_memory_writes(loop) and not persist_probe_history:
             _schedule_memory_write(
                 loop,
                 loop.memory.add_message(session_key, "user", msg.content),
@@ -142,9 +148,9 @@ async def finalize_session(
     if (
         final_content
         and not final_content.startswith("I've completed")
-        and not _is_probe_mode_message(msg)
+        and (not _is_probe_mode_message(msg) or _should_persist_probe_history(msg))
     ):
-        if _defer_memory_writes(loop):
+        if _defer_memory_writes(loop) and not _should_persist_probe_history(msg):
             _schedule_memory_write(
                 loop,
                 loop.memory.add_message(msg.session_key, "assistant", final_content),

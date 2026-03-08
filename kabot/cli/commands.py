@@ -1220,10 +1220,18 @@ def _build_dashboard_config_summary(config: Any) -> dict[str, Any]:
     }
 
     runtime_perf = getattr(runtime, "performance", None)
+    model_chain = [str(default_model or "").strip()]
+    model_chain.extend(
+        _merge_fallbacks(
+            str(default_model or "").strip(),
+            [str(item).strip() for item in default_fallbacks if str(item).strip()],
+        )
+    )
     runtime_summary = {
         "model": {
             "primary": str(default_model or ""),
             "fallbacks": [str(item).strip() for item in default_fallbacks if str(item).strip()],
+            "chain": [item for item in model_chain if item],
         },
         "performance": {
             "token_mode": str(getattr(runtime_perf, "token_mode", "boros") or "boros").strip().lower(),
@@ -1376,7 +1384,11 @@ def _build_dashboard_nodes(channels: Any) -> list[dict[str, Any]]:
     return nodes
 
 
-def _build_dashboard_cost_payload(session_manager: Any) -> dict[str, Any]:
+def _build_dashboard_cost_payload(
+    session_manager: Any,
+    *,
+    runtime_models: list[str] | None = None,
+) -> dict[str, Any]:
     try:
         from kabot.core.cost_tracker import CostTracker
 
@@ -1393,14 +1405,99 @@ def _build_dashboard_cost_payload(session_manager: Any) -> dict[str, Any]:
     model_usage = summary.get("model_usage", {})
     if not isinstance(model_usage, dict):
         model_usage = {}
+    model_usage_map = {
+        str(model): int(tokens or 0)
+        for model, tokens in model_usage.items()
+        if str(model).strip()
+    }
 
     model_costs = summary.get("model_costs", {})
     if not isinstance(model_costs, dict):
         model_costs = {}
+    model_costs_map = {
+        str(model): float(cost or 0)
+        for model, cost in model_costs.items()
+        if str(model).strip()
+    }
+
+    runtime_chain = [
+        str(model).strip()
+        for model in (runtime_models or [])
+        if str(model).strip()
+    ]
+    for runtime_model in runtime_chain:
+        model_usage_map.setdefault(runtime_model, 0)
+        model_costs_map.setdefault(runtime_model, 0.0)
 
     cost_history = summary.get("cost_history", [])
     if not isinstance(cost_history, list):
         cost_history = []
+
+    raw_usage_windows = summary.get("usage_windows", {})
+    if not isinstance(raw_usage_windows, dict):
+        raw_usage_windows = {}
+
+    usage_windows: dict[str, dict[str, Any]] = {}
+    for window_key in ("7d", "30d", "all"):
+        raw_window = raw_usage_windows.get(window_key, {})
+        if not isinstance(raw_window, dict):
+            raw_window = {}
+        raw_tokens = raw_window.get("token_usage", {})
+        if not isinstance(raw_tokens, dict):
+            raw_tokens = {}
+        raw_window_usage = raw_window.get("model_usage", {})
+        if not isinstance(raw_window_usage, dict):
+            raw_window_usage = {}
+        raw_window_costs = raw_window.get("model_costs", {})
+        if not isinstance(raw_window_costs, dict):
+            raw_window_costs = {}
+        raw_window_cost_payload = raw_window.get("costs", {})
+        if not isinstance(raw_window_cost_payload, dict):
+            raw_window_cost_payload = {}
+        if not raw_window_costs:
+            candidate_by_model = raw_window_cost_payload.get("by_model", {})
+            if isinstance(candidate_by_model, dict):
+                raw_window_costs = candidate_by_model
+        raw_window_history = raw_window.get("cost_history", [])
+        if not isinstance(raw_window_history, list):
+            raw_window_history = []
+
+        window_usage_map = {
+            str(model): int(tokens or 0)
+            for model, tokens in raw_window_usage.items()
+            if str(model).strip()
+        }
+        window_costs_map = {
+            str(model): float(cost or 0)
+            for model, cost in raw_window_costs.items()
+            if str(model).strip()
+        }
+        for runtime_model in runtime_chain:
+            window_usage_map.setdefault(runtime_model, 0)
+            window_costs_map.setdefault(runtime_model, 0.0)
+
+        usage_windows[window_key] = {
+            "label": str(raw_window.get("label") or window_key),
+            "token_usage": {
+                "input": int(raw_tokens.get("input", 0) or 0),
+                "output": int(raw_tokens.get("output", 0) or 0),
+                "total": int(raw_tokens.get("total", 0) or 0),
+            },
+            "model_usage": window_usage_map,
+            "costs": {
+                "total": float(raw_window_cost_payload.get("total", sum(window_costs_map.values())) or 0),
+                "by_model": window_costs_map,
+            },
+            "cost_history": [
+                {
+                    "date": str(item.get("date") or ""),
+                    "cost": float(item.get("cost", 0) or 0),
+                    "tokens": int(item.get("tokens", 0) or 0),
+                }
+                for item in raw_window_history
+                if isinstance(item, dict)
+            ],
+        }
 
     return {
         "costs": {
@@ -1408,8 +1505,8 @@ def _build_dashboard_cost_payload(session_manager: Any) -> dict[str, Any]:
             "total": float(summary.get("total", 0) or 0),
             "projected_monthly": float(summary.get("projected_monthly", 0) or 0),
             "by_model": {
-                str(model): float(cost or 0)
-                for model, cost in model_costs.items()
+                model: cost
+                for model, cost in model_costs_map.items()
             },
         },
         "token_usage": {
@@ -1417,10 +1514,7 @@ def _build_dashboard_cost_payload(session_manager: Any) -> dict[str, Any]:
             "output": int(token_usage.get("output", 0) or 0),
             "total": int(token_usage.get("total", 0) or 0),
         },
-        "model_usage": {
-            str(model): int(tokens or 0)
-            for model, tokens in model_usage.items()
-        },
+        "model_usage": model_usage_map,
         "cost_history": [
             {
                 "date": str(item.get("date") or ""),
@@ -1430,6 +1524,7 @@ def _build_dashboard_cost_payload(session_manager: Any) -> dict[str, Any]:
             for item in cost_history
             if isinstance(item, dict)
         ],
+        "usage_windows": usage_windows,
     }
 
 
@@ -1646,6 +1741,7 @@ def _build_dashboard_status_payload(
     *,
     gateway_started_at: float,
     runtime_model: str,
+    runtime_fallbacks: list[str] | None = None,
     runtime_host: str,
     runtime_port: int,
     tailscale_mode: str,
@@ -1664,9 +1760,20 @@ def _build_dashboard_status_payload(
     except Exception:
         channel_status = {}
 
+    runtime_models = [str(runtime_model or "").strip()]
+    runtime_models.extend(
+        _merge_fallbacks(
+            str(runtime_model or "").strip(),
+            [str(item).strip() for item in (runtime_fallbacks or []) if str(item).strip()],
+        )
+    )
+
     cron_status, cron_jobs_list = _build_dashboard_cron_snapshot(cron)
     channels_enabled = list(getattr(channels, "enabled_channels", []))
-    cost_payload = _build_dashboard_cost_payload(session_manager)
+    cost_payload = _build_dashboard_cost_payload(
+        session_manager,
+        runtime_models=[item for item in runtime_models if item],
+    )
     skills = _build_dashboard_skills_snapshot(config)
     subagent_activity = _build_dashboard_subagent_activity(agent)
     git_log = _build_dashboard_git_log(config.workspace_path)
@@ -1675,6 +1782,7 @@ def _build_dashboard_status_payload(
         "status": "running",
         "uptime_seconds": max(0, int(time.time() - gateway_started_at)),
         "model": runtime_model,
+        "runtime_models": [item for item in runtime_models if item],
         "version": __version__,
         "channels_enabled": channels_enabled,
         "channels_status": channel_status if isinstance(channel_status, dict) else {},
@@ -2208,6 +2316,7 @@ def gateway(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
+        config=config,
         model=runtime_model,
         fallbacks=runtime_fallbacks,
         max_iterations=config.agents.defaults.max_tool_iterations,
@@ -2266,6 +2375,7 @@ def gateway(
         return _build_dashboard_status_payload(
             gateway_started_at=gateway_started_at,
             runtime_model=runtime_model,
+            runtime_fallbacks=runtime_fallbacks,
             runtime_host=runtime_host,
             runtime_port=runtime_port,
             tailscale_mode=tailscale_mode,
@@ -2455,6 +2565,7 @@ def agent(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
+        config=config,
         model=runtime_model,
         fallbacks=runtime_fallbacks,
         brave_api_key=config.tools.web.search.api_key or None,
@@ -2530,6 +2641,7 @@ def agent(
                         session_id,
                         suppress_post_response_warmup=True,
                         probe_mode=True,
+                        persist_history=True,
                     )
                 _print_agent_response(response, render_markdown=markdown)
 

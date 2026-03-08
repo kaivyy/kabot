@@ -41,8 +41,10 @@ async def test_process_direct_can_suppress_post_response_warmup(tmp_path):
         "halo",
         suppress_post_response_warmup=True,
         probe_mode=True,
+        persist_history=True,
     )
 
     assert result == "ok"
     assert captured["metadata"]["suppress_post_response_warmup"] is True
     assert captured["metadata"]["probe_mode"] is True
+    assert captured["metadata"]["persist_history"] is True
