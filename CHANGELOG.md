@@ -40,20 +40,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Sub-Agent Activity Panel**: Added dashboard panel for recent subagent runs with status and duration snapshots.
   - **Git Log Panel**: Added dashboard panel for recent workspace commits.
   - **Expanded Cost/Chart Monitoring**: Cost panel now includes per-model breakdown, while charts can render both cost history and model usage from enriched status payloads.
+  - **Real Multi-Model Usage Accounting**: Dashboard cost panels now seed every active runtime model in the chain even before first usage, config/runtime summaries expose the full model chain, and transcript cost parsing now respects OpenClaw-style nested usage payloads plus explicit per-turn cost totals instead of assuming only one primary model path.
+  - **Usage Window Tabs**: Cost and chart panels now support OpenClaw-style `7d`, `30d`, and `All Time` window switching with HTMX-persisted panel refresh, while runtime payloads expose pre-aggregated `usage_windows` so auto-refresh stays fast even as history grows.
   - **Sticky Chat UX**: Dashboard chat now restores the active tab after browser reload using URL-hash + local tab persistence, and chat logs auto-stick to the latest message after HTMX/SSE updates so operators do not need to scroll back down manually.
   - **Settings Panel Hardening**: Settings/engine wrapper panels now load with `outerHTML` placeholders to avoid duplicate HTMX targets, skill toggles follow the real config `disabled` flag instead of readiness state, and read-only tokens now surface explicit operator-write requirements instead of showing dead action buttons.
   - **Dashboard History Cleanup**: Chat history payloads preserve real metadata when present without injecting empty `metadata: {}` into every message.
   - **Operator Feedback UX**: Dashboard action results now render friendly success/error summaries with expandable JSON details, while `Sessions`, `Nodes`, and `Chat` also show consistent read-only notices and fully disable write inputs when the token lacks `operator.write`.
+  - **Live Dashboard Performance Pass**: Dashboard snapshots are now cached briefly per burst so HTMX partials stop rebuilding expensive monitoring payloads on every request, the page refresh loop is centralized instead of every panel polling independently, the metrics bar updates once per second, and dashboard chat now fast-acks sends while SSE delivers the actual conversation stream.
   - **Responsive Design**: Mobile/tablet support with hamburger menu, collapsible sidebar, adaptive grid layouts.
   - **Auto-Refresh**: Countdown refresh now updates global bars plus the currently visible dashboard panels in place, so operators stay on the active tab instead of getting bounced back through a full page reload.
   - 9 new GET `/dashboard/partials/*` routes serving HTMX fragments.
 
 ### Changed
+- File-path and storage-analysis routing are now less brittle and less likely to hallucinate stale tool context:
+  - intent matching no longer treats latin keywords as blind substrings, so terms like `space` stop falsely matching inside paths such as `workspace`,
+  - explicit file-path questions like `C:\...\landing_hacker.html font pada web ini` now stay out of stale `system info` follow-up flow and instead add a runtime note telling the model to `read_file` before answering about that file,
+  - requests to find large files/folders now stop being forced into `cleanup_system` or generic `get_system_info`, letting the agent inspect disk usage directly instead of repeating cleanup,
+  - session follow-up tests now lock these cases so new file-analysis turns and large-file scan turns clear old pending tool state cleanly.
 - Chat-driven skill creation is now more natural and multilingual without becoming rigid:
   - semantic matching for `skill-creator` now catches broader phrasing such as new capabilities, integrations, and plugins across Indonesian, English, Thai, Japanese, and Chinese,
   - runtime now force-loads `skill-creator` context when the turn clearly asks to create/update a skill, instead of depending only on brittle keyword overlap,
   - skill-creation turns now carry a hidden workflow note that keeps the model in discovery/planning mode until explicit plan approval, preventing premature file creation while preserving conversational tone,
   - skill-creator docs now align with real runtime behavior by targeting workspace `skills/` directories and documenting env-based API secrets instead of hardcoded credentials.
+- Explicit skill-use turns are now leaner and more reliable in CLI/runtime:
+  - prompts like `please use the weather skill for this request` no longer drag the full `Available Skills` catalog into every GENERAL turn just because they mention the word `skill`,
+  - task-specific `Auto-Selected Skills` are now placed ahead of long bootstrap/reference sections in the system prompt, so token-budget truncation preserves the active skill context instead of cutting it off,
+  - multilingual explicit skill requests verified through `kabot agent -m ... --logs` stay AI-driven across English, Indonesian, Chinese, Thai, and Japanese prompt styles without falling back into unwanted parser-forced catalog/help flows,
+  - CLI regression coverage now locks this behavior so explicit skill prompts keep their system prompt and skip the heavyweight catalog summary unless the user is actually asking about the skill catalog itself.
+- CLI one-shot probe turns are now lighter and more workspace-consistent:
+  - `kabot agent -m ...` probe-mode system prompts now use a compact GENERAL prompt that skips heavy bootstrap/reference sections like large `AGENTS.md` files while still preserving active skill context,
+  - probe-mode regression coverage now locks the compact prompt behavior at the actual CLI `agent -m ... --logs` entrypoint,
+  - CLI and gateway `AgentLoop` construction now always pass the active loaded config into runtime, and `AgentLoop` reuses that provided config for memory initialization instead of silently reloading global defaults, preventing one-shot runs from drifting back to `~/.kabot/workspace` paths.
 - Manual skill scaffolding is now workspace-first instead of builtin-first:
   - `kabot/skills/skill-creator/scripts/init_skill.py` now resolves the active workspace `skills/` directory before falling back to repo builtin skills,
   - running the scaffold script from a workspace root with `skills/` now lands new skills in the same place that chat-driven `skill-creator` and `SkillsLoader` already expect,
@@ -103,6 +120,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - weather and stock follow-ups can reuse prior resolved context without requiring the user to restate ticker/location every turn,
   - stock quote conversion follow-ups like `jadikan idr harganya` now work from structured context even when only the earlier quote symbol was known,
   - weather follow-up location context now resists degradation from short wind/follow-up turns.
+- Filesystem routing is now much more reliable across Windows, macOS, and Linux style directory requests:
+  - deterministic routing now treats folder-navigation prompts as `list_dir` instead of misclassifying `file/folder` phrases into `read_file("/folder")`,
+  - path extraction now recognizes Windows drive paths (`C:\\...` and `C:/...`), UNC paths, POSIX paths (`/var/log`), and home-relative aliases like `Desktop`, `Downloads`, and `Documents`,
+  - multilingual directory prompts now recognize common Indonesian, English, Chinese, Japanese, and Thai folder/location phrases for listing and follow-up navigation,
+  - multilingual relative follow-ups like `表示 フォルダ bot` and `เปิด โฟลเดอร์ bot` now count as fresh `list_dir` payloads, so session follow-up enrichment no longer drags old folder prompts back into the current turn,
+  - directory follow-ups like `ya tampilkan` can reuse the last resolved folder path from session context instead of losing navigation state between turns,
+  - `list_dir` now uses the same direct fast-path execution flow as other deterministic tools, so folder listings return immediately without waiting for an extra summarization pass,
+  - natural location questions like `lokasimu sekarang dimana` now stay AI-driven while receiving exact workspace and last navigated path context, so the assistant can answer naturally without accidentally falling back into stale folder-list actions.
 - Natural-name and multilingual extraction were tightened:
   - stock company-name extraction now trims trailing question noise (`Microsoft right now` -> `Microsoft`) so natural English company queries resolve more reliably,
   - free-style Indonesian phrasing like `bro kira-kira saham microsoft sekarang berapa ya?` now resolves to the intended company instead of falling back to rigid ticker prompts,

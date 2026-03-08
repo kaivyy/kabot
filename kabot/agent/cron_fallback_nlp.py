@@ -630,14 +630,88 @@ _READ_FILE_SUBJECT_MARKERS = (
     "settings",
     "setting",
     "path",
+)
+_LIST_DIR_ACTION_MARKERS = (
+    "list",
+    "show",
+    "display",
+    "view",
+    "lihat",
+    "lihatkan",
+    "cek",
+    "check",
+    "tampilkan",
+    "tampilin",
+    "isi",
+    "open",
+    "buka",
+    "masuk",
+    "enter",
+    "cd",
+    "dir",
+    "ls",
+    "显示",
+    "查看",
+    "打开",
+    "表示",
+    "見せて",
+    "みせて",
+    "開いて",
+    "開く",
+    "เปิด",
+    "แสดง",
+    "ดู",
+)
+_LIST_DIR_SUBJECT_MARKERS = (
     "folder",
     "direktori",
+    "directory",
+    "subfolder",
+    "subdirektori",
+    "文件夹",
+    "文件夾",
+    "资料夹",
+    "資料夾",
+    "目录",
+    "目錄",
+    "フォルダ",
+    "ディレクトリ",
+    "โฟลเดอร์",
+    "ไดเรกทอรี",
+)
+_LIST_DIR_TARGET_MARKERS = (
+    "desktop",
+    "downloads",
+    "download",
+    "documents",
+    "document",
+    "docs",
+    "pictures",
+    "photos",
+    "music",
+    "videos",
+    "home",
+    "桌面",
+    "下载",
+    "下載",
+    "文档",
+    "文件档案",
+    "文件檔案",
+    "デスクトップ",
+    "ダウンロード",
+    "書類",
+    "ドキュメント",
+    "เดสก์ท็อป",
+    "ดาวน์โหลด",
+    "เอกสาร",
 )
 _FILELIKE_QUERY_RE = re.compile(
     r"\b[\w\-]+\.(json|ya?ml|toml|ini|cfg|conf|env|md|txt|csv|log|pdf|docx?|xlsx?|py|js|ts|tsx|jsx|html|css|xml)\b",
     re.IGNORECASE,
 )
-_PATHLIKE_QUERY_RE = re.compile(r"([a-zA-Z]:\\|\\\\|/[\w\-./]+|[\w\-./]+\\[\w\-./]+)")
+_PATHLIKE_QUERY_RE = re.compile(
+    r"([a-zA-Z]:[\\/][^\n\r\"']+|\\\\[^\n\r\"']+|(?<![\w])/[^\"'\s]+|(?<![\w])~[\\/][^\s\"']+|[\w.\-]+\\[\w .\\/-]+)"
+)
 _META_FEEDBACK_MARKERS = (
     "kenapa jawab",
     "kenapa balas",
@@ -658,6 +732,91 @@ _META_TOPIC_MARKERS = (
     "about",
     "topic",
     "topik",
+)
+_META_WORKFLOW_REFERENCE_MARKERS = (
+    "workflow",
+    "workflows",
+    "skill",
+    "skills",
+    "guide",
+    "guides",
+    "manual",
+    "instructions",
+    "instruction",
+    "playbook",
+    "pattern",
+    "alur",
+    "panduan",
+    "petunjuk",
+    "instruksi",
+    "cara kerja",
+    "ワークフロー",
+    "スキル",
+    "ガイド",
+    "手順",
+    "工作流",
+    "技能",
+    "指南",
+    "说明",
+    "步驟",
+    "步骤",
+    "เวิร์กโฟลว์",
+    "สกิล",
+    "คู่มือ",
+    "คำแนะนำ",
+    "ขั้นตอน",
+)
+_META_REFERENCE_VERBS = (
+    "follow",
+    "use",
+    "apply",
+    "read",
+    "refer",
+    "consult",
+    "study",
+    "learn",
+    "ikuti",
+    "gunakan",
+    "pakai",
+    "baca",
+    "rujuk",
+    "pelajari",
+    "pakailah",
+    "ikuti alur",
+    "gunakan alur",
+    "参照",
+    "使用",
+    "按照",
+    "跟着",
+    "อ่าน",
+    "ใช้",
+    "ตาม",
+    "อ้างอิง",
+)
+_META_TASK_SCOPE_MARKERS = (
+    "for this task",
+    "for this request",
+    "for this spec",
+    "for this job",
+    "untuk tugas ini",
+    "untuk request ini",
+    "untuk permintaan ini",
+    "untuk spek ini",
+    "untuk spec ini",
+    "buat tugas ini",
+    "buat request ini",
+    "buat permintaan ini",
+    "task ini",
+    "request ini",
+    "permintaan ini",
+    "spec ini",
+    "spek ini",
+    "このタスク",
+    "この依頼",
+    "这个任务",
+    "这个请求",
+    "สำหรับงานนี้",
+    "สำหรับคำขอนี้",
 )
 _NON_ACTION_MARKERS = (
     "stop",
@@ -723,11 +882,21 @@ def _is_edit_distance_leq_one(left: str, right: str) -> bool:
 
 
 def _contains_any(text: str, terms: Iterable[str], *, fuzzy_latin: bool = False) -> bool:
-    if any(term in text for term in terms):
-        return True
+    normalized_text = _normalize_query(text)
+    for raw_term in terms:
+        term = _normalize_query(raw_term)
+        if not term:
+            continue
+        if re.fullmatch(r"[a-z0-9]+(?: [a-z0-9]+)*", term):
+            pattern = r"(?<![a-z0-9])" + re.escape(term).replace(r"\ ", r"\s+") + r"(?![a-z0-9])"
+            if re.search(pattern, normalized_text):
+                return True
+            continue
+        if term in normalized_text:
+            return True
     if not fuzzy_latin:
         return False
-    tokens = _tokenize_latin_words(text)
+    tokens = _tokenize_latin_words(normalized_text)
     if not tokens:
         return False
     for raw_term in terms:
@@ -761,6 +930,92 @@ def _contains_any(text: str, terms: Iterable[str], *, fuzzy_latin: bool = False)
     return False
 
 
+_LARGE_FILE_SCAN_SUBJECT_MARKERS = (
+    "file",
+    "files",
+    "folder",
+    "folders",
+    "berkas",
+    "direktori",
+    "directory",
+)
+_LARGE_FILE_SCAN_SIZE_MARKERS = (
+    "large",
+    "largest",
+    "big",
+    "biggest",
+    "ukuran besar",
+    "yang ukurannya besar",
+    "paling besar",
+    "besar",
+    "makan ruang",
+    "memakan ruang",
+    "space hog",
+    "space hogs",
+    "folder size",
+)
+
+
+def _looks_like_large_file_scan_request(text: str) -> bool:
+    normalized = _normalize_query(text)
+    if not normalized:
+        return False
+    has_subject = _contains_any(normalized, _LARGE_FILE_SCAN_SUBJECT_MARKERS, fuzzy_latin=True)
+    if not has_subject:
+        return False
+    has_size_marker = (
+        _contains_any(normalized, _LARGE_FILE_SCAN_SIZE_MARKERS, fuzzy_latin=True)
+        or bool(re.search(r"\b(size|ukuran)\b", normalized))
+    )
+    return has_size_marker
+
+
+def _looks_like_meta_skill_or_workflow_prompt(text: str) -> bool:
+    """Detect prompts that discuss workflows/skills rather than requesting domain execution."""
+    q_lower = _normalize_query(text)
+    if not q_lower:
+        return False
+
+    has_meta_reference = _contains_any(q_lower, _META_WORKFLOW_REFERENCE_MARKERS, fuzzy_latin=True)
+    if not has_meta_reference:
+        return False
+
+    has_meta_intent = _contains_any(q_lower, _META_REFERENCE_VERBS, fuzzy_latin=True) or _contains_any(
+        q_lower, _META_TASK_SCOPE_MARKERS, fuzzy_latin=True
+    )
+    if not has_meta_intent:
+        return False
+
+    weather_location = extract_weather_location(text)
+    weather_payload = bool(weather_location) and not _contains_any(
+        _normalize_query(weather_location),
+        (
+            *_META_WORKFLOW_REFERENCE_MARKERS,
+            *_META_REFERENCE_VERBS,
+            *_META_TASK_SCOPE_MARKERS,
+            *_META_TOPIC_MARKERS,
+            *_NON_ACTION_MARKERS,
+        ),
+        fuzzy_latin=True,
+    )
+    has_structural_payload = any(
+        (
+            bool(_REMINDER_TIME_RE.search(q_lower)),
+            weather_payload,
+            bool(_extract_stock_symbol_candidates(text)),
+            bool(_FILELIKE_QUERY_RE.search(text) or _PATHLIKE_QUERY_RE.search(text)),
+            bool(re.search(r"\b\d{1,2}:\d{2}\b", str(text or ""))),
+            _contains_any(q_lower, _LIST_DIR_TARGET_MARKERS, fuzzy_latin=True),
+        )
+    )
+    return not has_structural_payload
+
+
+def looks_like_meta_skill_or_workflow_prompt(text: str) -> bool:
+    """Public wrapper for meta workflow/skill reference detection."""
+    return _looks_like_meta_skill_or_workflow_prompt(text)
+
+
 def _extract_stock_symbol_candidates(question: str) -> list[str]:
     # Reuse stock-tool parser so deterministic router and stock tool stay aligned.
     return extract_stock_symbols(question or "")
@@ -786,6 +1041,7 @@ def score_required_tool_intents(
     has_server_monitor_tool: bool = False,
     has_web_search_tool: bool = False,
     has_read_file_tool: bool = False,
+    has_list_dir_tool: bool = False,
     has_check_update_tool: bool = False,
     has_system_update_tool: bool = False,
 ) -> list[ToolIntentScore]:
@@ -812,6 +1068,7 @@ def score_required_tool_intents(
         "server_monitor": has_server_monitor_tool,
         "web_search": has_web_search_tool,
         "read_file": has_read_file_tool,
+        "list_dir": has_list_dir_tool,
         "check_update": has_check_update_tool,
         "system_update": has_system_update_tool,
     }
@@ -950,23 +1207,41 @@ def score_required_tool_intents(
         has_structural_payload=False,
     ):
         add("get_system_info", 0.82, "ram-capacity-structure")
+    has_large_file_scan_marker = _looks_like_large_file_scan_request(text)
     has_system_info_marker = _contains_any(q_lower, SYSTEM_INFO_KEYWORDS, fuzzy_latin=True) or _contains_any(
         q_lower, _DISK_SPACE_MARKERS, fuzzy_latin=True
     )
-    if has_system_info_marker and not _is_non_action_meta_domain_turn(
-        has_domain_marker=True,
-        has_structural_payload=False,
+    if (
+        has_system_info_marker
+        and not has_large_file_scan_marker
+        and not _is_non_action_meta_domain_turn(
+            has_domain_marker=True,
+            has_structural_payload=False,
+        )
     ):
         add("get_system_info", 0.66, "system-info-lexicon")
+    if has_large_file_scan_marker:
+        scores.pop("get_system_info", None)
+        reasons.pop("get_system_info", None)
     if _contains_any(q_lower, _RAM_USAGE_MARKERS, fuzzy_latin=True) and _contains_any(
         q_lower, ("ram", "memory", "memori"), fuzzy_latin=True
     ):
         add("get_process_memory", 0.16, "ram-usage-structure")
 
-    # 4b) File-reading requests.
+    # 4b) Directory listing/navigation requests.
+    has_list_dir_action = _contains_any(q_lower, _LIST_DIR_ACTION_MARKERS, fuzzy_latin=True)
+    has_list_dir_subject = _contains_any(q_lower, _LIST_DIR_SUBJECT_MARKERS, fuzzy_latin=True)
+    has_list_dir_target = _contains_any(q_lower, _LIST_DIR_TARGET_MARKERS, fuzzy_latin=True)
+    has_path_payload = bool(_PATHLIKE_QUERY_RE.search(text))
+    if has_list_dir_action and (has_list_dir_subject or has_list_dir_target or has_path_payload):
+        add("list_dir", 0.96, "list-dir-action")
+    elif has_list_dir_subject and (has_list_dir_target or has_path_payload):
+        add("list_dir", 0.84, "list-dir-subject-plus-target")
+
+    # 4c) File-reading requests.
     has_read_file_action = _contains_any(q_lower, _READ_FILE_ACTION_MARKERS, fuzzy_latin=True)
     has_read_file_subject = _contains_any(q_lower, _READ_FILE_SUBJECT_MARKERS, fuzzy_latin=True)
-    has_file_payload = bool(_FILELIKE_QUERY_RE.search(text) or _PATHLIKE_QUERY_RE.search(text))
+    has_file_payload = bool(_FILELIKE_QUERY_RE.search(text) or has_path_payload)
     if has_read_file_action and has_file_payload:
         add("read_file", 0.93, "read-file-action-plus-path")
     elif has_read_file_action and has_read_file_subject:
@@ -1100,6 +1375,8 @@ def score_required_tool_intents(
             _contains_any(q_lower, _PRODUCTIVITY_DOC_MARKERS, fuzzy_latin=True),
             _contains_any(q_lower, _READ_FILE_ACTION_MARKERS, fuzzy_latin=True),
             _contains_any(q_lower, _READ_FILE_SUBJECT_MARKERS, fuzzy_latin=True),
+            _contains_any(q_lower, _LIST_DIR_ACTION_MARKERS, fuzzy_latin=True),
+            _contains_any(q_lower, _LIST_DIR_SUBJECT_MARKERS, fuzzy_latin=True),
             _contains_any(q_lower, CHECK_UPDATE_KEYWORDS, fuzzy_latin=True),
             _contains_any(q_lower, APPLY_UPDATE_KEYWORDS, fuzzy_latin=True),
         )
@@ -1166,11 +1443,14 @@ def required_tool_for_query(
     has_server_monitor_tool: bool = False,
     has_web_search_tool: bool = False,
     has_read_file_tool: bool = False,
+    has_list_dir_tool: bool = False,
     has_check_update_tool: bool = False,
     has_system_update_tool: bool = False,
 ) -> str | None:
     """Return deterministic required-tool routing with intent confidence gating."""
     q_lower = _normalize_query(question)
+    if _looks_like_meta_skill_or_workflow_prompt(question):
+        return None
     if (
         has_system_info_tool
         and _contains_any(q_lower, _RAM_CAPACITY_MARKERS)
@@ -1192,6 +1472,7 @@ def required_tool_for_query(
         has_server_monitor_tool=has_server_monitor_tool,
         has_web_search_tool=has_web_search_tool,
         has_read_file_tool=has_read_file_tool,
+        has_list_dir_tool=has_list_dir_tool,
         has_check_update_tool=has_check_update_tool,
         has_system_update_tool=has_system_update_tool,
     )

@@ -14,9 +14,16 @@ from typing import Any
 
 from loguru import logger
 
-from kabot.agent.cron_fallback_nlp import extract_weather_location
+from kabot.agent.cron_fallback_nlp import (
+    extract_weather_location,
+    looks_like_meta_skill_or_workflow_prompt,
+)
 from kabot.agent.fallback_i18n import t
-from kabot.agent.loop_core.tool_enforcement import _query_has_tool_payload
+from kabot.agent.loop_core.tool_enforcement import (
+    _extract_list_dir_path,
+    _extract_read_file_path,
+    _query_has_tool_payload,
+)
 from kabot.agent.semantic_intent import arbitrate_semantic_intent
 from kabot.agent.skills import (
     looks_like_skill_creation_request,
@@ -181,6 +188,23 @@ _RUNTIME_META_FEEDBACK_MARKERS = (
     "hang",
     "lag",
     "ngelag",
+)
+_FILESYSTEM_LOCATION_QUERY_PATTERNS = (
+    r"\bwhere are you now\b",
+    r"\bwhere (?:are|r) you\b",
+    r"\bcurrent (?:folder|directory|working directory|workspace)\b",
+    r"\bwhat (?:folder|directory) are you in\b",
+    r"\b(?:cwd|pwd)\b",
+    r"\blokasi(?:mu)?(?: sekarang)? dimana\b",
+    r"\bfolder(?:mu)?(?: sekarang)? dimana\b",
+    r"\bdirektori(?:mu)?(?: sekarang)? dimana\b",
+    r"\bpath(?:mu)?(?: sekarang)? dimana\b",
+    r"你现在在哪个(?:文件夹|資料夾|目录|目錄)",
+    r"你現在在哪個(?:文件夾|資料夾|目錄|目录)",
+    r"今どの(?:フォルダ|ディレクトリ)にいる",
+    r"現在どの(?:フォルダ|ディレクトリ)にいる",
+    r"ตอนนี้คุณอยู่(?:โฟลเดอร์|ไดเรกทอรี)ไหน",
+    r"ตอนนี้อยู่(?:โฟลเดอร์|ไดเรกทอรี)ไหน",
 )
 _SKILL_CREATION_APPROVAL_MARKERS = (
     "yes",
@@ -584,6 +608,84 @@ def _looks_like_weather_context_followup(text: str) -> bool:
     return any(marker in normalized for marker in _WEATHER_CONTEXT_FOLLOWUP_MARKERS)
 
 
+def _looks_like_filesystem_location_query(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if len(normalized) > 120:
+        return False
+    return any(re.search(pattern, normalized) for pattern in _FILESYSTEM_LOCATION_QUERY_PATTERNS)
+
+
+def _build_filesystem_location_context_note(loop: Any, session: Any, last_tool_context: dict[str, Any] | None) -> str:
+    workspace = getattr(loop, "workspace", None)
+    workspace_path = ""
+    if isinstance(workspace, Path):
+        workspace_path = str(workspace.expanduser().resolve())
+    elif isinstance(workspace, str) and str(workspace).strip():
+        try:
+            workspace_path = str(Path(workspace).expanduser().resolve())
+        except Exception:
+            workspace_path = str(workspace).strip()
+
+    last_path = ""
+    if isinstance(last_tool_context, dict):
+        last_path = str(last_tool_context.get("path") or "").strip()
+
+    lines = ["[System Note: Filesystem location context]"]
+    if workspace_path:
+        lines.append(f"Current workspace path: {workspace_path}")
+    if last_path:
+        lines.append(f"Last navigated filesystem path: {last_path}")
+    lines.append(
+        "Answer naturally in the user's language. If they ask where you are now, use the concrete path context above."
+    )
+    return "\n".join(lines)
+
+
+def _build_explicit_file_analysis_note(path: str) -> str:
+    normalized_path = str(path or "").strip()
+    if not normalized_path:
+        return ""
+    return "\n".join(
+        (
+            "[System Note: Explicit file reference]",
+            f"- The user referenced this concrete file path: {normalized_path}",
+            "- If the user is asking about the file's contents, structure, styling, config, or attributes, call read_file on that path before answering.",
+            "- Do not ask the user to resend the file path when it is already present.",
+            "- After reading, answer the real question naturally in the user's language instead of dumping the file unless they explicitly ask for the raw content.",
+        )
+    )
+
+
+def _message_needs_full_skill_context(context_builder: Any, message: str, profile: str) -> bool:
+    """Preserve full context when the current turn would auto-load skills."""
+    if not str(message or "").strip():
+        return False
+
+    skills_loader = getattr(context_builder, "skills", None)
+    matcher = getattr(skills_loader, "match_skills", None)
+    if not callable(matcher):
+        return False
+
+    try:
+        matches = matcher(message, profile)
+    except TypeError:
+        try:
+            matches = matcher(message)
+        except Exception as exc:
+            logger.debug(f"Skill fast-path bypass check failed: {exc}")
+            return False
+    except Exception as exc:
+        logger.debug(f"Skill fast-path bypass check failed: {exc}")
+        return False
+
+    if isinstance(matches, (list, tuple, set)):
+        return len(matches) > 0
+    return False
+
+
 def _looks_like_explicit_new_request(text: str) -> bool:
     """
     Detect short-but-substantive turns that should not inherit pending follow-up tool state.
@@ -698,10 +800,11 @@ def _set_last_tool_context(session: Any, tool_name: str, now_ts: float, source_t
         "source": normalized_source,
         "updated_at": now_ts,
     }
+    previous = metadata.get(_LAST_TOOL_CONTEXT_KEY)
+    previous_context = previous if isinstance(previous, dict) else None
     if normalized_tool == "stock":
         payload["symbol"] = normalized_source
     elif normalized_tool == "weather":
-        previous = metadata.get(_LAST_TOOL_CONTEXT_KEY)
         previous_location = ""
         if isinstance(previous, dict):
             previous_location = str(previous.get("location") or "").strip()
@@ -715,6 +818,14 @@ def _set_last_tool_context(session: Any, tool_name: str, now_ts: float, source_t
             if looks_degraded:
                 candidate_location = previous_location
         payload["location"] = candidate_location or normalized_source
+    elif normalized_tool == "list_dir":
+        candidate_path = _extract_list_dir_path(source_text, last_tool_context=previous_context)
+        if candidate_path:
+            payload["path"] = candidate_path
+    elif normalized_tool == "read_file":
+        candidate_path = _extract_read_file_path(source_text)
+        if candidate_path:
+            payload["path"] = candidate_path
     metadata[_LAST_TOOL_CONTEXT_KEY] = payload
 
 
@@ -971,6 +1082,7 @@ def _build_budget_hints(
     fast_path: bool,
     skip_history_for_speed: bool,
     token_mode: str,
+    probe_mode: bool = False,
 ) -> dict[str, Any]:
     load_level = "normal"
     if dropped_count > 0 or history_limit <= 12 or fast_path or skip_history_for_speed:
@@ -982,6 +1094,7 @@ def _build_budget_hints(
         "history_limit": max(0, int(history_limit)),
         "dropped_count": max(0, int(dropped_count)),
         "fast_path": bool(fast_path),
+        "probe_mode": bool(probe_mode),
         "token_mode": str(token_mode or "boros").strip().lower(),
     }
 
@@ -1180,6 +1293,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
 
     direct_tools = {
         "read_file",
+        "list_dir",
         "get_process_memory",
         "get_system_info",
         "cleanup_system",
@@ -1259,12 +1373,16 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         last_tool_context=last_tool_context,
         payload_checker=_query_has_tool_payload,
     )
+    meta_skill_reference_turn = looks_like_meta_skill_or_workflow_prompt(effective_content)
     if semantic_hint.kind in {"advice_turn", "meta_feedback"}:
         required_tool = None
         required_tool_query = effective_content
     elif semantic_hint.required_tool:
         required_tool = semantic_hint.required_tool
         required_tool_query = str(semantic_hint.required_tool_query or effective_content).strip()
+    if meta_skill_reference_turn:
+        required_tool = None
+        required_tool_query = effective_content
     is_non_action_feedback = bool(is_non_action_feedback or semantic_hint.kind == "meta_feedback")
 
     if (
@@ -1482,11 +1600,18 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         skill_creation_intent = False
     forced_skill_names: list[str] | None = None
     llm_current_message = effective_content
+    filesystem_location_context_note = ""
+    explicit_file_analysis_note = ""
     skill_creation_stage = str((current_skill_flow or {}).get("stage") or "discovery").strip().lower() or "discovery"
     skill_workflow_kind = "install" if skill_install_intent else current_skill_flow_kind
     skill_creation_request_text = str((current_skill_flow or {}).get("request_text") or effective_content).strip()
     skill_creation_approved = False
     if skill_creation_intent or skill_install_intent:
+        # Skill workflows must outrank deterministic tool routing; otherwise
+        # ordinary domain words like "weather" or repo-like text can hijack
+        # create/update/install requests into stock/weather direct tools.
+        required_tool = None
+        required_tool_query = ""
         if (skill_creation_followup or skill_install_followup) and current_skill_flow:
             skill_creation_request_text = str(current_skill_flow.get("request_text") or skill_creation_request_text).strip()
             effective_content = (
@@ -1516,6 +1641,22 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         )
     elif current_skill_flow and is_explicit_new_request:
         _clear_skill_creation_flow(session)
+
+    if (
+        not required_tool
+        and not skill_creation_intent
+        and not skill_install_intent
+        and _looks_like_filesystem_location_query(effective_content)
+    ):
+        filesystem_location_context_note = _build_filesystem_location_context_note(loop, session, last_tool_context)
+        if filesystem_location_context_note:
+            llm_current_message = f"{effective_content}\n\n{filesystem_location_context_note}".strip()
+    elif not required_tool and not skill_creation_intent and not skill_install_intent:
+        explicit_file_path = _extract_read_file_path(effective_content)
+        if explicit_file_path:
+            explicit_file_analysis_note = _build_explicit_file_analysis_note(explicit_file_path)
+            if explicit_file_analysis_note:
+                llm_current_message = f"{effective_content}\n\n{explicit_file_analysis_note}".strip()
 
     if required_tool:
         _set_pending_followup_tool(session, required_tool, now_ts, str(required_tool_query or effective_content))
@@ -1551,6 +1692,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             msg.metadata.pop("semantic_intent_hint", None)
         msg.metadata["suppress_required_tool_inference"] = bool(
             semantic_hint.kind in {"advice_turn", "meta_feedback"}
+            or meta_skill_reference_turn
+            or skill_creation_intent
+            or skill_install_intent
         )
         if required_tool:
             msg.metadata["required_tool"] = required_tool
@@ -1584,6 +1728,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and bool(getattr(perf_cfg, "fast_first_response", True))
         and not decision.is_complex
         and not required_tool
+        and not filesystem_location_context_note
+        and not explicit_file_analysis_note
     )
 
     queue_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
@@ -1684,6 +1830,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             except Exception as exc:
                 logger.warning(f"Failed to resolve routed context builder: {exc}")
 
+        if fast_simple_context and _message_needs_full_skill_context(
+            context_builder,
+            llm_current_message,
+            str(decision.profile),
+        ):
+            fast_simple_context = False
+
         if fast_direct_context or fast_simple_context:
             messages = [{"role": "user", "content": effective_content}]
             context_build_ms = 0
@@ -1695,6 +1848,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 fast_path=bool(fast_direct_context or fast_simple_context),
                 skip_history_for_speed=skip_history_for_speed,
                 token_mode=token_mode,
+                probe_mode=probe_mode,
             )
             messages = await asyncio.to_thread(
                 context_builder.build_messages,

@@ -1,14 +1,73 @@
+import re
 from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.loop import AgentLoop
+from kabot.agent.loop_core import tool_enforcement as tool_enforcement_module
+from kabot.agent.loop_core.tool_enforcement import (
+    _extract_list_dir_path,
+    _extract_read_file_path,
+    _query_has_tool_payload,
+)
 from kabot.bus.events import InboundMessage
 from kabot.bus.queue import MessageBus
 from kabot.cron.service import CronService
 from kabot.providers.base import LLMResponse, ToolCallRequest
+from kabot.session.manager import Session
+
+
+class _InMemorySessionManager:
+    def __init__(self):
+        self._cache: dict[str, Session] = {}
+
+    def get_or_create(self, key: str) -> Session:
+        if key not in self._cache:
+            self._cache[key] = Session(key=key)
+        return self._cache[key]
+
+    def save(self, session: Session) -> None:
+        self._cache[session.key] = session
+
+
+class _RecordingLLMProvider:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def get_default_model(self) -> str:
+        return "openai-codex/gpt-5.3-codex"
+
+    async def chat(
+        self,
+        messages,
+        tools=None,
+        model=None,
+        max_tokens=4096,
+        temperature=0.7,
+    ):
+        user_message = next(
+            (str(item.get("content") or "") for item in reversed(messages) if item.get("role") == "user"),
+            "",
+        )
+        self.calls.append(user_message)
+
+        workspace_match = re.search(r"Current workspace path: (.+)", user_message)
+        last_path_match = re.search(r"Last navigated filesystem path: (.+)", user_message)
+        workspace_path = workspace_match.group(1).strip() if workspace_match else ""
+        last_path = last_path_match.group(1).strip() if last_path_match else ""
+
+        if "你现在在哪个" in user_message:
+            content = f"我现在在工作区 {workspace_path}，最近查看的文件夹是 {last_path}。"
+        elif "ตอนนี้คุณอยู่" in user_message:
+            content = f"ตอนนี้ฉันอยู่ที่ workspace {workspace_path} และโฟลเดอร์ล่าสุดคือ {last_path}"
+        else:
+            content = f"Current workspace: {workspace_path}; last path: {last_path}"
+
+        return LLMResponse(content=content)
 
 
 @pytest.fixture
@@ -66,6 +125,21 @@ def test_required_tool_for_query_detects_multilingual_weather_and_reminder(agent
     assert agent_loop._required_tool_for_query("อากาศกรุงเทพวันนี้") == "weather"
     assert agent_loop._required_tool_for_query("两分钟后提醒我吃饭") == "cron"
     assert agent_loop._required_tool_for_query("北京今天天气怎么样") == "weather"
+
+
+def test_required_tool_for_query_keeps_meta_skill_and_workflow_prompts_ai_driven(agent_loop):
+    assert agent_loop._required_tool_for_query("follow the weather workflow for this task") is None
+    assert agent_loop._required_tool_for_query("tolong ikuti workflow cuaca untuk tugas ini") is None
+    assert agent_loop._required_tool_for_query("please use the weather skill for this request") is None
+    assert agent_loop._required_tool_for_query("tolong pakai skill weather untuk request ini ya") is None
+    assert agent_loop._required_tool_for_query("tolong pakai skill weather untuk permintaan ini ya") is None
+    assert agent_loop._required_tool_for_query("follow the writing plans workflow for this spec") is None
+    assert agent_loop._required_tool_for_query("ikuti alur writing plans untuk spec ini") is None
+    assert agent_loop._required_tool_for_query("请用 weather 技能处理这个请求。") is None
+    assert agent_loop._required_tool_for_query("请用 cron 技能处理这个请求。") is None
+    assert agent_loop._required_tool_for_query("请用 apple-reminders 技能处理这个请求。") is None
+    assert agent_loop._required_tool_for_query("ช่วยใช้สกิล weather กับงานนี้หน่อย") is None
+    assert agent_loop._required_tool_for_query("writing-plans スキルを使ってこの依頼を手伝って") is None
 
 
 def test_required_tool_for_query_prefers_cleanup_when_cleanup_intent_and_disk_terms_overlap(agent_loop):
@@ -140,6 +214,82 @@ def test_required_tool_for_query_does_not_misclassify_file_or_stop_messages_as_s
     assert agent_loop._required_tool_for_query("jangan bahas crypto") is None
     assert agent_loop._required_tool_for_query("bukan tentang berita") is None
     assert agent_loop._required_tool_for_query("market cap bbca sekarang") == "stock"
+
+
+def test_required_tool_for_query_does_not_treat_workspace_paths_as_system_info(agent_loop):
+    assert (
+        agent_loop._required_tool_for_query(
+            r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html font pada web ini"
+        )
+        is None
+    )
+    assert (
+        agent_loop._required_tool_for_query(
+            "C:/Users/Arvy Kairi/.kabot/workspace/landing_hacker.html font pada web ini"
+        )
+        is None
+    )
+
+
+def test_required_tool_for_query_does_not_force_cleanup_or_sysinfo_for_large_file_scan_requests(agent_loop):
+    assert (
+        agent_loop._required_tool_for_query(
+            "cari file/folder yang ukurannya besar, karena ssd 256gb sisanya cuma 18gb an"
+        )
+        is None
+    )
+    assert (
+        agent_loop._required_tool_for_query(
+            "mantap sekali, kalau untuk file atau folder yang ukurannya besar ada ga? coba periksa"
+        )
+        is None
+    )
+
+
+def test_required_tool_for_query_routes_directory_listing_queries_to_list_dir(agent_loop):
+    assert agent_loop._required_tool_for_query("cek file/folder di desktop isinya apa aja") == "list_dir"
+    assert agent_loop._required_tool_for_query("tolong masuk ke desktop di pc") == "list_dir"
+    assert agent_loop._required_tool_for_query(r"tampilkan isi folder C:\Users\Arvy Kairi\Desktop\bot") == "list_dir"
+    assert agent_loop._required_tool_for_query("tampilkan isi folder /var/log") == "list_dir"
+
+
+def test_required_tool_for_query_routes_multilingual_directory_listing_queries_to_list_dir(agent_loop):
+    assert agent_loop._required_tool_for_query("显示桌面文件夹内容") == "list_dir"
+    assert agent_loop._required_tool_for_query("デスクトップフォルダを表示して") == "list_dir"
+    assert agent_loop._required_tool_for_query("เปิดโฟลเดอร์เดสก์ท็อป") == "list_dir"
+    assert agent_loop._required_tool_for_query("显示 文件夹 bot") == "list_dir"
+    assert agent_loop._required_tool_for_query("表示 フォルダ bot") == "list_dir"
+    assert agent_loop._required_tool_for_query("เปิด โฟลเดอร์ bot") == "list_dir"
+
+
+def test_filesystem_extractors_support_directory_queries_without_false_read_file_path(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+    expected_desktop = str(tool_enforcement_module.Path("/Users/Arvy Kairi") / "Desktop")
+
+    assert _extract_read_file_path("cek file/folder di desktop isinya apa aja") is None
+    assert _extract_list_dir_path("cek file/folder di desktop isinya apa aja") == expected_desktop
+    assert _extract_list_dir_path(r"tampilkan isi folder C:\Users\Arvy Kairi\Desktop\bot") == r"C:\Users\Arvy Kairi\Desktop\bot"
+    assert _extract_list_dir_path("tampilkan isi folder /var/log") == "/var/log"
+
+
+def test_filesystem_extractors_support_multilingual_directory_aliases(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+    expected_desktop = str(tool_enforcement_module.Path("/Users/Arvy Kairi") / "Desktop")
+    expected_downloads = str(tool_enforcement_module.Path("/Users/Arvy Kairi") / "Downloads")
+
+    assert _extract_list_dir_path("显示桌面文件夹内容") == expected_desktop
+    assert _extract_list_dir_path("デスクトップフォルダを表示して") == expected_desktop
+    assert _extract_list_dir_path("เปิดโฟลเดอร์เดสก์ท็อป") == expected_desktop
+    assert _extract_list_dir_path("显示下载文件夹") == expected_downloads
+    assert _extract_list_dir_path("显示 文件夹 bot", last_tool_context={"path": expected_desktop}) == str(tool_enforcement_module.Path(expected_desktop) / "bot")
+    assert _extract_list_dir_path("表示 フォルダ bot", last_tool_context={"path": expected_desktop}) == str(tool_enforcement_module.Path(expected_desktop) / "bot")
+    assert _extract_list_dir_path("เปิด โฟลเดอร์ bot", last_tool_context={"path": expected_desktop}) == str(tool_enforcement_module.Path(expected_desktop) / "bot")
+
+
+def test_query_has_tool_payload_treats_multilingual_relative_folder_turns_as_new_list_dir_payload():
+    assert _query_has_tool_payload("list_dir", "显示 文件夹 bot") is True
+    assert _query_has_tool_payload("list_dir", "表示 フォルダ bot") is True
+    assert _query_has_tool_payload("list_dir", "เปิด โฟลเดอร์ bot") is True
 
 
 def test_required_tool_for_query_tolerates_common_typos_for_core_intents(agent_loop):
@@ -234,6 +384,59 @@ async def test_execute_required_tool_fallback_read_file_calls_read_file_tool(age
     result = await agent_loop._execute_required_tool_fallback("read_file", msg)
     assert "providers" in result
     execute_mock.assert_awaited_once_with("read_file", {"path": "config.json"})
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_list_dir_uses_platform_aliases_and_followup_context(agent_loop, monkeypatch):
+    execute_mock = AsyncMock(return_value="📁 bot\n📁 openclaw")
+    agent_loop.tools.execute = execute_mock
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+    expected_desktop = str(tool_enforcement_module.Path("/Users/Arvy Kairi") / "Desktop")
+
+    first_msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="cek file/folder di desktop isinya apa aja",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("list_dir", first_msg)
+    assert "bot" in result
+    execute_mock.assert_awaited_once_with("list_dir", {"path": expected_desktop})
+
+    execute_mock.reset_mock()
+    followup_msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="ya tampilkan",
+        metadata={"last_tool_context": {"path": expected_desktop}},
+        timestamp=datetime.now(),
+    )
+
+    followup_result = await agent_loop._execute_required_tool_fallback("list_dir", followup_msg)
+    assert "bot" in followup_result
+    execute_mock.assert_awaited_once_with("list_dir", {"path": expected_desktop})
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_list_dir_resolves_relative_subfolder_from_last_context(agent_loop):
+    execute_mock = AsyncMock(return_value="📄 CHANGELOG.md\n📁 kabot")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="tampilkan isi folder kabot",
+        metadata={"last_tool_context": {"path": r"C:\Users\Arvy Kairi\Desktop\bot"}},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("list_dir", msg)
+    assert "CHANGELOG" in result
+    execute_mock.assert_awaited_once_with("list_dir", {"path": r"C:\Users\Arvy Kairi\Desktop\bot\kabot"})
 
 
 @pytest.mark.asyncio
@@ -1172,3 +1375,106 @@ async def test_execute_required_tool_fallback_cron_supports_custom_3_1_2_1_cycle
 
     assert len(group_ids) == 1
     assert len(titles) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_process_direct_supports_multilingual_directory_navigation_smoke(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_desktop = fake_home / "Desktop"
+    fake_bot = fake_desktop / "bot"
+    fake_bot.mkdir(parents=True)
+    (fake_desktop / "note.txt").write_text("hello", encoding="utf-8")
+    (fake_bot / "CHANGELOG.md").write_text("demo", encoding="utf-8")
+
+    provider = _RecordingLLMProvider()
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=tmp_path / "workspace",
+        model="openai-codex/gpt-5.3-codex",
+        cron_service=CronService(tmp_path / "cron_jobs.json"),
+        session_manager=_InMemorySessionManager(),
+    )
+    loop.workspace.mkdir(parents=True, exist_ok=True)
+    loop.memory = SimpleNamespace(
+        create_session=lambda *args, **kwargs: None,
+        add_message=AsyncMock(return_value=None),
+        get_conversation_context=lambda *args, **kwargs: [],
+        metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+    )
+    loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+    loop._ensure_memory_warmup_task = lambda: None
+    loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+    loop.context.build_messages = MagicMock(
+        side_effect=lambda history, current_message, **kwargs: [
+            {"role": "system", "content": "ctx"},
+            {"role": "user", "content": current_message},
+        ]
+    )
+    loop._resolve_context_for_message = lambda _msg: loop.context
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: Path(fake_home))
+
+    first = await loop.process_direct("显示桌面文件夹内容", session_key="cli:fs-smoke", chat_id="fs-smoke")
+    second = await loop.process_direct("表示 フォルダ bot", session_key="cli:fs-smoke", chat_id="fs-smoke")
+    thai_first = await loop.process_direct("เปิดโฟลเดอร์เดสก์ท็อป", session_key="cli:fs-smoke-th", chat_id="fs-smoke-th")
+    third = await loop.process_direct("เปิด โฟลเดอร์ bot", session_key="cli:fs-smoke-th", chat_id="fs-smoke-th")
+
+    assert "bot" in first
+    assert "note.txt" in first
+    assert "CHANGELOG.md" in second
+    assert "bot" in thai_first
+    assert "CHANGELOG.md" in third
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_process_direct_keeps_multilingual_location_queries_ai_driven(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_desktop = fake_home / "Desktop"
+    fake_bot = fake_desktop / "bot"
+    fake_bot.mkdir(parents=True)
+    (fake_bot / "CHANGELOG.md").write_text("demo", encoding="utf-8")
+
+    provider = _RecordingLLMProvider()
+    workspace = tmp_path / "workspace"
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=workspace,
+        model="openai-codex/gpt-5.3-codex",
+        cron_service=CronService(tmp_path / "cron_jobs.json"),
+        session_manager=_InMemorySessionManager(),
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    loop.memory = SimpleNamespace(
+        create_session=lambda *args, **kwargs: None,
+        add_message=AsyncMock(return_value=None),
+        get_conversation_context=lambda *args, **kwargs: [],
+        metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+    )
+    loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+    loop._ensure_memory_warmup_task = lambda: None
+    loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+    loop.context.build_messages = MagicMock(
+        side_effect=lambda history, current_message, **kwargs: [
+            {"role": "system", "content": "ctx"},
+            {"role": "user", "content": current_message},
+        ]
+    )
+    loop._resolve_context_for_message = lambda _msg: loop.context
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: Path(fake_home))
+
+    await loop.process_direct("显示桌面文件夹内容", session_key="cli:fs-location", chat_id="fs-location")
+    await loop.process_direct("表示 フォルダ bot", session_key="cli:fs-location", chat_id="fs-location")
+
+    chinese = await loop.process_direct("你现在在哪个文件夹", session_key="cli:fs-location", chat_id="fs-location")
+    thai = await loop.process_direct("ตอนนี้คุณอยู่โฟลเดอร์ไหน", session_key="cli:fs-location", chat_id="fs-location")
+
+    expected_workspace = str(workspace.resolve())
+    expected_last_path = str(fake_bot.resolve())
+    assert expected_workspace in chinese
+    assert expected_last_path in chinese
+    assert expected_workspace in thai
+    assert expected_last_path in thai
+    location_calls = [call for call in provider.calls if "[System Note: Filesystem location context]" in call]
+    assert len(location_calls) == 2
