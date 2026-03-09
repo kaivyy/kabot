@@ -19,6 +19,8 @@ def test_docs_header_is_sticky() -> None:
     assert ".md-header {" in css
     assert "position: sticky;" in css
     assert "top: 0;" in css
+    assert ".md-header.kabot-header-scrolled {" in css
+    assert "border-bottom-color: var(--kabot-line-strong);" in css
 
 
 def test_docs_sidebars_are_sticky_on_desktop() -> None:
@@ -69,7 +71,9 @@ def test_docs_font_toggle_script_persists_mode() -> None:
     assert "Font: Cyber" in js
     assert "document$.subscribe" in js
     assert "kabot-is-stuck" in js
+    assert "kabot-header-scrolled" in js
     assert "querySelectorAll(\".md-sidebar--primary, .md-sidebar--secondary\")" in js
+    assert "window.scrollY > 8" in js
 
 
 def test_docs_mobile_rules_keep_header_compact() -> None:
@@ -81,3 +85,9 @@ def test_docs_mobile_rules_keep_header_compact() -> None:
     assert "-webkit-overflow-scrolling: touch;" in css
     assert ".md-nav--primary .md-nav__link" in css
     assert "min-height: 2.4rem;" in css
+    assert ".md-sidebar--primary {" in css
+    assert "backdrop-filter: blur(18px);" in css
+    assert ".md-nav--primary .md-nav__title" in css
+    assert "text-transform: uppercase;" in css
+    assert ".md-nav--primary .md-nav[aria-expanded=\"true\"]" in css
+    assert "transition: opacity 180ms ease, transform 180ms ease;" in css

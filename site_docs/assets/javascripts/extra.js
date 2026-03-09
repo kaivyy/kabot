@@ -10,6 +10,15 @@ function getStickyOffset() {
   return headerHeight + 16;
 }
 
+function syncHeaderScrollState() {
+  const header = document.querySelector(".md-header");
+  if (!header) {
+    return;
+  }
+
+  header.classList.toggle("kabot-header-scrolled", window.scrollY > 8);
+}
+
 function syncStickySidebarState() {
   const stickyOffset = getStickyOffset();
   document
@@ -68,6 +77,7 @@ function initKabotDocsTheme() {
   const mode = getStoredFontMode();
   applyFontMode(mode);
   ensureFontToggle();
+  syncHeaderScrollState();
   syncStickySidebarState();
 }
 
@@ -77,5 +87,6 @@ if (window.document$ && typeof window.document$.subscribe === "function") {
   document.addEventListener("DOMContentLoaded", initKabotDocsTheme);
 }
 
+window.addEventListener("scroll", syncHeaderScrollState, { passive: true });
 window.addEventListener("scroll", syncStickySidebarState, { passive: true });
 window.addEventListener("resize", syncStickySidebarState, { passive: true });
