@@ -26,8 +26,12 @@ def test_docs_sidebars_are_sticky_on_desktop() -> None:
 
     assert "@media screen and (min-width: 60em)" in css
     assert "@media screen and (min-width: 76.25em)" in css
+    assert ".md-sidebar,\n.md-content {" not in css
     assert ".md-sidebar--secondary .md-sidebar__scrollwrap" in css
     assert ".md-sidebar--primary .md-sidebar__scrollwrap" in css
+    assert ".md-sidebar--secondary {" in css
+    assert ".md-sidebar--primary {" in css
+    assert "position: sticky;" in css
     assert "max-height: calc(100vh - var(--md-header-height)" in css
     assert "overflow-y: auto;" in css
     assert "backdrop-filter: blur(16px);" in css
@@ -62,3 +66,11 @@ def test_docs_font_toggle_script_persists_mode() -> None:
     assert "Font: Clean" in js
     assert "Font: Cyber" in js
     assert "document$.subscribe" in js
+
+
+def test_docs_mobile_rules_keep_header_compact() -> None:
+    css = _read_extra_css()
+
+    assert "@media screen and (max-width: 59.984375em)" in css
+    assert "display: none;" in css
+    assert "max-width: 100%;" in css

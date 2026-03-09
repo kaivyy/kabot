@@ -61,7 +61,6 @@ body::after {
 .md-header,
 .md-main,
 .md-main__inner,
-.md-sidebar,
 .md-content {
   position: relative;
   z-index: 1;
@@ -254,9 +253,13 @@ html.kabot-font-cyber .md-typeset code {
 }
 
 @media screen and (min-width: 60em) {
-  .md-sidebar--secondary .md-sidebar__scrollwrap {
+  .md-sidebar--secondary {
     position: sticky;
     top: calc(var(--md-header-height) + 1rem);
+    align-self: flex-start;
+  }
+
+  .md-sidebar--secondary .md-sidebar__scrollwrap {
     max-height: calc(100vh - var(--md-header-height) - 2rem);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -269,9 +272,13 @@ html.kabot-font-cyber .md-typeset code {
 }
 
 @media screen and (min-width: 76.25em) {
-  .md-sidebar--primary .md-sidebar__scrollwrap {
+  .md-sidebar--primary {
     position: sticky;
     top: calc(var(--md-header-height) + 1rem);
+    align-self: flex-start;
+  }
+
+  .md-sidebar--primary .md-sidebar__scrollwrap {
     max-height: calc(100vh - var(--md-header-height) - 2rem);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -360,5 +367,16 @@ html.kabot-font-cyber .md-typeset code {
   .md-sidebar--primary,
   .md-sidebar--secondary {
     background: rgba(4, 8, 16, 0.96);
+  }
+}
+
+@media screen and (max-width: 59.984375em) {
+  .md-content__inner {
+    max-width: 100%;
+    padding: 1rem 0.9rem 2rem;
+  }
+
+  .kabot-font-toggle {
+    display: none;
   }
 }
