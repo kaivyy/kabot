@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Space+Mono:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700;800&display=swap');
 
 :root {
   --kabot-bg: #05070d;
@@ -22,7 +22,7 @@ body {
     radial-gradient(circle at top right, rgba(0, 255, 200, 0.11), transparent 25%),
     linear-gradient(180deg, var(--kabot-bg) 0%, var(--kabot-bg-2) 100%);
   color: var(--kabot-text);
-  font-family: 'Space Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', 'Cascadia Code', monospace;
 }
 
 body::before {
@@ -81,7 +81,7 @@ body::after {
 .md-search__input,
 .md-content,
 .md-typeset {
-  font-family: 'Space Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', 'Cascadia Code', monospace;
 }
 
 .md-header__title,
@@ -89,8 +89,9 @@ body::after {
 .md-typeset h2,
 .md-typeset h3,
 .md-ellipsis {
-  font-family: 'Orbitron', 'Space Mono', sans-serif;
-  letter-spacing: 0.04em;
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Code', monospace;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .md-typeset h1 {
@@ -145,7 +146,7 @@ body::after {
 .md-typeset code,
 .md-typeset pre,
 .md-typeset kbd {
-  font-family: 'Space Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', 'Cascadia Code', monospace;
 }
 
 .md-typeset .highlight,

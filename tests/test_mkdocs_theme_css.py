@@ -27,3 +27,13 @@ def test_docs_sidebars_are_sticky_on_desktop() -> None:
     assert "overflow-y: auto;" in css
     assert "backdrop-filter: blur(16px);" in css
     assert "border-color: var(--kabot-line-strong);" in css
+
+
+def test_docs_fonts_use_restrained_hacker_stack() -> None:
+    css = _read_extra_css()
+
+    assert "IBM+Plex+Mono" in css
+    assert "JetBrains+Mono" in css
+    assert "'IBM Plex Mono'" in css
+    assert "'JetBrains Mono'" in css
+    assert "'Orbitron'" not in css
