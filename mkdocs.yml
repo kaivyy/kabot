@@ -1,0 +1,90 @@
+site_name: Kabot Docs
+site_description: Cyberpunk neon documentation for Kabot, from first install to advanced operator workflows.
+site_url: https://kaivyy.github.io/kabot/
+repo_url: https://github.com/kaivyy/kabot
+repo_name: kaivyy/kabot
+edit_uri: edit/main/
+docs_dir: site_docs
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  font: false
+  logo: kabotimage.png
+  favicon: kabotimage.png
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+  palette:
+    - scheme: slate
+      primary: black
+      accent: lime
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+extra_javascript:
+  - assets/javascripts/extra.js
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - pymdownx.keys
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/index.md
+      - Install: getting-started/install.md
+      - First Run: getting-started/first-run.md
+      - Quickstart: getting-started/quickstart.md
+      - Dashboard: getting-started/dashboard.md
+  - User Guide:
+      - Configuration: guide/configuration.md
+      - CLI: guide/cli.md
+      - Gateway and Dashboard: guide/gateway-dashboard.md
+      - Channels: guide/channels.md
+      - Google Suite: guide/google-suite.md
+      - Skills: guide/skills.md
+      - Memory: guide/memory.md
+      - Multi-Agent: guide/multi-agent.md
+      - Security: guide/security.md
+      - Troubleshooting: guide/troubleshooting.md
+  - Advanced:
+      - Overview: advanced/index.md
+      - Runtime Architecture: advanced/runtime-architecture.md
+      - Operator Patterns: advanced/operator-patterns.md
+      - Integrations and Extensions: advanced/integrations.md
+  - Reference:
+      - Commands: reference/commands.md
+      - Configuration: reference/configuration.md
+      - Authentication: reference/authentication.md
+      - Dashboard Routes: reference/dashboard-routes.md

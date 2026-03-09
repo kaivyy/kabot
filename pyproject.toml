@@ -51,6 +51,11 @@ dev = [
     "google-auth-httplib2",
     "google-auth-oauthlib",
 ]
+docs = [
+    "mkdocs>=1.6.0,<2.0",
+    "mkdocs-material>=9.5.0",
+    "pymdown-extensions>=10.0.0",
+]
 
 [project.scripts]
 kabot = "kabot.cli.commands:app"

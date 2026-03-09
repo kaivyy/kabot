@@ -22,7 +22,7 @@
 
 If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
 
-[Website](https://kabot.ai) · [Docs](docs/) · [How-To-Use](HOW_TO_USE.MD) · [Getting Started](#-quick-start) · [Telegram](https://t.me/kabot_support) · [FAQ](#faq)
+[Website](https://kabot.ai) · [Docs](https://kaivyy.github.io/kabot/) · [How-To-Use](HOW_TO_USE.MD) · [Getting Started](#-quick-start) · [Telegram](https://t.me/kabot_support) · [FAQ](#faq)
 
 ---
 
