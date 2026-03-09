@@ -14,6 +14,8 @@
   --kabot-muted: #8db1c7;
   --kabot-warning: #ffd166;
   --kabot-shadow: 0 0 0.9rem rgba(0, 255, 200, 0.18);
+  --kabot-font-body: 'IBM Plex Mono', 'JetBrains Mono', 'Cascadia Code', monospace;
+  --kabot-font-heading: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Code', monospace;
 }
 
 body {
@@ -22,7 +24,8 @@ body {
     radial-gradient(circle at top right, rgba(0, 255, 200, 0.11), transparent 25%),
     linear-gradient(180deg, var(--kabot-bg) 0%, var(--kabot-bg-2) 100%);
   color: var(--kabot-text);
-  font-family: 'IBM Plex Mono', 'JetBrains Mono', 'Cascadia Code', monospace;
+  font-family: var(--kabot-font-body);
+  line-height: 1.72;
 }
 
 body::before {
@@ -81,7 +84,7 @@ body::after {
 .md-search__input,
 .md-content,
 .md-typeset {
-  font-family: 'IBM Plex Mono', 'JetBrains Mono', 'Cascadia Code', monospace;
+  font-family: var(--kabot-font-body);
 }
 
 .md-header__title,
@@ -89,23 +92,36 @@ body::after {
 .md-typeset h2,
 .md-typeset h3,
 .md-ellipsis {
-  font-family: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Code', monospace;
+  font-family: var(--kabot-font-heading);
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
 .md-typeset h1 {
+  font-size: clamp(2.2rem, 1.8rem + 1vw, 3.1rem);
+  line-height: 1.12;
   color: var(--kabot-neon);
   text-shadow: 0 0 0.8rem rgba(0, 255, 200, 0.35);
 }
 
 .md-typeset h2 {
+  font-size: clamp(1.45rem, 1.2rem + 0.55vw, 2rem);
+  line-height: 1.22;
   color: var(--kabot-acid);
 }
 
 .md-typeset h3,
 .md-typeset h4 {
   color: #7ad9ff;
+}
+
+.md-typeset h3 {
+  font-size: clamp(1.1rem, 1rem + 0.35vw, 1.4rem);
+}
+
+.md-typeset p,
+.md-typeset li {
+  line-height: 1.72;
 }
 
 .md-sidebar__scrollwrap,
@@ -122,7 +138,9 @@ body::after {
 }
 
 .md-content__inner {
-  padding: 1.4rem 1.4rem 2.2rem;
+  max-width: 82ch;
+  margin: 0 auto;
+  padding: 1.6rem 1.6rem 2.6rem;
 }
 
 .md-nav__link--active,
@@ -146,7 +164,7 @@ body::after {
 .md-typeset code,
 .md-typeset pre,
 .md-typeset kbd {
-  font-family: 'IBM Plex Mono', 'JetBrains Mono', 'Cascadia Code', monospace;
+  font-family: var(--kabot-font-body);
 }
 
 .md-typeset .highlight,
@@ -187,6 +205,52 @@ body::after {
 .md-footer {
   background: rgba(5, 7, 13, 0.92);
   border-top: 1px solid var(--kabot-line);
+}
+
+.kabot-font-toggle {
+  margin-left: 0.75rem;
+  border: 1px solid var(--kabot-line-strong);
+  border-radius: 999px;
+  background: rgba(5, 10, 18, 0.78);
+  color: var(--kabot-neon);
+  font-family: var(--kabot-font-body);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.42rem 0.8rem;
+  cursor: pointer;
+  box-shadow: 0 0 0.8rem rgba(0, 255, 200, 0.1);
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.kabot-font-toggle:hover,
+.kabot-font-toggle:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+  color: var(--kabot-acid);
+  border-color: var(--kabot-acid);
+  box-shadow: 0 0 1rem rgba(123, 255, 0, 0.18);
+}
+
+html.kabot-font-cyber {
+  --kabot-font-body: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Code', monospace;
+}
+
+html.kabot-font-cyber .md-header__title,
+html.kabot-font-cyber .md-typeset h1,
+html.kabot-font-cyber .md-typeset h2,
+html.kabot-font-cyber .md-typeset h3,
+html.kabot-font-cyber .md-ellipsis {
+  letter-spacing: 0.05em;
+  text-shadow: 0 0 0.95rem rgba(0, 255, 200, 0.22);
+}
+
+html.kabot-font-cyber .md-typeset code {
+  box-shadow: inset 0 0 0.8rem rgba(0, 255, 200, 0.04);
 }
 
 @media screen and (min-width: 60em) {
