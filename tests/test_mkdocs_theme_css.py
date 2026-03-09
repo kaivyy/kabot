@@ -154,7 +154,12 @@ def test_secondary_toc_spacing_is_more_compact() -> None:
     assert ".md-sidebar--secondary .md-nav--secondary {" in css
     assert "padding: 0.3rem 0.34rem 0.42rem;" in css
     assert ".md-sidebar--secondary .md-nav--secondary .md-nav__title {" in css
-    assert "padding: 0.2rem 0.28rem 0.34rem;" in css
+    assert "display: flex;" in css
+    assert "align-items: center;" in css
+    assert "gap: 0.34rem;" in css
+    assert "padding: 0.3rem 0.38rem 0.46rem;" in css
+    assert "margin-bottom: 0.08rem;" in css
+    assert "line-height: 1.22;" in css
     assert ".md-sidebar--secondary .md-nav--secondary .md-nav__link {" in css
     assert "padding: 0.24rem 0.34rem;" in css
 

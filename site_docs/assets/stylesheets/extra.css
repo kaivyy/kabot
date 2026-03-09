@@ -222,7 +222,12 @@ body::after {
 }
 
 .md-sidebar--secondary .md-nav--secondary .md-nav__title {
-  padding: 0.2rem 0.28rem 0.34rem;
+  display: flex;
+  align-items: center;
+  gap: 0.34rem;
+  padding: 0.3rem 0.38rem 0.46rem;
+  margin-bottom: 0.08rem;
+  line-height: 1.22;
 }
 
 .md-sidebar--secondary .md-nav--secondary .md-nav__link {
