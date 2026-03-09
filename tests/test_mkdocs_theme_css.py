@@ -121,6 +121,7 @@ def test_sidebar_spacing_is_more_refined() -> None:
     assert "gap: 0.24rem;" in css
     assert "padding: 0.18rem 0.28rem 0.46rem;" in css
     assert ".md-nav--primary .md-nav__source {" in css
+    assert ".md-nav--primary .md-nav__source {\n  display: none;" in css
     assert ".md-nav--primary .md-nav__link {" in css
     assert "border-radius: 12px;" in css
 
@@ -143,6 +144,19 @@ def test_sidebar_active_item_uses_elegant_highlight() -> None:
     assert "background: linear-gradient(90deg, rgba(0, 255, 200, 0.16), rgba(0, 255, 200, 0.03));" in css
     assert "box-shadow: inset 0 0 0 1px rgba(0, 255, 200, 0.16);" in css
     assert "font-weight: 600;" in css
+
+
+def test_secondary_toc_spacing_is_more_compact() -> None:
+    css = _read_extra_css()
+
+    assert ".md-sidebar--secondary .md-sidebar__inner {" in css
+    assert "padding: 0.2rem 0.26rem 0.36rem;" in css
+    assert ".md-sidebar--secondary .md-nav--secondary {" in css
+    assert "padding: 0.3rem 0.34rem 0.42rem;" in css
+    assert ".md-sidebar--secondary .md-nav--secondary .md-nav__title {" in css
+    assert "padding: 0.2rem 0.28rem 0.34rem;" in css
+    assert ".md-sidebar--secondary .md-nav--secondary .md-nav__link {" in css
+    assert "padding: 0.24rem 0.34rem;" in css
 
 
 def test_homepage_hero_spacing_is_balanced_after_badge_removal() -> None:
