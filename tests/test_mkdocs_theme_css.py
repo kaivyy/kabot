@@ -118,8 +118,8 @@ def test_sidebar_spacing_is_more_refined() -> None:
     css = _read_extra_css()
 
     assert ".md-nav--primary > .md-nav__list {" in css
-    assert "gap: 0.32rem;" in css
-    assert "padding: 0.28rem 0.36rem 0.58rem;" in css
+    assert "gap: 0.24rem;" in css
+    assert "padding: 0.18rem 0.28rem 0.46rem;" in css
     assert ".md-nav--primary .md-nav__source {" in css
     assert ".md-nav--primary .md-nav__link {" in css
     assert "border-radius: 12px;" in css
@@ -129,11 +129,11 @@ def test_sidebar_brand_title_has_extra_breathing_room() -> None:
     css = _read_extra_css()
 
     assert ".md-nav--primary > .md-nav__title {" in css
-    assert "margin-top: 0.2rem;" in css
-    assert "margin-bottom: 0.24rem;" in css
-    assert "padding: 0.78rem 0.82rem 0.7rem;" in css
-    assert "line-height: 1.28;" in css
-    assert "gap: 0.56rem;" in css
+    assert "margin-top: 0.06rem;" in css
+    assert "margin-bottom: 0.16rem;" in css
+    assert "padding: 0.66rem 0.72rem 0.58rem;" in css
+    assert "line-height: 1.22;" in css
+    assert "gap: 0.46rem;" in css
 
 
 def test_sidebar_active_item_uses_elegant_highlight() -> None:
@@ -149,12 +149,12 @@ def test_homepage_hero_spacing_is_balanced_after_badge_removal() -> None:
     css = _read_extra_css()
 
     assert ".kabot-hero {" in css
-    assert "padding: 2.1rem 2.05rem 1.92rem;" in css
+    assert "padding: 1.92rem 1.88rem 1.72rem;" in css
     assert ".kabot-hero > :first-child {" in css
     assert "margin-top: 0;" in css
     assert ".kabot-hero > :last-child {" in css
     assert "margin-bottom: 0;" in css
     assert ".kabot-hero p {" in css
-    assert "max-width: 56ch;" in css
+    assert "max-width: 54ch;" in css
     assert ".kabot-callout {" in css
-    assert "margin-top: 0.92rem;" in css
+    assert "margin-top: 0.78rem;" in css
