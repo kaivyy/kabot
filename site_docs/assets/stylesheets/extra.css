@@ -269,6 +269,13 @@ html.kabot-font-cyber .md-typeset code {
       0 0 0 1px rgba(0, 255, 200, 0.1),
       0 0 1.1rem rgba(0, 255, 200, 0.16);
   }
+
+  .md-sidebar--secondary.kabot-is-stuck .md-sidebar__scrollwrap {
+    box-shadow:
+      0 0 0 1px rgba(0, 255, 200, 0.18),
+      0 0 1.4rem rgba(0, 255, 200, 0.22),
+      0 0.5rem 1.1rem rgba(0, 0, 0, 0.28);
+  }
 }
 
 @media screen and (min-width: 76.25em) {
@@ -287,6 +294,13 @@ html.kabot-font-cyber .md-typeset code {
     box-shadow:
       0 0 0 1px rgba(0, 255, 200, 0.1),
       0 0 1.1rem rgba(0, 255, 200, 0.16);
+  }
+
+  .md-sidebar--primary.kabot-is-stuck .md-sidebar__scrollwrap {
+    box-shadow:
+      0 0 0 1px rgba(0, 255, 200, 0.18),
+      0 0 1.4rem rgba(0, 255, 200, 0.22),
+      0 0.5rem 1.1rem rgba(0, 0, 0, 0.28);
   }
 }
 
@@ -371,6 +385,20 @@ html.kabot-font-cyber .md-typeset code {
 }
 
 @media screen and (max-width: 59.984375em) {
+  .md-sidebar--primary .md-sidebar__scrollwrap {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 1rem;
+  }
+
+  .md-nav--primary .md-nav__link,
+  .md-nav--primary .md-nav__title {
+    min-height: 2.4rem;
+    padding-top: 0.72rem;
+    padding-bottom: 0.72rem;
+  }
+
   .md-content__inner {
     max-width: 100%;
     padding: 1rem 0.9rem 2rem;

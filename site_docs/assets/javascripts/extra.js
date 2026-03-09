@@ -4,6 +4,22 @@ const FONT_MODES = {
   cyber: "Font: Cyber",
 };
 
+function getStickyOffset() {
+  const header = document.querySelector(".md-header");
+  const headerHeight = header ? header.getBoundingClientRect().height : 0;
+  return headerHeight + 16;
+}
+
+function syncStickySidebarState() {
+  const stickyOffset = getStickyOffset();
+  document
+    .querySelectorAll(".md-sidebar--primary, .md-sidebar--secondary")
+    .forEach((sidebar) => {
+      const top = sidebar.getBoundingClientRect().top;
+      sidebar.classList.toggle("kabot-is-stuck", top <= stickyOffset + 1);
+    });
+}
+
 function getStoredFontMode() {
   const stored = window.localStorage.getItem(FONT_MODE_KEY);
   return stored === "cyber" ? "cyber" : "clean";
@@ -52,6 +68,7 @@ function initKabotDocsTheme() {
   const mode = getStoredFontMode();
   applyFontMode(mode);
   ensureFontToggle();
+  syncStickySidebarState();
 }
 
 if (window.document$ && typeof window.document$.subscribe === "function") {
@@ -59,3 +76,6 @@ if (window.document$ && typeof window.document$.subscribe === "function") {
 } else {
   document.addEventListener("DOMContentLoaded", initKabotDocsTheme);
 }
+
+window.addEventListener("scroll", syncStickySidebarState, { passive: true });
+window.addEventListener("resize", syncStickySidebarState, { passive: true });

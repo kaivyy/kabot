@@ -36,6 +36,8 @@ def test_docs_sidebars_are_sticky_on_desktop() -> None:
     assert "overflow-y: auto;" in css
     assert "backdrop-filter: blur(16px);" in css
     assert "border-color: var(--kabot-line-strong);" in css
+    assert ".md-sidebar--primary.kabot-is-stuck .md-sidebar__scrollwrap" in css
+    assert ".md-sidebar--secondary.kabot-is-stuck .md-sidebar__scrollwrap" in css
 
 
 def test_docs_fonts_use_restrained_hacker_stack() -> None:
@@ -66,6 +68,8 @@ def test_docs_font_toggle_script_persists_mode() -> None:
     assert "Font: Clean" in js
     assert "Font: Cyber" in js
     assert "document$.subscribe" in js
+    assert "kabot-is-stuck" in js
+    assert "querySelectorAll(\".md-sidebar--primary, .md-sidebar--secondary\")" in js
 
 
 def test_docs_mobile_rules_keep_header_compact() -> None:
@@ -74,3 +78,6 @@ def test_docs_mobile_rules_keep_header_compact() -> None:
     assert "@media screen and (max-width: 59.984375em)" in css
     assert "display: none;" in css
     assert "max-width: 100%;" in css
+    assert "-webkit-overflow-scrolling: touch;" in css
+    assert ".md-nav--primary .md-nav__link" in css
+    assert "min-height: 2.4rem;" in css
