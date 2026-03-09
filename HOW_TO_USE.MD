@@ -610,6 +610,76 @@ For hybrid mode, you can specify a custom embedding model:
 
 ---
 
+## 8b. Running 24/7 (Auto-start & Tailscale)
+
+If you want Kabot to run continuously in the background like a proper server—even when your terminal is closed—you can combine Kabot's **Auto-start** feature with **Tailscale** for secure remote access.
+
+### 1. Auto-start (Background Service)
+
+The Auto-start feature turns Kabot into a "background daemon" managed by your operating system, so you don't need to keep a terminal window open.
+
+**How to enable it:**
+1. Run the setup wizard: `kabot config`
+2. Select **Auto-start (Enable boot-up service)**.
+3. Choose `Yes` to enable Kabot to start automatically on boot.
+
+**How it works across operating systems:**
+- **Windows:** Kabot registers itself in the **Task Scheduler** to run `kabot gateway` silently in the background when the system boots.
+- **Linux:** Kabot creates a `systemd` service (`kabot.service`), which is standard for Linux servers.
+- **macOS:** Kabot uses `launchd` by creating a `.plist` file to start on login.
+
+**How to Start/Stop the background service:**
+Because it runs in the background, you use service commands instead of closing a terminal:
+```bash
+# Start the service manually
+kabot service start
+
+# Stop the service manually
+kabot service stop
+
+# Disable auto-start completely
+kabot service disable
+```
+
+### 2. Tailscale Integration (Secure Remote Access)
+
+Tailscale provides a secure, private VPN mesh (Tailnet). Kabot integrates deeply with Tailscale to allow you to securely access your AI from your phone or another laptop anywhere in the world.
+
+**How to enable it:**
+1. Ensure you have the [Tailscale Desktop App](https://tailscale.com/download) installed and running on your machine.
+2. Run `kabot config` -> **Gateway (Port, Host, Bindings)**.
+3. Select **Bind Mode: Tailscale (Private VPN)**.
+
+**What Kabot does automatically:**
+When `kabot gateway` runs, it automatically tells your Tailscale app to expose the Webhook/Dashboard port to your private Tailnet using `tailscale serve --bg`. 
+
+You will see a URL like this in your startup logs:
+`* Tailscale serve active: https://your-pc-name.random-words.ts.net/`
+This `.ts.net` MagicDNS URL allows you to access Kabot securely!
+
+**Windows Troubleshooting - Binary Not Found:**
+If you see `Warning: Tailscale serve setup failed: tailscale binary not found in PATH`, it means Windows doesn't know where Tailscale is installed.
+1. Find your Tailscale install folder (usually `C:\Program Files\Tailscale\`).
+2. Add this folder path to your Windows **Environment Variables** (`Path` variable).
+3. Restart your terminal and run `kabot gateway` again.
+
+**Windows Troubleshooting - Timeout:**
+If you see `Warning: Tailscale serve setup failed: tailscale command timed out`, it means the Tailscale app is waiting for manual permission. To fix this:
+1. Open PowerShell and manually run `tailscale serve 18790`.
+2. Accept any prompts or web logins that appear.
+3. Press `Ctrl+C` to close it.
+4. Run `kabot gateway` again. The timeout will be fixed permanently.
+
+### 3. Native Security Middleware
+
+Kabot includes a built-in security middleware that acts as a bouncer. When Tailscale mode is enabled, Kabot will **automatically drop (403 Forbidden)** any connection that does not originate from:
+- `127.0.0.1` (Localhost)
+- `100.x.x.x` (Your secure Tailscale private subnet)
+
+This guarantees that even if your port is somehow exposed to the public internet, no one outside your Tailnet can reach your Kabot application logic.
+
+---
+
 ## 9. Two Powerful Shortcut Commands (Advanced CLI)
 
 While the Setup Wizard (`kabot setup` / `kabot config`) covers 99% of your needs, Kabot offers two specialized command-line shortcuts for advanced "Power Users".

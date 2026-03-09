@@ -1,6 +1,16 @@
 from kabot.agent.semantic_intent import arbitrate_semantic_intent
 
 
+def test_semantic_intent_detects_not_web_search_chat_correction_as_meta_feedback():
+    hint = arbitrate_semantic_intent(
+        "sekarang senin woi, ini bukan web search, cuma koreksi chat kita. ngerti?",
+        parser_tool=None,
+    )
+
+    assert hint.kind == "meta_feedback"
+    assert hint.clear_pending is True
+
+
 def test_semantic_intent_reuses_weather_context_for_japanese_wind_followup():
     hint = arbitrate_semantic_intent(
         "風は強い？",

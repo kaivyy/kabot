@@ -9,6 +9,38 @@ import time
 from pathlib import Path
 from typing import Any
 
+from kabot.agent.skills_matching import (
+    BUILTIN_SKILLS_DIR,
+    WORKFLOW_CHAINS,
+    _extract_keywords,
+    _intent_alias_bonus,
+    _naive_stem,
+    looks_like_skill_catalog_request,
+    looks_like_skill_creation_request,
+    looks_like_skill_install_request,
+    normalize_skill_reference_name,
+)
+from kabot.agent.skills_parts.runtime import (
+    get_always_skills as runtime_get_always_skills,
+)
+from kabot.agent.skills_parts.runtime import (
+    get_skill_metadata_from_file as runtime_get_skill_metadata_from_file,
+)
+from kabot.agent.skills_parts.runtime import (
+    get_skill_status as runtime_get_skill_status,
+)
+from kabot.agent.skills_parts.runtime import (
+    iter_skill_roots_with_source as runtime_iter_skill_roots_with_source,
+)
+from kabot.agent.skills_parts.runtime import (
+    iter_unique_skill_candidates as runtime_iter_unique_skill_candidates,
+)
+from kabot.agent.skills_parts.runtime import (
+    match_explicit_skill_fast_path as runtime_match_explicit_skill_fast_path,
+)
+from kabot.agent.skills_parts.runtime import (
+    parse_frontmatter_metadata as runtime_parse_frontmatter_metadata,
+)
 from kabot.config.skills_settings import (
     get_skills_entries,
     normalize_skills_settings,
@@ -18,217 +50,20 @@ from kabot.config.skills_settings import (
 )
 from kabot.utils.skill_validator import validate_skill
 
-# Default builtin skills directory (relative to this file)
-BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
-
 logger = logging.getLogger(__name__)
 
-# Workflow chains: when skill X matches, also suggest related skills
-WORKFLOW_CHAINS: dict[str, list[str]] = {
-    "brainstorming": ["writing-plans", "executing-plans"],
-    "writing-plans": ["executing-plans"],
-    "systematic-debugging": ["test-driven-development"],
-    "executing-plans": ["finishing-a-development-branch"],
-    "requesting-code-review": ["finishing-a-development-branch"],
-}
-
-# Stop words to ignore when matching (multilingual)
-_STOP_WORDS = frozenset({
-    "the", "a", "an", "is", "are", "was", "were", "be", "been",
-    "to", "of", "in", "for", "on", "with", "at", "by", "from",
-    "or", "and", "not", "no", "it", "its", "this", "that",
-    "use", "using", "when", "you", "your", "via", "can", "do",
-    "tool", "tools", "skill", "skills",
-    "yang", "dan", "di", "ke", "dari", "ini", "itu", "untuk",
-    "pakai", "pake", "pakaiin",
-})
-
-_SKILL_CREATION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # English
-    re.compile(
-        r"\b(create|build|make|add|design|draft|generate)\b.{0,40}\b"
-        r"(skill|skills|plugin|plugins|capability|capabilities|integration|integrations|connector|workflow|automation)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|plugins|capability|capabilities|integration|integrations|connector|workflow|automation)\b.{0,40}\b"
-        r"(new|create|build|make|add|design)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(update|edit|modify|revise|improve|patch|refactor)\b.{0,40}\b"
-        r"(skill|skills|plugin|plugins|capability|capabilities|integration|integrations|connector|workflow|automation)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|plugins|capability|capabilities|integration|integrations|connector|workflow|automation)\b.{0,40}\b"
-        r"(update|edit|modify|revise|improve|patch|refactor)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    # Indonesian / Malay / mixed colloquial
-    re.compile(
-        r"\b(buat|bikin|buatkan|tambahkan|tambah|kembangkan|rancang|desain)\b.{0,40}\b"
-        r"(skill|skills|plugin|fitur|feature|kemampuan|kapabilitas|integrasi|integration|workflow|otomasi|automation)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|fitur|feature|kemampuan|kapabilitas|integrasi|integration|workflow|otomasi|automation)\b.{0,40}\b"
-        r"(baru|new|buat|bikin|tambahkan|kembangkan)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\bbuat\b.{0,16}\b(kemampuan|kapabilitas|integrasi|integration|fitur)\b.{0,16}\b(baru|kabot|api)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(update|edit|ubah|perbarui|modif|modifikasi|revisi|rapikan|improve)\b.{0,40}\b"
-        r"(skill|skills|plugin|fitur|feature|kemampuan|kapabilitas|integrasi|integration|workflow|otomasi|automation)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|fitur|feature|kemampuan|kapabilitas|integrasi|integration|workflow|otomasi|automation)\b.{0,40}\b"
-        r"(update|edit|ubah|perbarui|modif|modifikasi|revisi|rapikan|improve)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    # Thai
-    re.compile(r"(สร้าง|เพิ่ม).{0,20}(สกิล|ปลั๊กอิน|ความสามารถ|การเชื่อมต่อ|อินทิเกรชัน)", re.DOTALL),
-    re.compile(r"(สกิล|ปลั๊กอิน|ความสามารถ|การเชื่อมต่อ|อินทิเกรชัน).{0,20}(ใหม่|สร้าง|เพิ่ม)", re.DOTALL),
-    # Japanese
-    re.compile(r"(新しい|新規).{0,10}(スキル|プラグイン|機能)", re.DOTALL),
-    re.compile(r"(スキル|プラグイン|機能).{0,12}(作って|作成|追加|作る)", re.DOTALL),
-    re.compile(r"(作って|作成|追加|作る).{0,12}(スキル|プラグイン|機能)", re.DOTALL),
-    # Chinese
-    re.compile(r"(创建|新增|添加|做一个).{0,12}(技能|插件|能力|集成)", re.DOTALL),
-    re.compile(r"(技能|插件|能力|集成).{0,12}(创建|新增|添加|做一个|新的)", re.DOTALL),
-)
-
-_SKILL_INSTALL_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # English install/list/update from source/catalog
-    re.compile(
-        r"\b(install|add|download|fetch|sync|upgrade|update|list|show)\b.{0,50}\b"
-        r"(skill|skills|plugin|plugins)\b.{0,50}\b"
-        r"(github|repo|repository|url|catalog|catalogue|curated|openai/skills)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(github|repo|repository|url|catalog|catalogue|curated|openai/skills)\b.{0,50}\b"
-        r"(skill|skills|plugin|plugins)\b.{0,50}\b"
-        r"(install|add|download|fetch|sync|upgrade|update)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(list|show|what)\b.{0,30}\b(installable|available|curated|experimental)\b.{0,30}\b"
-        r"(skill|skills|plugin|plugins)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    # Indonesian / Malay install/list/update from source/catalog
-    re.compile(
-        r"\b(install|pasang|tambahkan|unduh|download|sinkron|sync|upgrade|update|tampilkan|lihat|daftar)\b.{0,50}\b"
-        r"(skill|skills|plugin|plugins)\b.{0,50}\b"
-        r"(github|repo|repository|url|katalog|catalog|catalogue|curated|kurasi|openai/skills)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(github|repo|repository|url|katalog|catalog|catalogue|curated|kurasi|openai/skills)\b.{0,50}\b"
-        r"(skill|skills|plugin|plugins)\b.{0,50}\b"
-        r"(install|pasang|tambahkan|unduh|download|sinkron|sync|upgrade|update)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|plugins)\b.{0,40}\b"
-        r"(yang tersedia|yang bisa diinstall|yang bisa dipasang|tersedia|installable|available|curated|experimental)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-)
-
-
-def _naive_stem(word: str) -> str:
-    """Very basic suffix stripping for keyword matching.
-
-    Not a real stemmer — just enough to match 'debugging'→'debug',
-    'plans'→'plan', 'writing'→'write', etc.
-    """
-    if len(word) <= 4:
-        return word
-    for suffix in ("ation", "tion", "ment", "ness", "ity", "ing", "ies", "ed", "ly", "es", "er", "al", "ful"):
-        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
-            stem = word[:-len(suffix)]
-            # Handle doubled consonant: debugging→debugg→debug, running→runn→run
-            if len(stem) >= 4 and stem[-1] == stem[-2] and stem[-1] not in "aeiou":
-                stem = stem[:-1]
-            # Handle silent 'e' restoration after -ing: writing→writ→write, creating→creat→create
-            if suffix == "ing" and len(stem) >= 3 and stem[-1] in "tdkcvz":
-                stem += "e"
-            return stem
-    if word.endswith("s") and not word.endswith("ss") and len(word) > 4:
-        return word[:-1]
-    return word
-
-
-def _extract_keywords(text: str) -> set[str]:
-    """Extract meaningful keywords from text, filtering stop words + stemming."""
-    words = re.findall(r'[a-zA-Z\u00C0-\u024F\u0400-\u04FF\u0E00-\u0E7F\u3000-\u9FFF\uAC00-\uD7AF]{2,}', text.lower())
-    stemmed = {_naive_stem(w) for w in words if w not in _STOP_WORDS}
-    # Also keep original words (so "debug" matches "debug" directly)
-    originals = {w for w in words if w not in _STOP_WORDS}
-    return stemmed | originals
-
-
-def _intent_alias_bonus(skill_name: str, message_lower: str) -> float:
-    """Provide intent-level boost for well-known workflow skills."""
-    normalized_skill = (skill_name or "").strip().lower()
-    if not normalized_skill:
-        return 0.0
-
-    if normalized_skill == "skill-installer":
-        if looks_like_skill_install_request(message_lower):
-            return 6.5
-        patterns = (
-            r"\b(skill[\s_-]?installer|install(?:able)? skills?|curated skills?)\b",
-        )
-        for pattern in patterns:
-            if re.search(pattern, message_lower):
-                return 6.5
-
-    if normalized_skill in {"skill-creator", "writing-skills"}:
-        if looks_like_skill_creation_request(message_lower):
-            return 6.0
-        patterns = (
-            r"\b(skill[\s_-]?creator|skills? creator|skill[\s_-]?builder)\b",
-        )
-        for pattern in patterns:
-            if re.search(pattern, message_lower):
-                return 6.0
-    return 0.0
-
-
-def looks_like_skill_creation_request(text: str) -> bool:
-    """Detect natural-language requests to create a new Kabot skill/capability.
-
-    The heuristic stays intentionally broad across languages, but still requires
-    a creation/build signal plus an artifact/domain signal so ordinary coding
-    requests do not get hijacked.
-    """
-    content = str(text or "").strip().lower()
-    if not content:
-        return False
-    for pattern in _SKILL_CREATION_PATTERNS:
-        if pattern.search(content):
-            return True
-    return False
-
-
-def looks_like_skill_install_request(text: str) -> bool:
-    """Detect natural-language requests to install/list/update external skills."""
-    content = str(text or "").strip().lower()
-    if not content:
-        return False
-    for pattern in _SKILL_INSTALL_PATTERNS:
-        if pattern.search(content):
-            return True
-    return False
-
-
+__all__ = [
+    "BUILTIN_SKILLS_DIR",
+    "SkillsLoader",
+    "WORKFLOW_CHAINS",
+    "_extract_keywords",
+    "_intent_alias_bonus",
+    "_naive_stem",
+    "looks_like_skill_catalog_request",
+    "looks_like_skill_creation_request",
+    "looks_like_skill_install_request",
+    "normalize_skill_reference_name",
+]
 
 class SkillsLoader:
     """
@@ -275,6 +110,7 @@ class SkillsLoader:
         self._list_cache_ttl_seconds = 60.0
         self._list_skills_cache: dict[bool, tuple[float, tuple[tuple[str, int, int, int], ...], list[dict[str, Any]]]] = {}
         self._summary_cache: tuple[float, tuple[tuple[str, int, int, int], ...], str] | None = None
+        self._always_skills_cache: tuple[float, tuple[tuple[str, int, int, int], ...], list[str]] | None = None
 
     def _build_skill_index(self) -> dict[str, set[str]]:
         """Build keyword index from all skill descriptions (cached)."""
@@ -317,6 +153,12 @@ class SkillsLoader:
             roots.append(self.builtin_skills)
         roots.extend(self.extra_skill_dirs)
         return roots
+
+    def _iter_skill_roots_with_source(self) -> list[tuple[Path, str]]:
+        return runtime_iter_skill_roots_with_source(self)
+
+    def _iter_unique_skill_candidates(self):
+        return runtime_iter_unique_skill_candidates(self)
 
     def _iter_skill_files(self) -> list[Path]:
         files: list[Path] = []
@@ -380,9 +222,17 @@ class SkillsLoader:
         if not message or len(message.strip()) < 5:
             return []
 
+        message_lower = message.lower()
+        explicit_fast_matches = self._match_explicit_skill_fast_path(
+            message=message,
+            message_lower=message_lower,
+            max_results=max_results,
+        )
+        if explicit_fast_matches is not None:
+            return explicit_fast_matches
+
         index = self._build_skill_index()
         msg_keywords = _extract_keywords(message)
-        message_lower = message.lower()
 
         if not msg_keywords:
             return []
@@ -476,12 +326,10 @@ class SkillsLoader:
                 if chain_skill not in expanded and len(expanded) < max_results + 2:
                     expanded.append(chain_skill)
 
-        status_map = {s["name"]: s for s in self.list_skills(filter_unavailable=False)}
-
         # Validate requirements for selected skills
         validated = []
         for skill_name in expanded:
-            status = status_map.get(skill_name)
+            status = self._get_skill_status(skill_name)
             if status and status.get("eligible"):
                 validated.append(skill_name)
             else:
@@ -503,6 +351,20 @@ class SkillsLoader:
                 validated.append(f"{skill_name} [NEEDS: {missing}]")
 
         return validated[:max_results + 2]  # Allow up to 5 with chains
+
+    def _match_explicit_skill_fast_path(
+        self,
+        *,
+        message: str,
+        message_lower: str,
+        max_results: int,
+    ) -> list[str] | None:
+        return runtime_match_explicit_skill_fast_path(
+            self,
+            message=message,
+            message_lower=message_lower,
+            max_results=max_results,
+        )
 
     def _resolve_node_install_command(self, package_name: str) -> str:
         manager = str(self._install_settings.get("node_manager") or "npm").strip().lower()
@@ -846,6 +708,10 @@ class SkillsLoader:
         Returns:
             Skill content or None if not found.
         """
+        name = normalize_skill_reference_name(name)
+        if not name:
+            return None
+
         # Check workspace first
         workspace_skill = self.workspace_skills / name / "SKILL.md"
         if workspace_skill.exists():
@@ -1074,13 +940,13 @@ class SkillsLoader:
 
     def get_always_skills(self) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
-        result = []
-        for s in self.list_skills(filter_unavailable=True):
-            meta = self.get_skill_metadata(s["name"]) or {}
-            skill_meta = self._parse_kabot_metadata(meta.get("metadata", ""))
-            if skill_meta.get("always") or meta.get("always"):
-                result.append(s["name"])
-        return result
+        return runtime_get_always_skills(self)
+
+    def _get_skill_metadata_from_file(self, skill_file: Path) -> dict:
+        return runtime_get_skill_metadata_from_file(self, skill_file)
+
+    def _get_skill_status(self, name: str) -> dict | None:
+        return runtime_get_skill_status(self, name)
 
     def get_skill_metadata(self, name: str) -> dict | None:
         """
@@ -1095,24 +961,8 @@ class SkillsLoader:
         content = self.load_skill(name)
         if not content:
             return None
+        metadata = self._parse_frontmatter_metadata(content)
+        return metadata or None
 
-        if content.startswith("---"):
-            match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
-            if match:
-                yaml_text = match.group(1)
-                try:
-                    import yaml
-                    return yaml.safe_load(yaml_text) or {}
-                except ImportError:
-                    # Fallback if PyYAML somehow isn't installed
-                    metadata = {}
-                    for line in yaml_text.split("\n"):
-                        if ":" in line and not line.strip().startswith("{") and not line.strip().startswith("}"):
-                            # Very basic single-line parse fallback
-                            key, value = line.split(":", 1)
-                            metadata[key.strip()] = value.strip().strip('"\'')
-                    return metadata
-                except Exception:
-                    return {}
-
-        return None
+    def _parse_frontmatter_metadata(self, content: str) -> dict:
+        return runtime_parse_frontmatter_metadata(content)

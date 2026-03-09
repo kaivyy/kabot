@@ -853,6 +853,23 @@ Located in `kabot/core/doctor.py`. A diagnostic engine that runs on startup.
 *   Validates API keys.
 *   Verifies Python environment dependencies.
 *   **Auto-Fix**: Can automatically reinstall missing pip packages or rebuild corrupted config files.
+*   **Agent Smoke Matrix**: `kabot doctor smoke-agent` runs multilingual temporal/filesystem smoke probes and can enforce latency gates.
+
+**Smoke examples:**
+```bash
+# Default multilingual smoke probes
+kabot doctor smoke-agent
+
+# JSON output + latency gates for fast one-shot flows
+kabot doctor smoke-agent --smoke-json \
+  --smoke-max-context-build-ms 1000 \
+  --smoke-max-first-response-ms 1000
+
+# Skill-focused smoke in multiple locales
+kabot doctor smoke-agent \
+  --smoke-skill weather \
+  --smoke-skill-locales en,id,zh,ja,th
+```
 
 ---
 

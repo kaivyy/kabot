@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import inspect
 import json
@@ -24,6 +25,10 @@ class BaseMixin:
     status_provider: Callable[[], dict[str, Any]] | None
     chat_history_provider: Callable[[str, int], Any] | None
     control_handler: Callable[[str, dict[str, Any]], Any] | None
+    dashboard_status_cache_ttl: float
+    _dashboard_status_cache_payload: dict[str, Any] | None
+    _dashboard_status_cache_at: float
+    _dashboard_background_tasks: set[asyncio.Task[Any]]
 
     _ROUTE_SCOPE_RULES: tuple[tuple[str, str, str], ...]
 
@@ -199,7 +204,41 @@ class BaseMixin:
             return 200
         return value
 
-    def _read_dashboard_status(self) -> dict[str, Any]:
+    def _invalidate_dashboard_status_cache(self) -> None:
+        self._dashboard_status_cache_payload = None
+        self._dashboard_status_cache_at = 0.0
+
+    def _remember_dashboard_task(self, task: asyncio.Task[Any]) -> None:
+        self._dashboard_background_tasks.add(task)
+
+        def _cleanup(done_task: asyncio.Task[Any]) -> None:
+            self._dashboard_background_tasks.discard(done_task)
+            try:
+                done_task.result()
+            except Exception:
+                pass
+
+        task.add_done_callback(_cleanup)
+
+    def _dispatch_control_action_background(
+        self,
+        action: str,
+        args: dict[str, Any] | None = None,
+    ) -> asyncio.Task[tuple[int, dict[str, Any]]]:
+        task: asyncio.Task[tuple[int, dict[str, Any]]] = asyncio.create_task(
+            self._run_control_action(action=action, args=args)
+        )
+        self._remember_dashboard_task(task)
+        return task
+
+    def _read_dashboard_status(self, *, force: bool = False) -> dict[str, Any]:
+        cache_ttl = max(0.0, float(getattr(self, "dashboard_status_cache_ttl", 0.0) or 0.0))
+        now = time.time()
+        cached_payload = getattr(self, "_dashboard_status_cache_payload", None)
+        cached_at = float(getattr(self, "_dashboard_status_cache_at", 0.0) or 0.0)
+        if not force and cache_ttl > 0 and isinstance(cached_payload, dict) and (now - cached_at) < cache_ttl:
+            return dict(cached_payload)
+
         payload: dict[str, Any]
         if callable(self.status_provider):
             try:
@@ -210,6 +249,9 @@ class BaseMixin:
             payload = {"status": "running"}
         payload.setdefault("status", "running")
         payload.setdefault("uptime_seconds", max(0, int(time.time() - self.started_at)))
+        if cache_ttl > 0:
+            self._dashboard_status_cache_payload = dict(payload)
+            self._dashboard_status_cache_at = now
         return payload
 
     async def _read_chat_history(self, session_key: str, limit: int = 30) -> list[dict[str, Any]]:
@@ -273,7 +315,7 @@ class BaseMixin:
     @staticmethod
     def _result_message_html(result: dict[str, Any] | None, status_code: int, element_id: str) -> str:
         if result is None:
-            return f"<div id='{html.escape(element_id)}' class='mono muted mt-2'></div>"
+            return f"<div id='{html.escape(element_id)}' style='font-family:ui-monospace,monospace;color:var(--muted);font-size:12px;margin-top:8px;'></div>"
         ok = status_code == 200
         color = "#10b981" if ok else "#ef4444"
         title = "Success" if ok else "Action failed"
@@ -287,7 +329,7 @@ class BaseMixin:
             summary = "Action completed." if ok else str(result.get("error") or result.get("message") or "Request failed.")
         payload = html.escape(json.dumps(result, ensure_ascii=False, indent=2))
         return (
-            f"<div id='{html.escape(element_id)}' class='mono muted mt-2'>"
+            f"<div id='{html.escape(element_id)}' style='font-family:ui-monospace,monospace;color:var(--muted);font-size:12px;margin-top:8px;'>"
             f"<div style='border:1px solid {color};border-radius:10px;padding:10px 12px;background:rgba(0,0,0,.08);'>"
             f"<div style='color:{color};font-weight:700;margin-bottom:4px;'>{html.escape(title)}</div>"
             f"<div style='color:var(--text);font-family:inherit;font-size:12px;'>{html.escape(summary)}</div>"
@@ -315,24 +357,24 @@ class BaseMixin:
             key_raw = str(item.get("key", "") or "").strip()
             key = html.escape(key_raw or "-")
             updated = html.escape(str(item.get("updated_at", "-")))
-            actions = "<span class='muted'>read-only</span>"
+            actions = "<span style='color:var(--muted);font-size:12px;'>read-only</span>"
             if controls_enabled and key_raw:
                 key_value = html.escape(key_raw)
                 actions = (
-                    f"<form style='display:inline;' class='mr-2' hx-post='{html.escape(action_url)}' hx-target='#panel-sessions' hx-swap='outerHTML'>"
+                    f"<form style='display:inline;margin-right:6px;' hx-post='{html.escape(action_url)}' hx-target='#panel-sessions' hx-swap='outerHTML'>"
                     "<input type='hidden' name='action' value='sessions.clear' />"
                     f"<input type='hidden' name='session_key' value='{key_value}' />"
-                    "<button type='submit' class='py-1 px-2 text-xs'>Clear</button>"
+                    "<button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;'>Clear</button>"
                     "</form>"
                     f"<form style='display:inline;' hx-post='{html.escape(action_url)}' hx-target='#panel-sessions' hx-swap='outerHTML'>"
                     "<input type='hidden' name='action' value='sessions.delete' />"
                     f"<input type='hidden' name='session_key' value='{key_value}' />"
-                    "<button type='submit' class='py-1 px-2 text-xs bg-red-500 hover:bg-red-600'>Delete</button>"
+                    "<button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;background:var(--danger);color:#fff;'>Delete</button>"
                     "</form>"
                 )
             rows.append(f"<tr><td class='mono'>{key}</td><td class='mono'>{updated}</td><td>{actions}</td></tr>")
         if not rows:
-            rows.append("<tr><td colspan='3' class='muted'>No sessions available.</td></tr>")
+            rows.append("<tr><td colspan='3' style='color:var(--muted);font-size:12px;'>No sessions available.</td></tr>")
         result_html = self._result_message_html(action_result, action_status_code, "sessions-result")
         access_note = ""
         if callable(self.control_handler) and not self._request_has_scope(request, "operator.write"):
@@ -365,31 +407,31 @@ class BaseMixin:
             kind = html.escape(str(item.get("kind", "-")))
             state_raw = str(item.get("state", "") or "").strip().lower()
             state = html.escape(state_raw or "-")
-            actions = "<span class='muted'>read-only</span>"
+            actions = "<span style='color:var(--muted);font-size:12px;'>read-only</span>"
             if controls_enabled and node_id_raw.startswith("channel:"):
                 node_value = html.escape(node_id_raw)
                 start_disabled = " disabled" if state_raw == "running" else ""
                 stop_disabled = " disabled" if state_raw == "stopped" else ""
                 actions = (
-                    f"<form style='display:inline;' class='mr-2' hx-post='{html.escape(action_url)}' hx-target='#panel-nodes' hx-swap='outerHTML'>"
+                    f"<form style='display:inline;margin-right:6px;' hx-post='{html.escape(action_url)}' hx-target='#panel-nodes' hx-swap='outerHTML'>"
                     "<input type='hidden' name='action' value='nodes.restart' />"
                     f"<input type='hidden' name='node_id' value='{node_value}' />"
-                    "<button type='submit' class='py-1 px-2 text-xs'>Restart</button>"
+                    "<button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;'>Restart</button>"
                     "</form>"
-                    f"<form style='display:inline;' class='mr-2' hx-post='{html.escape(action_url)}' hx-target='#panel-nodes' hx-swap='outerHTML'>"
+                    f"<form style='display:inline;margin-right:6px;' hx-post='{html.escape(action_url)}' hx-target='#panel-nodes' hx-swap='outerHTML'>"
                     "<input type='hidden' name='action' value='nodes.stop' />"
                     f"<input type='hidden' name='node_id' value='{node_value}' />"
-                    f"<button type='submit' class='py-1 px-2 text-xs bg-red-500 hover:bg-red-600'{stop_disabled}>Stop</button>"
+                    f"<button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;background:var(--danger);color:#fff;'{stop_disabled}>Stop</button>"
                     "</form>"
                     f"<form style='display:inline;' hx-post='{html.escape(action_url)}' hx-target='#panel-nodes' hx-swap='outerHTML'>"
                     "<input type='hidden' name='action' value='nodes.start' />"
                     f"<input type='hidden' name='node_id' value='{node_value}' />"
-                    f"<button type='submit' class='py-1 px-2 text-xs bg-emerald-500 hover:bg-emerald-600'{start_disabled}>Start</button>"
+                    f"<button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;background:var(--success);color:#fff;'{start_disabled}>Start</button>"
                     "</form>"
                 )
             rows.append(f"<tr><td class='mono'>{node_id}</td><td>{kind}</td><td>{state}</td><td>{actions}</td></tr>")
         if not rows:
-            rows.append("<tr><td colspan='4' class='muted'>No nodes available.</td></tr>")
+            rows.append("<tr><td colspan='4' style='color:var(--muted);font-size:12px;'>No nodes available.</td></tr>")
         result_html = self._result_message_html(action_result, action_status_code, "nodes-result")
         access_note = ""
         if callable(self.control_handler) and not self._request_has_scope(request, "operator.write"):
@@ -441,6 +483,7 @@ class BaseMixin:
             maybe_result = self.control_handler(normalized_action, payload_args)
             if inspect.isawaitable(maybe_result):
                 maybe_result = await maybe_result
+            self._invalidate_dashboard_status_cache()
             if isinstance(maybe_result, dict) and maybe_result.get("ok") is False:
                 status_code = int(maybe_result.get("status_code") or 400)
                 payload = dict(maybe_result)
@@ -452,6 +495,7 @@ class BaseMixin:
                 "result": maybe_result if maybe_result is not None else {},
             }
         except Exception as exc:
+            self._invalidate_dashboard_status_cache()
             return 500, {
                 "ok": False,
                 "action": normalized_action,

@@ -244,7 +244,7 @@ class ChatMixin:
             # â”€â”€ Chat Log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             f"<div id='chat-log' style='flex:1;overflow-y:auto;padding:20px 16px;display:flex;flex-direction:column;gap:16px;"
             f"background:var(--bg,#000);scroll-behavior:smooth;'"
-            f"hx-get='{html.escape(log_url)}' hx-trigger='load, every 3s' hx-swap='innerHTML'>"
+            f"hx-get='{html.escape(log_url)}' hx-trigger='load' hx-swap='innerHTML'>"
             "  <div class='kb-empty'>"
             "    <div class='kb-empty-icon'>ðŸ’¬</div>"
             "    <div style='text-align:center;'>"
@@ -283,12 +283,49 @@ class ChatMixin:
             "</form>"
             "<script>(function(){"
             "var f=document.getElementById('chat-form'); if(!f) return;"
+            "var esc=function(s){return String(s||'').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});};"
+            "var appendPendingPrompt=function(raw){"
+            "  var text=String(raw||'').trim(); if(!text) return;"
+            "  var log=document.getElementById('chat-log'); if(!log) return;"
+            "  var ts=new Date();"
+            "  var hh=String(ts.getHours()).padStart(2,'0');"
+            "  var mm=String(ts.getMinutes()).padStart(2,'0');"
+            "  var pending=document.createElement('div');"
+            "  pending.setAttribute('data-kabot-pending-user','1');"
+            "  pending.className='kb-msg-row';"
+            "  pending.style.cssText='display:flex;flex-direction:column;align-items:flex-end;gap:4px;opacity:.82;';"
+            "  pending.innerHTML="
+            "    '<div style=\"display:flex;align-items:center;gap:6px;flex-direction:row-reverse;\">'"
+            "    + '<div class=\"kb-avatar user\">U</div>'"
+            "    + '<span style=\"font-size:11px;font-weight:600;color:var(--muted);\">You</span>'"
+            "    + '<span class=\"kb-ts\">'+esc(hh+':'+mm)+'</span>'"
+            "    + '</div>'"
+            "    + '<div class=\"kb-bubble user\">'+esc(text)+'</div>';"
+            "  if(log.querySelector('.kb-empty')) log.innerHTML='';"
+            "  log.appendChild(pending);"
+            "  if(window.kabotScrollChatToLatest) window.kabotScrollChatToLatest(true);"
+            "};"
+            "var removePendingPrompt=function(){"
+            "  var log=document.getElementById('chat-log'); if(!log) return;"
+            "  var items=log.querySelectorAll('[data-kabot-pending-user=\"1\"]');"
+            "  items.forEach(function(node){ if(node&&node.parentNode) node.parentNode.removeChild(node); });"
+            "};"
+            "f.addEventListener('htmx:beforeRequest', function(){"
+            "  var ta=f.querySelector('textarea[name=prompt]');"
+            "  if(!ta) return;"
+            "  var prompt=String(ta.value||'').trim();"
+            "  if(!prompt) return;"
+            "  appendPendingPrompt(prompt);"
+            "  var cr=document.getElementById('chat-result');"
+            "  if(cr) cr.innerHTML=\"<span style='color:#10b981;'>Queued...</span>\";"
+            "});"
             "f.addEventListener('htmx:afterRequest', function(){"
             "  var ta=f.querySelector('textarea[name=prompt]'); if(ta){ta.value='';ta.style.height='';}"
             "  var cr=document.getElementById('chat-result');"
             "  if(cr) setTimeout(function(){cr.innerHTML='';}, 3000);"
             "  if(window.kabotScrollChatToLatest) window.kabotScrollChatToLatest(true);"
             "});"
+            "f.addEventListener('htmx:responseError', function(){removePendingPrompt();});"
             "})();</script>"
             "</div>"
 
@@ -388,15 +425,21 @@ class ChatMixin:
             f"      var rows=[];"
             f"      msgs.slice(-50).forEach(function(m){{"
             f"        var role=esc(m.role||'assistant').toLowerCase(); var ts=esc(m.timestamp||''); var content=esc(m.content||'');"
+            f"        var metadata=(m&&typeof m.metadata==='object'&&m.metadata)?m.metadata:{{}};"
+            f"        var updateType=String(metadata.type||'').toLowerCase().trim();"
+            f"        var phase=esc(String(metadata.phase||'').toLowerCase().trim());"
+            f"        var isStatusLike=['status_update','draft_update','reasoning_update'].indexOf(updateType)!==-1;"
             f"        var isUser=role==='user';"
             f"        var align=isUser?'flex-end':'flex-start';"
             f"        var avatarLabel=isUser?'U':'K';"
             f"        var avatarClass=isUser?'user':'agent';"
-            f"        var bubbleClass=isUser?'kb-bubble user':'kb-bubble agent';"
+            f"        var bubbleClass=isUser?'kb-bubble user':(isStatusLike?'kb-bubble status':'kb-bubble agent');"
+            f"        var nameLabel=isUser?'You':(isStatusLike?'Status':'Kabot');"
             f"        var row='<div class=\"kb-msg-row\" style=\"display:flex;flex-direction:column;align-items:'+align+';gap:4px;\">';"
             f"        var avatarRow='<div style=\"display:flex;align-items:center;gap:6px;'+( isUser?'flex-direction:row-reverse;':'')+'\">';"
             f"        avatarRow+='<div class=\"kb-avatar '+avatarClass+'\">'+avatarLabel+'</div>';"
-            f"        avatarRow+='<span style=\"font-size:11px;font-weight:600;color:var(--muted);\">'+( isUser?'You':'Kabot')+'</span>';"
+            f"        avatarRow+='<span style=\"font-size:11px;font-weight:600;color:var(--muted);\">'+nameLabel+'</span>';"
+            f"        if(phase)avatarRow+='<span class=\"kb-phase-badge\">'+phase+'</span>';"
             f"        if(ts)avatarRow+='<span class=\"kb-ts\">'+ts+'</span>';"
             f"        avatarRow+='</div>';"
             f"        row+=avatarRow;"
@@ -561,7 +604,19 @@ class ChatMixin:
         fallbacks = str(data.get("fallbacks", "") or "").strip()
         channel = str(data.get("channel", "") or "dashboard").strip()
         chat_id = str(data.get("chat_id", "") or "dashboard").strip()
-        status_code, result = await self._run_control_action(
+        if not prompt:
+            return web.Response(
+                text="<span style='color:#ef4444;'>Missing chat prompt</span>",
+                content_type="text/html",
+                status=400,
+            )
+        if not callable(self.control_handler):
+            return web.Response(
+                text="<span style='color:#ef4444;'>Runtime chat handler unavailable</span>",
+                content_type="text/html",
+                status=501,
+            )
+        self._dispatch_control_action_background(
             action="chat.send",
             args={
                 "prompt": prompt,
@@ -573,15 +628,10 @@ class ChatMixin:
                 "chat_id": chat_id,
             },
         )
-        if status_code == 200:
-            body = "<span style='color:#10b981;'>Success: Action completed. Sent</span>"
-        else:
-            err_text = ""
-            if isinstance(result, dict):
-                err_text = str(result.get("message", "")).strip()
-            if not err_text:
-                err_text = "Failed to send"
-            body = f"<span style='color:#ef4444;'>{html.escape(err_text)}</span>"
-        return web.Response(text=body, content_type="text/html", status=status_code)
+        return web.Response(
+            text="<span style='color:#10b981;'>Queued: sending to runtime...</span>",
+            content_type="text/html",
+            status=202,
+        )
 
 

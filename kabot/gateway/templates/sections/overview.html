@@ -6,7 +6,7 @@
 
     <!-- Stat Cards Row -->
     <div class="kb-stats-grid" id="stats-grid" hx-get="/dashboard/partials/health__TOKEN_SUFFIX__"
-        hx-trigger="load, every 5s" hx-swap="innerHTML">
+        hx-trigger="load" hx-swap="innerHTML">
         <div class="kb-stat-card">
             <div class="kb-stat-label">Loading...</div>
         </div>
@@ -15,23 +15,23 @@
     <!-- Two-column grid: Summary + Runtime -->
     <div class="kb-grid-2">
         <div class="config-section-card" hx-get="/dashboard/partials/summary__TOKEN_SUFFIX__"
-            hx-trigger="load, every 5s" hx-swap="innerHTML">
+            hx-trigger="load" hx-swap="innerHTML">
             <div style="padding:18px; color:var(--muted); font-size:12px;">Loading summary...</div>
         </div>
         <div class="config-section-card" hx-get="/dashboard/partials/runtime__TOKEN_SUFFIX__"
-            hx-trigger="load, every 5s" hx-swap="innerHTML">
+            hx-trigger="load" hx-swap="innerHTML">
             <div style="padding:18px; color:var(--muted); font-size:12px;">Loading runtime...</div>
         </div>
     </div>
 
     <!-- Cost & Charts Row -->
     <div class="kb-grid-2" style="margin-top:4px;">
-        <div class="config-section-card" hx-get="/dashboard/partials/cost__TOKEN_SUFFIX__" hx-trigger="load, every 30s"
-            hx-swap="innerHTML">
+        <div id="panel-cost" class="config-section-card" hx-get="/dashboard/partials/cost__TOKEN_SUFFIX__" hx-trigger="load"
+            hx-swap="outerHTML">
             <div style="padding:18px; color:var(--muted); font-size:12px;">Loading cost data...</div>
         </div>
-        <div class="config-section-card" hx-get="/dashboard/partials/charts__TOKEN_SUFFIX__"
-            hx-trigger="load, every 30s" hx-swap="innerHTML">
+        <div id="panel-charts" class="config-section-card" hx-get="/dashboard/partials/charts__TOKEN_SUFFIX__"
+            hx-trigger="load" hx-swap="outerHTML">
             <div style="padding:18px; color:var(--muted); font-size:12px;">Loading charts...</div>
         </div>
     </div>

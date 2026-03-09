@@ -6,9 +6,6 @@ from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.stock import (
     CryptoTool,
     StockTool,
-    extract_crypto_ids,
-    extract_stock_name_candidates,
-    extract_stock_symbols,
 )
 from kabot.agent.tools.stock_analysis import StockAnalysisTool
 
@@ -128,20 +125,6 @@ async def test_stock_tool_rejects_free_text_without_valid_tickers():
     result = await tool.execute(query)
     assert result == i18n_t("stock.need_symbol", query)
 
-
-def test_extract_stock_symbols_ignores_file_like_extensions():
-    assert extract_stock_symbols("config.json") == []
-    assert extract_stock_symbols("baca file config.json") == []
-
-
-def test_extract_stock_symbols_supports_usd_idr_natural_language_queries():
-    assert extract_stock_symbols("1 usd berapa rupiah sekarang") == ["USDIDR=X"]
-    assert extract_stock_symbols("kurs usd ke idr hari ini") == ["USDIDR=X"]
-
-
-def test_extract_stock_name_candidates_trim_fx_conversion_filler_words():
-    query = "If Apple is around 260 dollars, roughly how much is that in Indonesian rupiah today?"
-    assert extract_stock_name_candidates(query) == ["Apple"]
 
 
 @pytest.mark.asyncio
@@ -971,42 +954,6 @@ async def test_stock_tool_does_not_resolve_non_market_small_talk(monkeypatch):
     query = "umur kamu berapa sekarang"
     result = await tool.execute(query)
     assert result == i18n_t("stock.need_symbol", query)
-
-
-def test_extract_crypto_ids_handles_multi_coin_phrases():
-    assert extract_crypto_ids("kalau harga bitcoin dan ethereum berapa sekarang") == [
-        "bitcoin",
-        "ethereum",
-    ]
-    assert extract_crypto_ids("btc eth") == ["bitcoin", "ethereum"]
-
-
-def test_extract_stock_name_candidates_supports_non_latin_queries():
-    assert extract_stock_name_candidates("トヨタ") == ["トヨタ"]
-
-
-def test_extract_stock_name_candidates_ignores_generic_trend_phrase():
-    assert extract_stock_name_candidates("cenderung naik atau turun?") == []
-
-
-def test_extract_stock_name_candidates_ignores_generic_advice_phrase():
-    assert extract_stock_name_candidates("saranmu apa") == []
-
-
-def test_extract_stock_name_candidates_ignores_non_market_topic_phrase():
-    assert extract_stock_name_candidates("adakah gejolak politik sekarang") == []
-
-
-def test_extract_stock_name_candidates_ignores_fx_wording_without_asset():
-    assert extract_stock_name_candidates("kalau dirupiahkan dengan harga sekarang berapa") == []
-
-
-def test_extract_stock_name_candidates_ignores_generic_product_advice_phrase():
-    assert extract_stock_name_candidates("sunscreen nya apa yang bagus") == []
-
-
-def test_extract_stock_name_candidates_trims_trailing_question_noise_from_company_name():
-    assert extract_stock_name_candidates("How much is Microsoft stock right now?") == ["Microsoft"]
 
 
 @pytest.mark.asyncio

@@ -93,6 +93,18 @@ _COMPLEX_KEYWORDS = [
     "clear cache", "hapus cache", "hapus temp",
 ]
 
+_TEMPORAL_FAST_RE = re.compile(
+    r"(?i)\b("
+    r"hari apa|sekarang hari|hari sekarang|tanggal berapa|jam berapa|"
+    r"what day|day is it|what date|what time|timezone|time zone|zona waktu|"
+    r"utc\s*[+-]?\s*\d{1,2}(?::?\d{2})?|wib|wita|wit|"
+    r"besok hari apa|kemarin hari apa|seminggu dari sekarang|next week day|tomorrow day|yesterday day"
+    r")\b|"
+    r"今天星期几|今天星期幾|现在几点|現在幾點|今天几号|今天幾號|时区|時區|"
+    r"何曜日|何時|何日|タイムゾーン|"
+    r"ตอนนี้วันอะไร|ตอนนี้กี่โมง|เขตเวลา|โซนเวลา"
+)
+
 
 @dataclass
 class RouteDecision:
@@ -142,6 +154,9 @@ class IntentRouter:
         for keyword in _COMPLEX_KEYWORDS:
             if keyword in content_lower:
                 return RouteDecision(profile="GENERAL", is_complex=True)
+
+        if _TEMPORAL_FAST_RE.search(content_stripped):
+            return RouteDecision(profile="GENERAL", is_complex=False)
 
         # --- Ambiguous: use LLM classification ---
         profile = await self.classify(content)

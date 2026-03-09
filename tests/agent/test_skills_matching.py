@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from kabot.agent.skills import SkillsLoader
+from kabot.agent.skills import SkillsLoader, looks_like_skill_catalog_request
 
 
 def _write_skill(skill_root: Path, skill_name: str, body: str) -> None:
@@ -100,6 +100,65 @@ def test_match_skills_preserves_explicit_digit_heavy_full_name_match(tmp_path, m
     assert matches
     assert any(m.startswith("password-helper") for m in matches)
     assert matches[0].startswith("1password")
+
+
+def test_match_skills_explicit_skill_turn_skips_full_index(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(workspace / "skills", "weather", "forecast temperature rain wind humidity")
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    monkeypatch.setattr(
+        loader,
+        "_build_skill_index",
+        lambda: (_ for _ in ()).throw(AssertionError("_build_skill_index should not be called")),
+    )
+    monkeypatch.setattr(
+        loader,
+        "list_skills",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("list_skills should not be called")),
+    )
+
+    matches = loader.match_skills("Please use the weather skill for this request.", profile="GENERAL")
+
+    assert matches
+    assert matches[0].startswith("weather")
+
+
+def test_match_skills_non_explicit_turn_still_uses_full_index(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(workspace / "skills", "weather", "forecast temperature rain wind humidity")
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    calls = {"count": 0}
+    original = loader._build_skill_index
+
+    def _build():
+        calls["count"] += 1
+        return original()
+
+    monkeypatch.setattr(loader, "_build_skill_index", _build)
+
+    matches = loader.match_skills("forecast temperature rain today", profile="GENERAL")
+
+    assert calls["count"] == 1
+    assert matches
+    assert matches[0].startswith("weather")
 
 
 def test_match_skills_understands_create_new_skill_intent_for_skill_creator(tmp_path, monkeypatch):
@@ -254,6 +313,50 @@ def test_match_skills_understands_multilingual_skill_creation_intent(tmp_path, m
         matches = loader.match_skills(phrase, profile="GENERAL")
         assert matches
         assert matches[0].startswith("skill-creator")
+
+
+def test_match_skills_understands_multilingual_skill_update_intent(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(
+        workspace / "skills",
+        "skill-creator",
+        "guide for creating or updating a skill workflow and SKILL.md structure",
+    )
+    _write_skill(
+        workspace / "skills",
+        "generic-dev",
+        "build app script code automation helper development",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    for phrase in (
+        "天気スキルを更新してUV indexも見られるようにして",
+        "ช่วยอัปเดตสกิลอากาศให้เช็กค่า UV index ได้ด้วย",
+        "帮我更新天气技能，让它也能检查 UV index",
+    ):
+        matches = loader.match_skills(phrase, profile="GENERAL")
+        assert matches
+        assert matches[0].startswith("skill-creator")
+
+
+def test_looks_like_skill_catalog_request_supports_multilingual_inventory_questions():
+    assert looks_like_skill_catalog_request("what skills are available in this workspace?")
+    assert looks_like_skill_catalog_request("skill apa yang tersedia di workspace ini?")
+    assert looks_like_skill_catalog_request("有哪些技能可以用？")
+    assert looks_like_skill_catalog_request("使えるスキル一覧を見せて")
+    assert looks_like_skill_catalog_request("มีสกิลอะไรให้ใช้บ้าง")
+
+    assert looks_like_skill_catalog_request("Please use the weather skill for this request.") is False
+    assert looks_like_skill_catalog_request("tolong pakai skill 1password untuk request ini ya.") is False
 
 
 def test_list_skills_uses_snapshot_cache(tmp_path, monkeypatch):

@@ -13,7 +13,42 @@ import tiktoken
 from loguru import logger
 
 from kabot.agent.memory import MemoryStore
-from kabot.agent.skills import SkillsLoader
+from kabot.agent.skills import (
+    SkillsLoader,
+    looks_like_skill_catalog_request,
+    looks_like_skill_creation_request,
+    looks_like_skill_install_request,
+    normalize_skill_reference_name,
+)
+
+_SPACE_RE = re.compile(r"\s+")
+_MEMORY_RECALL_RE = re.compile(
+    r"(?i)\b("
+    r"memory|remember|recall|ingat|ingetin|ingatkan|preferensi|preference|"
+    r"my name|nama saya|namaku|siapa aku|past conversation|percakapan lalu|"
+    r"what do you know about me|apa yang kamu tahu tentang saya"
+    r")\b"
+)
+_EXPLICIT_SKILL_TURN_RE = re.compile(
+    r"(?i)\b(skill|skills)\b|スキル|技能|技術|สกิล"
+)
+_LIGHT_PROBE_GENERAL_RE = re.compile(
+    r"(?i)\b("
+    r"hari|day|tanggal|date|jam|time|waktu|timezone|utc|wib|wita|wit|"
+    r"today|tomorrow|yesterday|besok|kemarin|sekarang|now|seminggu|week"
+    r")\b|星期|วันนี้|เมื่อวาน|พรุ่งนี้|เวลา|今日|明日|昨日"
+)
+
+
+def _strip_appended_system_notes(message: str) -> str:
+    raw = str(message or "").strip()
+    if not raw:
+        return ""
+    marker = "\n\n[System Note:"
+    idx = raw.find(marker)
+    if idx >= 0:
+        return raw[:idx].strip()
+    return raw
 
 
 class TokenBudget:
@@ -269,6 +304,9 @@ Always check platform before writing scripts."""
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, skills_config=skills_config)
         self._last_truncation_summary: dict[str, Any] | None = None
+        self._resolved_workspace_path = str(self.workspace.expanduser().resolve())
+        system = platform.system()
+        self._runtime_description = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
         self.memory_config = memory_config
         self.graph_memory = None
         graph_enabled = True
@@ -289,7 +327,14 @@ Always check platform before writing scripts."""
             except Exception as e:
                 logger.debug(f"Graph memory context disabled: {e}")
 
-    def build_system_prompt(self, skill_names: list[str] | None = None, profile: str = "GENERAL", tool_names: list[str] | None = None, current_message: str | None = None) -> str:
+    def build_system_prompt(
+        self,
+        skill_names: list[str] | None = None,
+        profile: str = "GENERAL",
+        tool_names: list[str] | None = None,
+        current_message: str | None = None,
+        budget_hints: dict[str, Any] | None = None,
+    ) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
 
@@ -304,24 +349,116 @@ Always check platform before writing scripts."""
         """
         parts = []
 
+        compact_prompt = self._should_use_compact_system_prompt(profile, budget_hints)
+        lean_probe_context = self._should_use_lean_probe_context(
+            profile=profile,
+            current_message=current_message,
+            skill_names=skill_names,
+            budget_hints=budget_hints,
+        )
+
         # Core identity
-        parts.append(self._get_identity())
+        parts.append(self._get_identity(compact=compact_prompt))
 
         # Profile instruction
-        if profile in self.PROFILES:
-            parts.append(self.PROFILES[profile])
+        profile_prompt = self._get_profile_prompt(profile, compact=compact_prompt)
+        if profile_prompt:
+            parts.append(profile_prompt)
+
+        is_heartbeat_task = (
+            isinstance(current_message, str)
+            and current_message.strip().lower().startswith("heartbeat task:")
+        )
+
+        # Skills - progressive loading
+        skill_parts: list[str] = []
+
+        # 1. Always-loaded skills: include full content
+        always_skills = self.skills.get_always_skills()
+        if always_skills:
+            always_content = self.skills.load_skills_for_context(always_skills)
+            if always_content:
+                skill_parts.append(f"# Active Skills\n\n{always_content}")
+
+        # 2. Auto-matched skills based on user message
+        loaded_skills = {
+            normalize_skill_reference_name(skill_name)
+            for skill_name in (always_skills or [])
+            if normalize_skill_reference_name(skill_name)
+        }
+        if skill_names:
+            loaded_skills.update(
+                normalize_skill_reference_name(skill_name)
+                for skill_name in skill_names
+                if normalize_skill_reference_name(skill_name)
+            )
+
+        new_matches: list[str] = []
+        if current_message and not lean_probe_context:
+            matched = [] if is_heartbeat_task else self.skills.match_skills(current_message, profile)
+            # Filter out already-loaded skills
+            new_matches = [
+                skill_name
+                for skill_name in matched
+                if normalize_skill_reference_name(skill_name) not in loaded_skills
+            ]
+            if new_matches:
+                matched_content = self.skills.load_skills_for_context(new_matches)
+                if matched_content:
+                    names_str = ", ".join(new_matches)
+                    skill_parts.append(
+                        f"# Auto-Selected Skills (matched to your request)\n\n"
+                        f"The following skills were auto-detected as relevant: {names_str}\n\n"
+                        f"{matched_content}"
+                    )
+                    loaded_skills.update(
+                        normalize_skill_reference_name(skill_name)
+                        for skill_name in new_matches
+                        if normalize_skill_reference_name(skill_name)
+                    )
+                    logger.info(f"Auto-loaded skills: {new_matches}")
+
+        # 3. Available skills: only show summary when likely needed.
+        # For routine CHAT/GENERAL turns this summary is large and expensive to
+        # build/tokenize, so keep prompt lean unless user is in coding/research
+        # mode or explicitly asking about skills.
+        wants_skill_help = bool(
+            isinstance(current_message, str)
+            and looks_like_skill_catalog_request(current_message)
+        )
+        include_skills_summary = (
+            not is_heartbeat_task
+            and (wants_skill_help or (profile in {"CODING", "RESEARCH"} and not new_matches))
+        )
+        skills_summary = self.skills.build_skills_summary() if include_skills_summary else ""
+        if skills_summary:
+            skill_parts.append(f"""# Available Skills (Reference Documents)
+
+âš ï¸ IMPORTANT: Skills listed below are NOT callable tools. To use a skill:
+1. Call read_file with the skill's <location> path
+2. Follow the instructions inside that SKILL.md
+NEVER attempt to call a skill name directly as a tool function.
+Skills with available="false" need dependencies installed first.
+
+{skills_summary}""")
+
+        if skill_parts:
+            parts.extend(skill_parts)
 
         # Bootstrap files
-        bootstrap = self._load_bootstrap_files()
-        if bootstrap:
-            parts.append(bootstrap)
+        if not compact_prompt:
+            bootstrap = self._load_bootstrap_files()
+            if bootstrap:
+                parts.append(bootstrap)
 
         # Memory context
-        memory = self.memory.get_memory_context()
+        memory = ""
+        if not lean_probe_context:
+            memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
 
-        if self.graph_memory:
+        if self.graph_memory and not compact_prompt:
             graph_query = None
             if current_message:
                 words = [w for w in current_message.strip().split() if w]
@@ -335,7 +472,7 @@ Always check platform before writing scripts."""
                 parts.append(f"# Graph Memory\n\n{graph_context}")
 
         # Tool roster (helps weaker models understand their capabilities)
-        if tool_names:
+        if tool_names and not compact_prompt:
             tools_str = ", ".join(tool_names)
             parts.append(f"""## Your Callable Tools
 You have these tools available: {tools_str}
@@ -349,86 +486,78 @@ For cleanup / free space / optimize requests, ALWAYS call cleanup_system tool fi
 When user asks to build/create/automate something: use write_file to create scripts, exec to run them, and cron to schedule them. ALWAYS verify results with exec after running.""")
 
         # Guardrails from past lessons (metacognition)
-        try:
-            from kabot.memory.sqlite_store import SQLiteMetadataStore
-            db_path = self.workspace / "chroma" / "metadata.db"
-            if db_path.exists():
-                meta = SQLiteMetadataStore(db_path)
-                guardrails = meta.get_guardrails(limit=5)
-                if guardrails:
-                    guardrail_text = "\n".join(f"- {g}" for g in guardrails)
-                    parts.append(f"""## Learned Guardrails (from past mistakes)
+        if not compact_prompt:
+            try:
+                from kabot.memory.sqlite_store import SQLiteMetadataStore
+                db_path = self.workspace / "chroma" / "metadata.db"
+                if db_path.exists():
+                    meta = SQLiteMetadataStore(db_path)
+                    guardrails = meta.get_guardrails(limit=5)
+                    if guardrails:
+                        guardrail_text = "\n".join(f"- {g}" for g in guardrails)
+                        parts.append(f"""## Learned Guardrails (from past mistakes)
 The following rules were learned from previous interactions where quality was low:
 {guardrail_text}
 Follow these guardrails to avoid repeating past mistakes.""")
-        except Exception:
-            pass  # Silently skip if lessons table doesn't exist yet
-
-        is_heartbeat_task = (
-            isinstance(current_message, str)
-            and current_message.strip().lower().startswith("heartbeat task:")
-        )
-
-        # Skills - progressive loading
-        # 1. Always-loaded skills: include full content
-        always_skills = self.skills.get_always_skills()
-        if always_skills:
-            always_content = self.skills.load_skills_for_context(always_skills)
-            if always_content:
-                parts.append(f"# Active Skills\n\n{always_content}")
-
-        # 2. Auto-matched skills based on user message
-        loaded_skills = set(always_skills) if always_skills else set()
-        if skill_names:
-            loaded_skills.update(skill_names)
-
-        if current_message:
-            matched = [] if is_heartbeat_task else self.skills.match_skills(current_message, profile)
-            # Filter out already-loaded skills
-            new_matches = [s for s in matched if s not in loaded_skills]
-            if new_matches:
-                matched_content = self.skills.load_skills_for_context(new_matches)
-                if matched_content:
-                    names_str = ", ".join(new_matches)
-                    parts.append(f"# Auto-Selected Skills (matched to your request)\n\n"
-                                 f"The following skills were auto-detected as relevant: {names_str}\n\n"
-                                 f"{matched_content}")
-                    loaded_skills.update(new_matches)
-                    logger.info(f"Auto-loaded skills: {new_matches}")
-
-        # 3. Available skills: only show summary when likely needed.
-        # For routine CHAT/GENERAL turns this summary is large and expensive to
-        # build/tokenize, so keep prompt lean unless user is in coding/research
-        # mode or explicitly asking about skills.
-        wants_skill_help = bool(
-            isinstance(current_message, str)
-            and re.search(r"\bskill(s)?\b", current_message.lower())
-        )
-        include_skills_summary = (
-            not is_heartbeat_task
-            and (profile in {"CODING", "RESEARCH"} or wants_skill_help)
-        )
-        skills_summary = self.skills.build_skills_summary() if include_skills_summary else ""
-        if skills_summary:
-            parts.append(f"""# Available Skills (Reference Documents)
-
-âš ï¸ IMPORTANT: Skills listed below are NOT callable tools. To use a skill:
-1. Call read_file with the skill's <location> path
-2. Follow the instructions inside that SKILL.md
-NEVER attempt to call a skill name directly as a tool function.
-Skills with available="false" need dependencies installed first.
-
-{skills_summary}""")
+            except Exception:
+                pass  # Silently skip if lessons table doesn't exist yet
 
         return "\n\n---\n\n".join(parts)
 
-    def _get_identity(self) -> str:
+    def _should_use_compact_system_prompt(
+        self,
+        profile: str,
+        budget_hints: dict[str, Any] | None = None,
+    ) -> bool:
+        if str(profile or "").strip().upper() != "GENERAL":
+            return False
+        if not isinstance(budget_hints, dict):
+            return False
+        if bool(budget_hints.get("compact_system_prompt")):
+            return True
+        return bool(budget_hints.get("probe_mode"))
+
+    def _get_profile_prompt(self, profile: str, *, compact: bool = False) -> str:
+        normalized = str(profile or "").strip().upper()
+        if compact and normalized == "GENERAL":
+            return """# Role: General Assistant
+You are a direct, capable assistant.
+- Keep replies natural, concise, and in the user's language.
+- Use tools when needed, but do not fabricate results.
+- For explicit skill-use turns, follow the loaded skill context first."""
+        return self.PROFILES.get(normalized, "")
+
+    def _get_identity(self, *, compact: bool = False) -> str:
         """Get the core identity section."""
         from datetime import datetime
-        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
-        workspace_path = str(self.workspace.expanduser().resolve())
-        system = platform.system()
-        runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
+        now_local = datetime.now().astimezone()
+        now = now_local.strftime("%Y-%m-%d %H:%M (%A)")
+        tz_name = str(now_local.tzname() or "Local")
+        offset = now_local.utcoffset()
+        total_minutes = int(offset.total_seconds() // 60) if offset is not None else 0
+        sign = "+" if total_minutes >= 0 else "-"
+        hours, minutes = divmod(abs(total_minutes), 60)
+        tz_offset = f"UTC{sign}{hours:02d}:{minutes:02d}"
+        workspace_path = self._resolved_workspace_path
+        runtime = self._runtime_description
+
+        if compact:
+            return f"""# kabot
+
+You are kabot, a helpful AI assistant with tool access for files, shell, web, messaging, and subagents.
+
+## Current Time
+{now}
+Timezone: {tz_name} ({tz_offset})
+
+## Runtime
+{runtime}
+
+## Workspace
+Your workspace is at: {workspace_path}
+- Memory files: {workspace_path}/memory/MEMORY.md
+- Daily notes: {workspace_path}/memory/YYYY-MM-DD.md
+- Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md"""
 
         return f"""# kabot ðŸˆ
 
@@ -441,6 +570,7 @@ You are kabot, a helpful AI assistant. You have access to tools that allow you t
 
 ## Current Time
 {now}
+Timezone: {tz_name} ({tz_offset})
 
 ## Runtime
 {runtime}
@@ -494,6 +624,55 @@ If the user asks for a specific task (e.g. "Order food", "Control lights", "Chec
 4. NEVER say you can't do something without checking the skills directory first.
 
 If you are performing a multi-step task, start the first step NOW."""
+
+    def _should_use_lean_probe_context(
+        self,
+        *,
+        profile: str,
+        current_message: str | None,
+        skill_names: list[str] | None,
+        budget_hints: dict[str, Any] | None,
+    ) -> bool:
+        if str(profile or "").strip().upper() != "GENERAL":
+            return False
+        if not isinstance(budget_hints, dict) or not bool(budget_hints.get("probe_mode")):
+            return False
+        if skill_names:
+            return False
+
+        raw = _strip_appended_system_notes(current_message or "")
+        if not raw:
+            return False
+        normalized = _SPACE_RE.sub(" ", raw.lower()).strip()
+        if not normalized:
+            return False
+        if self._message_needs_memory_context(raw):
+            return False
+        if self._message_needs_explicit_skill_context(raw):
+            return False
+        if re.search(r"(https?://|www\.|[A-Za-z]:\\|[/\\].+\w)", raw):
+            return False
+
+        token_count = len([part for part in normalized.split(" ") if part])
+        if token_count > 12:
+            return False
+        return bool(_LIGHT_PROBE_GENERAL_RE.search(raw))
+
+    def _message_needs_memory_context(self, message: str) -> bool:
+        raw = _strip_appended_system_notes(message)
+        if not raw:
+            return False
+        return bool(_MEMORY_RECALL_RE.search(raw))
+
+    def _message_needs_explicit_skill_context(self, message: str) -> bool:
+        raw = _strip_appended_system_notes(message)
+        if not raw:
+            return False
+        if looks_like_skill_catalog_request(raw):
+            return True
+        if looks_like_skill_creation_request(raw) or looks_like_skill_install_request(raw):
+            return True
+        return bool(_EXPLICIT_SKILL_TURN_RE.search(raw))
 
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
@@ -551,7 +730,13 @@ If you are performing a multi-step task, start the first step NOW."""
         messages = []
 
         # System prompt
-        system_prompt = self.build_system_prompt(skill_names, profile, tool_names=tool_names, current_message=current_message)
+        system_prompt = self.build_system_prompt(
+            skill_names,
+            profile,
+            tool_names=tool_names,
+            current_message=current_message,
+            budget_hints=budget_hints,
+        )
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         if isinstance(untrusted_context, dict) and untrusted_context:

@@ -65,8 +65,10 @@ class WebhookServer(
         status_provider: Callable[[], dict[str, Any]] | None = None,
         chat_history_provider: Callable[[str, int], Any] | None = None,
         control_handler: Callable[[str, dict[str, Any]], Any] | None = None,
+        tailscale_only: bool = False,
     ):
         self.bus = bus
+        self.tailscale_only = tailscale_only
         self.auth_token, self.auth_scopes = self._parse_auth_token(auth_token)
         self.meta_verify_token = (meta_verify_token or "").strip()
         self.meta_app_secret = (meta_app_secret or "").strip()
@@ -80,6 +82,10 @@ class WebhookServer(
         self.status_provider = status_provider
         self.chat_history_provider = chat_history_provider
         self.control_handler = control_handler
+        self.dashboard_status_cache_ttl = 1.0
+        self._dashboard_status_cache_payload = None
+        self._dashboard_status_cache_at = 0.0
+        self._dashboard_background_tasks = set()
 
         @web.middleware
         async def security_headers_middleware(
@@ -91,7 +97,22 @@ class WebhookServer(
                 response.headers["Strict-Transport-Security"] = self.strict_transport_security_value
             return response
 
-        self.app = web.Application(middlewares=[security_headers_middleware])
+        @web.middleware
+        async def tailnet_middleware(
+            request: web.Request,
+            handler,
+        ) -> web.StreamResponse:
+            if self.tailscale_only:
+                remote = request.remote or ""
+                # Permit localhost (127.0.0.1, ::1) or Tailscale IP (100.x.x.x)
+                if not (remote == "127.0.0.1" or remote == "::1" or remote.startswith("100.")):
+                    return web.Response(
+                        text=f"Forbidden: Access restricted to Tailnet/Localhost (Your IP: {remote})",
+                        status=403
+                    )
+            return await handler(request)
+
+        self.app = web.Application(middlewares=[security_headers_middleware, tailnet_middleware])
         self.app.router.add_get("/", self.handle_root)
         self.app.router.add_get("/dashboard", self.handle_dashboard)
         self.app.router.add_get("/dashboard/partials/summary", self.handle_dashboard_summary)

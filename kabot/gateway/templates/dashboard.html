@@ -678,6 +678,18 @@
         }
 
         /* ═══════════════════════════════════════════════════════════════
+           UTILITY CLASSES (fallback for handler fragments)
+           ═══════════════════════════════════════════════════════════════ */
+        .muted {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .overflow-x-auto {
+            overflow-x: auto;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
            SVG CHART AREA (generic)
            ═══════════════════════════════════════════════════════════════ */
         .kb-chart-area {
@@ -756,7 +768,7 @@
 
         <!-- ═══ Top Metrics Bar ═══════════════════════════════════════════ -->
         <div class="kb-metrics-bar" id="metrics-bar" hx-get="/dashboard/partials/metrics__TOKEN_SUFFIX__"
-            hx-trigger="load, every 10s" hx-swap="innerHTML">
+            hx-trigger="load" hx-swap="innerHTML">
             <span class="kb-metric" style="color:var(--muted);">Loading metrics...</span>
         </div>
 
@@ -776,7 +788,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
-                    <span id="countdown-val">60s</span>
+                    <span id="countdown-val">5s</span>
                 </div>
                 <select class="kb-theme-btn" id="theme-picker" onchange="setTheme(this.value)">
                     <option value="midnight">🌙 Midnight</option>
@@ -801,8 +813,8 @@
         </div>
 
         <!-- ═══ Alerts Banner ═════════════════════════════════════════════ -->
-        <div class="kb-alerts" id="alerts-bar" hx-get="/dashboard/partials/alerts__TOKEN_SUFFIX__"
-            hx-trigger="load, every 15s" hx-swap="innerHTML">
+        <div class="kb-alerts" id="alerts-bar" hx-get="/dashboard/partials/alerts__TOKEN_SUFFIX__" hx-trigger="load"
+            hx-swap="innerHTML">
         </div>
 
         <!-- ═══ Shell: Sidebar + Main ═════════════════════════════════════ -->
@@ -833,6 +845,10 @@
 
         /* ═══ Auto-Refresh Countdown ═══════════════════════════════════════ */
         (function () {
+            var METRICS_INTERVAL_MS = 1000;
+            var ALERTS_INTERVAL_MS = 5000;
+            var ACTIVE_SECTION_INTERVAL_MS = 5000;
+
             function refreshElement(el) {
                 if (!el || !window.htmx) return;
                 var refreshUrl = el.getAttribute('hx-get');
@@ -853,21 +869,10 @@
             function refreshActiveSectionPanels() {
                 var currentId = 'overview';
                 if (typeof activeNavId === 'string' && activeNavId) currentId = activeNavId;
+                if (currentId === 'chat') return;
                 var section = document.getElementById('sec-' + currentId);
                 if (!section) return;
-
-                if (currentId === 'chat') {
-                    var chatLog = document.getElementById('chat-log');
-                    if (chatLog && chatLog.getAttribute('hx-get')) {
-                        refreshElement(chatLog);
-                        if (typeof window.kabotScrollChatToLatest === 'function') {
-                            setTimeout(function () { window.kabotScrollChatToLatest(true); }, 80);
-                        }
-                        return;
-                    }
-                }
-
-                section.querySelectorAll('[hx-get]').forEach(function (node) {
+                section.querySelectorAll('.config-section-card[hx-get]').forEach(function (node) {
                     refreshElement(node);
                 });
             }
@@ -887,15 +892,21 @@
             }
 
             window.__kabotRefreshDashboardPartials = refreshDashboardPartials;
-            var reloadInterval = 300; // 5 minutes
+            var reloadInterval = Math.max(1, Math.round(ACTIVE_SECTION_INTERVAL_MS / 1000));
             var secs = reloadInterval, el = document.getElementById('countdown-val');
             setInterval(function () {
                 secs--;
                 if (secs <= 0) {
-                    setTimeout(refreshDashboardPartials, 500);
+                    refreshDashboardPartials();
                 }
                 if (el) el.textContent = secs + 's';
             }, 1000);
+            setInterval(function () {
+                refreshElement(document.getElementById('metrics-bar'));
+            }, METRICS_INTERVAL_MS);
+            setInterval(function () {
+                refreshElement(document.getElementById('alerts-bar'));
+            }, ALERTS_INTERVAL_MS);
 
             // Allow manual refresh by clicking the countdown
             var cd = document.getElementById('countdown-display');
@@ -904,6 +915,23 @@
                 cd.onclick = refreshDashboardPartials;
                 cd.title = "Click to refresh visible panels now";
             }
+
+            // ═══ Client-side uptime ticker (updates every 1s without HTTP) ═══
+            function _fmtUptime(s) {
+                if (s < 60) return s + 's';
+                if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+                var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+                if (h < 24) return h + 'h ' + m + 'm';
+                return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
+            }
+            setInterval(function () {
+                var el = document.getElementById('kb-overview-uptime');
+                if (!el) return;
+                var cur = parseInt(el.getAttribute('data-uptime-seconds') || '0', 10);
+                cur++;
+                el.setAttribute('data-uptime-seconds', cur);
+                el.textContent = _fmtUptime(cur);
+            }, 1000);
         })();
 
         /* ═══ Sidebar Navigation ══════════════════════════════════════════ */
@@ -957,6 +985,20 @@
         /* ═══ Mobile Menu ═════════════════════════════════════════════════ */
         var menuBtn = document.getElementById('mobile-menu-btn'), sidebar = document.getElementById('sidebar');
         if (menuBtn && sidebar) menuBtn.addEventListener('click', function () { sidebar.classList.toggle('open'); });
+
+        /* ═══ HTMX Error Handling ═════════════════════════════════════════ */
+        document.body.addEventListener('htmx:responseError', function (event) {
+            // Swap explicitly on error if the server sends back HTML
+            var xhr = event.detail.xhr;
+            if (xhr && xhr.status >= 400 && xhr.responseText && xhr.responseText.includes('<div')) {
+                var target = event.detail.target;
+                if (target) {
+                    htmx.swap(target, event.detail.xhr.responseText, { swapStyle: 'outerHTML' });
+                }
+            } else if (xhr && xhr.status >= 400) {
+                alert("Action failed (Status " + xhr.status + "): " + xhr.responseText);
+            }
+        });
     </script>
 </body>
 

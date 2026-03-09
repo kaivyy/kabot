@@ -5,7 +5,7 @@ All notable changes to Kabot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] - Unreleased
+## [0.6.0] - 2026-03-09
 
 ### Added
 - **Dashboard UI Improvements**:
@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Action buttons now in a grid with icons and descriptions.
   - Automatic success/error message clearing for a cleaner experience.
 
-- **OpenClaw-style Dashboard Feature Parity**:
+- **Dashboard Feature Parity**:
   - **6 Themes**: 3 dark (Midnight, Charcoal, Ocean) + 3 light (Snow, Cream, Mint) — switchable from header dropdown, persisted in localStorage.
   - **Top Metrics Bar**: Live CPU, RAM, disk usage with color-coded progress bars, gateway status badge, uptime counter, version display.
   - **Header Bar**: Bot logo, status dot with pulse animation, auto-refresh countdown (60s), theme picker.
@@ -36,12 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Available Models Grid**: Per-provider model listing with configured/available badges and tag-style model names.
   - **Skills List**: Registered skills with active/disabled state badges.
   - **Cron Operator Actions**: Cron panel now shows last status, duration, and inline `Run`, `Enable/Disable`, and `Delete` actions via HTMX partial refresh.
+  - **Dashboard Action Buttons Fixed**: Replaced broken Tailwind CSS utility classes (`py-1`, `px-2`, `text-xs`, `bg-red-500`, `bg-slate-600`, `bg-emerald-500`, `mr-2`) with proper inline CSS styles — all action buttons across Sessions (Clear/Delete), Nodes (Restart/Stop/Start), Cron (Run/Enable-Disable/Delete), and Skills (Enable-Disable/Save Key) panels are now fully interactive and visually differentiated (accent/danger/success colors).
+  - **Real-Time Uptime Counter**: Overview uptime stat card now ticks every second client-side (JS `setInterval`) instead of waiting for the 5-second panel refresh, matching the metrics bar responsiveness without extra HTTP requests.
   - **Skills Operator Actions**: Skills panel now shows env readiness, inline `Enable/Disable`, and `Save Key` actions for API-key based skills.
   - **Sub-Agent Activity Panel**: Added dashboard panel for recent subagent runs with status and duration snapshots.
   - **Git Log Panel**: Added dashboard panel for recent workspace commits.
   - **Expanded Cost/Chart Monitoring**: Cost panel now includes per-model breakdown, while charts can render both cost history and model usage from enriched status payloads.
-  - **Real Multi-Model Usage Accounting**: Dashboard cost panels now seed every active runtime model in the chain even before first usage, config/runtime summaries expose the full model chain, and transcript cost parsing now respects OpenClaw-style nested usage payloads plus explicit per-turn cost totals instead of assuming only one primary model path.
-  - **Usage Window Tabs**: Cost and chart panels now support OpenClaw-style `7d`, `30d`, and `All Time` window switching with HTMX-persisted panel refresh, while runtime payloads expose pre-aggregated `usage_windows` so auto-refresh stays fast even as history grows.
+  - **Dashboard Interaction Bug Fix**: Fixed a client-side JavaScript auto-refresh loop in `dashboard.html` that indiscriminately overwrote all elements with `.hx-get` attributes every 5 seconds, which previously broke interactivity for chart time filters (`7d`, `30d`, `all`) and prevented POST forms like the `sessions.delete` button from retaining state.
+  - **Real Multi-Model Usage Accounting**: Dashboard cost panels now seed every active runtime model in the chain even before first usage, config/runtime summaries expose the full model chain, and transcript cost parsing now respects nested usage payloads plus explicit per-turn cost totals instead of assuming only one primary model path.
+  - **Usage Window Tabs**: Cost and chart panels now support `7d`, `30d`, and `All Time` window switching with HTMX-persisted panel refresh, while runtime payloads expose pre-aggregated `usage_windows` so auto-refresh stays fast even as history grows.
   - **Sticky Chat UX**: Dashboard chat now restores the active tab after browser reload using URL-hash + local tab persistence, and chat logs auto-stick to the latest message after HTMX/SSE updates so operators do not need to scroll back down manually.
   - **Settings Panel Hardening**: Settings/engine wrapper panels now load with `outerHTML` placeholders to avoid duplicate HTMX targets, skill toggles follow the real config `disabled` flag instead of readiness state, and read-only tokens now surface explicit operator-write requirements instead of showing dead action buttons.
   - **Dashboard History Cleanup**: Chat history payloads preserve real metadata when present without injecting empty `metadata: {}` into every message.
@@ -51,7 +54,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Auto-Refresh**: Countdown refresh now updates global bars plus the currently visible dashboard panels in place, so operators stay on the active tab instead of getting bounced back through a full page reload.
   - 9 new GET `/dashboard/partials/*` routes serving HTMX fragments.
 
+### Fixed
+- **Comprehensive Chat Model Tracking**: Resolved an issue causing Cost & Usage tracker panels on the dashboard to ignore model overrides (such as openrouter models or custom providers) used in the web chat. LLM responses returning native Pydantic objects or missing usage properties entirely are now safely parsed and tracked, ensuring that *all* models, including overrides and custom endpoints, correctly appear in model usage charts and cost aggregation.
+
+### Added
+- **Documentation**: Added comprehensive guide for Auto-start (background daemon) and Tailscale tunneling to `HOW_TO_USE.MD`, including native security middleware explanations and Windows troubleshooting.
+- **Native Tailscale Security Middleware**: Kabot's Gateway now features an IP-level Tailnet middleware. When `gateway.tailscale` is enabled in the configuration, the `webhook_server` natively drops any incoming UI/Webhook connection (`403 Forbidden`) that does not originate from Localhost (`127.0.0.1`, `::1`) or the secure Tailscale subnet (`100.x.x.x`). This mirrors OpenClaw's security posture, ensuring that even if port 18790 is exposed via `0.0.0.0`, malicious public traffic is immediately blocked before touching the application logic.
+
 ### Changed
+- One-shot CLI session behavior is now safer for ad-hoc probes:
+  - `kabot agent -m ...` without an explicit `--session` now resolves to an ephemeral one-shot session ID instead of silently reusing `cli:default`,
+  - interactive mode and explicitly provided session IDs keep their previous behavior,
+  - this prevents follow-up contamination where a brand-new one-shot prompt accidentally inherits stale filesystem or weather context from an older ad-hoc run.
+- Agent CLI smoke coverage is now easier to rerun across Windows, macOS, and Linux shells:
+  - new module `python -m kabot.cli.agent_smoke_matrix` runs multilingual temporal/filesystem cases through list-argument subprocess calls instead of brittle shell strings,
+  - it supports explicit skill smoke cases via `--skill ...` and broad skill discovery via `--all-skills`,
+  - JSON output is now Unicode-safe even on legacy Windows consoles, so multilingual smoke results do not crash when stdout is still using `cp1252`,
+  - the official `kabot doctor smoke-agent` surface now wraps that runner directly, including threshold gates for `context_build_ms` and `first_response_ms` so latency regressions can fail health checks on demand,
+  - README now documents `kabot doctor smoke-agent` examples, and the first repo-wide lint cleanup batch reduced Ruff findings from `508` to `402` without changing runtime behavior.
+- Narrow temporal chat prompts can now complete locally without waiting for the answer model:
+  - new `kabot/agent/loop_core/message_runtime_parts/temporal.py` generates local fast replies for tiny day/date/time/timezone prompts such as `hari apa sekarang`, `besok hari apa`, `今天星期几`, `今日は何曜日`, and `ตอนนี้วันอะไร`,
+  - `process_message()` now uses that helper before context assembly or LLM execution when the turn is clearly simple, has no required tool, and is not inside another guarded workflow,
+  - temporal matching now prioritizes the actual question type over trailing timezone hints, so prompts like `hari apa sekarang? ... pakai WIB ya` answer the weekday instead of being misclassified as timezone-only,
+  - real CLI smoke on Windows now shows these prompts returning in roughly `first_response_ms=136-283`, while direct filesystem prompts still keep their own fast direct-tool path.
+- One-shot runtime is now faster before the main answer model even runs:
+  - `IntentRouter` now short-circuits obvious multilingual temporal/day-time prompts (`hari apa sekarang`, `今天星期几`, `ตอนนี้วันอะไร`, `今日は何曜日`) to `GENERAL` + simple flow without paying an extra routing LLM call,
+  - `process_message()` now also skips `router.route()` entirely for fast direct-tool turns once `required_tool` already resolved to deterministic direct tools such as `list_dir` or `get_process_memory`, so direct filesystem/system queries stop wasting a classification hop before the real tool executes,
+  - real CLI smoke now shows filesystem prompts like `デスクトップのbotフォルダの中、最初の5件だけ見せて。` dropping from multi-second routing overhead to roughly `first_response_ms=175`, while lightweight temporal prompts shave off the old pre-route classification delay as well.
+- CLI multilingual input is now more resilient to shell/codepage damage across Windows-hosted terminals and still safe for POSIX shells:
+  - new text-safety repair logic performs a narrow best-effort fix for common mojibake patterns caused by UTF-8 text being mis-decoded as Latin-1/CP1252 before Python receives `argv`,
+  - one-shot and interactive `kabot agent` entrypoints now normalize incoming CLI text through that repair step without altering already-clean Unicode input,
+  - regression tests now lock repaired Chinese/Japanese/Thai-style prompts at the CLI boundary, while real subprocess smoke confirms garbled direct args can still recover into correct multilingual agent understanding.
+- Simple no-tool responses now start with a text-only LLM attempt before sending tool definitions:
+  - `run_simple_response()` now calls the shared model-fallback helper with `include_tools_initial=False`, so lightweight chats such as time/day questions avoid paying the first-attempt tool payload cost,
+  - the shared fallback state machine still preserves the same model-chain, auth-rotation, and text-only retry behavior for complex/tool-capable flows because the default path remains `include_tools_initial=True`,
+  - regression coverage now locks both sides: simple-response turns must start text-only, while the normal tool-capable fallback path still keeps its existing behavior.
+- Lean probe context for one-shot GENERAL chats is now more faithful to the real runtime path:
+  - `ContextBuilder` now strips appended runtime `[System Note: ...]` blocks before deciding whether a probe turn is still a lightweight temporal/day-time chat,
+  - this fixes a regression where natural prompts like `hari apa sekarang? jawab singkat, pakai WIB ya.` were getting their injected temporal note counted as part of the user turn, which re-enabled full auto-skill scanning and memory-context injection,
+  - local CLI smoke now shows that temporal one-shot probes keep compact runtime context without auto-loading unrelated skills, while explicit skill prompts still load their matched skill context,
+  - the regression is locked by `tests/agent/test_context_builder.py::test_context_builder_probe_mode_keeps_temporal_system_note_turns_lean`.
+- Lean temporal probe context is now also cheaper on cold start:
+  - `SkillsLoader.get_always_skills()` no longer routes through full `list_skills(filter_unavailable=True)` validation just to discover always-loaded skills,
+  - the loader now scans skill frontmatter directly with a short cache while still honoring precedence, `disabled` entries, builtin allowlists, OS/bin/env requirements, and env/API-key values supplied from `skills.entries`,
+  - local CLI smoke for `kabot agent -m \"hari apa sekarang? jawab singkat, pakai WIB ya.\" --logs` dropped `context_build_ms` from the previous ~`841ms` path to about `128ms`, while explicit skill turns still keep their richer skill-loading path,
+  - regression coverage now locks this behavior in `tests/agent/test_skills_entries_semantics.py`.
+- CLI one-shot agent runs are now lighter and easier to validate locally:
+  - `kabot agent -m ...` now constructs `AgentLoop` with `lazy_probe_memory=True`, so probe-style one-shot runs start with lightweight SQLite-backed history and only boot the heavy hybrid memory backend if semantic memory tools are actually used,
+  - the new `kabot.memory.lazy_probe_memory.LazyProbeMemory` backend preserves session history writes and recent context immediately while deferring Chroma/embedding startup until `search_memory`, `remember_fact`, or graph-memory access needs it,
+  - `python -m kabot.cli.commands ...` no longer trips a circular import after the CLI refactor because the running `__main__` module is now aliased back to `kabot.cli.commands` for the extracted helper modules,
+  - filesystem list-dir fallback is now more tolerant of mixed-language special-directory prompts like `desktopのbot folder ...` by normalizing mixed separators and ignoring bogus relative candidates such as `3 item aja`.
+- Temporal and correction-style chat turns now preserve local runtime context more reliably:
+  - compact fast-path chats that ask about day/date/time or timezone now keep a system prompt with explicit local timezone labels instead of sending only the raw user turn,
+  - short memory-commit turns such as `simpan` now bypass the raw no-history fast path so recent conversation context can still be seen by the model,
+  - `suppress_required_tool_inference` now also blocks the live web-search safety latch in execution runtime, preventing correction/meta-feedback turns containing words like `sekarang` from being hijacked into `web_search`.
+- Repo-wide sub-1000 refactor campaign now uses package folders for new extractions instead of adding more flat sibling modules:
+  - `kabot/agent/loop.py` now delegates compatibility and thin runtime wrappers through `kabot/agent/loop_parts/`,
+  - `kabot/agent/cron_fallback_nlp.py` is now a facade over `kabot/agent/cron_fallback_parts/intent_scoring.py` and `kabot/agent/cron_fallback_parts/constants.py`,
+  - `kabot/agent/loop_core/execution_runtime.py` now imports shared helper functions from `kabot/agent/loop_core/execution_runtime_parts/helpers.py` plus LLM/simple-response flow from `kabot/agent/loop_core/execution_runtime_parts/llm.py`,
+  - `kabot/agent/loop_core/message_runtime.py` now imports helper/state logic from `kabot/agent/loop_core/message_runtime_parts/helpers.py`, `kabot/agent/loop_core/message_runtime_parts/followup.py`, and tail/system flows from `kabot/agent/loop_core/message_runtime_parts/tail.py`,
+  - these extractions preserve existing facades and monkeypatch targets through re-export/proxy wiring, so runtime behavior and test hooks stay intact while the new files live under dedicated refactor folders.
+- The current refactor batch brought the last oversized runtime source files below `1000` lines without changing behavior:
+  - `kabot/agent/loop.py` -> `723`
+  - `kabot/agent/cron_fallback_nlp.py` -> `562`
+  - `kabot/agent/cron_fallback_parts/intent_scoring.py` -> `632`
+  - `kabot/agent/loop_core/execution_runtime.py` -> `774`
+  - `kabot/agent/loop_core/message_runtime.py` -> `865`
+- Large test modules are now also split into folder-based chunks so the workspace mainline has no Python file above `1000` lines:
+  - `tests/agent/loop_core/test_message_runtime.py` -> themed files such as `test_message_runtime_basics.py`, `test_message_runtime_pending_file_context.py`, `test_message_runtime_skill_workflows.py`, and `test_message_runtime_fast_paths_and_status.py`
+  - `tests/agent/loop_core/test_execution_runtime.py` -> themed files such as `test_execution_runtime_simple_and_guards.py`, `test_execution_runtime_tool_calls_and_skill_phases.py`, and `test_execution_runtime_direct_paths_and_research.py`
+  - `tests/agent/test_tool_enforcement.py` -> `test_tool_enforcement_routing_and_aliases.py` and `test_tool_enforcement_fallback_and_navigation.py`
+  - `tests/gateway/test_webhooks.py` -> `test_webhooks_ingress_and_auth.py` and `test_webhooks_dashboard_panels.py`
+  - final workspace check excluding `.worktrees` now reports `TOTAL_GT_1000 0`.
+  - Gateway regression coverage for nodes actions is now less brittle:
+    - `tests/gateway/test_webhooks_cases/test_webhooks_dashboard_panels.py` now verifies disabled `Start`/`Stop` buttons by behavior (`disabled` state in rendered button markup) instead of pinning the exact CSS class string, which had already diverged from the inline-styled UI.
+- Repo-wide sub-1000 refactor campaign continued without behavior changes:
+  - `kabot/cli/commands.py` is now a thin facade (`409` lines) that re-exports command groups from dedicated helper modules such as `commands_setup.py`, `commands_gateway.py`, `commands_agent_command.py`, `commands_models_auth.py`, `commands_approvals.py`, and `commands_system.py`,
+  - `kabot/agent/skills.py` now keeps `SkillsLoader` focused while multilingual matching constants/helpers live in `kabot/agent/skills_matching.py`,
+  - `kabot/agent/tools/stock.py` now keeps tool runtime classes focused while symbol/alias extraction helpers live in `kabot/agent/tools/stock_matching.py`,
+  - setup wizard sections `channels.py`, `model_auth.py`, and `tools_gateway_skills.py` now delegate large helper blocks to sibling `*_helpers.py` modules while preserving the same bound section methods and test monkeypatch targets,
+  - `tests/agent/tools/test_stock.py` was split so extractor coverage now lives in `tests/agent/tools/test_stock_extractors.py`,
+  - this batch brought the following files below `1000` lines: `kabot/cli/commands.py`, `kabot/agent/skills.py`, `kabot/agent/tools/stock.py`, `kabot/cli/wizard/sections/channels.py`, `kabot/cli/wizard/sections/model_auth.py`, `kabot/cli/wizard/sections/tools_gateway_skills.py`, and `tests/agent/tools/test_stock.py`.
+- `kabot/cli/commands.py` has started being split into dedicated helper modules:
+  - dashboard payload/runtime helper functions now live in `kabot/cli/dashboard_payloads.py`,
+  - `commands.py` still re-exports the same helper names so existing CLI/gateway call sites and tests stay behavior-compatible,
+  - this is a refactor-only first cut to reduce `commands.py` safely before moving larger command groups.
 - File-path and storage-analysis routing are now less brittle and less likely to hallucinate stale tool context:
   - intent matching no longer treats latin keywords as blind substrings, so terms like `space` stop falsely matching inside paths such as `workspace`,
   - explicit file-path questions like `C:\...\landing_hacker.html font pada web ini` now stay out of stale `system info` follow-up flow and instead add a runtime note telling the model to `read_file` before answering about that file,
@@ -66,7 +153,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - prompts like `please use the weather skill for this request` no longer drag the full `Available Skills` catalog into every GENERAL turn just because they mention the word `skill`,
   - task-specific `Auto-Selected Skills` are now placed ahead of long bootstrap/reference sections in the system prompt, so token-budget truncation preserves the active skill context instead of cutting it off,
   - multilingual explicit skill requests verified through `kabot agent -m ... --logs` stay AI-driven across English, Indonesian, Chinese, Thai, and Japanese prompt styles without falling back into unwanted parser-forced catalog/help flows,
-  - CLI regression coverage now locks this behavior so explicit skill prompts keep their system prompt and skip the heavyweight catalog summary unless the user is actually asking about the skill catalog itself.
+  - CLI regression coverage now locks this behavior so explicit skill prompts keep their system prompt and skip the heavyweight catalog summary unless the user is actually asking about the skill catalog itself,
+  - cold explicit skill turns now also avoid building the full keyword/body skill index when the prompt is a lightweight direct skill-use request such as `Please use the weather skill for this request.`, instead resolving the named skill through a narrow fast path while preserving the older full-index path for broader descriptive prompts,
+  - local CLI smoke now shows that explicit skill `context_build_ms` drops from the previous ~`1148ms` path to about `143ms`, while the helper extraction for this optimization lives under `kabot/agent/skills_parts/` so `kabot/agent/skills.py` stays below `1000` lines.
 - CLI one-shot probe turns are now lighter and more workspace-consistent:
   - `kabot agent -m ...` probe-mode system prompts now use a compact GENERAL prompt that skips heavy bootstrap/reference sections like large `AGENTS.md` files while still preserving active skill context,
   - probe-mode regression coverage now locks the compact prompt behavior at the actual CLI `agent -m ... --logs` entrypoint,
@@ -200,7 +289,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Closing acknowledgement turns are now also excluded from history-based follow-up tool inference:
   - short gratitude replies (e.g. `oke makasih ya`, `iya makasih`) no longer infer previous reminder intents from recent conversation history,
   - prevents false cron fallback replies like reminder-time parsing errors after reminder completion.
-- Dashboard surface is upgraded toward OpenClaw-style control flow while keeping Kabot's lightweight SSR+HTMX stack:
+- Dashboard surface is upgraded toward control flow while keeping Kabot's lightweight SSR+HTMX stack:
   - added dashboard panels for `Chat`, `Sessions`, `Nodes`, and `Config` on `/dashboard`,
   - chat panel now includes auto-refresh live log (`/dashboard/partials/chat/log`) to show recent conversation state without full page reload,
   - added SSE live stream endpoint for chat panel (`GET /dashboard/api/chat/stream`) with read-scope auth,
@@ -243,7 +332,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - added runtime dashboard control support for `cron.enable`, `cron.disable`, `cron.run`, `cron.delete`, `skills.enable`, `skills.disable`, and `skills.set_api_key`,
   - added enriched dashboard payload fields for `cost_history`, per-model costs, `cron_jobs_list`, `skills`, `subagent_activity`, and `git_log`,
   - dashboard control capability metadata now advertises cron/skills actions for operator clients.
-- Dashboard Chat panel now supports per-turn model/provider routing (OpenClaw-style operator flow):
+- Dashboard Chat panel now supports per-turn model/provider routing (operator flow):
   - added provider selector fed from runtime provider registry snapshot,
   - added model override input (`provider/model` or alias),
   - model suggestions now refresh automatically based on selected provider (with merged shortlist fallback when provider is empty),
@@ -334,7 +423,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Outbound status/send race guard is now extended to additional channels:
   - added per-chat send-lock serialization for Bridge WebSocket, WhatsApp, QQ, Feishu, and DingTalk channel send paths,
   - prevents concurrent status/final-message interleaving from creating stale/duplicate progress behavior.
-- Added OpenClaw-style abort shortcuts for safer interaction control:
+- Added abort shortcuts for safer interaction control:
   - recognizes standalone stop intent across slash + natural phrasing (`/stop`, `stop action`, `please stop`, `do not do that`, multilingual variants),
   - accepts trailing punctuation in stop requests (`STOP!!!`),
   - clears pending follow-up tool/intent context immediately to prevent stale continuation after user cancellation,
@@ -343,7 +432,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Telegram and Discord typing loops now include max-duration TTL guard and repeated-failure breaker,
   - typing loop tasks now self-clean from per-chat task maps after exit (no stale task handle retention),
   - prevents indefinite looping during transport instability while allowing automatic restart from status pulses.
-- Discord status lane now explicitly ensures typing keepalive while progress updates are sent (`queued/thinking/tool`), improving responsiveness parity with Telegram/OpenClaw behavior.
+- Discord status lane now explicitly ensures typing keepalive while progress updates are sent (`queued/thinking/tool`), improving responsiveness parity with Telegram/behavior.
 - Stock tool now has defensive symbol extraction at tool layer (not only router layer):
   - mixed natural-language input is filtered to valid ticker candidates only,
   - plain confirmation/chat text is rejected with a clear ticker guidance error,
@@ -541,7 +630,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lint check for touched runtime/CLI/test files:
   - `ruff check kabot/cli/commands.py kabot/agent/loop_core/message_runtime.py tests/cli/test_config_runtime_mode.py tests/cli/test_setup_wizard_tools_menu.py tests/config/test_runtime_resilience_schema.py tests/config/test_loader_meta_migration.py tests/agent/test_context_builder.py tests/agent/loop_core/test_execution_runtime.py tests/agent/loop_core/test_message_runtime.py`
   - Result: `PASSED`.
-- Dashboard OpenClaw-like parity verification (web UI + control helpers):
+- Dashboard parity verification (web UI + control helpers):
   - `pytest -q tests/gateway/test_webhooks.py tests/cli/test_gateway_dashboard_helpers.py tests/cli/test_gateway_tailscale_runtime.py tests/cli/test_config_runtime_mode.py tests/cli/test_setup_wizard_tools_menu.py`
   - Result: `52 passed`.
 - Follow-up acknowledgement regression verification:
@@ -1093,7 +1182,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - skip critic retries on required-tool turns,
     - skip self-eval/critic loops on background/heartbeat turns.
   - Direct readouts for `cleanup_system` and `get_process_memory` now return raw tool output immediately (no extra summarization hop).
-- **OpenClaw-Style Input Maturity Hardening (Context over Keyword)**:
+- **Input Maturity Hardening (Context over Keyword)**:
   - Added session-scoped follow-up intent latch (`pending_followup_tool`) in message runtime:
     - stores the last required tool per session with TTL,
     - allows short confirmations/follow-ups (e.g. `ya`, `gas`, `lanjut`, `terusin`) to continue the prior intended action without repeating keywords.
@@ -1107,8 +1196,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - if upstream routing metadata is `RESEARCH` and `web_search` exists, agent loop forces web search tool path to reduce hallucinated “from memory” answers.
   - Extended critic speed policy:
     - skip critic retries for `RESEARCH` profile turns (in addition to existing short/chat/required-tool shortcuts) to prevent 20-40s retry loops on live-news prompts.
-  - Added dedicated OpenClaw gap matrix document for operator parity tracking:
-    - `docs/plans/2026-03-03-openclaw-vs-kabot-input-gap-matrix.md`.
+  - Added dedicated gap matrix document for operator parity tracking:
+    - `docs/plans/2026-03-03--vs-kabot-input-gap-matrix.md`.
   - Improved actionable-intent detection for short messages:
     - short imperative prompts (e.g. `cek ram`, `buat skill`) are no longer treated as passive follow-up confirmations.
   - Improved skill matching for creator workflows:
@@ -1159,7 +1248,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Loader now injects defaults for `runtime.observability`, `runtime.quotas`, `security.trustMode`, and `skills.onboarding`.
   - Loader now injects defaults for `runtime.queue` and keeps queue policy canonical during migration.
   - Skills section is canonicalized through migration path consistently (with atomic write + backup behavior retained).
-- **Inbound Queue Burst Handling (OpenClaw-Style Core Parity)**:
+- **Inbound Queue Burst Handling (Core Parity)**:
   - Added inbound queue policy engine in `MessageBus`:
     - per-session debounce window,
     - per-session pending-cap guard,

@@ -17,7 +17,7 @@ class NodesMixin:
         unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
-        fragment = f"<div id='panel-nodes' class='config-section-card card overflow-x-auto' hx-get='/dashboard/partials/nodes{self._dashboard_token_suffix(request)}' hx-trigger='load, every 5s' hx-swap='outerHTML'>{self._render_nodes_fragment(request)}</div>"
+        fragment = f"<div id='panel-nodes' class='config-section-card card overflow-x-auto' hx-get='/dashboard/partials/nodes{self._dashboard_token_suffix(request)}' hx-trigger='load' hx-swap='outerHTML'>{self._render_nodes_fragment(request)}</div>"
         return web.Response(text=fragment, content_type="text/html")
 
     async def handle_dashboard_nodes_update_api(self, request: web.Request) -> web.Response:
@@ -51,5 +51,5 @@ class NodesMixin:
             action=action,
             args={"node_id": node_id},
         )
-        fragment = f"<div id='panel-nodes' class='config-section-card card overflow-x-auto' hx-get='/dashboard/partials/nodes{self._dashboard_token_suffix(request)}' hx-trigger='load, every 5s' hx-swap='outerHTML'>{self._render_nodes_fragment(request, action_result=result, action_status_code=status_code)}</div>"
+        fragment = f"<div id='panel-nodes' class='config-section-card card overflow-x-auto' hx-get='/dashboard/partials/nodes{self._dashboard_token_suffix(request)}' hx-trigger='load' hx-swap='outerHTML'>{self._render_nodes_fragment(request, action_result=result, action_status_code=status_code)}</div>"
         return web.Response(text=fragment, content_type="text/html", status=status_code)

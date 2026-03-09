@@ -134,6 +134,99 @@ def test_allow_bundled_blocks_bundled_skill(tmp_path):
     assert loader.list_skills(filter_unavailable=True) == []
 
 
+def test_get_always_skills_reads_frontmatter_without_list_skills(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
+
+    _write_skill(
+        builtin,
+        "always_skill",
+        '{"kabot":{"always":true,"requires":{"bins":[],"env":[]}}}',
+    )
+
+    loader = SkillsLoader(
+        workspace=workspace,
+        builtin_skills_dir=builtin,
+        skills_config={"load": {"managed_dir": str(managed)}},
+    )
+
+    monkeypatch.setattr(
+        loader,
+        "list_skills",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("list_skills should not be called")),
+    )
+
+    assert loader.get_always_skills() == ["always_skill"]
+
+
+def test_get_always_skills_respects_disabled_entries_without_list_skills(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
+
+    _write_skill(
+        builtin,
+        "disabled_always_skill",
+        '{"kabot":{"always":true,"requires":{"bins":[],"env":[]}}}',
+    )
+
+    loader = SkillsLoader(
+        workspace=workspace,
+        builtin_skills_dir=builtin,
+        skills_config={
+            "load": {"managed_dir": str(managed)},
+            "entries": {"disabled_always_skill": {"enabled": False}},
+        },
+    )
+
+    monkeypatch.setattr(
+        loader,
+        "list_skills",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("list_skills should not be called")),
+    )
+
+    assert loader.get_always_skills() == []
+
+
+def test_get_always_skills_respects_entry_env_without_list_skills(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+    managed = tmp_path / "managed"
+    managed.mkdir()
+
+    _write_skill(
+        builtin,
+        "env_always_skill",
+        '{"kabot":{"always":true,"requires":{"bins":[],"env":["MY_ALWAYS_KEY"]}}}',
+    )
+
+    loader = SkillsLoader(
+        workspace=workspace,
+        builtin_skills_dir=builtin,
+        skills_config={
+            "load": {"managed_dir": str(managed)},
+            "entries": {"env_always_skill": {"env": {"MY_ALWAYS_KEY": "set-via-config"}}},
+        },
+    )
+
+    monkeypatch.setattr(
+        loader,
+        "list_skills",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("list_skills should not be called")),
+    )
+
+    assert loader.get_always_skills() == ["env_always_skill"]
+
+
 def test_skill_key_entry_env_is_used_for_requirements(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

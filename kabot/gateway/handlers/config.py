@@ -106,7 +106,7 @@ class ConfigMixin:
             "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;'>"
             "<span style='font-size:11px;font-weight:600;color:var(--accent);text-transform:uppercase;"
             "letter-spacing:.06em;'>Config Preview</span>"
-            "<span style='font-size:10px;color:var(--muted);'>Auto-refreshes every 10s</span>"
+            "<span style='font-size:10px;color:var(--muted);'>Live refresh while this tab is open</span>"
             "</div>"
             f"<pre class='mono' style='font-size:11px;max-height:300px;overflow:auto;'>{pretty}</pre>"
             "</div>"

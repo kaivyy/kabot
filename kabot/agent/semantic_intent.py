@@ -11,7 +11,9 @@ _NON_WORD_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 _META_FEEDBACK_RE = re.compile(
     r"(?i)\b("
     r"kok|kenapa|why|wrong|ngaco|aneh|lama|slow|bug|error|"
-    r"bukan (?:itu|saham|stock|cuaca|weather)|"
+    r"bukan (?:itu|saham|stock|cuaca|weather|web\s*search|websearch|brows(?:e|ing))|"
+    r"no web\s*search|not web\s*search|"
+    r"koreksi (?:chat|percakapan)|correct(?:ing|ion)? (?:the )?(?:chat|conversation)|"
     r"stop bahas|jangan bahas|not about|that's not what i asked"
     r")\b"
 )

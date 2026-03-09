@@ -1,0 +1,109 @@
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+import kabot.agent.loop_core.message_runtime as message_runtime_module
+from kabot.agent.loop_core.message_runtime import process_message
+from kabot.agent.loop_core.message_runtime_parts.temporal import build_temporal_fast_reply
+from kabot.bus.events import InboundMessage, OutboundMessage
+
+
+def _fixed_wib_now() -> datetime:
+    return datetime(2026, 3, 9, 14, 5, tzinfo=timezone(timedelta(hours=7)))
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_fragment"),
+    [
+        ("hari apa sekarang?", "Senin"),
+        ("besok hari apa", "Selasa"),
+        ("今天星期几？", "星期一"),
+        ("今日は何曜日？", "月曜日"),
+        ("ตอนนี้วันอะไร", "วันจันทร์"),
+    ],
+)
+def test_build_temporal_fast_reply_handles_multilingual_queries(query, expected_fragment):
+    reply = build_temporal_fast_reply(query, now_local=_fixed_wib_now())
+
+    assert reply is not None
+    assert expected_fragment in reply
+
+
+def test_build_temporal_fast_reply_ignores_non_question_feedback():
+    reply = build_temporal_fast_reply(
+        "sekarang senin woi astaga kenapa ga disimpan di memory mu",
+        now_local=_fixed_wib_now(),
+    )
+
+    assert reply is None
+
+
+def test_build_temporal_fast_reply_prioritizes_day_query_over_timezone_hint():
+    reply = build_temporal_fast_reply(
+        "hari apa sekarang? jawab singkat, pakai WIB ya.",
+        now_local=_fixed_wib_now(),
+    )
+
+    assert reply == "Sekarang hari Senin."
+
+
+@pytest.mark.asyncio
+async def test_process_message_temporal_fast_reply_skips_context_and_llm(monkeypatch):
+    routed_context = MagicMock()
+    routed_context.build_messages.return_value = [{"role": "user", "content": "hari apa sekarang"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: routed_context,
+        context=routed_context,
+        tools=SimpleNamespace(tool_names=["read_file"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="llm-should-not-run"),
+        _run_agent_loop=AsyncMock(return_value="agent-should-not-run"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="Sekarang hari Senin.")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+        bus=None,
+        channel_manager=None,
+    )
+
+    monkeypatch.setattr(
+        message_runtime_module,
+        "build_temporal_fast_reply",
+        lambda text, *, locale=None, now_local=None: "Sekarang hari Senin.",
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="hari apa sekarang")
+    response = await process_message(loop, msg)
+
+    assert response is not None
+    assert response.content == "Sekarang hari Senin."
+    routed_context.build_messages.assert_not_called()
+    loop._run_simple_response.assert_not_awaited()
+    loop._run_agent_loop.assert_not_awaited()

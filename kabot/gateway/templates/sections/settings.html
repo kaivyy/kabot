@@ -8,11 +8,11 @@
     <!-- Config + Control -->
     <div class="kb-grid-2">
         <div id="panel-config" class="config-section-card" hx-get="/dashboard/partials/config__TOKEN_SUFFIX__"
-            hx-trigger="load, every 10s" hx-swap="innerHTML">
+            hx-trigger="load" hx-swap="innerHTML">
             <div style="padding:18px; color:var(--muted); font-size:12px;">Loading config...</div>
         </div>
         <div class="config-section-card" hx-get="/dashboard/partials/control__TOKEN_SUFFIX__"
-            hx-trigger="load, every 15s" hx-swap="innerHTML">
+            hx-trigger="load" hx-swap="innerHTML">
             <div style="padding:18px; color:var(--muted); font-size:12px;">Loading control...</div>
         </div>
     </div>
@@ -20,7 +20,7 @@
     <!-- Models + Skills -->
     <div class="kb-grid-2">
         <div class="config-section-card" hx-get="/dashboard/partials/models__TOKEN_SUFFIX__"
-            hx-trigger="load, every 30s" hx-swap="innerHTML">
+            hx-trigger="load" hx-swap="innerHTML">
             <div style="padding:18px; color:var(--muted); font-size:12px;">Loading models...</div>
         </div>
         <div id="panel-skills" class="config-section-card" hx-get="/dashboard/partials/skills__TOKEN_SUFFIX__"

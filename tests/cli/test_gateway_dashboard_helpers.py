@@ -45,6 +45,30 @@ def test_build_dashboard_config_summary_exposes_safe_fields_only(monkeypatch):
     ]
 
 
+def test_build_dashboard_config_summary_exposes_model_chain():
+    from kabot.cli import commands
+    from kabot.config.schema import AgentModelConfig, Config
+
+    cfg = Config()
+    cfg.agents.defaults.model = AgentModelConfig(
+        primary="openai-codex/gpt-5.3-codex",
+        fallbacks=["openai/gpt-4o-mini", "groq/llama-3.3-70b"],
+    )
+
+    summary = commands._build_dashboard_config_summary(cfg)
+
+    assert summary["runtime"]["model"]["primary"] == "openai-codex/gpt-5.3-codex"
+    assert summary["runtime"]["model"]["fallbacks"] == [
+        "openai/gpt-4o-mini",
+        "groq/llama-3.3-70b",
+    ]
+    assert summary["runtime"]["model"]["chain"] == [
+        "openai-codex/gpt-5.3-codex",
+        "openai/gpt-4o-mini",
+        "groq/llama-3.3-70b",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_gateway_dashboard_control_action_sets_token_mode_and_saves():
     from kabot.cli import commands
@@ -377,6 +401,7 @@ def test_build_dashboard_status_payload_includes_enriched_monitoring_data(monkey
     payload = commands._build_dashboard_status_payload(
         gateway_started_at=1709800000,
         runtime_model="gpt-4o-mini",
+        runtime_fallbacks=["openai-codex/gpt-5.3-codex"],
         runtime_host="127.0.0.1",
         runtime_port=18790,
         tailscale_mode="off",
@@ -421,6 +446,11 @@ def test_build_dashboard_status_payload_includes_enriched_monitoring_data(monkey
     assert payload["costs"]["today"] >= 0
     assert payload["token_usage"]["total"] == 1500
     assert payload["model_usage"]["gpt-4o-mini"] == 1500
+    assert payload["runtime_models"] == ["gpt-4o-mini", "openai-codex/gpt-5.3-codex"]
+    assert payload["costs"]["by_model"]["openai-codex/gpt-5.3-codex"] == 0.0
+    assert payload["usage_windows"]["7d"]["model_usage"]["gpt-4o-mini"] == 1500
+    assert payload["usage_windows"]["7d"]["model_usage"]["openai-codex/gpt-5.3-codex"] == 0
+    assert payload["usage_windows"]["all"]["costs"]["by_model"]["openai-codex/gpt-5.3-codex"] == 0.0
     assert payload["cost_history"][0]["tokens"] == 1500
     assert payload["cron_jobs_list"][0]["name"] == "Daily ping"
     assert payload["cron_jobs_list"][0]["last_status"] == "error"

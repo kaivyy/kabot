@@ -8,6 +8,7 @@ import os
 import platform
 import shutil
 import time
+from datetime import date, timedelta
 from typing import Any
 
 from aiohttp import web
@@ -19,6 +20,11 @@ except ImportError:
 
 
 class DashboardMixin:
+    _USAGE_WINDOW_OPTIONS = (
+        ("7d", "7d", "Last 7 days"),
+        ("30d", "30d", "Last 30 days"),
+        ("all", "All Time", "All time"),
+    )
 
     async def handle_root(self, _request: web.Request) -> web.Response:
         raise web.HTTPFound("/dashboard")
@@ -61,13 +67,24 @@ class DashboardMixin:
         channels = status.get("channels_enabled", [])
         if not isinstance(channels, list):
             channels = []
+        runtime_models = status.get("runtime_models", [])
+        if not isinstance(runtime_models, list):
+            runtime_models = []
+        runtime_chain = [
+            str(item).strip()
+            for item in runtime_models
+            if str(item).strip()
+        ]
+        if not runtime_chain:
+            runtime_chain = [str(status.get("model", "-")).strip() or "-"]
+        model_value = ", ".join(runtime_chain)
         fragment = (
             "<div style='padding:18px;'>"
             "<h2 style='margin:0 0 12px;font-size:15px;font-weight:600;'>System Summary</h2>"
             "<table>"
             f"<tr><th>Status</th><td><span class='kb-badge ok'>{html.escape(str(status.get('status', 'unknown')))}</span></td></tr>"
             f"<tr><th>Uptime</th><td class='mono'>{html.escape(self._format_uptime(int(status.get('uptime_seconds', 0) or 0)))}</td></tr>"
-            f"<tr><th>Model</th><td class='mono' style='font-size:11px;'>{html.escape(str(status.get('model', '-')))}</td></tr>"
+            f"<tr><th>Model</th><td class='mono' style='font-size:11px;'>{html.escape(model_value)}</td></tr>"
             f"<tr><th>Channels</th><td>{html.escape(', '.join(str(v) for v in channels if str(v).strip()) or '-')}</td></tr>"
             f"<tr><th>Cron jobs</th><td class='mono'>{int(status.get('cron_jobs', 0) or 0)}</td></tr>"
             "</table>"
@@ -173,10 +190,17 @@ class DashboardMixin:
             sub_html = f"<div class='kb-stat-sub'>{html.escape(sub)}</div>" if sub else ""
             return f"<div class='kb-stat-card'><div class='kb-stat-label'>{html.escape(label)}</div><div class='kb-stat-value'>{value}</div>{sub_html}</div>"
 
+        uptime_seconds = int(status.get("uptime_seconds", 0) or 0)
+        uptime_formatted = html.escape(self._format_uptime(uptime_seconds))
+        uptime_card = (
+            f"<div class='kb-stat-card'><div class='kb-stat-label'>Uptime</div>"
+            f"<div class='kb-stat-value' id='kb-overview-uptime' data-uptime-seconds='{uptime_seconds}'>{uptime_formatted}</div></div>"
+        )
+
         channels = status.get("channels_enabled", [])
         fragment = (
             card("Status", f"<span style='color:var(--success);'>{html.escape(str(status.get('status', 'running')))}</span>")
-            + card("Uptime", html.escape(self._format_uptime(int(status.get("uptime_seconds", 0) or 0))))
+            + uptime_card
             + card("Sessions", str(len(self._status_list("sessions"))), "active sessions")
             + card("Nodes", str(len(self._status_list("nodes"))), "runtime components")
             + card("Channels", str(len(channels) if isinstance(channels, list) else 0), "enabled")
@@ -190,7 +214,20 @@ class DashboardMixin:
         unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
+        body = self._render_cost_fragment(request)
+        fragment = self._render_dashboard_panel(
+            request,
+            panel_id="panel-cost",
+            path="/dashboard/partials/cost",
+            trigger="load",
+            query={"window": self._resolve_usage_window(request)},
+            body=body,
+        )
+        return web.Response(text=fragment, content_type="text/html")
+
+    def _render_cost_fragment(self, request: web.Request) -> str:
         status = self._read_dashboard_status()
+        window_key = self._resolve_usage_window(request)
         costs = status.get("costs", {}) if isinstance(status, dict) else {}
         if not isinstance(costs, dict):
             costs = {}
@@ -203,15 +240,43 @@ class DashboardMixin:
         by_model = costs.get("by_model", {})
         if not isinstance(by_model, dict):
             by_model = {}
+        window_payload = self._select_usage_window(status, window_key)
+        window_tokens = window_payload.get("token_usage", {})
+        if not isinstance(window_tokens, dict):
+            window_tokens = {}
+        window_model_usage = window_payload.get("model_usage", {})
+        if not isinstance(window_model_usage, dict):
+            window_model_usage = {}
+        window_costs = window_payload.get("costs", {})
+        if not isinstance(window_costs, dict):
+            window_costs = {}
+        window_by_model = window_costs.get("by_model", {})
+        if not isinstance(window_by_model, dict):
+            window_by_model = {}
+        runtime_models = status.get("runtime_models", []) if isinstance(status, dict) else []
+        if not isinstance(runtime_models, list):
+            runtime_models = []
 
         rows = []
-        model_names = sorted({str(name) for name in list(by_model.keys()) + list(model_usage.keys()) if str(name).strip()})
+        ordered_models: list[str] = []
+        for candidate in runtime_models:
+            name = str(candidate).strip()
+            if name and name not in ordered_models:
+                ordered_models.append(name)
+        extra_models = sorted(
+            {
+                str(name).strip()
+                for name in list(window_by_model.keys()) + list(window_model_usage.keys())
+                if str(name).strip() and str(name).strip() not in ordered_models
+            }
+        )
+        model_names = ordered_models + extra_models
         for name in model_names[:8]:
             rows.append(
                 "<tr>"
                 f"<td class='mono' style='font-size:11px;'>{html.escape(name)}</td>"
-                f"<td class='mono'>${float(by_model.get(name, 0) or 0):.4f}</td>"
-                f"<td class='mono'>{int(model_usage.get(name, 0) or 0):,}</td>"
+                f"<td class='mono'>${float(window_by_model.get(name, 0) or 0):.4f}</td>"
+                f"<td class='mono'>{int(window_model_usage.get(name, 0) or 0):,}</td>"
                 "</tr>"
             )
         if not rows:
@@ -219,33 +284,54 @@ class DashboardMixin:
 
         fragment = (
             "<div style='padding:18px;'>"
-            "<h2 style='margin:0 0 14px;font-size:15px;font-weight:600;'>Cost & Usage</h2>"
+            "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px;'>"
+            "<div>"
+            "<h2 style='margin:0 0 6px;font-size:15px;font-weight:600;'>Cost & Usage</h2>"
+            f"<div style='font-size:11px;color:var(--muted);'>Breakdown Window: {html.escape(self._usage_window_title(window_key))}</div>"
+            "</div>"
+            f"{self._render_usage_window_tabs(request, panel_id='panel-cost', path='/dashboard/partials/cost', active_window=window_key)}"
+            "</div>"
             "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px;'>"
             f"<div class='kb-stat-card'><div class='kb-stat-label'>Today</div><div class='kb-stat-value' style='color:var(--accent);'>${float(costs.get('today', 0) or 0):.4f}</div></div>"
             f"<div class='kb-stat-card'><div class='kb-stat-label'>All Time</div><div class='kb-stat-value'>${float(costs.get('total', 0) or 0):.4f}</div></div>"
             f"<div class='kb-stat-card'><div class='kb-stat-label'>Projected/Mo</div><div class='kb-stat-value'>${float(costs.get('projected_monthly', 0) or 0):.2f}</div></div>"
+            f"<div class='kb-stat-card'><div class='kb-stat-label'>{html.escape(self._usage_window_badge(window_key))}</div><div class='kb-stat-value'>${float(window_costs.get('total', 0) or 0):.4f}</div></div>"
             "</div>"
             "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;'>"
-            "<div><div style='font-size:11px;color:var(--muted);margin-bottom:8px;'>Token Usage</div><table>"
-            f"<tr><th>Input tokens</th><td class='mono'>{int(tokens.get('input', 0) or 0):,}</td></tr>"
-            f"<tr><th>Output tokens</th><td class='mono'>{int(tokens.get('output', 0) or 0):,}</td></tr>"
-            f"<tr><th>Total</th><td class='mono' style='font-weight:600;'>{int(tokens.get('total', int(tokens.get('input', 0) or 0) + int(tokens.get('output', 0) or 0)) or 0):,}</td></tr>"
+            f"<div><div style='font-size:11px;color:var(--muted);margin-bottom:8px;'>Token Usage · {html.escape(self._usage_window_badge(window_key))}</div><table>"
+            f"<tr><th>Input tokens</th><td class='mono'>{int(window_tokens.get('input', tokens.get('input', 0)) or 0):,}</td></tr>"
+            f"<tr><th>Output tokens</th><td class='mono'>{int(window_tokens.get('output', tokens.get('output', 0)) or 0):,}</td></tr>"
+            f"<tr><th>Total</th><td class='mono' style='font-weight:600;'>{int(window_tokens.get('total', int(window_tokens.get('input', 0) or 0) + int(window_tokens.get('output', 0) or 0)) or 0):,}</td></tr>"
             "</table></div>"
-            "<div><div style='font-size:11px;color:var(--muted);margin-bottom:8px;'>Per-Model Breakdown</div><table><tr><th>Model</th><th>Cost</th><th>Tokens</th></tr>"
+            f"<div><div style='font-size:11px;color:var(--muted);margin-bottom:8px;'>Per-Model Breakdown · {html.escape(self._usage_window_badge(window_key))}</div><table><tr><th>Model</th><th>Cost</th><th>Tokens</th></tr>"
             f"{''.join(rows)}"
             "</table></div></div></div>"
         )
-        return web.Response(text=fragment, content_type="text/html")
+        return fragment
 
     async def handle_dashboard_charts(self, request: web.Request) -> web.Response:
         unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
+        body = self._render_charts_fragment(request)
+        fragment = self._render_dashboard_panel(
+            request,
+            panel_id="panel-charts",
+            path="/dashboard/partials/charts",
+            trigger="load",
+            query={"window": self._resolve_usage_window(request)},
+            body=body,
+        )
+        return web.Response(text=fragment, content_type="text/html")
+
+    def _render_charts_fragment(self, request: web.Request) -> str:
         status = self._read_dashboard_status()
-        model_usage = status.get("model_usage", {}) if isinstance(status, dict) else {}
+        window_key = self._resolve_usage_window(request)
+        window_payload = self._select_usage_window(status, window_key)
+        model_usage = window_payload.get("model_usage", status.get("model_usage", {}) if isinstance(status, dict) else {})
         if not isinstance(model_usage, dict):
             model_usage = {}
-        cost_history = status.get("cost_history", []) if isinstance(status, dict) else []
+        cost_history = window_payload.get("cost_history", status.get("cost_history", []) if isinstance(status, dict) else [])
         if not isinstance(cost_history, list):
             cost_history = []
 
@@ -282,7 +368,18 @@ class DashboardMixin:
 
         if not sections:
             sections.append("<div style='text-align:center;padding:24px;color:var(--muted);font-size:12px;'>No chart data available yet. Provide model_usage or cost_history in the status payload.</div>")
-        return web.Response(text="<div style='padding:18px;display:grid;gap:18px;'>" + "".join(sections) + "</div>", content_type="text/html")
+        return (
+            "<div style='padding:18px;display:grid;gap:18px;'>"
+            "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;'>"
+            "<div>"
+            "<h2 style='margin:0 0 6px;font-size:15px;font-weight:600;'>Charts & Trends</h2>"
+            f"<div style='font-size:11px;color:var(--muted);'>Window: {html.escape(self._usage_window_title(window_key))}</div>"
+            "</div>"
+            f"{self._render_usage_window_tabs(request, panel_id='panel-charts', path='/dashboard/partials/charts', active_window=window_key)}"
+            "</div>"
+            + "".join(sections)
+            + "</div>"
+        )
 
     async def handle_dashboard_channels(self, request: web.Request) -> web.Response:
         unauthorized = self._authorize_route(request)
@@ -315,7 +412,7 @@ class DashboardMixin:
         unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
-        return web.Response(text=self._render_dashboard_panel(request, panel_id="panel-cron", path="/dashboard/partials/cron", trigger="load, every 10s", body=self._render_cron_fragment(request)), content_type="text/html")
+        return web.Response(text=self._render_dashboard_panel(request, panel_id="panel-cron", path="/dashboard/partials/cron", trigger="load", body=self._render_cron_fragment(request)), content_type="text/html")
 
     async def handle_dashboard_cron_action(self, request: web.Request) -> web.Response:
         unauthorized = self._authorize_route(request)
@@ -323,7 +420,7 @@ class DashboardMixin:
             return unauthorized
         data = await request.post()
         status_code, result = await self._run_control_action(action=str(data.get("action", "") or "").strip(), args={"job_id": str(data.get("job_id", "") or "").strip()})
-        fragment = self._render_dashboard_panel(request, panel_id="panel-cron", path="/dashboard/partials/cron", trigger="load, every 10s", body=self._render_cron_fragment(request, action_result=result, action_status_code=status_code))
+        fragment = self._render_dashboard_panel(request, panel_id="panel-cron", path="/dashboard/partials/cron", trigger="load", body=self._render_cron_fragment(request, action_result=result, action_status_code=status_code))
         return web.Response(text=fragment, content_type="text/html", status=status_code)
 
     async def handle_dashboard_models(self, request: web.Request) -> web.Response:
@@ -352,7 +449,7 @@ class DashboardMixin:
         unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
-        return web.Response(text=self._render_dashboard_panel(request, panel_id="panel-skills", path="/dashboard/partials/skills", trigger="load, every 30s", body=self._render_skills_fragment(request)), content_type="text/html")
+        return web.Response(text=self._render_dashboard_panel(request, panel_id="panel-skills", path="/dashboard/partials/skills", trigger="load", body=self._render_skills_fragment(request)), content_type="text/html")
 
     async def handle_dashboard_skills_action(self, request: web.Request) -> web.Response:
         unauthorized = self._authorize_route(request)
@@ -364,20 +461,20 @@ class DashboardMixin:
         if api_key:
             args["api_key"] = api_key
         status_code, result = await self._run_control_action(action=str(data.get("action", "") or "").strip(), args=args)
-        fragment = self._render_dashboard_panel(request, panel_id="panel-skills", path="/dashboard/partials/skills", trigger="load, every 30s", body=self._render_skills_fragment(request, action_result=result, action_status_code=status_code))
+        fragment = self._render_dashboard_panel(request, panel_id="panel-skills", path="/dashboard/partials/skills", trigger="load", body=self._render_skills_fragment(request, action_result=result, action_status_code=status_code))
         return web.Response(text=fragment, content_type="text/html", status=status_code)
 
     async def handle_dashboard_subagents(self, request: web.Request) -> web.Response:
         unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
-        return web.Response(text=self._render_dashboard_panel(request, panel_id="panel-subagents", path="/dashboard/partials/subagents", trigger="load, every 15s", body=self._render_subagents_fragment()), content_type="text/html")
+        return web.Response(text=self._render_dashboard_panel(request, panel_id="panel-subagents", path="/dashboard/partials/subagents", trigger="load", body=self._render_subagents_fragment()), content_type="text/html")
 
     async def handle_dashboard_git(self, request: web.Request) -> web.Response:
         unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
-        return web.Response(text=self._render_dashboard_panel(request, panel_id="panel-git", path="/dashboard/partials/git", trigger="load, every 60s", body=self._render_git_fragment()), content_type="text/html")
+        return web.Response(text=self._render_dashboard_panel(request, panel_id="panel-git", path="/dashboard/partials/git", trigger="load", body=self._render_git_fragment()), content_type="text/html")
 
     def _render_cron_fragment(
         self,
@@ -409,15 +506,15 @@ class DashboardMixin:
             if str(job.get("last_error", "")).strip():
                 details.append("err: " + html.escape(str(job.get("last_error", ""))))
             details_html = f"<div class='muted' style='margin-top:4px;font-size:10px;'>{' | '.join(details)}</div>" if details else ""
-            actions = "<span class='muted'>read-only</span>"
+            actions = "<span style='color:var(--muted);font-size:12px;'>read-only</span>"
             if controls_enabled and job_id_raw:
                 toggle_action = "cron.disable" if state_raw in {"active", "enabled", "running"} else "cron.enable"
                 toggle_label = "Disable" if toggle_action == "cron.disable" else "Enable"
                 job_id = html.escape(job_id_raw)
                 actions = (
-                    f"<form style='display:inline;' class='mr-2' hx-post='{html.escape(action_url)}' hx-target='#panel-cron' hx-swap='outerHTML'><input type='hidden' name='action' value='cron.run' /><input type='hidden' name='job_id' value='{job_id}' /><button type='submit' class='py-1 px-2 text-xs'>Run</button></form>"
-                    f"<form style='display:inline;' class='mr-2' hx-post='{html.escape(action_url)}' hx-target='#panel-cron' hx-swap='outerHTML'><input type='hidden' name='action' value='{toggle_action}' /><input type='hidden' name='job_id' value='{job_id}' /><button type='submit' class='py-1 px-2 text-xs bg-slate-600 hover:bg-slate-700'>{toggle_label}</button></form>"
-                    f"<form style='display:inline;' hx-post='{html.escape(action_url)}' hx-target='#panel-cron' hx-swap='outerHTML'><input type='hidden' name='action' value='cron.delete' /><input type='hidden' name='job_id' value='{job_id}' /><button type='submit' class='py-1 px-2 text-xs bg-red-500 hover:bg-red-600'>Delete</button></form>"
+                    f"<form style='display:inline;margin-right:6px;' hx-post='{html.escape(action_url)}' hx-target='#panel-cron' hx-swap='outerHTML'><input type='hidden' name='action' value='cron.run' /><input type='hidden' name='job_id' value='{job_id}' /><button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;'>Run</button></form>"
+                    f"<form style='display:inline;margin-right:6px;' hx-post='{html.escape(action_url)}' hx-target='#panel-cron' hx-swap='outerHTML'><input type='hidden' name='action' value='{toggle_action}' /><input type='hidden' name='job_id' value='{job_id}' /><button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;background:var(--bg-hover);color:var(--text);'>{toggle_label}</button></form>"
+                    f"<form style='display:inline;' hx-post='{html.escape(action_url)}' hx-target='#panel-cron' hx-swap='outerHTML'><input type='hidden' name='action' value='cron.delete' /><input type='hidden' name='job_id' value='{job_id}' /><button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;background:var(--danger);color:#fff;'>Delete</button></form>"
                 )
             rows.append(
                 "<tr>"
@@ -475,15 +572,15 @@ class DashboardMixin:
             elif env_names:
                 meta_bits.append("missing: " + html.escape(", ".join(env_names)))
             meta_html = f"<div class='muted' style='margin-top:4px;font-size:10px;'>{' | '.join(meta_bits)}</div>" if meta_bits else ""
-            actions = "<span class='muted'>read-only</span>"
+            actions = "<span style='color:var(--muted);font-size:12px;'>read-only</span>"
             if controls_enabled and skill_key_raw:
                 skill_key = html.escape(skill_key_raw)
                 toggle_action = "skills.enable" if disabled_raw else "skills.disable"
                 toggle_label = "Disable" if toggle_action == "skills.disable" else "Enable"
-                toggle_form = f"<form style='display:inline;' class='mr-2' hx-post='{html.escape(action_url)}' hx-target='#panel-skills' hx-swap='outerHTML'><input type='hidden' name='action' value='{toggle_action}' /><input type='hidden' name='skill_key' value='{skill_key}' /><button type='submit' class='py-1 px-2 text-xs bg-slate-600 hover:bg-slate-700'>{toggle_label}</button></form>"
+                toggle_form = f"<form style='display:inline;margin-right:6px;' hx-post='{html.escape(action_url)}' hx-target='#panel-skills' hx-swap='outerHTML'><input type='hidden' name='action' value='{toggle_action}' /><input type='hidden' name='skill_key' value='{skill_key}' /><button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;background:var(--bg-hover);color:var(--text);'>{toggle_label}</button></form>"
                 api_form = ""
                 if env_hint:
-                    api_form = f"<form style='display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;' hx-post='{html.escape(action_url)}' hx-target='#panel-skills' hx-swap='outerHTML'><input type='hidden' name='action' value='skills.set_api_key' /><input type='hidden' name='skill_key' value='{skill_key}' /><input type='password' name='api_key' placeholder='{html.escape(env_hint)}' style='min-width:140px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg-soft, var(--bg));color:var(--text);' /><button type='submit' class='py-1 px-2 text-xs'>Save Key</button></form>"
+                    api_form = f"<form style='display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;' hx-post='{html.escape(action_url)}' hx-target='#panel-skills' hx-swap='outerHTML'><input type='hidden' name='action' value='skills.set_api_key' /><input type='hidden' name='skill_key' value='{skill_key}' /><input type='password' name='api_key' placeholder='{html.escape(env_hint)}' style='min-width:140px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg-soft, var(--bg));color:var(--text);' /><button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;'>Save Key</button></form>"
                 actions = toggle_form + api_form
             rows.append("<div style='padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);'><div style='display:flex;align-items:flex-start;justify-content:space-between;gap:12px;'><div><div class='mono' style='font-size:12px;font-weight:600;'>" + html.escape(str(skill.get("name", "-"))) + f"</div>{meta_html}</div><div style='display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;'><span class='kb-badge {badge_cls}'>" + html.escape(state_raw.replace("_", " ")) + "</span>" + enabled_badge + "</div></div><div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;'>" + actions + "</div></div>")
         if not rows:
@@ -534,9 +631,118 @@ class DashboardMixin:
             rows.append("<tr><td colspan='4' style='color:var(--muted);text-align:center;padding:18px;'>No git history available.</td></tr>")
         return "<h2>Recent Commits</h2><div class='muted'>Latest repository activity visible from the current workspace.</div><table><tr><th>SHA</th><th>Subject</th><th>Author</th><th>When</th></tr>" + "".join(rows) + "</table>"
 
-    def _render_dashboard_panel(self, request: web.Request, *, panel_id: str, path: str, trigger: str, body: str) -> str:
-        url = self._dashboard_url_with_token(path, request)
+    def _render_dashboard_panel(
+        self,
+        request: web.Request,
+        *,
+        panel_id: str,
+        path: str,
+        trigger: str,
+        body: str,
+        query: dict[str, Any] | None = None,
+    ) -> str:
+        url = self._dashboard_url_with_token(path, request, query=query)
         return f"<div id='{html.escape(panel_id)}' class='config-section-card card overflow-x-auto' hx-get='{html.escape(url)}' hx-trigger='{html.escape(trigger)}' hx-swap='outerHTML'>{body}</div>"
+
+    @classmethod
+    def _resolve_usage_window(cls, request: web.Request) -> str:
+        raw = str(request.query.get("window", "") or "").strip().lower()
+        allowed = {key for key, _label, _title in cls._USAGE_WINDOW_OPTIONS}
+        return raw if raw in allowed else "7d"
+
+    @classmethod
+    def _usage_window_title(cls, window_key: str) -> str:
+        for key, _label, title in cls._USAGE_WINDOW_OPTIONS:
+            if key == window_key:
+                return title
+        return "Last 7 days"
+
+    @classmethod
+    def _usage_window_badge(cls, window_key: str) -> str:
+        for key, label, _title in cls._USAGE_WINDOW_OPTIONS:
+            if key == window_key:
+                return label
+        return "7d"
+
+    def _render_usage_window_tabs(
+        self,
+        request: web.Request,
+        *,
+        panel_id: str,
+        path: str,
+        active_window: str,
+    ) -> str:
+        buttons: list[str] = []
+        for key, label, _title in self._USAGE_WINDOW_OPTIONS:
+            url = self._dashboard_url_with_token(path, request, query={"window": key})
+            active = key == active_window
+            style = (
+                "padding:6px 10px;border-radius:999px;border:1px solid var(--border);"
+                "font-size:11px;font-weight:600;"
+                + (
+                    "background:var(--accent);color:#081018;border-color:var(--accent);"
+                    if active
+                    else "background:var(--bg);color:var(--text);"
+                )
+            )
+            buttons.append(
+                f"<button type='button' hx-get='{html.escape(url)}' hx-target='#{html.escape(panel_id)}' hx-swap='outerHTML' "
+                f"style='{style}'>{html.escape(label)}</button>"
+            )
+        return "<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;'>" + "".join(buttons) + "</div>"
+
+    @classmethod
+    def _select_usage_window(cls, status: dict[str, Any], window_key: str) -> dict[str, Any]:
+        usage_windows = status.get("usage_windows", {}) if isinstance(status, dict) else {}
+        if isinstance(usage_windows, dict):
+            selected = usage_windows.get(window_key, {})
+            if isinstance(selected, dict) and selected:
+                return selected
+
+        costs = status.get("costs", {}) if isinstance(status, dict) else {}
+        if not isinstance(costs, dict):
+            costs = {}
+        tokens = status.get("token_usage", {}) if isinstance(status, dict) else {}
+        if not isinstance(tokens, dict):
+            tokens = {}
+        model_usage = status.get("model_usage", {}) if isinstance(status, dict) else {}
+        if not isinstance(model_usage, dict):
+            model_usage = {}
+        by_model = costs.get("by_model", {})
+        if not isinstance(by_model, dict):
+            by_model = {}
+        cost_history = status.get("cost_history", []) if isinstance(status, dict) else []
+        if not isinstance(cost_history, list):
+            cost_history = []
+        filtered_history = cls._filter_cost_history_window(cost_history, window_key)
+        return {
+            "label": window_key,
+            "token_usage": tokens,
+            "model_usage": model_usage,
+            "costs": {
+                "total": float(costs.get("total", 0) or 0),
+                "by_model": by_model,
+            },
+            "cost_history": filtered_history,
+        }
+
+    @classmethod
+    def _filter_cost_history_window(cls, raw_history: list[Any], window_key: str) -> list[dict[str, Any]]:
+        if window_key == "all":
+            return [item for item in raw_history if isinstance(item, dict)]
+        cutoff = date.today() - timedelta(days=6 if window_key == "7d" else 29)
+        filtered: list[dict[str, Any]] = []
+        for item in raw_history:
+            if not isinstance(item, dict):
+                continue
+            raw_date = str(item.get("date") or "").strip()
+            try:
+                parsed = date.fromisoformat(raw_date)
+            except ValueError:
+                continue
+            if parsed >= cutoff:
+                filtered.append(item)
+        return filtered
 
     @staticmethod
     def _format_duration_ms(duration_ms: Any) -> str:

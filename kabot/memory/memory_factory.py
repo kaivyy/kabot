@@ -28,7 +28,12 @@ class MemoryFactory:
     """
 
     @staticmethod
-    def create(config: dict[str, Any], workspace: Path) -> MemoryBackend:
+    def create(
+        config: dict[str, Any],
+        workspace: Path,
+        *,
+        lazy_probe: bool = False,
+    ) -> MemoryBackend:
         """Create the appropriate memory backend from configuration.
 
         Args:
@@ -59,6 +64,12 @@ class MemoryFactory:
                 workspace=workspace / "memory_db",
                 enable_graph_memory=bool(memory_config.get("enable_graph_memory", True)),
             )
+
+        if lazy_probe:
+            from kabot.memory.lazy_probe_memory import LazyProbeMemory
+
+            logger.info("Memory backend: hybrid (lazy probe mode)")
+            return LazyProbeMemory.from_config(config, workspace)
 
         # Default: hybrid
         from kabot.memory.chroma_memory import HybridMemoryManager

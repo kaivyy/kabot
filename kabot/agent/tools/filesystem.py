@@ -190,12 +190,16 @@ class ListDirTool(Tool):
                 "path": {
                     "type": "string",
                     "description": "The directory path to list"
-                }
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional maximum number of entries to return"
+                },
             },
             "required": ["path"]
         }
 
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, limit: int | None = None, **kwargs: Any) -> str:
         try:
             dir_path = _resolve_path(path, self._allowed_dir)
             if not dir_path.exists():
@@ -207,6 +211,14 @@ class ListDirTool(Tool):
             for item in sorted(dir_path.iterdir()):
                 prefix = "📁 " if item.is_dir() else "📄 "
                 items.append(f"{prefix}{item.name}")
+
+            if limit is not None:
+                try:
+                    limit_value = int(limit)
+                except Exception:
+                    limit_value = 0
+                if limit_value > 0:
+                    items = items[:limit_value]
 
             if not items:
                 return i18n_t("filesystem.directory_empty", path, path=path)

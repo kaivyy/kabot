@@ -118,3 +118,49 @@ def test_doctor_routing_mode_uses_routing_renderer(monkeypatch, runner):
 
     assert result.exit_code == 0
     assert called["routing"] is True
+
+
+def test_doctor_smoke_agent_invokes_smoke_matrix_with_threshold_args(monkeypatch, runner):
+    from kabot.cli.commands import app
+
+    captured: dict[str, list[str] | None] = {"argv": None}
+
+    def _fake_main(argv=None):
+        captured["argv"] = list(argv or [])
+        return 0
+
+    monkeypatch.setattr("kabot.cli.agent_smoke_matrix.main", _fake_main)
+    result = runner.invoke(
+        app,
+        [
+            "doctor",
+            "smoke-agent",
+            "--smoke-json",
+            "--smoke-no-default-cases",
+            "--smoke-skill",
+            "weather",
+            "--smoke-skill-locales",
+            "en,id",
+            "--smoke-timeout",
+            "15",
+            "--smoke-max-first-response-ms",
+            "800",
+            "--smoke-max-context-build-ms",
+            "250",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["argv"] is not None
+    assert "--json" in captured["argv"]
+    assert "--no-default-cases" in captured["argv"]
+    assert "--skill" in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--skill") + 1] == "weather"
+    assert "--skill-locales" in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--skill-locales") + 1] == "en,id"
+    assert "--timeout" in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--timeout") + 1] == "15"
+    assert "--max-first-response-ms" in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--max-first-response-ms") + 1] == "800"
+    assert "--max-context-build-ms" in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--max-context-build-ms") + 1] == "250"

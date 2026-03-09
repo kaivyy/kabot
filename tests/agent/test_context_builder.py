@@ -3,7 +3,17 @@ from pathlib import Path
 import pytest
 
 from kabot.agent.context import ContextBuilder, TokenBudget
+from kabot.agent.loop_core.message_runtime_parts.helpers import _build_temporal_context_note
 from kabot.memory.graph_memory import GraphMemory
+
+
+def _write_skill(skill_root: Path, skill_name: str, body: str, *, description: str = "test skill") -> None:
+    skill_dir = skill_root / skill_name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {skill_name}\ndescription: {description}\n---\n\n{body}\n",
+        encoding="utf-8",
+    )
 
 
 def test_truncate_history_skips_non_dict_entries():
@@ -139,3 +149,201 @@ def test_context_builder_budget_overrides_support_token_mode_hemat(tmp_path: Pat
     assert isinstance(overrides, dict)
     assert overrides["history"] < 0.30
     assert overrides["current"] > 0.10
+
+
+def test_context_builder_loads_auto_selected_skill_content_for_decorated_unavailable_names(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    _write_skill(
+        workspace / "skills",
+        "1password",
+        "Use 1Password vaults to fetch and manage credentials.",
+        description="vault credential manager",
+    )
+
+    builder = ContextBuilder(workspace)
+    builder.skills.match_skills = lambda _msg, _profile: ["1password [NEEDS: ENV: OP_SESSION]"]  # type: ignore[assignment]
+
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="please use the 1password skill for this vault task",
+    )
+
+    assert "Auto-Selected Skills" in prompt
+    assert "1password [NEEDS: ENV: OP_SESSION]" in prompt
+    assert "Use 1Password vaults to fetch and manage credentials." in prompt
+
+
+def test_context_builder_skips_skills_summary_for_explicit_skill_usage_prompt(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    builder.skills.match_skills = lambda _msg, _profile: ["weather"]  # type: ignore[assignment]
+    builder.skills.load_skills_for_context = lambda _skills: "Bring weather context into the reply."  # type: ignore[assignment]
+
+    calls = {"summary": 0}
+
+    def _summary() -> str:
+        calls["summary"] += 1
+        return "<skills><skill /></skills>"
+
+    builder.skills.build_skills_summary = _summary  # type: ignore[assignment]
+
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="Please use the weather skill for this request.",
+    )
+
+    assert "Auto-Selected Skills" in prompt
+    assert "Bring weather context into the reply." in prompt
+    assert "Available Skills (Reference Documents)" not in prompt
+    assert calls["summary"] == 0
+
+
+def test_context_builder_includes_skills_summary_for_catalog_question(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    builder.skills.match_skills = lambda _msg, _profile: []  # type: ignore[assignment]
+
+    calls = {"summary": 0}
+
+    def _summary() -> str:
+        calls["summary"] += 1
+        return "<skills><skill><name>weather</name></skill></skills>"
+
+    builder.skills.build_skills_summary = _summary  # type: ignore[assignment]
+
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="Skill apa yang tersedia di workspace ini?",
+    )
+
+    assert "Available Skills (Reference Documents)" in prompt
+    assert "<skills><skill><name>weather</name></skill></skills>" in prompt
+    assert calls["summary"] == 1
+
+
+def test_context_builder_probe_mode_uses_compact_general_prompt_without_bootstrap_bloat(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "AGENTS.md").write_text("A" * 5000, encoding="utf-8")
+
+    builder = ContextBuilder(workspace)
+    builder.skills.match_skills = lambda _msg, _profile: ["weather"]  # type: ignore[assignment]
+    builder.skills.load_skills_for_context = lambda _skills: "Use live weather tools."  # type: ignore[assignment]
+
+    normal_prompt = builder.build_messages(
+        history=[],
+        current_message="Please use the weather skill for this request.",
+        profile="GENERAL",
+    )[0]["content"]
+    compact_prompt = builder.build_messages(
+        history=[],
+        current_message="Please use the weather skill for this request.",
+        profile="GENERAL",
+        budget_hints={"probe_mode": True},
+    )[0]["content"]
+
+    assert "## AGENTS.md" in normal_prompt
+    assert "## AGENTS.md" not in compact_prompt
+    assert "Auto-Selected Skills" in compact_prompt
+    assert "Use live weather tools." in compact_prompt
+    assert len(compact_prompt) < len(normal_prompt)
+
+
+def test_context_builder_identity_includes_explicit_timezone_label(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+
+    prompt = builder.build_system_prompt(profile="GENERAL", current_message="hari apa sekarang")
+
+    assert "## Current Time" in prompt
+    assert "Timezone:" in prompt
+    assert "UTC" in prompt
+
+
+def test_context_builder_probe_mode_skips_auto_skill_match_for_light_general_turn(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    calls = {"match": 0}
+
+    def _match(_msg: str, _profile: str):
+        calls["match"] += 1
+        return ["weather"]
+
+    builder.skills.match_skills = _match  # type: ignore[assignment]
+
+    builder.build_messages(
+        history=[],
+        current_message="hari apa sekarang?",
+        profile="GENERAL",
+        budget_hints={"probe_mode": True},
+    )
+
+    assert calls["match"] == 0
+
+
+def test_context_builder_probe_mode_skips_memory_context_for_light_general_turn(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    builder.memory.get_memory_context = lambda: "VERY LARGE MEMORY BLOCK"  # type: ignore[assignment]
+
+    prompt = builder.build_messages(
+        history=[],
+        current_message="hari apa sekarang?",
+        profile="GENERAL",
+        budget_hints={"probe_mode": True},
+    )[0]["content"]
+
+    assert "VERY LARGE MEMORY BLOCK" not in prompt
+
+
+def test_context_builder_probe_mode_still_loads_explicit_skill_context(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    builder.skills.match_skills = lambda _msg, _profile: ["weather"]  # type: ignore[assignment]
+    builder.skills.load_skills_for_context = lambda _skills: "Use live weather tools."  # type: ignore[assignment]
+
+    prompt = builder.build_messages(
+        history=[],
+        current_message="Please use the weather skill for this request.",
+        profile="GENERAL",
+        budget_hints={"probe_mode": True},
+    )[0]["content"]
+
+    assert "Auto-Selected Skills" in prompt
+    assert "Use live weather tools." in prompt
+
+
+def test_context_builder_probe_mode_still_includes_memory_for_recall_turn(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    builder.memory.get_memory_context = lambda: "VERY LARGE MEMORY BLOCK"  # type: ignore[assignment]
+
+    prompt = builder.build_messages(
+        history=[],
+        current_message="ingat preferensi saya apa?",
+        profile="GENERAL",
+        budget_hints={"probe_mode": True},
+    )[0]["content"]
+
+    assert "VERY LARGE MEMORY BLOCK" in prompt
+
+
+def test_context_builder_probe_mode_keeps_temporal_system_note_turns_lean(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    calls = {"match": 0, "memory": 0}
+
+    def _match(_msg: str, _profile: str):
+        calls["match"] += 1
+        return ["weather"]
+
+    def _memory() -> str:
+        calls["memory"] += 1
+        return "VERY LARGE MEMORY BLOCK"
+
+    builder.skills.match_skills = _match  # type: ignore[assignment]
+    builder.memory.get_memory_context = _memory  # type: ignore[assignment]
+
+    prompt = builder.build_messages(
+        history=[],
+        current_message=f"hari apa sekarang?\n\n{_build_temporal_context_note()}",
+        profile="GENERAL",
+        budget_hints={"probe_mode": True},
+    )[0]["content"]
+
+    assert calls["match"] == 0
+    assert calls["memory"] == 0
+    assert "VERY LARGE MEMORY BLOCK" not in prompt

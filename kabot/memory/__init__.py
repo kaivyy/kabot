@@ -6,6 +6,7 @@ _MODULE_LOCKS = {
     "ChromaMemoryManager": ".chroma_memory",
     "MemoryBackend": ".memory_backend",
     "MemoryFactory": ".memory_factory",
+    "LazyProbeMemory": ".lazy_probe_memory",
     "NullMemory": ".null_memory",
     "SQLiteMemory": ".sqlite_memory",
     "SmartRouter": ".smart_router",

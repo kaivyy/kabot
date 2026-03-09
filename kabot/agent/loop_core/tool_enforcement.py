@@ -126,6 +126,24 @@ _FILESYSTEM_TRAILING_TAIL_RE = re.compile(
 _RELATIVE_DIRECTORY_QUERY_RE = re.compile(
     r"(?i)(?:\b(?:subfolder|folder|direktori|directory|dir)\b|文件夹|文件夾|资料夹|資料夾|目录|目錄|フォルダ|ディレクトリ|โฟลเดอร์|ไดเรกทอรี)\s+(.+)$"
 )
+_RELATIVE_DIRECTORY_SUFFIX_RE = re.compile(
+    r"(?i)\s+(?:ada\b.*|isinya\b.*|isi\b.*|apa\b.*|what\b.*|which\b.*|show\b.*|display\b.*|list\b.*|lihat\b.*|lihatkan\b.*|tampilkan\b.*|open\b.*|buka\b.*|please\b.*|tolong\b.*|最初.*|件だけ.*|รายการ.*)$"
+)
+_SPECIAL_DIR_SUBFOLDER_PATTERNS = (
+    re.compile(r"(?i)desktop(?:の|的)\s*([A-Za-z0-9._-]+)\s*(?:folder|directory|dir)\b"),
+    re.compile(r"(?i)\bdesktop\b(?:\s+|[/\\]|-|\u2014|\u2013|of|inside|in|di|pada|dalam|ke|の|的)?\s*([A-Za-z0-9._-]+)\s*(?:folder|directory|dir)\b"),
+    re.compile(r"桌面(?:的|内|裡|里|中)?\s*([A-Za-z0-9._-]+)\s*(?:文件夹|文件夾|資料夾|目录|目錄)"),
+    re.compile(r"デスクトップ(?:の|内の)?\s*([A-Za-z0-9._-]+)\s*(?:フォルダ|ディレクトリ)"),
+    re.compile(r"เดสก์ท็อป(?:ของ|ใน)?\s*([A-Za-z0-9._-]+)\s*(?:โฟลเดอร์|ไดเรกทอรี)"),
+)
+_SPECIAL_DIR_NORMALIZED_SUBFOLDER_RE = re.compile(
+    r"(?i)\b(?:desktop|downloads?|documents?|docs|pictures?|photos?|music|videos?|home)\b"
+    r"[^A-Za-z0-9._-]*([A-Za-z0-9._-]+)\s*(?:folder|directory|dir)\b"
+)
+_SPECIAL_DIR_ASCII_SUBFOLDER_RE = re.compile(
+    r"(?i)\b([A-Za-z0-9._-]+)\s*(?:folder|directory|dir)\b"
+)
+
 
 
 def _filesystem_home_dir() -> Path:
@@ -207,9 +225,17 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
     candidate = _normalize_filesystem_candidate(match.group(1))
     if not candidate:
         return None
+    candidate = _RELATIVE_DIRECTORY_SUFFIX_RE.sub("", candidate).strip(" ,.;:!?")
     if any(sep in candidate for sep in ("/", "\\")):
         return None
     normalized = _normalize_text(candidate)
+    if normalized.startswith(("di ", "in ", "inside ", "pada ", "dalam ")):
+        return None
+    if re.match(
+        r"(?i)^\d+\s*(?:item|items|entry|entries|hasil|baris|line|file|files|folder|folders)\b",
+        candidate,
+    ):
+        return None
     if normalized in _FILESYSTEM_TARGET_MARKERS:
         return None
     return candidate
@@ -421,6 +447,7 @@ def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | Non
     raw = str(text or "").strip()
     if not raw:
         return None
+    normalized_raw = _normalize_text(raw)
 
     fallback_path = ""
     if isinstance(last_tool_context, dict):
@@ -430,17 +457,81 @@ def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | Non
     if explicit_path:
         return explicit_path
 
+    relative_dir = _extract_relative_directory_candidate(raw)
     special_dir = _resolve_special_directory_path(raw)
     if special_dir:
+        for pattern in _SPECIAL_DIR_SUBFOLDER_PATTERNS:
+            match = pattern.search(raw)
+            if not match:
+                continue
+            nested_candidate = _normalize_filesystem_candidate(match.group(1))
+            normalized_nested = _normalize_text(nested_candidate)
+            if (
+                nested_candidate
+                and not any(sep in nested_candidate for sep in ("/", "\\"))
+                and normalized_nested not in _FILESYSTEM_TARGET_MARKERS
+            ):
+                return str(Path(special_dir) / nested_candidate)
+        normalized_match = _SPECIAL_DIR_NORMALIZED_SUBFOLDER_RE.search(normalized_raw)
+        if normalized_match:
+            nested_candidate = _normalize_filesystem_candidate(normalized_match.group(1))
+            normalized_nested = _normalize_text(nested_candidate)
+            if (
+                nested_candidate
+                and not any(sep in nested_candidate for sep in ("/", "\\"))
+                and normalized_nested not in _FILESYSTEM_TARGET_MARKERS
+            ):
+                return str(Path(special_dir) / nested_candidate)
+        ascii_tail_match = _SPECIAL_DIR_ASCII_SUBFOLDER_RE.search(normalized_raw)
+        if ascii_tail_match:
+            nested_candidate = _normalize_filesystem_candidate(ascii_tail_match.group(1))
+            normalized_nested = _normalize_text(nested_candidate)
+            if (
+                nested_candidate
+                and not nested_candidate.isdigit()
+                and not any(sep in nested_candidate for sep in ("/", "\\"))
+                and normalized_nested not in _FILESYSTEM_TARGET_MARKERS
+            ):
+                return str(Path(special_dir) / nested_candidate)
+    if special_dir and relative_dir:
+        return str(Path(special_dir) / relative_dir)
+    if special_dir:
         return special_dir
-
-    relative_dir = _extract_relative_directory_candidate(raw)
     if relative_dir and fallback_path:
         return str(Path(fallback_path) / relative_dir)
 
     if fallback_path and _is_low_information_followup(raw):
         return fallback_path
 
+    return None
+
+
+_LIST_DIR_LIMIT_PATTERNS = (
+    re.compile(r"(?i)\b(?:first|top|show|list)?\s*(\d{1,3})\s*(?:item|items|entry|entries|file|files|folder|folders)\b"),
+    re.compile(r"(?i)\b(\d{1,3})\s*(?:item|items|entry|entries|hasil|baris|line|file|files|folder|folders)\s*(?:aja|saja|doang|only)?\b"),
+    re.compile(r"(?i)\b(\d{1,3})\s*(?:aja|saja|doang)\b"),
+    re.compile(r"(?i)\b(?:item|items)\s*(?:pertama|awal)\s*(\d{1,3})\b"),
+    re.compile(r"最初の\s*(\d{1,3})\s*件"),
+    re.compile(r"(\d{1,3})\s*件だけ"),
+    re.compile(r"前\s*(\d{1,3})\s*[项項]"),
+    re.compile(r"(\d{1,3})\s*[项項]"),
+    re.compile(r"(\d{1,3})\s*รายการ"),
+)
+
+
+def _extract_list_dir_limit(text: str) -> int | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    for pattern in _LIST_DIR_LIMIT_PATTERNS:
+        match = pattern.search(raw)
+        if not match:
+            continue
+        try:
+            value = int(match.group(1))
+        except Exception:
+            continue
+        return max(1, min(200, value))
     return None
 
 
@@ -623,7 +714,11 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         path = _extract_list_dir_path(source_text, last_tool_context=last_tool_context)
         if not path:
             return i18n_t("filesystem.need_path", source_text)
-        result = await loop.tools.execute("list_dir", {"path": path})
+        payload: dict[str, Any] = {"path": path}
+        limit = _extract_list_dir_limit(source_text)
+        if limit is not None:
+            payload["limit"] = limit
+        result = await loop.tools.execute("list_dir", payload)
         return str(result)
 
     if required_tool == "read_file":

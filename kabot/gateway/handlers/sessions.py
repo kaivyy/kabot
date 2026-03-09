@@ -17,7 +17,7 @@ class SessionsMixin:
         unauthorized = self._authorize_route(request)
         if unauthorized is not None:
             return unauthorized
-        fragment = f"<div id='panel-sessions' class='config-section-card card overflow-x-auto' hx-get='/dashboard/partials/sessions{self._dashboard_token_suffix(request)}' hx-trigger='load, every 5s' hx-swap='outerHTML'>{self._render_sessions_fragment(request)}</div>"
+        fragment = f"<div id='panel-sessions' class='config-section-card card overflow-x-auto' hx-get='/dashboard/partials/sessions{self._dashboard_token_suffix(request)}' hx-trigger='load' hx-swap='outerHTML'>{self._render_sessions_fragment(request)}</div>"
         return web.Response(text=fragment, content_type="text/html")
 
     async def handle_dashboard_sessions_update_api(self, request: web.Request) -> web.Response:
@@ -51,5 +51,5 @@ class SessionsMixin:
             action=action,
             args={"session_key": session_key},
         )
-        fragment = f"<div id='panel-sessions' class='config-section-card card overflow-x-auto' hx-get='/dashboard/partials/sessions{self._dashboard_token_suffix(request)}' hx-trigger='load, every 5s' hx-swap='outerHTML'>{self._render_sessions_fragment(request, action_result=result, action_status_code=status_code)}</div>"
+        fragment = f"<div id='panel-sessions' class='config-section-card card overflow-x-auto' hx-get='/dashboard/partials/sessions{self._dashboard_token_suffix(request)}' hx-trigger='load' hx-swap='outerHTML'>{self._render_sessions_fragment(request, action_result=result, action_status_code=status_code)}</div>"
         return web.Response(text=fragment, content_type="text/html", status=status_code)
