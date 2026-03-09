@@ -65,6 +65,9 @@ body::after {
 }
 
 .md-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   background: rgba(5, 7, 13, 0.85);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--kabot-line);
@@ -183,6 +186,36 @@ body::after {
 .md-footer {
   background: rgba(5, 7, 13, 0.92);
   border-top: 1px solid var(--kabot-line);
+}
+
+@media screen and (min-width: 60em) {
+  .md-sidebar--secondary .md-sidebar__scrollwrap {
+    position: sticky;
+    top: calc(var(--md-header-height) + 1rem);
+    max-height: calc(100vh - var(--md-header-height) - 2rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    backdrop-filter: blur(16px);
+    border-color: var(--kabot-line-strong);
+    box-shadow:
+      0 0 0 1px rgba(0, 255, 200, 0.1),
+      0 0 1.1rem rgba(0, 255, 200, 0.16);
+  }
+}
+
+@media screen and (min-width: 76.25em) {
+  .md-sidebar--primary .md-sidebar__scrollwrap {
+    position: sticky;
+    top: calc(var(--md-header-height) + 1rem);
+    max-height: calc(100vh - var(--md-header-height) - 2rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    backdrop-filter: blur(16px);
+    border-color: var(--kabot-line-strong);
+    box-shadow:
+      0 0 0 1px rgba(0, 255, 200, 0.1),
+      0 0 1.1rem rgba(0, 255, 200, 0.16);
+  }
 }
 
 .kabot-hero,
