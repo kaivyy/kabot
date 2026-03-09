@@ -162,23 +162,23 @@ body::after {
 .md-nav--primary > .md-nav__list {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
-  padding: 0.4rem 0.45rem 0.75rem;
+  gap: 0.32rem;
+  padding: 0.28rem 0.36rem 0.58rem;
 }
 
 .md-nav--primary .md-nav__source {
   display: block;
-  margin: 0.55rem 0.65rem 0.85rem;
+  margin: 0.42rem 0.52rem 0.72rem;
 }
 
 .md-nav--primary > .md-nav__title {
   display: flex;
   align-items: center;
-  gap: 0.72rem;
-  margin-top: 0.38rem;
-  margin-bottom: 0.45rem;
-  padding: 0.95rem 0.95rem 0.82rem;
-  line-height: 1.34;
+  gap: 0.56rem;
+  margin-top: 0.2rem;
+  margin-bottom: 0.24rem;
+  padding: 0.78rem 0.82rem 0.7rem;
+  line-height: 1.28;
 }
 
 .md-nav--primary > .md-nav__title .md-nav__button.md-logo {
@@ -187,7 +187,7 @@ body::after {
 
 .md-nav--primary .md-nav[data-md-level="1"] > .md-nav__title,
 .md-nav--primary .md-nav[data-md-level="2"] > .md-nav__title {
-  padding: 0.7rem 0.85rem 0.55rem;
+  padding: 0.62rem 0.74rem 0.46rem;
 }
 
 .md-nav--primary .md-nav__item--section > .md-nav__link,
@@ -197,13 +197,21 @@ body::after {
 }
 
 .md-nav--primary .md-nav__link {
-  padding: 0.58rem 0.7rem;
+  padding: 0.5rem 0.62rem;
 }
 
 .md-nav--primary .md-nav[data-md-level="1"] > .md-nav__list,
 .md-nav--primary .md-nav[data-md-level="2"] > .md-nav__list {
-  padding-top: 0.28rem;
-  padding-bottom: 0.35rem;
+  padding-top: 0.2rem;
+  padding-bottom: 0.28rem;
+}
+
+.md-nav--primary .md-nav__link--active,
+.md-nav--primary .md-nav__item--active > .md-nav__link,
+.md-nav--primary .md-nav__item--active > label.md-nav__link {
+  background: linear-gradient(90deg, rgba(0, 255, 200, 0.16), rgba(0, 255, 200, 0.03));
+  box-shadow: inset 0 0 0 1px rgba(0, 255, 200, 0.16);
+  font-weight: 600;
 }
 
 .md-typeset a,
@@ -370,7 +378,7 @@ html.kabot-font-cyber .md-typeset code {
 }
 
 .kabot-hero {
-  padding: 2rem;
+  padding: 2.1rem 2.05rem 1.92rem;
   overflow: hidden;
 }
 
@@ -382,6 +390,18 @@ html.kabot-font-cyber .md-typeset code {
     radial-gradient(circle at 10% 10%, rgba(255, 60, 172, 0.14), transparent 24%),
     radial-gradient(circle at 90% 0%, rgba(0, 255, 200, 0.14), transparent 24%);
   pointer-events: none;
+}
+
+.kabot-hero > :first-child {
+  margin-top: 0;
+}
+
+.kabot-hero > :last-child {
+  margin-bottom: 0;
+}
+
+.kabot-hero p {
+  max-width: 56ch;
 }
 
 .kabot-grid {
@@ -410,6 +430,8 @@ html.kabot-font-cyber .md-typeset code {
 }
 
 .kabot-callout {
+  margin-top: 0.92rem;
+  margin-bottom: 0;
   border-left: 3px solid var(--kabot-pink);
   padding-left: 1rem;
 }
