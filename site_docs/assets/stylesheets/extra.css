@@ -171,7 +171,22 @@ body::after {
   margin: 0.55rem 0.65rem 0.85rem;
 }
 
-.md-nav--primary .md-nav__title {
+.md-nav--primary > .md-nav__title {
+  display: flex;
+  align-items: center;
+  gap: 0.72rem;
+  margin-top: 0.38rem;
+  margin-bottom: 0.45rem;
+  padding: 0.95rem 0.95rem 0.82rem;
+  line-height: 1.34;
+}
+
+.md-nav--primary > .md-nav__title .md-nav__button.md-logo {
+  margin: 0;
+}
+
+.md-nav--primary .md-nav[data-md-level="1"] > .md-nav__title,
+.md-nav--primary .md-nav[data-md-level="2"] > .md-nav__title {
   padding: 0.7rem 0.85rem 0.55rem;
 }
 

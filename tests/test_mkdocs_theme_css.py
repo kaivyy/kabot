@@ -123,3 +123,14 @@ def test_sidebar_spacing_is_more_refined() -> None:
     assert ".md-nav--primary .md-nav__source {" in css
     assert ".md-nav--primary .md-nav__link {" in css
     assert "border-radius: 12px;" in css
+
+
+def test_sidebar_brand_title_has_extra_breathing_room() -> None:
+    css = _read_extra_css()
+
+    assert ".md-nav--primary > .md-nav__title {" in css
+    assert "margin-top: 0.38rem;" in css
+    assert "margin-bottom: 0.45rem;" in css
+    assert "padding: 0.95rem 0.95rem 0.82rem;" in css
+    assert "line-height: 1.34;" in css
+    assert "gap: 0.72rem;" in css
