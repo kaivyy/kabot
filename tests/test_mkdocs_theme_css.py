@@ -3,6 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EXTRA_CSS = ROOT / "site_docs" / "assets" / "stylesheets" / "extra.css"
 EXTRA_JS = ROOT / "site_docs" / "assets" / "javascripts" / "extra.js"
+INDEX_DOC = ROOT / "site_docs" / "index.md"
 
 
 def _read_extra_css() -> str:
@@ -11,6 +12,10 @@ def _read_extra_css() -> str:
 
 def _read_extra_js() -> str:
     return EXTRA_JS.read_text(encoding="utf-8")
+
+
+def _read_index_doc() -> str:
+    return INDEX_DOC.read_text(encoding="utf-8")
 
 
 def test_docs_header_is_sticky() -> None:
@@ -91,3 +96,30 @@ def test_docs_mobile_rules_keep_header_compact() -> None:
     assert "text-transform: uppercase;" in css
     assert ".md-nav--primary .md-nav[aria-expanded=\"true\"]" in css
     assert "transition: opacity 180ms ease, transform 180ms ease;" in css
+
+
+def test_homepage_hero_no_longer_shows_cyberpunk_badge() -> None:
+    index = _read_index_doc()
+
+    assert "Cyberpunk Docs" not in index
+    assert '<span class="kabot-badge">' not in index
+
+
+def test_font_toggle_is_more_compact() -> None:
+    css = _read_extra_css()
+
+    assert "font-size: 0.62rem;" in css
+    assert "padding: 0.3rem 0.56rem;" in css
+    assert "letter-spacing: 0.04em;" in css
+    assert "margin-left: 0.5rem;" in css
+
+
+def test_sidebar_spacing_is_more_refined() -> None:
+    css = _read_extra_css()
+
+    assert ".md-nav--primary > .md-nav__list {" in css
+    assert "gap: 0.45rem;" in css
+    assert "padding: 0.4rem 0.45rem 0.75rem;" in css
+    assert ".md-nav--primary .md-nav__source {" in css
+    assert ".md-nav--primary .md-nav__link {" in css
+    assert "border-radius: 12px;" in css

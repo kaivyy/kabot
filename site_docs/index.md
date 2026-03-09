@@ -1,8 +1,6 @@
 # Kabot Docs
 
 <div class="kabot-hero">
-  <span class="kabot-badge">Cyberpunk Docs</span>
-
 # Kabot
 
 A resilient personal AI assistant framework with long-lived memory, native reasoning workflows, multi-channel routing, and an operator-friendly dashboard.

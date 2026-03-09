@@ -159,6 +159,38 @@ body::after {
   color: var(--kabot-neon);
 }
 
+.md-nav--primary > .md-nav__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.4rem 0.45rem 0.75rem;
+}
+
+.md-nav--primary .md-nav__source {
+  display: block;
+  margin: 0.55rem 0.65rem 0.85rem;
+}
+
+.md-nav--primary .md-nav__title {
+  padding: 0.7rem 0.85rem 0.55rem;
+}
+
+.md-nav--primary .md-nav__item--section > .md-nav__link,
+.md-nav--primary .md-nav__item > .md-nav__link,
+.md-nav--primary .md-nav__item > label.md-nav__link {
+  border-radius: 12px;
+}
+
+.md-nav--primary .md-nav__link {
+  padding: 0.58rem 0.7rem;
+}
+
+.md-nav--primary .md-nav[data-md-level="1"] > .md-nav__list,
+.md-nav--primary .md-nav[data-md-level="2"] > .md-nav__list {
+  padding-top: 0.28rem;
+  padding-bottom: 0.35rem;
+}
+
 .md-typeset a,
 .md-nav__link,
 .md-tabs__link {
@@ -216,16 +248,16 @@ body::after {
 }
 
 .kabot-font-toggle {
-  margin-left: 0.75rem;
+  margin-left: 0.5rem;
   border: 1px solid var(--kabot-line-strong);
   border-radius: 999px;
   background: rgba(5, 10, 18, 0.78);
   color: var(--kabot-neon);
   font-family: var(--kabot-font-body);
-  font-size: 0.72rem;
-  letter-spacing: 0.06em;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  padding: 0.42rem 0.8rem;
+  padding: 0.3rem 0.56rem;
   cursor: pointer;
   box-shadow: 0 0 0.8rem rgba(0, 255, 200, 0.1);
   transition:
