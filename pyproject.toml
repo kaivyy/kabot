@@ -1,6 +1,6 @@
 [project]
 name = "kabot"
-version = "0.6.0"
+version = "0.6.1"
 description = "A lightweight personal AI assistant framework"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -39,6 +39,7 @@ dependencies = [
     "rank_bm25>=0.2.2",
     "questionary>=2.0.0",
     "pypdf>=5.1.0",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]

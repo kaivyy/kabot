@@ -2,5 +2,5 @@
 kabot - A lightweight AI agent framework
 """
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 __logo__ = "kabot"  # Changed from emoji to text for Windows console compatibility
