@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-03-10
+
 ### Fixed
 - **Ollama Provider Integration (#2)**:
   - Added dedicated `ollama` provider specification to the model registry to prevent local Ollama URLs from being incorrectly routed through the `vLLM` LiteLLM backend, which caused 404 Not Found errors on model lookups.
@@ -2728,3 +2730,4 @@ After deep verification analysis, discovered that Phase 13 initial implementatio
 
 ### Phase 12 and Earlier
 See git history for previous changes.
+
