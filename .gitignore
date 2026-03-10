@@ -25,6 +25,7 @@ poetry.lock
 .pytest_cache/
 .pytest-temp-root-safe/
 .tmp*/
+site/
 .basetemp/
 tmp_test/
 botpy.log
