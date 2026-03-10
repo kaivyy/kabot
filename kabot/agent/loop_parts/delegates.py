@@ -178,6 +178,9 @@ class AgentLoopDelegatesMixin:
             metadata["probe_mode"] = True
         if persist_history:
             metadata["persist_history"] = True
+        direct_agent_binding = str(getattr(self, "_direct_agent_binding", "") or "").strip()
+        if direct_agent_binding:
+            metadata["channel_instance"] = {"agent_binding": direct_agent_binding}
 
         msg = InboundMessage(
             channel=channel,

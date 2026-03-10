@@ -78,3 +78,16 @@ def test_semantic_intent_reuses_stock_context_for_relaxed_idr_followup():
 
     assert hint.required_tool == "stock"
     assert "MSFT" in str(hint.required_tool_query)
+
+
+def test_semantic_intent_reuses_stock_context_for_trend_followup():
+    hint = arbitrate_semantic_intent(
+        "trend nya naik?",
+        parser_tool=None,
+        pending_followup_tool="stock",
+        pending_followup_source="kalau saham apple berapa sekarang",
+        last_tool_context={"tool": "stock", "symbol": "AAPL", "source": "apple"},
+    )
+
+    assert hint.required_tool == "stock_analysis"
+    assert "apple" in str(hint.required_tool_query).lower()

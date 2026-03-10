@@ -758,6 +758,13 @@ Examples you can type manually:
 - `cloudflare-ai-gateway/claude-sonnet-4-5`
 - `vercel-ai-gateway/anthropic/claude-opus-4.6`
 
+### A.1) Ollama Auto-Discovery (Local Models)
+
+Kabot natively supports Ollama auto-discovery! If you have Ollama running on your machine:
+1. When Kabot starts, it automatically queries your local Ollama instance (`http://localhost:11434/api/tags`).
+2. Any downloaded models (e.g. `llama3.2-vision`, `qwen3.5:9b`) will **automatically** appear in your manual override lists or when picking from the setup wizard.
+3. You can simply use them right away by typing `ollama/qwen3.5:9b` or using the wizard! No API key is needed.
+
 ### B) Quick Runtime Switch (Without reopening setup)
 
 Inside chat:

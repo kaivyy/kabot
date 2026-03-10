@@ -469,6 +469,15 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         is_local=True,
     ),
     ProviderSpec(
+        name="ollama",
+        keywords=("ollama",),
+        env_key="OLLAMA_API_KEY",
+        display_name="Ollama (Local)",
+        litellm_prefix="ollama",
+        skip_prefixes=("ollama/",),
+        is_local=True,
+    ),
+    ProviderSpec(
         name="groq",
         keywords=("groq",),
         env_key="GROQ_API_KEY",

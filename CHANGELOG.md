@@ -5,6 +5,45 @@ All notable changes to Kabot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Ollama Provider Integration (#2)**:
+  - Added dedicated `ollama` provider specification to the model registry to prevent local Ollama URLs from being incorrectly routed through the `vLLM` LiteLLM backend, which caused 404 Not Found errors on model lookups.
+  - Fixed `ollama_url.py` auth handler to correctly use the `"ollama"` provider key instead of reusing `"vllm"`.
+  - Added an auto-discovery plugin for Ollama models on startup, so models installed locally (`http://localhost:11434/api/tags`) automatically appear in the Kabot model list.
+
+- **Chat Continuity Hardening**:
+  - Short contextual follow-ups like `ya lanjut`, `lanjut rencana`, `yang formal gimana`, `trend nya naik?`, `naik ya`, and `kenapa` now prefer recent conversational context instead of being hijacked by stale tool history.
+  - Assistant offer follow-ups now keep their pending offer context even when the runtime chooses the safer full-context lane, so numbered choices and brief confirmations stay connected to the previous answer.
+  - Bare numeric replies and ordinal follow-ups such as `2`, `nomor 3`, `yang ketiga gimana`, and `lanjut yang tadi` now stay grounded to the latest assistant option prompt instead of echoing the number back or asking for context that was already present.
+  - User-authored option prompts like `Kalau mau, aku bisa kasih 3 opsi...` are now treated as quoted choice prompts that require a follow-up selection, preventing Kabot from auto-picking an option on the user's behalf.
+  - Multilingual quoted option prompts and selections now stay grounded across Chinese, Japanese, and Thai flows, so replies such as `第二个`, `2番`, and `ข้อ 2` keep following the last option prompt instead of resetting or asking for already-known context.
+  - Assistant option blocks that use East Asian numbering styles such as `1）` without spaces are now preserved as real option prompts, so multilingual numbered follow-ups no longer lose the choice list during continuity recovery.
+  - Referential follow-ups such as `再简短一点`, `这是什么意思`, `もっと短く`, `それどういう意味`, `สั้นกว่านี้`, and `หมายความว่าไง` now inherit the most recent assistant answer as explicit answer-reference context, letting Kabot shorten or explain the last reply instead of falling back to generic translation/help text.
+  - Referential follow-ups can now keep the most recent assistant answer context even when an assistant-offer continuation is still pending, so turns like `第二个 -> 再简短一点 -> 这是什么意思` stay on the same answer instead of asking the user to resend it.
+  - Quoted option prompts now inject a stronger `User-Provided Option Prompt` note that tells the model the list came from the user and must not be auto-completed in-character, reducing cases where Kabot picked an option by itself in multilingual chats.
+  - Short assistant-offer confirmations such as `ya`, `ya berikan`, and `ya lanjut` now inject an explicit acceptance note into the current turn so the model continues the promised answer instead of drifting into unrelated tools or topics.
+  - Recent stock quote follow-ups can now promote into contextual stock analysis using the latest stock context instead of falling back to generic "need more context" replies.
+  - Explicit stock trade-plan requests such as `Buatkan 3 skenario trading AAPL: breakout, pullback, invalidation` now resolve to `stock_analysis` instead of degrading into plain quote lookups.
+  - Referential stock follow-ups like `lanjut yang tadi` now keep the prior analysis intent instead of snapping back to the last raw stock quote context.
+  - Deterministic stock-analysis fallback now serializes `days` as a string to match the tool schema, fixing follow-up errors like `Invalid parameters for tool 'stock_analysis': days should be string`.
+  - Short hostile meta feedback like `tolol` or `goblok jawab apa loh` now carries a feedback note that tells the model to acknowledge frustration briefly, avoid joking, and restate the last answer more directly instead of resetting or becoming flippant.
+- **Weather Follow-up Accuracy**:
+  - Explicit new weather locations now beat stale last-weather context, so turns like `suhu di purwokerto sekarang berapa` no longer reuse a previous city just because the prompt is short.
+  - Weather location normalization now cleans `+`-joined text such as `Cilacap+Utara`, allowing fallback variants to reach Open-Meteo correctly before falling back to other providers.
+  - Follow-up weather chats now stay grounded to the right city and source more consistently, with live smoke verification confirming `Source: Open-Meteo (current_weather)` for cases such as `cuaca cilacap utara sekarang berapa` and `berapa suhu di purwokerto`.
+
+- **Weather Provider Priority**:
+  - Weather resolution now tries all normalized location variants against Open-Meteo before accepting a `wttr.in` success, so queries like `cuaca cilacap utara sekarang berapa` no longer stop early on a less-preferred source when `Cilacap` already resolves correctly in Open-Meteo.
+- **Skill Runtime Reliability**:
+  - The bundled `github` skill now explicitly tells the model to use the shell/exec command tool for `gh ...` commands and not to hallucinate a standalone `gh` tool call, fixing multilingual smoke failures that previously tripped model fallback with `tool ... was not in request.tools`.
+- **Smoke Harness Accuracy**:
+  - `agent_smoke_matrix` now computes weekday expectations from the current `Asia/Jakarta` date instead of hardcoding Monday strings, making multilingual temporal smoke cases valid across real calendar days.
+  - Smoke prompt text for Chinese, Japanese, and Thai is now stored with Unicode-safe escapes so CLI smoke runs no longer degrade into `????` prompts on Windows.
+  - Smoke expectation matching is now case-insensitive and separator-tolerant, so healthy skill replies like `BlueBubbles` or `Test-Driven Development` are not falsely marked as failures just because the output uses title case or spaces instead of slug-style names.
+  - Per-case subprocess timeouts are now captured as failed smoke results instead of aborting the entire matrix, so broad all-skill audits can finish and report the real outliers instead of crashing on the first slow skill.
+
 ## [0.6.1] - 2026-03-09
 
 ### Fixed

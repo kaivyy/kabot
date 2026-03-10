@@ -328,6 +328,38 @@ def test_infer_required_tool_from_history_skips_low_information_user_turns(agent
     assert tool == "web_search"
     assert source == "berita terbaru 2026 sekarang"
 
+def test_infer_required_tool_from_history_skips_generic_contextual_plan_followup(agent_loop):
+    history = [
+        {"role": "user", "content": "kalau saham apple berapa sekarang"},
+        {
+            "role": "assistant",
+            "content": (
+                "Kalau kamu mau, aku bisa lanjut bikin rencana entry-exit 3 skenario "
+                "(breakout, pullback, dan invalidation) lengkap angka levelnya."
+            ),
+        },
+    ]
+
+    tool, source = agent_loop._infer_required_tool_from_history("lanjut rencana", history)
+
+    assert tool is None
+    assert source is None
+
+
+def test_required_tool_for_query_prefers_stock_analysis_for_trade_plan_requests(agent_loop):
+    assert (
+        agent_loop._required_tool_for_query(
+            "Buatkan 3 skenario trading AAPL: breakout, pullback, invalidation"
+        )
+        == "stock_analysis"
+    )
+    assert (
+        agent_loop._required_tool_for_query(
+            "buatkan rencana entry exit aapl dengan support resistance dan stop loss"
+        )
+        == "stock_analysis"
+    )
+
 def test_required_tool_for_query_keeps_sysinfo_for_non_cleanup_disk_query(agent_loop):
     assert agent_loop._required_tool_for_query("cek free space ssd sekarang") == "get_system_info"
 
@@ -473,6 +505,29 @@ async def test_execute_required_tool_fallback_weather_prefers_fresh_raw_query_ov
     execute_mock.assert_awaited_once_with(
         "weather",
         {"location": "Cilacap", "context_text": "kalau suhu cilacap berapa sekarang"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_weather_explicit_new_location_beats_stale_last_tool_context(agent_loop):
+    execute_mock = AsyncMock(return_value="Purwokerto: 24.9C, berkabut")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="suhu di purwokerto sekarang berapa",
+        metadata={"last_tool_context": {"location": "Cilacap Utara"}},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("weather", msg)
+
+    assert result == "Purwokerto: 24.9C, berkabut"
+    execute_mock.assert_awaited_once_with(
+        "weather",
+        {"location": "Purwokerto", "context_text": "suhu di purwokerto sekarang berapa"},
     )
 
 @pytest.mark.asyncio
@@ -739,7 +794,26 @@ async def test_execute_required_tool_fallback_stock_routes_tracking_requests_to_
 
     result = await agent_loop._execute_required_tool_fallback("stock", msg)
     assert result == "analysis-ok"
-    execute_mock.assert_awaited_once_with("stock_analysis", {"symbol": "BBRI.JK", "days": 30})
+    execute_mock.assert_awaited_once_with("stock_analysis", {"symbol": "BBRI.JK", "days": "30"})
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_stock_analysis_serializes_days_as_string(agent_loop):
+    execute_mock = AsyncMock(return_value="analysis-ok")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="Buatkan 3 skenario trading AAPL: breakout, pullback, invalidation",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("stock_analysis", msg)
+
+    assert result == "analysis-ok"
+    execute_mock.assert_awaited_once_with("stock_analysis", {"symbol": "AAPL", "days": "30"})
 
 @pytest.mark.asyncio
 async def test_execute_required_tool_fallback_stock_routes_usd_idr_natural_query(agent_loop):

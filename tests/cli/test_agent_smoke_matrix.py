@@ -1,11 +1,16 @@
+import subprocess
 from pathlib import Path
 
 from kabot.cli.agent_smoke_matrix import (
+    SmokeCase,
     SmokeResult,
+    _localized_weekday_expectations,
+    _stdout_matches_expectations,
     apply_thresholds,
     build_agent_command,
     build_smoke_cases,
     parse_run_metrics,
+    run_case,
     serialize_results_json,
 )
 
@@ -17,9 +22,15 @@ def test_build_smoke_cases_windows_uses_windows_style_path_prompt():
     cases = build_smoke_cases(cwd=Path(r"C:\Users\Arvy Kairi\Desktop\bot\kabot"), os_profile="windows")
 
     filesystem_case = next(case for case in cases if case.label == "fs-local-id")
+    zh_case = next(case for case in cases if case.label == "zh-day")
+    ja_case = next(case for case in cases if case.label == "ja-day")
+    th_case = next(case for case in cases if case.label == "th-day")
 
     assert "C:\\" in filesystem_case.prompt
     assert "folder" in filesystem_case.prompt.lower()
+    assert "?" not in zh_case.prompt
+    assert "?" not in ja_case.prompt
+    assert "?" not in th_case.prompt
 
 
 def test_build_smoke_cases_posix_uses_posix_style_path_prompt():
@@ -116,3 +127,46 @@ def test_apply_thresholds_marks_missing_metric_as_failure_when_gate_enabled():
 
     assert gated.passed is False
     assert "missing context_build_ms" in gated.failure_reason
+
+
+def test_localized_weekday_expectations_match_known_weekday_index():
+    expectations = _localized_weekday_expectations(1)
+
+    assert expectations["id"] == ("Selasa",)
+    assert expectations["zh"] == ("星期二",)
+    assert expectations["ja"] == ("火曜日",)
+    assert expectations["th"] == ("วันอังคาร", "อังคาร")
+
+
+def test_stdout_matches_expectations_case_insensitively():
+    assert _stdout_matches_expectations(
+        "Absolutely—I can use BlueBubbles.",
+        expected_contains=(),
+        expected_any_contains=("bluebubbles", "skill"),
+    )
+
+
+def test_stdout_matches_expectations_ignores_separator_differences():
+    assert _stdout_matches_expectations(
+        "I will use Test-Driven Development (TDD) for this request.",
+        expected_contains=(),
+        expected_any_contains=("test-driven-development",),
+    )
+
+
+def test_run_case_returns_failed_result_when_subprocess_times_out(monkeypatch):
+    def _boom(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["python", "-m", "kabot.cli.commands"], timeout=30)
+
+    monkeypatch.setattr("kabot.cli.agent_smoke_matrix.subprocess.run", _boom)
+
+    result = run_case(
+        SmokeCase(label="timeout", prompt="Please use the slack skill for this request."),
+        cwd=Path.cwd(),
+        python_executable="python",
+        timeout=30,
+    )
+
+    assert result.passed is False
+    assert result.returncode == 124
+    assert "timeout" in result.failure_reason.lower()

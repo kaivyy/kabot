@@ -10,8 +10,10 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from kabot.agent.skills import SkillsLoader
 from kabot.config.loader import load_config
@@ -41,6 +43,57 @@ class SmokeResult:
     failure_reason: str = ""
 
 
+def _localized_weekday_expectations(weekday_index: int) -> dict[str, tuple[str, ...]]:
+    normalized = int(weekday_index) % 7
+    return {
+        "id": (("Senin",), ("Selasa",), ("Rabu",), ("Kamis",), ("Jumat",), ("Sabtu",), ("Minggu",))[normalized],
+        "zh": (("星期一",), ("星期二",), ("星期三",), ("星期四",), ("星期五",), ("星期六",), ("星期日",))[normalized],
+        "ja": (("月曜日",), ("火曜日",), ("水曜日",), ("木曜日",), ("金曜日",), ("土曜日",), ("日曜日",))[normalized],
+        "th": (
+            ("วันจันทร์", "จันทร์"),
+            ("วันอังคาร", "อังคาร"),
+            ("วันพุธ", "พุธ"),
+            ("วันพฤหัสบดี", "พฤหัสบดี"),
+            ("วันศุกร์", "ศุกร์"),
+            ("วันเสาร์", "เสาร์"),
+            ("วันอาทิตย์", "อาทิตย์"),
+        )[normalized],
+    }
+
+
+def _today_weekday_expectations() -> dict[str, tuple[str, ...]]:
+    jakarta_now = datetime.now(ZoneInfo("Asia/Jakarta"))
+    return _localized_weekday_expectations(jakarta_now.weekday())
+
+
+def _stdout_matches_expectations(
+    stdout: str,
+    *,
+    expected_contains: tuple[str, ...] = (),
+    expected_any_contains: tuple[str, ...] = (),
+) -> bool:
+    text = str(stdout or "")
+    folded = text.casefold()
+
+    def _normalize_for_loose_match(value: str) -> str:
+        return re.sub(r"[\W_]+", "", str(value or "").casefold())
+
+    normalized_text = _normalize_for_loose_match(text)
+
+    def _contains(expected: str) -> bool:
+        expected_folded = str(expected or "").casefold()
+        if expected_folded in folded:
+            return True
+        normalized_expected = _normalize_for_loose_match(expected)
+        return bool(normalized_expected) and normalized_expected in normalized_text
+
+    if expected_contains and not all(_contains(expected) for expected in expected_contains):
+        return False
+    if expected_any_contains and not any(_contains(expected) for expected in expected_any_contains):
+        return False
+    return True
+
+
 def _normalize_threshold(value: int | None) -> int | None:
     if value is None:
         return None
@@ -64,9 +117,9 @@ def _skill_prompt(locale: str, skill_name: str) -> str:
     templates = {
         "en": f"Please use the {skill_name} skill for this request.",
         "id": f"Tolong pakai skill {skill_name} untuk request ini ya.",
-        "zh": f"请用 {skill_name} 技能处理这个请求。",
-        "ja": f"{skill_name} スキルを使ってこの依頼を手伝って。",
-        "th": f"ช่วยใช้สกิล {skill_name} กับงานนี้หน่อย",
+        "zh": f"\u8bf7\u7528 {skill_name} \u6280\u80fd\u5904\u7406\u8fd9\u4e2a\u8bf7\u6c42\u3002",
+        "ja": f"{skill_name} \u30b9\u30ad\u30eb\u3092\u4f7f\u3063\u3066\u3053\u306e\u4f9d\u983c\u3092\u624b\u4f1d\u3063\u3066\u3002",
+        "th": f"\u0e0a\u0e48\u0e27\u0e22\u0e43\u0e0a\u0e49\u0e2a\u0e01\u0e34\u0e25 {skill_name} \u0e01\u0e31\u0e1a\u0e07\u0e32\u0e19\u0e19\u0e35\u0e49\u0e2b\u0e19\u0e48\u0e2d\u0e22",
     }
     return templates.get(locale, templates["en"])
 
@@ -79,20 +132,20 @@ def build_smoke_cases(
     base_dir = Path(cwd or Path.cwd())
     profile = _normalize_os_profile(os_profile)
     path_text = str(base_dir) if profile == "windows" else base_dir.as_posix()
+    weekday_expectations = _today_weekday_expectations()
 
     return [
-        SmokeCase("id-day", "hari apa sekarang? jawab singkat, pakai WIB ya.", expected_contains=("Senin",)),
-        SmokeCase("id-weird-day", "bro sekarang hari apa sih woi, jawab satu baris", expected_contains=("Senin",)),
-        SmokeCase("zh-day", "今天星期几？只回答一行。", expected_contains=("星期一",)),
-        SmokeCase("ja-day", "今日は何曜日？一行だけ。", expected_contains=("月曜日",)),
-        SmokeCase("th-day", "ตอนนี้วันอะไร ตอบสั้นๆ", expected_any_contains=("วันจันทร์", "จันทร์")),
+        SmokeCase("id-day", "hari apa sekarang? jawab singkat, pakai WIB ya.", expected_contains=weekday_expectations["id"]),
+        SmokeCase("id-weird-day", "bro sekarang hari apa sih woi, jawab satu baris", expected_contains=weekday_expectations["id"]),
+        SmokeCase("zh-day", "\u4eca\u5929\u661f\u671f\u51e0\uff1f\u53ea\u56de\u7b54\u4e00\u884c\u3002", expected_contains=weekday_expectations["zh"]),
+        SmokeCase("ja-day", "\u4eca\u65e5\u306f\u4f55\u66dc\u65e5\uff1f\u4e00\u884c\u3060\u3051\u3002", expected_contains=weekday_expectations["ja"]),
+        SmokeCase("th-day", "\u0e15\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e27\u0e31\u0e19\u0e2d\u0e30\u0e44\u0e23 \u0e15\u0e2d\u0e1a\u0e2a\u0e31\u0e49\u0e19\u0e46", expected_any_contains=weekday_expectations["th"]),
         SmokeCase(
             "fs-local-id",
             f"tampilkan 3 item pertama dari folder {path_text}",
-            expected_any_contains=("📁", "📄"),
+            expected_any_contains=("\U0001F4C1", "\U0001F4C4"),
         ),
     ]
-
 
 def discover_skill_names(
     *,
@@ -188,15 +241,33 @@ def run_case(
 ) -> SmokeResult:
     session_id = _make_session_id(case.label)
     command = build_agent_command(case.prompt, session_id=session_id, python_executable=python_executable)
-    result = subprocess.run(
-        command,
-        cwd=str(cwd or Path.cwd()),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(cwd or Path.cwd()),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = str(getattr(exc, "stdout", "") or "")
+        stderr = str(getattr(exc, "stderr", "") or "")
+        metrics = parse_run_metrics(stderr)
+        return SmokeResult(
+            label=case.label,
+            prompt=case.prompt,
+            session_id=session_id,
+            returncode=124,
+            stdout=stdout,
+            stderr=stderr,
+            route=metrics["route"],
+            context_build_ms=metrics["context_build_ms"],
+            first_response_ms=metrics["first_response_ms"],
+            passed=False,
+            failure_reason=f"timeout after {timeout}s",
+        )
     metrics = parse_run_metrics(result.stderr)
     smoke_result = SmokeResult(
         label=case.label,
@@ -212,10 +283,16 @@ def run_case(
     if result.returncode != 0:
         smoke_result.failure_reason = f"exit={result.returncode}"
         return smoke_result
-    if case.expected_contains and not all(expected in result.stdout for expected in case.expected_contains):
+    if not _stdout_matches_expectations(
+        result.stdout,
+        expected_contains=case.expected_contains,
+    ):
         smoke_result.failure_reason = f"missing expected_contains={case.expected_contains}"
         return smoke_result
-    if case.expected_any_contains and not any(expected in result.stdout for expected in case.expected_any_contains):
+    if not _stdout_matches_expectations(
+        result.stdout,
+        expected_any_contains=case.expected_any_contains,
+    ):
         smoke_result.failure_reason = f"missing expected_any_contains={case.expected_any_contains}"
         return smoke_result
     smoke_result.passed = True

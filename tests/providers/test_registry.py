@@ -95,6 +95,18 @@ def test_catalog_loading():
     xiaomi = registry.get_model("xiaomi/mimo-v2-flash")
     assert xiaomi is not None
 
+
+def test_catalog_includes_gpt_5_4_forward_compat_limits():
+    registry = ModelRegistry()
+    registry.clear()
+    registry.load_catalog()
+
+    metadata = registry.get_model("openai/gpt-5.4")
+
+    assert metadata is not None
+    assert metadata.context_window == 1050000
+    assert metadata.max_output == 128000
+
     volcengine = registry.get_model("volcengine/doubao-seed-1-8-251228")
     assert volcengine is not None
 

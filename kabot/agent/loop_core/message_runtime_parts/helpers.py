@@ -1,4 +1,4 @@
-"""Helper utilities extracted from message_runtime."""
+﻿"""Helper utilities extracted from message_runtime."""
 
 from __future__ import annotations
 
@@ -84,9 +84,17 @@ __all__ = [
     "_build_temporal_context_note",
     "_clear_pending_followup_intent",
     "_clear_pending_followup_tool",
+    "_extract_assistant_followup_offer_text",
+    "_extract_option_selection_reference",
+    "_infer_recent_assistant_option_prompt_from_history",
+    "_infer_recent_assistant_answer_from_history",
+    "_extract_user_supplied_option_prompt_text",
     "_get_last_tool_context",
     "_get_pending_followup_intent",
     "_get_pending_followup_tool",
+    "_looks_like_answer_reference_followup",
+    "_looks_like_assistant_offer_context_followup",
+    "_looks_like_contextual_followup_request",
     "_normalize_text",
     "_resolve_runtime_locale",
     "_set_last_tool_context",
@@ -181,7 +189,7 @@ def _is_low_information_turn(text: str, *, max_tokens: int, max_chars: int) -> b
         return False
     if normalized.startswith("/"):
         return False
-    if any(mark in raw_text for mark in ("?", "？", "¿", "؟")):
+    if any(mark in raw_text for mark in ("?", "ï¼Ÿ", "Â¿", "ØŸ")):
         return False
 
     tokens = normalized.split()
@@ -362,18 +370,29 @@ _TEMPORAL_CONTEXT_RE = re.compile(
     r"hari apa|what day|day is it|tanggal berapa|what date|jam berapa|what time|"
     r"hari ini|today|besok|tomorrow|kemarin|yesterday|lusa|seminggu|next week|"
     r"timezone|time zone|zona waktu|utc\s*[+-]?\s*\d{1,2}|wib|sekarang hari|hari sekarang"
-    r")\b|"
-    r"今天|今日|明天|昨天|后天|後天|星期几|星期幾|星期|周几|周幾|周日|周天|何曜日|今日|明日|昨日|一週間|タイムゾーン|"
-    r"ตอนนี้วันอะไร|วันนี้|พรุ่งนี้|เมื่อวาน|มะรืน|สัปดาห์หน้า|เขตเวลา|โซนเวลา"
+    r")\b"
 )
-
+_TEMPORAL_CONTEXT_NON_LATIN_PHRASES = (
+    "今天星期几",
+    "今天星期幾",
+    "今天是星期几",
+    "今天是星期幾",
+    "今天是什么星期",
+    "今天是什麼星期",
+    "今日は何曜日",
+    "今日何曜日",
+    "ตอนนี้วันอะไร",
+    "วันนี้วันอะไร",
+)
 
 def _looks_like_temporal_context_query(text: str) -> bool:
     raw = str(text or "").strip()
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    return bool(_TEMPORAL_CONTEXT_RE.search(normalized))
+    if _TEMPORAL_CONTEXT_RE.search(normalized):
+        return True
+    return any(phrase in raw for phrase in _TEMPORAL_CONTEXT_NON_LATIN_PHRASES)
 
 
 _MEMORY_COMMIT_RE = re.compile(
@@ -407,6 +426,556 @@ def _looks_like_short_confirmation(text: str) -> bool:
         return False
     return True
 
+
+_ASSISTANT_OFFER_CONTEXT_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "apa",
+    "are",
+    "bagaimana",
+    "berikan",
+    "bisa",
+    "buat",
+    "deh",
+    "do",
+    "dong",
+    "gimana",
+    "hadeh",
+    "how",
+    "i",
+    "ini",
+    "is",
+    "itu",
+    "kah",
+    "kalau",
+    "kalo",
+    "kamu",
+    "ke",
+    "lah",
+    "mau",
+    "me",
+    "my",
+    "nomor",
+    "number",
+    "oke",
+    "ok",
+    "opsi",
+    "option",
+    "or",
+    "please",
+    "pilihan",
+    "saya",
+    "sih",
+    "that",
+    "the",
+    "this",
+    "to",
+    "tolong",
+    "what",
+    "yang",
+    "ya",
+    "yeah",
+}
+
+_CONTEXTUAL_FOLLOWUP_PHRASES = (
+    "ya lanjut",
+    "lanjut rencana",
+    "lanjut analisis",
+    "lanjut yang",
+    "maksudnya",
+    "kenapa",
+    "kok",
+    "yang formal",
+    "yang kedua",
+    "nomor 2",
+    "coba ulang",
+    "jelasin",
+    "jelaskan",
+    "trend nya",
+    "trendnya",
+    "再简短一点",
+    "更短一点",
+    "这是什么意思",
+    "什么意思",
+    "もっと短く",
+    "それどういう意味",
+    "สั้นกว่านี้",
+    "หมายความว่าไง",
+)
+
+_CONTEXTUAL_FOLLOWUP_EXACT = {
+    "naik ya",
+    "turun ya",
+}
+_ANSWER_REFERENCE_FOLLOWUP_PHRASES = (
+    "yang pertama",
+    "yang kedua",
+    "yang ketiga",
+    "yang keempat",
+    "yang kelima",
+    "nomor 1",
+    "nomor 2",
+    "nomor 3",
+    "nomor 4",
+    "nomor 5",
+    "opsi 1",
+    "opsi 2",
+    "opsi 3",
+    "opsi 4",
+    "opsi 5",
+    "the first",
+    "the second",
+    "the third",
+    "the fourth",
+    "the fifth",
+    "maksudnya",
+    "coba ulang",
+    "ulang dari awal",
+    "versi singkat",
+    "versi pendek",
+    "jelasin lagi",
+    "jelaskan lagi",
+    "再简短一点",
+    "再短一点",
+    "更短一点",
+    "这是什么意思",
+    "這是什麼意思",
+    "什么意思",
+    "什麼意思",
+    "もっと短く",
+    "短くして",
+    "それどういう意味",
+    "どういう意味",
+    "สั้นกว่านี้",
+    "หมายความว่าไง",
+    "หมายความว่าอะไร",
+)
+
+_OPTION_SELECTION_NUMERIC_RE = re.compile(
+    r"^(?:(?:opsi|option|nomor|number)\s+)?(?P<ref>\d{1,2})$"
+)
+_OPTION_SELECTION_REFERENCE_RE = re.compile(
+    r"\b(?:(?:opsi|option|nomor|number|yang|the)\s+)?"
+    r"(?P<ref>pertama|kedua|ketiga|keempat|kelima|first|second|third|fourth|fifth|\d{1,2})"
+    r"(?:\s+one)?\b",
+    re.IGNORECASE,
+)
+_OPTION_SELECTION_ORDINAL_MAP = {
+    "pertama": "1",
+    "kedua": "2",
+    "ketiga": "3",
+    "keempat": "4",
+    "kelima": "5",
+    "first": "1",
+    "second": "2",
+    "third": "3",
+    "fourth": "4",
+    "fifth": "5",
+    "一": "1",
+    "二": "2",
+    "三": "3",
+    "四": "4",
+    "五": "5",
+}
+_OPTION_SELECTION_CJK_ORDINAL_RE = re.compile("\\u7b2c(?P<ref>[\\u4e00\\u4e8c\\u4e09\\u56db\\u4e94\\d]{1,2})(?:\\u4e2a|\\u500b|\\u756a|\\u3064\\u76ee)?")
+_OPTION_SELECTION_JA_NUMERIC_RE = re.compile("(?P<ref>\\d{1,2})\\u756a")
+_OPTION_SELECTION_THAI_NUMERIC_RE = re.compile("\\u0e02\\u0e49\\u0e2d\\s*(?P<ref>\\d{1,2})")
+
+def _tokenize_context_tokens(text: str) -> set[str]:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return set()
+    tokens = re.findall(r"\w+", normalized, flags=re.UNICODE)
+    result: set[str] = set()
+    for token in tokens:
+        if not token:
+            continue
+        if token in _ASSISTANT_OFFER_CONTEXT_STOPWORDS:
+            continue
+        if token.isdigit():
+            result.add(token)
+            continue
+        if len(token) < 2:
+            continue
+        result.add(token)
+    return result
+
+
+def _looks_like_assistant_offer_context_followup(text: str, offer_text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if _looks_like_short_confirmation(raw):
+        return True
+    if not _is_low_information_turn(raw, max_tokens=7, max_chars=96):
+        return False
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if _PATHLIKE_TEXT_RE.search(raw):
+        return False
+    current_tokens = _tokenize_context_tokens(raw)
+    offer_tokens = _tokenize_context_tokens(offer_text)
+    if not current_tokens or not offer_tokens:
+        return False
+    return bool(current_tokens & offer_tokens)
+
+
+def _extract_option_selection_reference(text: str) -> str | None:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return None
+    if not _is_low_information_turn(raw, max_tokens=8, max_chars=96):
+        return None
+    if re.search(r"(https?://|www\.)", normalized):
+        return None
+    if _PATHLIKE_TEXT_RE.search(raw):
+        return None
+
+    numeric_match = _OPTION_SELECTION_NUMERIC_RE.fullmatch(normalized)
+    if numeric_match:
+        return str(numeric_match.group("ref") or "").strip() or None
+
+    for pattern in (
+        _OPTION_SELECTION_CJK_ORDINAL_RE,
+        _OPTION_SELECTION_JA_NUMERIC_RE,
+        _OPTION_SELECTION_THAI_NUMERIC_RE,
+    ):
+        extra_match = pattern.search(raw)
+        if not extra_match:
+            continue
+        ref = str(extra_match.group("ref") or "").strip()
+        if not ref:
+            continue
+        if ref.isdigit():
+            return ref
+        mapped = _OPTION_SELECTION_ORDINAL_MAP.get(ref)
+        if mapped:
+            return mapped
+
+    match = _OPTION_SELECTION_REFERENCE_RE.search(normalized)
+    if not match:
+        return None
+    ref = str(match.group("ref") or "").strip().lower()
+    if not ref:
+        return None
+    if ref.isdigit():
+        return ref
+    return _OPTION_SELECTION_ORDINAL_MAP.get(ref)
+
+
+def _looks_like_answer_reference_followup(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if _PATHLIKE_TEXT_RE.search(raw):
+        return False
+    if _extract_option_selection_reference(raw):
+        return True
+    if any(phrase in normalized for phrase in _ANSWER_REFERENCE_FOLLOWUP_PHRASES):
+        return True
+    if not _is_low_information_turn(raw, max_tokens=10, max_chars=120):
+        return False
+    return False
+
+
+def _looks_like_contextual_followup_request(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if not _is_low_information_turn(raw, max_tokens=8, max_chars=96):
+        return False
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if _PATHLIKE_TEXT_RE.search(raw):
+        return False
+    if _extract_option_selection_reference(raw):
+        return True
+    if normalized in _CONTEXTUAL_FOLLOWUP_EXACT:
+        return True
+    if "trend" in normalized:
+        return True
+    return any(phrase in normalized for phrase in _CONTEXTUAL_FOLLOWUP_PHRASES)
+
+
+_ASSISTANT_FOLLOWUP_OFFER_LEAD_MARKERS = (
+    "if you want",
+    "if you'd like",
+    "if you would like",
+    "if you like",
+    "kalau mau",
+    "kalau kamu mau",
+    "kalau lo mau",
+    "kalau lu mau",
+    "kalau anda mau",
+    "jika mau",
+    "jika anda mau",
+    "jika kamu mau",
+    "jika anda ingin",
+    "jika kamu ingin",
+    "bila mau",
+    "bila anda mau",
+    "bila kamu mau",
+    "bila anda ingin",
+    "bila kamu ingin",
+    "kalau ingin",
+    "mau aku",
+    "mau saya",
+    "si quieres",
+    "se quiser",
+    "si tu veux",
+    "si vous voulez",
+    "wenn du willst",
+    "wenn sie m?chten",
+    "如果你想",
+    "如果你愿意",
+    "如果你想要",
+    "よければ",
+    "必要なら",
+    "ถ้าต้องการ",
+    "ถ้าอยาก",
+)
+
+_ASSISTANT_FOLLOWUP_OFFER_CAPABILITY_MARKERS = (
+    "i can",
+    "i can also",
+    "can also",
+    "aku bisa",
+    "aku juga bisa",
+    "saya bisa",
+    "saya juga bisa",
+    "bisa juga",
+    "bisa kasih",
+    "bisa berikan",
+    "bisa bikinin",
+    "bisa bantu",
+    "puedo",
+    "je peux",
+    "ich kann",
+    "我也可以",
+    "我可以",
+    "可以帮你",
+    "できます",
+    "お伝えできます",
+    "ช่วยได้",
+    "ช่วยคุณได้",
+)
+
+_ASSISTANT_FOLLOWUP_OFFER_EXCLUDE_MARKERS = (
+    "what can i help you with today",
+    "what can i help you with",
+    "apa yang bisa saya bantu",
+    "ada yang bisa saya bantu",
+    "silakan beri tahu apa yang ingin",
+    "tolong beri tahu apa yang ingin",
+)
+
+_ASSISTANT_FOLLOWUP_SELECTION_MARKERS = (
+    "balas hanya angka",
+    "balas angka",
+    "balas hanya nomor",
+    "silakan balas",
+    "silakan pilih",
+    "reply with just",
+    "reply only with",
+    "reply with only",
+    "reply with",
+    "choose 1",
+    "choose one",
+    "pick 1",
+    "pick one",
+    "select 1",
+    "select one",
+    "选一个",
+    "選一個",
+    "选择一个",
+    "選擇一個",
+    "1つ選んでください",
+    "一つ選んでください",
+    "選んでください",
+    "เลือกหนึ่งแบบ",
+    "เลือกหนึ่งข้อ",
+    "เลือกหนึ่งอย่าง",
+)
+
+_ASSISTANT_FOLLOWUP_OPTION_INTRO_MARKERS = (
+    "opsi",
+    "pilihan",
+    "option",
+    "options",
+    "choice",
+    "choices",
+    "tingkat formalitas",
+    "formalitas",
+    "版本",
+    "版",
+    "文体",
+    "文體",
+    "แบบ",
+)
+
+_ASSISTANT_FOLLOWUP_CHOICE_LINE_RE = re.compile(
+    r"^\s*(?:\d{1,2}[.)\uFF09\uFF0E\u3002]|[-*\u2022])\s*\S+"
+)
+
+
+_INLINE_NUMBERED_CHOICE_RE = re.compile(r"(?:^|\s)\d{1,2}(?:[.)）．。]|\s*[\(（])", re.UNICODE)
+_USER_OPTION_PROMPT_SELECTION_MARKERS = (
+    *_ASSISTANT_FOLLOWUP_SELECTION_MARKERS,
+    "pilih satu",
+    "pilih salah satu",
+    "pilih ya",
+    "pilih dulu",
+    "choose one",
+    "pick one",
+    "select one",
+    "选一个",
+    "選一個",
+    "1つ選んでください",
+    "เลือกหนึ่งแบบ",
+)
+
+_INLINE_CHOICE_QUESTION_MARKERS = (
+    "mau yang",
+    "yang mana",
+    "pilihanmu",
+    "pilihan anda",
+    "pilihan kamu",
+    "which one",
+    "选哪个",
+    "選哪個",
+    "どれ",
+    "どちら",
+    "เลือกแบบไหน",
+)
+
+_USER_OPTION_PROMPT_EXPLICIT_CHOOSE_FOR_ME_MARKERS = (
+    "menurutmu pilih yang mana",
+    "menurut anda pilih yang mana",
+    "which one should i choose",
+    "which should i choose",
+    "choose for me",
+    "pick for me",
+    "pilihkan",
+    "pilihin",
+    "pilih yang terbaik",
+    "rekomendasikan yang mana",
+)
+
+def _extract_assistant_followup_offer_text(text: str) -> str | None:
+    """Extract a concise assistant offer sentence that can anchor a short follow-up."""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    normalized_lines = [_normalize_text(line) for line in lines]
+    normalized_raw = _normalize_text(raw)
+
+    def _is_offer_anchor(normalized: str) -> bool:
+        if not normalized:
+            return False
+        if any(marker in normalized for marker in _ASSISTANT_FOLLOWUP_OFFER_EXCLUDE_MARKERS):
+            return False
+        has_lead = any(marker in normalized for marker in _ASSISTANT_FOLLOWUP_OFFER_LEAD_MARKERS)
+        has_capability = any(marker in normalized for marker in _ASSISTANT_FOLLOWUP_OFFER_CAPABILITY_MARKERS)
+        return has_lead and has_capability
+
+    def _looks_like_option_intro(normalized: str, next_lines: list[str]) -> bool:
+        if not normalized:
+            return False
+        has_intro_marker = any(
+            marker in normalized for marker in _ASSISTANT_FOLLOWUP_OPTION_INTRO_MARKERS
+        )
+        has_selection_marker = any(
+            marker in normalized for marker in _ASSISTANT_FOLLOWUP_SELECTION_MARKERS
+        )
+        if not (has_intro_marker or has_selection_marker):
+            return False
+        return any(_ASSISTANT_FOLLOWUP_CHOICE_LINE_RE.match(line) for line in next_lines[:4])
+
+    def _has_inline_choice_prompt(normalized: str, raw_value: str) -> bool:
+        if not normalized:
+            return False
+        if len(_INLINE_NUMBERED_CHOICE_RE.findall(raw_value)) < 2:
+            return False
+        return any(marker in normalized for marker in _USER_OPTION_PROMPT_SELECTION_MARKERS) or any(
+            marker in normalized for marker in _INLINE_CHOICE_QUESTION_MARKERS
+        )
+
+    def _collect_followup_block(start_idx: int) -> str | None:
+        if start_idx < 0 or start_idx >= len(lines):
+            return None
+        block = [lines[start_idx]]
+        for idx in range(start_idx + 1, min(len(lines), start_idx + 7)):
+            line = lines[idx]
+            normalized = normalized_lines[idx]
+            if _ASSISTANT_FOLLOWUP_CHOICE_LINE_RE.match(line):
+                block.append(line)
+                continue
+            if any(marker in normalized for marker in _ASSISTANT_FOLLOWUP_SELECTION_MARKERS):
+                block.append(line)
+                continue
+            break
+        joined = "\n".join(block).strip()
+        return joined if joined else None
+
+    if len(lines) > 1:
+        for idx, normalized in enumerate(normalized_lines):
+            if _looks_like_option_intro(normalized, lines[idx + 1 :]):
+                return _collect_followup_block(idx)
+
+        for idx, normalized in enumerate(normalized_lines):
+            if _is_offer_anchor(normalized):
+                return _collect_followup_block(idx) or lines[idx]
+
+    if _has_inline_choice_prompt(normalized_raw, raw):
+        return raw
+
+    candidates = [segment.strip() for segment in re.split(r"(?<=[.!?ã€‚ï¼ï¼Ÿ])\s+|\n+", raw) if segment.strip()]
+    if not candidates:
+        candidates = [raw]
+
+    for candidate in reversed(candidates[-4:]):
+        normalized = _normalize_text(candidate)
+        if not normalized or len(candidate) > 260:
+            continue
+        if _is_offer_anchor(normalized):
+            return candidate
+        if _has_inline_choice_prompt(normalized, candidate):
+            return candidate
+    return None
+
+
+def _extract_user_supplied_option_prompt_text(text: str) -> str | None:
+    """Detect user-authored assistant-like option prompts without auto-selecting for them."""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return None
+    if any(marker in normalized for marker in _USER_OPTION_PROMPT_EXPLICIT_CHOOSE_FOR_ME_MARKERS):
+        return None
+
+    offer_text = _extract_assistant_followup_offer_text(raw)
+    if not offer_text:
+        return None
+
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    choice_count = sum(1 for line in lines if _ASSISTANT_FOLLOWUP_CHOICE_LINE_RE.match(line))
+    choice_count += len(_INLINE_NUMBERED_CHOICE_RE.findall(raw))
+    has_selection_prompt = any(marker in normalized for marker in _USER_OPTION_PROMPT_SELECTION_MARKERS)
+    if choice_count < 2 or not has_selection_prompt:
+        return None
+    return raw
 
 def _looks_like_closing_acknowledgement(text: str) -> bool:
     """Detect short gratitude/closure replies that should not trigger pending actions."""
@@ -606,7 +1175,7 @@ def _looks_like_explicit_new_request(text: str) -> bool:
         return False
     if normalized.startswith("/"):
         return True
-    if any(mark in raw for mark in ("?", "ï¼Ÿ", "Â¿", "ØŸ")):
+    if any(mark in raw for mark in ("?", "Ã¯Â¼Å¸", "Ã‚Â¿", "Ã˜Å¸")):
         return True
     if re.search(r"(https?://|www\.)", normalized):
         return True
@@ -664,6 +1233,38 @@ def _infer_recent_file_path_from_history(history: list[dict[str, Any]]) -> str:
         path = _extract_read_file_path_proxy(content)
         if path:
             return path
+    return ""
+
+
+def _infer_recent_assistant_option_prompt_from_history(history: list[dict[str, Any]]) -> str:
+    for item in reversed(history[-10:]):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "") or "").strip().lower()
+        if role != "assistant":
+            continue
+        content = str(item.get("content", "") or "").strip()
+        if not content:
+            continue
+        prompt = _extract_assistant_followup_offer_text(content) or ""
+        if prompt:
+            return prompt
+    return ""
+
+
+def _infer_recent_assistant_answer_from_history(history: list[dict[str, Any]]) -> str:
+    for item in reversed(history[-10:]):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "") or "").strip().lower()
+        if role != "assistant":
+            continue
+        content = str(item.get("content", "") or "").strip()
+        if not content:
+            continue
+        if _extract_assistant_followup_offer_text(content):
+            continue
+        return content
     return ""
 
 
@@ -749,7 +1350,7 @@ def _assistant_response_looks_like_skill_plan(text: str) -> bool:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith(("- ", "* ", "• ", "1.", "2.", "3.", "4.")):
+        if stripped.startswith(("- ", "* ", "â€¢ ", "1.", "2.", "3.", "4.")):
             bullet_lines += 1
     if bullet_lines >= 2 and any(
         marker in normalized
@@ -943,3 +1544,5 @@ async def _schedule_context_truncation_memory_fact(
         task.add_done_callback(pending_tasks.discard)
         return
     await _persist()
+
+

@@ -23,6 +23,34 @@ class FailoverError(Exception):
         self.reason = reason
 
 
+_RATE_LIMIT_402_HINTS = (
+    "rate limit",
+    "too many requests",
+    "retry later",
+    "model tier",
+    "capacity",
+    "concurrency",
+    "request limit",
+)
+_BILLING_402_HINTS = (
+    "billing",
+    "payment",
+    "insufficient funds",
+    "insufficient credits",
+    "credit balance",
+    "add funds",
+    "out of credits",
+)
+
+
+def _classify_402_message(msg_lower: str) -> FailoverReason:
+    if any(keyword in msg_lower for keyword in _RATE_LIMIT_402_HINTS):
+        return "rate_limit"
+    if any(keyword in msg_lower for keyword in _BILLING_402_HINTS):
+        return "billing"
+    return "billing"
+
+
 def resolve_failover_reason(
     *,
     status: int | None = None,
@@ -44,14 +72,14 @@ def resolve_failover_reason(
 
     # Status code classification
     if status == 402:
-        return "billing"
+        return _classify_402_message(msg_lower)
     if status == 429:
         return "rate_limit"
     if status in (401, 403):
         return "auth"
     if status == 400:
         return "format"
-    if status in (502, 503, 504):
+    if status in (408, 499, 502, 503, 504):
         return "timeout"
     if status == 404:
         # Could be model not found or endpoint not found

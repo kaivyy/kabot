@@ -6,6 +6,7 @@ import os
 import signal
 import sys
 import time
+from pathlib import Path
 
 import typer
 from click.core import ParameterSource
@@ -85,6 +86,7 @@ def _resolve_one_shot_session_id(
         return normalized_session
     return _make_ephemeral_one_shot_session_id(message)
 
+
 def agent(
     ctx: typer.Context,
     message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
@@ -94,6 +96,7 @@ def agent(
 ):
     """Interact with the agent directly."""
 
+    from kabot.agent.agent_scope import resolve_agent_id_for_workspace, resolve_agent_workspace
     from kabot.agent.loop import AgentLoop
     from kabot.bus.queue import MessageBus
     from kabot.config.loader import get_data_dir, load_config
@@ -132,6 +135,8 @@ def agent(
         model_fallbacks=model_fallbacks,
         provider_fallbacks=list(p.fallbacks) if p else [],
     )
+    bound_agent_id = resolve_agent_id_for_workspace(config, Path.cwd())
+    bound_workspace = resolve_agent_workspace(config, bound_agent_id)
 
     # Initialize CronService (required for reminder tools)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
@@ -140,7 +145,7 @@ def agent(
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
-        workspace=config.workspace_path,
+        workspace=bound_workspace,
         config=config,
         model=runtime_model,
         fallbacks=runtime_fallbacks,
@@ -151,6 +156,7 @@ def agent(
         cron_service=cron,  # Pass cron service to enable tools
         lazy_probe_memory=bool(message),
     )
+    agent_loop._direct_agent_binding = bound_agent_id
     if sys.stdin.isatty():
         _resolve_commands_override("_wire_cli_exec_approval", _wire_cli_exec_approval)(agent_loop)
 

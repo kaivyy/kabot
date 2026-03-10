@@ -31,16 +31,24 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _clear_pending_followup_tool,
     _clear_skill_creation_flow,
     _emit_runtime_event,
+    _extract_assistant_followup_offer_text,
+    _extract_option_selection_reference,
+    _extract_user_supplied_option_prompt_text,
     _get_last_tool_context,
     _get_pending_followup_intent,
     _get_pending_followup_tool,
     _get_skill_creation_flow,
+    _infer_recent_assistant_answer_from_history,
+    _infer_recent_assistant_option_prompt_from_history,
     _infer_recent_file_path_from_history,
     _is_abort_request_text,
     _is_low_information_turn,
     _is_probe_mode_message,
     _is_short_context_followup,
+    _looks_like_answer_reference_followup,
+    _looks_like_assistant_offer_context_followup,
     _looks_like_closing_acknowledgement,
+    _looks_like_contextual_followup_request,
     _looks_like_explicit_new_request,
     _looks_like_file_context_followup,
     _looks_like_filesystem_location_query,
@@ -83,7 +91,13 @@ from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.core.command_router import CommandContext
 
 __all__ = [
+    "_extract_assistant_followup_offer_text",
+    "_extract_option_selection_reference",
+    "_infer_recent_assistant_answer_from_history",
+    "_infer_recent_assistant_option_prompt_from_history",
+    "_extract_user_supplied_option_prompt_text",
     "_is_low_information_turn",
+    "_looks_like_answer_reference_followup",
     "_normalize_text",
     "_resolve_runtime_locale",
     "build_temporal_fast_reply",
@@ -296,6 +310,23 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     recent_history_file_path = _infer_recent_file_path_from_history(conversation_history)
     last_tool_context = _get_last_tool_context(session, now_ts)
     pending_followup_intent = _get_pending_followup_intent(session, now_ts)
+    pending_followup_intent_text = (
+        str(pending_followup_intent.get("text") or "").strip()
+        if isinstance(pending_followup_intent, dict)
+        else ""
+    )
+    pending_followup_intent_kind = (
+        str(pending_followup_intent.get("kind") or "").strip().lower()
+        if isinstance(pending_followup_intent, dict)
+        else ""
+    )
+    recent_assistant_option_prompt = _infer_recent_assistant_option_prompt_from_history(
+        conversation_history
+    )
+    recent_assistant_answer = _infer_recent_assistant_answer_from_history(conversation_history)
+    is_answer_reference_followup = bool(
+        not required_tool and _looks_like_answer_reference_followup(effective_content)
+    )
     is_short_confirmation = bool(not required_tool and _looks_like_short_confirmation(effective_content))
     is_closing_ack = _looks_like_closing_acknowledgement(effective_content)
     is_short_greeting = _looks_like_short_greeting_smalltalk(effective_content)
@@ -316,6 +347,28 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and _looks_like_file_context_followup(effective_content)
     )
     is_explicit_new_request = bool(raw_is_explicit_new_request and not is_weather_context_followup)
+    is_assistant_offer_context_followup = bool(
+        pending_followup_intent_kind == "assistant_offer"
+        and _looks_like_assistant_offer_context_followup(
+            effective_content,
+            pending_followup_intent_text,
+        )
+    )
+    is_contextual_followup_request = bool(
+        not required_tool and _looks_like_contextual_followup_request(effective_content)
+    )
+    if (
+        not pending_followup_intent_text
+        and recent_assistant_option_prompt
+        and (is_short_confirmation or is_contextual_followup_request)
+    ):
+        pending_followup_intent = {
+            "text": recent_assistant_option_prompt,
+            "profile": "CHAT",
+            "kind": "assistant_offer",
+        }
+        pending_followup_intent_text = recent_assistant_option_prompt
+        pending_followup_intent_kind = "assistant_offer"
     semantic_hint = arbitrate_semantic_intent(
         effective_content,
         parser_tool=required_tool,
@@ -372,6 +425,30 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         pending_followup_source = ""
         pending_followup_intent = None
 
+    user_supplied_option_prompt_text = ""
+    if (
+        not required_tool
+        and not pending_followup_intent
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+    ):
+        user_supplied_option_prompt_text = (
+            _extract_user_supplied_option_prompt_text(effective_content) or ""
+        )
+        if user_supplied_option_prompt_text:
+            effective_content = (
+                "[User-Provided Option Prompt]\n"
+                f"{user_supplied_option_prompt_text}\n\n"
+                "[Context Note]\n"
+                "The text above was written by the user and should be treated as a quoted "
+                "option list or draft, not as an assistant message to continue in-character. "
+                "Do not choose an option on the user's behalf, and do not auto-pick "
+                "the 'best' or most natural-sounding option. Only ask them to choose, "
+                "help clarify the options, or explicitly recommend one if they clearly "
+                "ask for your recommendation."
+            ).strip()
+
     if (
         not required_tool
         and not is_closing_ack
@@ -423,6 +500,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not decision.is_complex
         and not required_tool
         and (is_short_confirmation or is_weather_context_followup)
+        and not is_assistant_offer_context_followup
+        and not is_contextual_followup_request
         and not is_closing_ack
         and not is_short_greeting
         and not is_non_action_feedback
@@ -453,6 +532,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not is_short_greeting
         and not is_non_action_feedback
         and not is_explicit_new_request
+        and not is_assistant_offer_context_followup
+        and not is_contextual_followup_request
     ):
         normalized_followup = _normalize_text(effective_content)
         if _looks_like_short_confirmation(normalized_followup):
@@ -504,9 +585,43 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 )
 
     if (
+        not required_tool
+        and not pending_followup_intent
+        and recent_assistant_answer
+        and _looks_like_answer_reference_followup(effective_content)
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not is_explicit_new_request
+    ):
+        effective_content = (
+            f"{effective_content}\n\n"
+            "[Answer Reference Context]\n"
+            f"{recent_assistant_answer}\n\n"
+            "[Answer Reference Note]\n"
+            "The user appears to be referring to the assistant response above. "
+            "Assume that response is the target unless the user explicitly points "
+            "to different text. If they ask to continue, clarify, simplify, shorten, "
+            "restate, or explain it, operate on the response above directly instead "
+            "of asking them to resend it. Stay on the same topic and do not reset "
+            "the conversation."
+        )
+        logger.info(
+            f"Recent assistant answer context continued: '{_normalize_text(effective_content)[:120]}'"
+        )
+
+    if (
         pending_followup_intent
         and not required_tool
-        and is_short_confirmation
+        and (
+            is_short_confirmation
+            or is_assistant_offer_context_followup
+            or is_contextual_followup_request
+            or (
+                pending_followup_intent_kind == "assistant_offer"
+                and is_answer_reference_followup
+            )
+        )
         and not is_closing_ack
         and not is_short_greeting
         and not is_non_action_feedback
@@ -514,7 +629,19 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     ):
         intent_text = str(pending_followup_intent.get("text") or "").strip()
         intent_profile = str(pending_followup_intent.get("profile") or "GENERAL").strip().upper()
-        inferred_tool = loop._required_tool_for_query(intent_text) if intent_text else None
+        intent_kind = str(pending_followup_intent.get("kind") or "").strip().lower()
+        option_selection_reference = (
+            _extract_option_selection_reference(effective_content)
+            if intent_kind == "assistant_offer"
+            else None
+        )
+        answer_reference_followup = bool(
+            intent_kind != "assistant_offer"
+            and is_answer_reference_followup
+        )
+        inferred_tool = None
+        if intent_text and intent_kind != "assistant_offer" and not answer_reference_followup:
+            inferred_tool = loop._required_tool_for_query(intent_text)
         if inferred_tool:
             required_tool = inferred_tool
             required_tool_query = intent_text
@@ -535,6 +662,36 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 if intent_text
                 else effective_content
             )
+            if intent_kind == "assistant_offer" and intent_text:
+                effective_content = (
+                    f"{effective_content}\n\n"
+                    "[Offer Acceptance Note]\n"
+                    "The user appears to be accepting the assistant offer from the "
+                    "follow-up context above and wants the promised continuation. "
+                    "Continue that exact topic naturally. Do not switch topics, "
+                    "restart the conversation, or fetch unrelated tools/data unless "
+                    "the offer itself explicitly required it."
+                )
+                if recent_assistant_answer and is_answer_reference_followup:
+                    effective_content = (
+                        f"{effective_content}\n\n"
+                        "[Answer Reference Context]\n"
+                        f"{recent_assistant_answer}\n\n"
+                        "[Answer Reference Note]\n"
+                        "The user appears to be referring to the assistant response above "
+                        "while continuing the accepted offer. Operate directly on that "
+                        "response instead of asking them to resend it, and keep the same "
+                        "topic without resetting the conversation."
+                    )
+            if option_selection_reference:
+                effective_content = (
+                    f"{effective_content}\n\n"
+                    "[Selection Note]\n"
+                    f"The user appears to be referring to option {option_selection_reference} "
+                    "from the follow-up context above. Interpret their reply as selecting or "
+                    "asking about that option. Continue naturally and do not simply repeat "
+                    "the option number back."
+                )
             if not decision.is_complex and str(decision.profile).upper() == "CHAT":
                 decision.profile = intent_profile if intent_profile else decision.profile
                 if intent_profile in {"CODING", "RESEARCH", "GENERAL"}:
@@ -542,6 +699,10 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             logger.info(
                 f"Session intent context continued: '{_normalize_text(effective_content)[:120]}' profile={decision.profile} complex={decision.is_complex}"
             )
+            if intent_kind == "assistant_offer":
+                _clear_pending_followup_tool(session)
+                pending_followup_tool = None
+                pending_followup_source = ""
 
     current_skill_flow = _get_skill_creation_flow(session, now_ts)
     current_skill_flow_kind = str((current_skill_flow or {}).get("kind") or "create").strip().lower() or "create"
@@ -579,6 +740,15 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         skill_creation_intent = False
     forced_skill_names: list[str] | None = None
     llm_current_message = effective_content
+    if is_non_action_feedback:
+        llm_current_message = (
+            f"{llm_current_message}\n\n"
+            "[Feedback Note]\n"
+            "The user appears frustrated with the previous answer. Acknowledge "
+            "that briefly, do not joke or restart the conversation, and then "
+            "clarify or restate the most recent answer more directly in the "
+            "user's language."
+        )
     filesystem_location_context_note = ""
     explicit_file_analysis_note = ""
     file_analysis_path = ""
@@ -746,6 +916,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         is_non_action_feedback
         or _looks_like_temporal_context_query(effective_content)
         or _looks_like_memory_commit_turn(effective_content)
+        or is_contextual_followup_request
     )
     temporal_fast_reply = None
     if (
@@ -965,6 +1136,15 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             final_content,
             now_ts=time.time(),
         )
+        followup_offer_text = _extract_assistant_followup_offer_text(final_content or "")
+        if followup_offer_text:
+            _set_pending_followup_intent(
+                session,
+                followup_offer_text,
+                str(decision.profile),
+                time.time(),
+                kind="assistant_offer",
+            )
 
     first_response_ms = int((time.perf_counter() - turn_started) * 1000)
     logger.info(f"turn_id={turn_id} first_response_ms={first_response_ms}")

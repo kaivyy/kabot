@@ -9,6 +9,8 @@ from typing import Any
 
 from loguru import logger
 
+from kabot.core.context_engine import LegacyContextEngine
+from kabot.core.queue import DormantQueue
 from kabot.utils.helpers import ensure_dir, safe_filename
 from kabot.utils.pid_lock import PIDLock
 
@@ -48,17 +50,45 @@ class Session:
         Returns:
             List of messages in LLM format.
         """
-        # Get recent messages
-        recent = self.messages[-max_messages:] if len(self.messages) > max_messages else self.messages
+        return self.compile_context(max_messages=max_messages)
 
-        # Convert to LLM format (just role and content)
-        return [{"role": m["role"], "content": m["content"]} for m in recent]
+    def compile_context(self, max_messages: int = 50) -> list[dict[str, Any]]:
+        """Compile LLM-ready history through the legacy context engine."""
+        engine = LegacyContextEngine(max_messages=max_messages)
+        return engine.compile(self)
 
     def clear(self) -> None:
         """Clear conversation history and transient runtime metadata."""
         self.messages = []
         self.metadata = {}
         self.updated_at = datetime.now()
+
+    def enqueue_pending_work(self, payload: Any) -> None:
+        """Persist resumable pending work alongside session metadata."""
+        queue = DormantQueue({self.key: self._pending_work_items()})
+        queue.enqueue(self.key, payload)
+        self.metadata["pending_work"] = queue.snapshot().get(self.key, [])
+        self.updated_at = datetime.now()
+
+    def has_pending_work(self) -> bool:
+        """Return True when the session has queued work to resume."""
+        queue = DormantQueue({self.key: self._pending_work_items()})
+        return queue.has_pending(self.key)
+
+    def drain_pending_work(self) -> list[Any]:
+        """Drain any queued pending work for this session."""
+        queue = DormantQueue({self.key: self._pending_work_items()})
+        items = queue.drain(self.key)
+        if items:
+            self.metadata.pop("pending_work", None)
+            self.updated_at = datetime.now()
+        return items
+
+    def _pending_work_items(self) -> list[Any]:
+        pending = self.metadata.get("pending_work", [])
+        if isinstance(pending, list):
+            return list(pending)
+        return []
 
 
 class SessionManager:

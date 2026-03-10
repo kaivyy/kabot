@@ -34,7 +34,7 @@ class OllamaURLHandler(AuthHandler):
 
         return {
             "providers": {
-                "vllm": {
+                "ollama": {
                     "api_base": base_url,
                     "api_key": "ollama"
                 }

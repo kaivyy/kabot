@@ -12,6 +12,16 @@ def test_402_is_billing():
     assert resolve_failover_reason(status=402) == "billing"
 
 
+def test_402_with_rate_limit_message_is_rate_limit():
+    assert (
+        resolve_failover_reason(
+            status=402,
+            message="Payment Required: rate limit reached for this model tier",
+        )
+        == "rate_limit"
+    )
+
+
 def test_429_is_rate_limit():
     assert resolve_failover_reason(status=429) == "rate_limit"
 
@@ -30,6 +40,10 @@ def test_timeout_from_message():
 
 def test_503_is_timeout():
     assert resolve_failover_reason(status=503) == "timeout"
+
+
+def test_499_is_timeout():
+    assert resolve_failover_reason(status=499) == "timeout"
 
 
 def test_400_is_format():

@@ -188,7 +188,13 @@ def _terminal_safe(text: str, encoding: str | None = None) -> str:
 def _print_agent_response(response: str, render_markdown: bool) -> None:
     """Render assistant response with consistent terminal styling."""
     content = _terminal_safe(response or "")
-    body = Markdown(content) if render_markdown else Text(content)
+    if render_markdown:
+        try:
+            body = Markdown(content)
+        except Exception:
+            body = Text(content)
+    else:
+        body = Text(content)
     title = _terminal_safe(f"{__logo__} kabot")
     console.print()
     console.print(
@@ -230,6 +236,37 @@ def main(
 ):
     """kabot - Personal AI Assistant."""
     pass
+
+
+def backup_create(
+    source_dir: Path | None = typer.Option(
+        None,
+        "--source-dir",
+        help="Directory to archive. Defaults to ~/.kabot.",
+    ),
+    dest_dir: Path | None = typer.Option(
+        None,
+        "--dest-dir",
+        help="Directory where the backup zip will be written.",
+    ),
+    only_config: bool = typer.Option(
+        True,
+        "--only-config/--include-runtime",
+        help="Exclude runtime-heavy directories like sessions and old backups.",
+    ),
+) -> None:
+    """Create a local backup archive."""
+    from kabot.config.loader import get_config_path
+    from kabot.core.backup import create_backup
+
+    source_root = source_dir or get_config_path().parent
+    try:
+        archive_path = create_backup(source_root, dest_dir=dest_dir, only_config=only_config)
+    except Exception as exc:
+        typer.echo(f"Backup failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Backup created: {archive_path}")
 
 from kabot.cli.commands_agent_command import agent  # noqa: E402,I001
 from kabot.cli.commands_approvals import (  # noqa: E402,I001
@@ -385,6 +422,8 @@ __all__ = [
     "approvals_scoped_remove",
     "approvals_status",
     "auth_app",
+    "backup_app",
+    "backup_create",
     "auth_list",
     "auth_login",
     "auth_methods",
@@ -447,6 +486,9 @@ app.add_typer(approvals_app, name="approvals")
 cron_app = typer.Typer(help="Manage scheduled tasks")
 app.add_typer(cron_app, name="cron")
 
+backup_app = typer.Typer(help="Create and inspect backups")
+app.add_typer(backup_app, name="backup")
+
 app.add_typer(agents.app, name="agents")
 app.add_typer(mode.app, name="mode")
 
@@ -483,6 +525,7 @@ cron_app.command("run")(cron_run)
 cron_app.command("status")(cron_status)
 cron_app.command("update")(cron_update)
 cron_app.command("runs")(cron_runs)
+backup_app.command("create")(backup_create)
 app.command()(status)
 app.command("env-check")(env_check)
 app.command("remote-bootstrap")(remote_bootstrap)

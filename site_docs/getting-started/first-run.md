@@ -23,6 +23,7 @@ Good first providers for many users:
 - Gemini
 - Groq
 - OpenRouter
+- Ollama (Local Auto-Discovery)
 
 ## Step 3: Save Configuration
 

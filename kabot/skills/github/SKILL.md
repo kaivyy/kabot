@@ -8,6 +8,12 @@ metadata: {"kabot":{"emoji":"🐙","requires":{"bins":["gh"]},"install":[{"id":"
 
 Use the `gh` CLI to interact with GitHub. Always specify `--repo owner/repo` when not in a git directory, or use URLs directly.
 
+Important:
+- There is no dedicated `gh` tool.
+- Use the shell/exec command tool to run `gh ...` commands.
+- Do not emit a tool call named `gh`.
+- If shell execution is unavailable or needs approval, say that clearly and ask for the missing permission/input.
+
 ## Pull Requests
 
 Check CI status on a PR:

@@ -43,6 +43,27 @@ _FILELIKE_QUERY_RE = re.compile(
 _PATHLIKE_QUERY_RE = re.compile(
     r"([a-zA-Z]:[\\/][^\n\r\"']+|\\\\[^\n\r\"']+|(?<![\w])/[^\"'\s]+|(?<![\w])~[\\/][^\s\"']+|[\w.\-]+\\[\w .\\/-]+)"
 )
+_CONTEXTUAL_FOLLOWUP_PHRASES = (
+    "ya lanjut",
+    "lanjut rencana",
+    "lanjut analisis",
+    "lanjut yang",
+    "maksudnya",
+    "kenapa",
+    "kok",
+    "yang formal",
+    "yang kedua",
+    "nomor 2",
+    "coba ulang",
+    "jelasin",
+    "jelaskan",
+    "trend nya",
+    "trendnya",
+)
+_CONTEXTUAL_FOLLOWUP_EXACT = {
+    "naik ya",
+    "turun ya",
+}
 _STOCK_TRACKING_MARKER_RE = re.compile(
     r"(?i)\b("
     r"track(?:ing)?|trend|movement|history|historical|chart|grafik|"
@@ -299,6 +320,8 @@ def infer_required_tool_from_history_for_loop(
         return None, None
     if not _is_low_information_followup(followup_text):
         return None, None
+    if _looks_like_contextual_followup_request_for_history(followup_text):
+        return None, None
     if not isinstance(history, list) or not history:
         return None, None
 
@@ -330,6 +353,24 @@ def infer_required_tool_from_history_for_loop(
             return inferred, candidate
 
     return None, None
+
+
+def _looks_like_contextual_followup_request_for_history(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if not _is_low_information_followup(raw, max_tokens=8, max_chars=96):
+        return False
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if _PATHLIKE_QUERY_RE.search(raw):
+        return False
+    if normalized in _CONTEXTUAL_FOLLOWUP_EXACT:
+        return True
+    if "trend" in normalized:
+        return True
+    return any(phrase in normalized for phrase in _CONTEXTUAL_FOLLOWUP_PHRASES)
 
 
 def make_unique_schedule_title_for_loop(loop: Any, base_title: str) -> str:
@@ -748,15 +789,21 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
     if required_tool == "weather":
         last_tool_context = metadata.get("last_tool_context") if isinstance(metadata.get("last_tool_context"), dict) else {}
         fallback_location = str(last_tool_context.get("location") or "").strip()
+        explicit_location = extract_weather_location(source_text) if source_text else None
         short_weather_followup = bool(
             raw_text
             and len(str(raw_text).strip()) <= 24
-            and re.search(r"(?i)(wind|angin|weather|cuaca|[風风]|ลม)", str(raw_text))
+            and re.search(r"(?i)(wind|angin|weather|cuaca)", str(raw_text))
         )
-        if raw_text and (_is_low_information_followup(raw_text) or short_weather_followup) and fallback_location:
+        if (
+            raw_text
+            and (_is_low_information_followup(raw_text) or short_weather_followup)
+            and fallback_location
+            and not explicit_location
+        ):
             location = fallback_location
         else:
-            location = extract_weather_location(source_text)
+            location = explicit_location
             if not location and fallback_location:
                 location = fallback_location
         if not location:
@@ -798,10 +845,11 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
     if required_tool == "stock_analysis":
         symbols = extract_stock_symbols(source_text)
         days = _extract_stock_analysis_days(source_text, default_days=30)
+        days_payload = str(days)
         if symbols:
             result = await loop.tools.execute(
                 "stock_analysis",
-                {"symbol": symbols[0], "days": days},
+                {"symbol": symbols[0], "days": days_payload},
             )
             return str(result)
         name_candidates = extract_stock_name_candidates(source_text)
@@ -809,7 +857,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             return i18n_t("stock.need_symbol", source_text)
         result = await loop.tools.execute(
             "stock_analysis",
-            {"symbol": source_text, "days": days},
+            {"symbol": source_text, "days": days_payload},
         )
         return str(result)
 
@@ -830,17 +878,18 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             combined_text = " ".join(part for part in (source_text, raw_text) if part).strip()
             analysis_symbols = extract_stock_symbols(combined_text)
             analysis_days = _extract_stock_analysis_days(raw_text or source_text, default_days=30)
+            analysis_days_payload = str(analysis_days)
             if analysis_symbols:
                 result = await loop.tools.execute(
                     "stock_analysis",
-                    {"symbol": analysis_symbols[0], "days": analysis_days},
+                    {"symbol": analysis_symbols[0], "days": analysis_days_payload},
                 )
                 return str(result)
             analysis_name_candidates = extract_stock_name_candidates(combined_text)
             if analysis_name_candidates:
                 result = await loop.tools.execute(
                     "stock_analysis",
-                    {"symbol": combined_text, "days": analysis_days},
+                    {"symbol": combined_text, "days": analysis_days_payload},
                 )
                 return str(result)
 

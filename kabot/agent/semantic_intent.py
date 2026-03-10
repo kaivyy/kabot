@@ -36,6 +36,12 @@ _IDR_CONVERSION_RE = re.compile(
     r")\b"
 )
 _CURRENCY_RE = re.compile(r"(?i)\b(usd|dollar|idr|rupiah|yen|eur|euro|gbp)\b")
+_STOCK_TREND_RE = re.compile(
+    r"(?i)\b("
+    r"trend(?:nya)?|naik|turun|bullish|bearish|support|resistance|"
+    r"analisis|analysis|breakout|pullback|entry|exit|stop\s*loss|take\s*profit|tp|sl"
+    r")\b"
+)
 
 
 @dataclass(slots=True)
@@ -129,6 +135,18 @@ def _looks_like_quote_conversion_followup(text: str) -> bool:
     )
 
 
+def _looks_like_stock_trend_followup(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if raw.startswith("/"):
+        return False
+    if len(normalized) > 120:
+        return False
+    return bool(_STOCK_TREND_RE.search(normalized))
+
+
 def arbitrate_semantic_intent(
     text: str,
     *,
@@ -156,6 +174,21 @@ def arbitrate_semantic_intent(
             clear_pending=True,
             reason="meta_feedback_turn",
         )
+
+    stock_context = last_tool_context if isinstance(last_tool_context, dict) else {}
+    stock_tool_active = str((stock_context or {}).get("tool") or "").strip() == "stock"
+    if (
+        _looks_like_stock_trend_followup(raw)
+        and (pending_followup_tool == "stock" or stock_tool_active)
+    ):
+        base_source = str(pending_followup_source or stock_context.get("source") or stock_context.get("symbol") or "").strip()
+        if base_source:
+            return SemanticIntentHint(
+                kind="stock_context_followup",
+                required_tool="stock_analysis",
+                required_tool_query=f"{base_source} {raw}".strip(),
+                reason="stock_context_followup",
+            )
 
     if parser_tool and _looks_like_advice_request(raw):
         return SemanticIntentHint(

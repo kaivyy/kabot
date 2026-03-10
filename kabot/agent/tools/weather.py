@@ -190,6 +190,7 @@ def normalize_location(location: str) -> str:
     raw = (location or "").strip()
     if not raw:
         return ""
+    raw = raw.replace("+", " ")
 
     candidate = extract_weather_location(raw) or raw
     candidate = re.sub(
@@ -570,6 +571,7 @@ class WeatherTool(Tool):
         normalized = candidates[0]
 
         try:
+            pending_wttr_result: str | None = None
             for candidate in candidates:
                 if format == "simple":
                     # Run providers in parallel to reduce tail latency on slow networks.
@@ -586,12 +588,7 @@ class WeatherTool(Tool):
                         result = attach_source(openmeteo_result, "Open-Meteo (current_weather)")
                         return attach_care_advice(result, context_text or location)
                     if wttr_result and not str(wttr_result).startswith("Error"):
-                        _persist_user_weather_alias(
-                            normalized,
-                            _extract_weather_result_location(str(wttr_result)),
-                        )
-                        result = attach_source(str(wttr_result), "wttr.in")
-                        return attach_care_advice(result, context_text or location)
+                        pending_wttr_result = str(wttr_result)
                 else:
                     result = await fetch_wttr(candidate, format)
                     if result and not result.startswith("Error"):
@@ -603,6 +600,14 @@ class WeatherTool(Tool):
                             return result
                         result = attach_source(result, "wttr.in")
                         return attach_care_advice(result, context_text or location)
+
+            if pending_wttr_result:
+                _persist_user_weather_alias(
+                    normalized,
+                    _extract_weather_result_location(str(pending_wttr_result)),
+                )
+                result = attach_source(str(pending_wttr_result), "wttr.in")
+                return attach_care_advice(result, context_text or location)
 
             return i18n_t("weather.fetch_failed", context_text or location, location=normalized)
         except Exception as exc:

@@ -159,6 +159,14 @@ _RUNTIME_META_FEEDBACK_MARKERS = (
     "hang",
     "lag",
     "ngelag",
+    "tolol",
+    "goblok",
+    "bodoh",
+    "stupid",
+    "idiot",
+    "ngaco",
+    "halu",
+    "nyasar",
 )
 _FILESYSTEM_LOCATION_QUERY_PATTERNS = (
     r"\bwhere are you now\b",
@@ -390,6 +398,7 @@ def _get_pending_followup_intent(session: Any, now_ts: float) -> dict[str, str] 
 
     intent_text = str(pending.get("text") or "").strip()
     profile = str(pending.get("profile") or "").strip().upper() or "GENERAL"
+    kind = str(pending.get("kind") or "").strip().lower()
     expires_at = pending.get("expires_at")
     try:
         expires_ts = float(expires_at)
@@ -399,22 +408,36 @@ def _get_pending_followup_intent(session: Any, now_ts: float) -> dict[str, str] 
     if not intent_text or expires_ts <= now_ts:
         metadata.pop(_PENDING_FOLLOWUP_INTENT_KEY, None)
         return None
-    return {"text": intent_text, "profile": profile}
+    payload = {"text": intent_text, "profile": profile}
+    if kind:
+        payload["kind"] = kind
+    return payload
 
 
-def _set_pending_followup_intent(session: Any, intent_text: str, profile: str, now_ts: float) -> None:
+def _set_pending_followup_intent(
+    session: Any,
+    intent_text: str,
+    profile: str,
+    now_ts: float,
+    *,
+    kind: str | None = None,
+) -> None:
     metadata = getattr(session, "metadata", None)
     if not isinstance(metadata, dict):
         return
     normalized_intent = _normalize_followup_text(intent_text)[:220]
     if not normalized_intent:
         return
-    metadata[_PENDING_FOLLOWUP_INTENT_KEY] = {
+    payload = {
         "text": normalized_intent,
         "profile": str(profile or "GENERAL").strip().upper(),
         "updated_at": now_ts,
         "expires_at": now_ts + _PENDING_FOLLOWUP_TTL_SECONDS,
     }
+    normalized_kind = str(kind or "").strip().lower()
+    if normalized_kind:
+        payload["kind"] = normalized_kind
+    metadata[_PENDING_FOLLOWUP_INTENT_KEY] = payload
 
 
 def _clear_pending_followup_intent(session: Any) -> None:

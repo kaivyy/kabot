@@ -16,8 +16,8 @@ def test_ollama_url_handler_has_name():
 
 
 @patch('kabot.auth.handlers.ollama_url.Prompt.ask')
-def test_authenticate_returns_vllm_provider(mock_prompt):
-    """authenticate() should return 'vllm' provider with api_base."""
+def test_authenticate_returns_ollama_provider(mock_prompt):
+    """authenticate() should return 'ollama' provider with api_base."""
     with patch.dict('os.environ', {}, clear=True):
         mock_prompt.return_value = "http://localhost:11434"
 
@@ -27,7 +27,7 @@ def test_authenticate_returns_vllm_provider(mock_prompt):
 
         assert result == {
             "providers": {
-                "vllm": {
+                "ollama": {
                     "api_base": "http://localhost:11434",
                     "api_key": "ollama"
                 }

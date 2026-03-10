@@ -63,6 +63,199 @@ def test_followup_helpers_detect_acknowledgement_without_hardcoded_wordlist():
     assert message_runtime_module._is_short_context_followup("oke makasih ya")
     assert message_runtime_module._looks_like_short_confirmation("saranmu apa") is False
 
+
+def test_extract_assistant_followup_offer_text_supports_multilingual_offer_phrases():
+    assert (
+        message_runtime_module._extract_assistant_followup_offer_text(
+            "Kalau mau, aku bisa kasih juga versi angka hoki + jam bagus buat Gemini hari ini."
+        )
+        == "Kalau mau, aku bisa kasih juga versi angka hoki + jam bagus buat Gemini hari ini."
+    )
+    assert (
+        message_runtime_module._extract_assistant_followup_offer_text(
+            "If you'd like, I can also give you lucky numbers and best hours for Gemini today."
+        )
+        == "If you'd like, I can also give you lucky numbers and best hours for Gemini today."
+    )
+    assert message_runtime_module._extract_assistant_followup_offer_text(
+        "Tolong beri tahu apa yang ingin Anda saya berikan?"
+    ) is None
+
+
+def test_extract_assistant_followup_offer_text_supports_polite_indonesian_offer_phrase():
+    assert (
+        message_runtime_module._extract_assistant_followup_offer_text(
+            "Tentu. Mulai sekarang saya akan menggunakan gaya bahasa formal. "
+            "Jika Anda ingin, saya juga bisa menyesuaikan tingkat formalitasnya "
+            "(misalnya: sangat resmi, profesional, atau semi-formal)."
+        )
+        == "Jika Anda ingin, saya juga bisa menyesuaikan tingkat formalitasnya "
+        "(misalnya: sangat resmi, profesional, atau semi-formal)."
+    )
+
+
+def test_extract_assistant_followup_offer_text_preserves_numbered_choice_block():
+    assert (
+        message_runtime_module._extract_assistant_followup_offer_text(
+            "Tentu. Mulai sekarang saya akan menggunakan gaya bahasa formal.\n"
+            "Jika Anda ingin, saya juga bisa menyesuaikan tingkat formalitasnya, misalnya:\n"
+            "1. Formal standar\n"
+            "2. Sangat formal\n"
+            "3. Formal tetapi tetap ramah\n"
+            "Silakan balas hanya angka: 1, 2, atau 3."
+        )
+        == "Jika Anda ingin, saya juga bisa menyesuaikan tingkat formalitasnya, misalnya:\n"
+        "1. Formal standar\n"
+        "2. Sangat formal\n"
+        "3. Formal tetapi tetap ramah\n"
+        "Silakan balas hanya angka: 1, 2, atau 3."
+    )
+
+
+def test_extract_assistant_followup_offer_text_supports_pure_numbered_choice_prompt():
+    assert (
+        message_runtime_module._extract_assistant_followup_offer_text(
+            "Tentu! Berikut 3 opsi tingkat formalitas:\n"
+            "1. Santai\n"
+            "2. Semi-formal\n"
+            "3. Formal\n"
+            "Silakan balas hanya dengan angka: 1, 2, atau 3."
+        )
+        == "Tentu! Berikut 3 opsi tingkat formalitas:\n"
+        "1. Santai\n"
+        "2. Semi-formal\n"
+        "3. Formal\n"
+        "Silakan balas hanya dengan angka: 1, 2, atau 3."
+    )
+
+
+def test_extract_assistant_followup_offer_text_supports_inline_numbered_choice_prompt():
+    assert (
+        message_runtime_module._extract_assistant_followup_offer_text(
+            "Siap, mau format yang mana? Balas angka aja: 1 (ringkas), 2 (detail), atau 3 (tabel)."
+        )
+        == "Siap, mau format yang mana? Balas angka aja: 1 (ringkas), 2 (detail), atau 3 (tabel)."
+    )
+
+
+def test_extract_assistant_followup_offer_text_supports_inline_choice_question_prompt():
+    assert (
+        message_runtime_module._extract_assistant_followup_offer_text(
+            "Siap, aku tunggu pilihanmu. Mau yang 1) ringkas, 2) detail, atau 3) tabel?"
+        )
+        == "Siap, aku tunggu pilihanmu. Mau yang 1) ringkas, 2) detail, atau 3) tabel?"
+    )
+
+
+def test_extract_user_supplied_option_prompt_text_detects_inline_numbered_choices():
+    assert (
+        message_runtime_module._extract_user_supplied_option_prompt_text(
+            "Kalau mau, aku bisa kasih 3 opsi: 1) ringkas 2) detail 3) tabel. Pilih satu ya."
+        )
+        == "Kalau mau, aku bisa kasih 3 opsi: 1) ringkas 2) detail 3) tabel. Pilih satu ya."
+    )
+
+
+def test_extract_assistant_followup_offer_text_preserves_multiline_chinese_choice_block():
+    text = (
+        "\u5f53\u7136\u53ef\u4ee5\uff5e\n"
+        "\u4f60\u53ef\u4ee5\u76f4\u63a5\u9009\u4e00\u4e2a\u7f16\u53f7\u5c31\u597d\uff1a\n"
+        "1\uff09\u6b63\u5f0f\u6807\u51c6\n"
+        "2\uff09\u975e\u5e38\u6b63\u5f0f\n"
+        "3\uff09\u6b63\u5f0f\u4f46\u53cb\u597d\n"
+        "\u5982\u679c\u4f60\u4e0d\u786e\u5b9a\uff0c\u6211\u4e5f\u53ef\u4ee5\u5148\u544a\u8bc9\u4f60\u8fd9\u4e09\u4e2a\u7248\u672c\u5404\u81ea\u9002\u5408\u4ec0\u4e48\u573a\u666f\u3002"
+    )
+
+    assert (
+        message_runtime_module._extract_assistant_followup_offer_text(text)
+        == "\u4f60\u53ef\u4ee5\u76f4\u63a5\u9009\u4e00\u4e2a\u7f16\u53f7\u5c31\u597d\uff1a\n1\uff09\u6b63\u5f0f\u6807\u51c6\n2\uff09\u975e\u5e38\u6b63\u5f0f\n3\uff09\u6b63\u5f0f\u4f46\u53cb\u597d"
+    )
+
+
+def test_extract_user_supplied_option_prompt_text_detects_multilingual_inline_choices():
+    assert (
+        message_runtime_module._extract_user_supplied_option_prompt_text(
+            "如果你愿意，我可以给你三个版本：1）正式标准 2）非常正式 3）正式但友好。选一个。"
+        )
+        == "如果你愿意，我可以给你三个版本：1）正式标准 2）非常正式 3）正式但友好。选一个。"
+    )
+    assert (
+        message_runtime_module._extract_user_supplied_option_prompt_text(
+            "必要なら3つの文体を出せます。1) 標準的に丁寧 2) とても丁寧 3) 丁寧だけどやわらかい。1つ選んでください。"
+        )
+        == "必要なら3つの文体を出せます。1) 標準的に丁寧 2) とても丁寧 3) 丁寧だけどやわらかい。1つ選んでください。"
+    )
+    assert (
+        message_runtime_module._extract_user_supplied_option_prompt_text(
+            "ถ้าคุณต้องการ ผมทำได้ 3 แบบ: 1) ทางการมาตรฐาน 2) ทางการมาก 3) ทางการแต่เป็นมิตร เลือกหนึ่งแบบ"
+        )
+        == "ถ้าคุณต้องการ ผมทำได้ 3 แบบ: 1) ทางการมาตรฐาน 2) ทางการมาก 3) ทางการแต่เป็นมิตร เลือกหนึ่งแบบ"
+    )
+
+
+def test_extract_user_supplied_option_prompt_text_ignores_explicit_pick_for_me_requests():
+    assert (
+        message_runtime_module._extract_user_supplied_option_prompt_text(
+            "Kalau mau, aku bisa kasih 3 opsi: 1) ringkas 2) detail 3) tabel. Menurutmu pilih yang mana?"
+        )
+        is None
+    )
+
+
+def test_infer_recent_assistant_option_prompt_from_history_prefers_latest_choice_prompt():
+    history = [
+        {"role": "assistant", "content": "Ini jawaban biasa."},
+        {
+            "role": "assistant",
+            "content": "Siap, aku tunggu pilihanmu. Mau yang 1) ringkas, 2) detail, atau 3) tabel?",
+        },
+    ]
+
+    assert (
+        message_runtime_module._infer_recent_assistant_option_prompt_from_history(history)
+        == "Siap, aku tunggu pilihanmu. Mau yang 1) ringkas, 2) detail, atau 3) tabel?"
+    )
+
+
+def test_extract_option_selection_reference_supports_numeric_and_ordinal_followups():
+    assert message_runtime_module._extract_option_selection_reference("2") == "2"
+    assert message_runtime_module._extract_option_selection_reference("nomor 3") == "3"
+    assert message_runtime_module._extract_option_selection_reference("yang ketiga gimana") == "3"
+    assert message_runtime_module._extract_option_selection_reference("the second one") == "2"
+    assert message_runtime_module._extract_option_selection_reference("第二个") == "2"
+    assert message_runtime_module._extract_option_selection_reference("2番") == "2"
+    assert message_runtime_module._extract_option_selection_reference("ข้อ 2") == "2"
+    assert message_runtime_module._extract_option_selection_reference("yang formal gimana") is None
+
+
+def test_contextual_followup_request_supports_option_ordinal_references():
+    assert message_runtime_module._looks_like_contextual_followup_request("yang ketiga gimana")
+    assert message_runtime_module._looks_like_contextual_followup_request("nomor 3")
+    assert message_runtime_module._looks_like_contextual_followup_request("the second one")
+    assert message_runtime_module._looks_like_contextual_followup_request("第二个")
+    assert message_runtime_module._looks_like_contextual_followup_request("2番")
+    assert message_runtime_module._looks_like_contextual_followup_request("ข้อ 2")
+
+
+def test_answer_reference_followup_detects_referential_clarification_requests():
+    assert message_runtime_module._looks_like_answer_reference_followup("yang kedua")
+    assert message_runtime_module._looks_like_answer_reference_followup("yang ketiga gimana")
+    assert message_runtime_module._looks_like_answer_reference_followup("coba ulang versi singkat")
+    assert message_runtime_module._looks_like_answer_reference_followup("ulang dari awal")
+    assert message_runtime_module._looks_like_answer_reference_followup("maksudnya apa itu")
+    assert message_runtime_module._looks_like_answer_reference_followup("再简短一点")
+    assert message_runtime_module._looks_like_answer_reference_followup("这是什么意思")
+    assert message_runtime_module._looks_like_answer_reference_followup("もっと短く")
+    assert message_runtime_module._looks_like_answer_reference_followup("それどういう意味")
+    assert message_runtime_module._looks_like_answer_reference_followup("สั้นกว่านี้")
+    assert message_runtime_module._looks_like_answer_reference_followup("หมายความว่าไง")
+    assert message_runtime_module._looks_like_answer_reference_followup("lanjut yang tadi") is False
+
+
+def test_non_action_meta_feedback_detects_short_hostile_feedback():
+    assert message_runtime_module._looks_like_non_action_meta_feedback("tolol")
+    assert message_runtime_module._looks_like_non_action_meta_feedback("goblok jawab apa loh")
+
 def test_filesystem_location_query_helper_supports_multilingual_phrases():
     assert message_runtime_module._looks_like_filesystem_location_query("lokasimu sekarang dimana")
     assert message_runtime_module._looks_like_filesystem_location_query("你现在在哪个文件夹")

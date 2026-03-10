@@ -10,6 +10,36 @@ def test_weather_location_variants_include_compact_city_fallback():
     assert "Purwokerto" in variants
 
 
+def test_weather_location_variants_normalize_plus_joined_directional_location():
+    variants = weather_mod._weather_location_variants("Cilacap+Utara")
+    assert variants[0] == "Cilacap Utara"
+    assert "Cilacap, Utara" in variants
+    assert "Cilacap" in variants
+
+
+@pytest.mark.asyncio
+async def test_weather_prefers_openmeteo_from_later_location_variant_before_wttr(monkeypatch):
+    async def fake_openmeteo(location: str) -> str | None:
+        if location == "Cilacap":
+            return "Cilacap: [Cloudy] +24.8C | Wind: 3.3 km/h @ 13°"
+        return None
+
+    async def fake_wttr(location: str, format: str = "simple") -> str | None:
+        if location == "Cilacap Utara":
+            return "Cilacap,+Utara: [Rainy] +25C"
+        return None
+
+    monkeypatch.setattr(weather_mod, "fetch_openmeteo", fake_openmeteo)
+    monkeypatch.setattr(weather_mod, "fetch_wttr", fake_wttr)
+
+    tool = weather_mod.WeatherTool()
+    result = await tool.execute(location="Cilacap+Utara", format="simple")
+
+    assert "Source: Open-Meteo (current_weather)" in result
+    assert "Cilacap: [Cloudy]" in result
+    assert "wttr.in" not in result
+
+
 def test_weather_location_variants_include_non_latin_alias_fallbacks():
     tokyo_variants = weather_mod._weather_location_variants("東京")
     beijing_variants = weather_mod._weather_location_variants("北京今天怎么样")

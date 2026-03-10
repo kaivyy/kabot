@@ -75,8 +75,7 @@ def load_config(config_path: Path | None = None) -> Config:
                     )
             return Config.model_validate(convert_keys(migrated_data))
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"Warning: Failed to load config from {path}: {e}")
-            print("Using default configuration.")
+            raise ValueError(f"CRITICAL: Configuration file is malformed: {path}: {e}") from e
 
     return Config()
 

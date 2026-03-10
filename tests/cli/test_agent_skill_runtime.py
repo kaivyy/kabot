@@ -38,6 +38,13 @@ def _garble_utf8(text: str) -> str:
     return text.encode("utf-8").decode("latin1")
 
 
+def test_github_skill_instructions_clarify_shell_tool_usage():
+    skill_text = Path("kabot/skills/github/SKILL.md").read_text(encoding="utf-8")
+
+    assert "no dedicated `gh` tool" in skill_text
+    assert "shell" in skill_text.lower()
+
+
 def test_agent_cli_explicit_skill_prompts_stay_ai_driven_and_skip_catalog_summary(monkeypatch, tmp_path):
     from kabot.cli.commands import app
 

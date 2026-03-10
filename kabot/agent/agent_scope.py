@@ -16,6 +16,15 @@ from kabot.config.schema import (
 )
 
 
+def _normalize_workspace_path(path: str | Path | None) -> Path | None:
+    if path is None:
+        return None
+    raw = str(path).strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve(strict=False)
+
+
 def resolve_default_agent_id(config: Config) -> str:
     """Resolve the default agent ID from configuration.
 
@@ -71,6 +80,33 @@ def resolve_agent_workspace(config: Config, agent_id: str) -> Path:
 
     # Non-default agents get isolated workspace
     return Path.home() / ".kabot" / f"workspace-{agent_id}"
+
+
+def resolve_agent_id_for_workspace(config: Config, workspace: str | Path | None) -> str:
+    """Resolve the best matching agent id for a workspace path."""
+    default_agent_id = resolve_default_agent_id(config)
+    target_workspace = _normalize_workspace_path(workspace)
+    if target_workspace is None:
+        return default_agent_id
+
+    candidate_ids = [default_agent_id]
+    candidate_ids.extend(agent.id for agent in config.agents.agents if agent.id not in candidate_ids)
+
+    best_match = default_agent_id
+    best_depth = -1
+
+    for agent_id in candidate_ids:
+        candidate_workspace = _normalize_workspace_path(resolve_agent_workspace(config, agent_id))
+        if candidate_workspace is None:
+            continue
+        if target_workspace != candidate_workspace and candidate_workspace not in target_workspace.parents:
+            continue
+        depth = len(candidate_workspace.parts)
+        if depth > best_depth:
+            best_match = agent_id
+            best_depth = depth
+
+    return best_match
 
 
 def resolve_agent_dir(config: Config, agent_id: str) -> Path:
