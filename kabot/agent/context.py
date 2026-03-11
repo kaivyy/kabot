@@ -635,7 +635,11 @@ If you are performing a multi-step task, start the first step NOW."""
     ) -> bool:
         if str(profile or "").strip().upper() != "GENERAL":
             return False
-        if not isinstance(budget_hints, dict) or not bool(budget_hints.get("probe_mode")):
+        if not isinstance(budget_hints, dict):
+            return False
+        if not bool(budget_hints.get("probe_mode")) and not bool(
+            budget_hints.get("mcp_context_mode")
+        ):
             return False
         if skill_names:
             return False
@@ -650,6 +654,8 @@ If you are performing a multi-step task, start the first step NOW."""
             return False
         if self._message_needs_explicit_skill_context(raw):
             return False
+        if bool(budget_hints.get("mcp_context_mode")):
+            return True
         if re.search(r"(https?://|www\.|[A-Za-z]:\\|[/\\].+\w)", raw):
             return False
 

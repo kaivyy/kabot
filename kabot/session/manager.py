@@ -14,6 +14,23 @@ from kabot.core.queue import DormantQueue
 from kabot.utils.helpers import ensure_dir, safe_filename
 from kabot.utils.pid_lock import PIDLock
 
+_DURABLE_HISTORY_METADATA_KEY = "durable_history"
+
+
+def _normalize_durable_history(messages: list[dict[str, Any]] | None, *, max_messages: int = 50) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in list(messages or []):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if not role or not content:
+            continue
+        normalized.append({"role": role, "content": content})
+    if max_messages > 0:
+        return normalized[-max_messages:]
+    return normalized
+
 
 @dataclass
 class Session:
@@ -54,8 +71,30 @@ class Session:
 
     def compile_context(self, max_messages: int = 50) -> list[dict[str, Any]]:
         """Compile LLM-ready history through the legacy context engine."""
+        if not self.messages:
+            return self.get_durable_history_snapshot(max_messages=max_messages)
         engine = LegacyContextEngine(max_messages=max_messages)
         return engine.compile(self)
+
+    def get_durable_history_snapshot(self, max_messages: int = 50) -> list[dict[str, Any]]:
+        """Return the persisted bounded history snapshot used for lightweight hydration."""
+        snapshot = self.metadata.get(_DURABLE_HISTORY_METADATA_KEY, [])
+        if isinstance(snapshot, list):
+            return _normalize_durable_history(snapshot, max_messages=max_messages)
+        return []
+
+    def refresh_durable_history_snapshot(self, max_messages: int = 24) -> list[dict[str, Any]]:
+        """Refresh the persisted bounded history snapshot from the latest session state."""
+        if self.messages:
+            snapshot = _normalize_durable_history(self.compile_context(max_messages=max_messages), max_messages=max_messages)
+        else:
+            snapshot = self.get_durable_history_snapshot(max_messages=max_messages)
+        if snapshot:
+            self.metadata[_DURABLE_HISTORY_METADATA_KEY] = snapshot
+        else:
+            self.metadata.pop(_DURABLE_HISTORY_METADATA_KEY, None)
+        self.updated_at = datetime.now()
+        return snapshot
 
     def clear(self) -> None:
         """Clear conversation history and transient runtime metadata."""

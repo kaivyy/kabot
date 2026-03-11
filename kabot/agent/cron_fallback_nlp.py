@@ -218,16 +218,37 @@ def extract_weather_location(question: str) -> str | None:
             "itu", "yang", "di", "in", "apa", "ga", "gak", "ngga", "nggak", "enggak", "tidak",
             "天", "气", "風", "风",
         }
+        relational_non_locations = {
+            "atas",
+            "bawah",
+            "dalam",
+            "luar",
+            "sini",
+            "situ",
+            "sana",
+        }
         tokens = [tok for tok in cleaned.split() if tok]
         while tokens and tokens[0].lower() in edge_fillers:
             tokens.pop(0)
         while tokens and tokens[-1].lower() in edge_fillers:
             tokens.pop()
+        if tokens and tokens[0].lower() in relational_non_locations:
+            return ""
+        if len(tokens) > 8:
+            return ""
         if len(tokens) == 1:
             attached_di = re.fullmatch(r"(?i)di([a-z][a-z\-']{2,})", tokens[0])
             if attached_di:
                 tokens[0] = attached_di.group(1)
-        return " ".join(tokens).strip(" .,!?:;")
+        candidate = " ".join(tokens).strip(" .,!?:;")
+        if len(candidate) > 80 or re.search(r"[\(\):]", candidate):
+            return ""
+        if re.fullmatch(
+            r"(?i)\d+(?:[.,]\d+)?\s*(?:km/?h|kph|m/?s|mph|kt|kts|knots?|°|deg(?:ree)?s?)?",
+            candidate,
+        ):
+            return ""
+        return candidate
 
     text = (question or "").strip()
     if not text:

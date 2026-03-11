@@ -125,6 +125,7 @@ class GetMemoryTool(Tool):
             # Search memories
             memories = await self.memory.search_memory(
                 query=query,
+                session_id=self._session_key or None,
                 limit=limit
             )
 

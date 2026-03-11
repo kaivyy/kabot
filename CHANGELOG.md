@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to Kabot will be documented in this file.
 
@@ -6,6 +6,185 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.6.3] - 2026-03-12
+
+### Added
+- **Python-Native MCP Foundation**:
+  - Added a new typed `mcp` config section to the root schema so Kabot can describe MCP servers natively without routing everything through a skill prompt.
+  - Added an initial `kabot.mcp` package scaffold with:
+    - immutable MCP server definitions,
+    - a namespaced MCP capability registry using `mcp.<server>.<tool>` names,
+    - a session-scoped runtime skeleton for attached MCP servers,
+    - transcript-safe synthetic error result helpers for future MCP repair logic,
+    - real Python MCP transport wrappers for `stdio` and `streamable_http`,
+    - a tool adapter plus registry bridge so MCP tools can be exported into Kabot's `ToolRegistry` without auto-enabling them in the main loop yet.
+  - Added session-bound MCP runtime state helpers so each Kabot conversation can resolve the correct MCP transport set without leaking tool execution across sessions.
+  - Added gated `AgentLoop` wiring for MCP so enabled sessions can:
+    - attach configured MCP servers,
+    - discover namespaced MCP tools,
+    - expose those tools to the model only when the session actually has MCP enabled,
+    - execute MCP tool calls through session-local runtime binding instead of global mutable state.
+  - Added a real Python stdio MCP end-to-end test using a tiny local `FastMCP` server, plus `AgentLoop` integration coverage proving explicit MCP tool-use prompts reach the LLM/tool loop without forcing ordinary chat turns into tool mode.
+  - Added implementation and design docs for the full-Python MCP direction:
+    - `docs/plans/2026-03-11-kabot-python-mcp-design.md`
+    - `docs/plans/2026-03-11-kabot-python-mcp-implementation.md`
+  - Added a user-facing `kabot mcp` CLI surface with:
+    - `kabot mcp status`
+    - `kabot mcp example-config`
+    - `kabot mcp inspect <server>` for live MCP capability inspection
+  - Added `doctor smoke-agent --smoke-mcp-local-echo` plus a local Python MCP echo smoke case for end-to-end MCP validation without npm.
+  - Extended the Python-native MCP runtime with real `resources` and `prompts` support:
+    - stdio and streamable HTTP transports can now list resources, read resource contents, list prompts, and fetch prompt payloads through the official Python MCP SDK,
+    - session-scoped MCP runtimes now normalize those capabilities into typed descriptors instead of keeping them as raw SDK objects,
+    - real stdio end-to-end coverage now verifies a local Python MCP server can expose tools, resources, and prompts together through Kabot's runtime.
+  - Added explicit MCP prompt/resource context support for the agent:
+    - users can now explicitly refer to an MCP prompt or resource and have Kabot pull that context into the current turn without forcing a tool call,
+    - MCP capability snapshots and prompt/resource fetches are now cached per session runtime to avoid repeated round-trips for the same server during a conversation.
+  - Added lean-context handling for explicit MCP prompt/resource turns:
+    - explicit MCP context now tells the context builder to skip expensive auto-skill discovery and bulky memory blocks when the user already supplied the exact MCP prompt/resource they want Kabot to use,
+    - MCP explicit turns still keep their explicit context note and normal chat behavior, but no longer pay the full GENERAL prompt assembly cost by default.
+
+### Changed
+- Large runtime entry files are now slimmer without changing the tested routing/runtime behavior:
+  - `message_runtime.py` is now a small facade over the extracted `process_flow` runtime, which keeps monkeypatch-sensitive globals synchronized while cutting the entry file down to a small orchestration surface,
+  - `execution_runtime.py` is now a matching facade over the extracted agent-loop runtime, with the same compatibility treatment for patched globals used in tests,
+  - `execution_runtime_parts/helpers.py` was split into grouped `artifacts`, `intent`, `observability`, and `persistence` modules,
+  - `execution_runtime_parts/agent_loop.py` is now below 1000 lines after extracting the status/draft/reasoning/interruption runtime into `progress.py` and moving `process_tool_calls(...)` into `tool_processing.py`,
+  - the execution runtime facade now syncs monkeypatched translator/logger globals into the extracted progress and tool-processing modules too, so existing compatibility tests keep working after the split,
+  - `message_runtime_parts/helpers.py` now delegates extracted answer-reference and context-note logic into smaller modules instead of keeping all continuity helpers in one large file,
+  - `message_runtime_parts/process_flow.py` is now down to 1255 lines after extracting answer-reference/offer-follow-up continuity handling into `continuity_runtime.py` and moving final turn metadata assembly into `turn_metadata.py`, while keeping the same stateful follow-up contract for short confirmations, committed actions, answer-reference turns, and runtime metadata fields,
+  - the message runtime facade now also syncs monkeypatch-sensitive logger globals into the extracted `continuity_runtime` module so compatibility tests keep seeing the same patched logging surface after the split,
+  - `tool_enforcement_parts/core.py` is now down to 641 lines after extracting shared regex/common helpers, filesystem path resolution, action-request parsing, history-driven routing, and fallback-support utilities into dedicated modules,
+  - the split `tool_enforcement` core now re-exports the same helper contract the wrapper expects, so deterministic fallback paths like `write_file`, `message/archive_path`, and cron management keep their prior behavior while the code is easier to audit,
+  - `tool_enforcement.py` is now a 172-line facade that re-exports the extracted helpers and keeps only monkeypatch-sensitive compatibility sync for `_filesystem_home_dir`-driven wrappers plus the deterministic fallback entrypoint,
+  - wrapper compatibility now includes a focused regression test proving `_extract_message_delivery_path(...)` still respects a monkeypatched facade home directory after the split,
+  - delivery-path parsing now strips channel-delivery tails such as `ke chat ini` / `chat here` before relative-directory fallback runs, which prevents requests like `kirim folder desktop ke chat ini` from hallucinating `Desktop/kirim` or `Desktop/desktop ke chat ini`,
+  - `tool_enforcement.py` now keeps only the monkeypatch-sensitive compatibility layer locally while reusing canonical multilingual filesystem regexes from the extracted core module, which fixed mojibake regressions for `æ¡Œé¢` / `ãƒ‡ã‚¹ã‚¯ãƒˆãƒƒãƒ—` / `à¹€à¸”à¸ªà¸à¹Œà¸—à¹‡à¸­à¸›` follow-ups,
+  - direct `list_dir` execution now records the requested directory path itself as follow-up context instead of accidentally reusing the first listed file, which fixes multilingual folder-navigation smoke flows such as `æ˜¾ç¤ºæ¡Œé¢æ–‡ä»¶å¤¹å†…å®¹ -> è¡¨ç¤º ãƒ•ã‚©ãƒ«ãƒ€ bot`.
+  - filesystem path extraction no longer treats slash-separated control hints like `↑/↓` as real filesystem paths, so game-upgrade follow-ups stop hallucinating `read_file` targets such as `/↓`,
+  - explicit file-analysis mode now only extracts file paths from the user's raw turn instead of synthetic `[Committed Action Context]` / `[Assistant Promise]` sections, which prevents short follow-ups like `yes continue` from being hijacked into stale `read_file` flows just because the assistant promise mentioned filenames.
+
+- Skyclaw/OpenClaw-style continuity parity is now much more explicit and observable across the runtime:
+  - message routing now records a first-class `turn_category` (`chat`, `action`, `contextual_action`, `command`) instead of leaving short follow-ups to weak parser guesses,
+  - durable session snapshots now backstop history hydration across normal, isolated, slash, and system-origin turns so recent context survives fresh loop instances and fail-open history gaps,
+  - layered context assembly now gives bounded priority to recent history, recent answer/tool context, saved memory facts, and learned execution hints before weaker fallback heuristics,
+  - long-running execution can now detect pending same-session user messages, inject a compact interruption note, and send a real intermediate acknowledgment through the message lane,
+  - completion is now governed by unified evidence metadata (`completion_evidence`) so direct create/find/generate/send paths must have real artifact and delivery proof instead of trusting plain-text success claims,
+  - smoke and dashboard observability now expose `turn_category`, continuity source, pending interrupt count, and completion evidence so parity/debug work can be validated from runtime output instead of inference alone.
+- `KABOT_CONFIG` now overrides the default config path, which lets MCP smoke runs and isolated CLI sessions use temporary config files safely while preserving the active base config.
+- Filesystem search and same-channel file delivery are now more reliable for explicit local-file requests:
+  - added a generic `find_files` tool for file/folder lookup before read/send actions,
+  - explicit `kirim file ... ke chat ini` requests now prefer real existing relative paths from the current working directory before falling back to the agent workspace path,
+  - bare filenames can inherit the last resolved path from a prior `find_files` step, so `find -> send` flows stop re-failing on `File not found`,
+  - natural phrases such as `folder kerja saat ini`, `current folder`, and `working directory` now resolve to the current process directory during deterministic filesystem search.
+- Multi-step `find -> send` file requests now have a deterministic workflow lane:
+  - turns like `cari file report.pdf lalu kirim ke chat ini` can execute `find_files` first, capture the resolved absolute path, and immediately hand off to `message`,
+  - guarded tool-call validation now allows the right workflow tools (`find_files`, `message`) for delivery-backed file requests instead of blocking them behind stale single-tool expectations such as `read_file`,
+  - if delivery still cannot be proven, Kabot keeps failing honestly instead of claiming the file was sent.
+- Create/generate-and-send artifact requests now stay AI-driven instead of collapsing into the wrong send-first path:
+  - prompts like `buat file ... lalu kirim ke chat ini` now prefer `write_file` first, with delivery enforced afterward, instead of jumping straight to `message`,
+  - prompts like `generate gambar ... lalu kirim ke chat ini` now keep `image_gen` as the primary execution tool while still marking delivery as required when the user explicitly asks to send the result.
+- Delivery recovery is now less hardcoded to built-in tools:
+  - direct deterministic lanes can send freshly created files and generated images immediately after `write_file` or `image_gen` succeeds,
+  - runtime can now reuse any captured local result path from prior tool execution, not only `find_files`/`write_file`/`image_gen`, which makes future MCP media tools and custom artifact generators easier to deliver through the same `message(files=...)` path,
+  - generic artifact-path extraction now understands structured tool results (`dict`/`list`/JSON strings) and relative output paths such as `outputs/promo.mp4`, which makes MCP/video/audio-style tools much less likely to lose their delivery target just because they returned metadata instead of a plain sentence,
+  - artifact-path extraction now also reads output paths embedded inside `exec` command arguments such as Playwright `page.screenshot(path=...)`, which gives screenshot/video shell workflows a real delivery target instead of losing the file after the command succeeds,
+  - `find_files -> message` delivery now keeps working even when search returns multiple matches by carrying forward the primary resolved path instead of falling back to the raw file list,
+  - real CLI smoke now confirms `create -> send`, `find -> send`, and honest `generate -> send` blocker paths through the new `--delivery-cases` matrix instead of relying only on unit tests.
+- Command approval flow is now durable across CLI/agent process restarts:
+  - pending `exec` approvals are now persisted on disk instead of living only in one in-memory `ExecTool` instance,
+  - `/approve <id>` and `/deny <id>` can now resolve the queued command from a fresh agent process, which fixes loops where users already sent the approval command but Kabot responded with `No matching pending command approval found.`,
+  - real CLI verification now succeeds end-to-end for a persisted approval followed by a fresh `/approve <id>` turn.
+- Follow-up continuity is now more AI-first across generic tools, not only parser-known domains:
+  - short follow-ups can reuse the most recent real tool execution context (`last_tool_execution`) as a continuation source,
+  - MCP tool follow-ups can continue even before the tool name is re-derived from keyword parsers or eagerly present in the base tool registry,
+  - explicit fresh requests still break continuity so file/config/path turns do not inherit stale tool execution state.
+- Low-information continuity resolution now prefers richer conversational evidence before weak parser guesses:
+  - recent answer references can clear parser-selected tools when the user is clearly referring to the last assistant answer,
+  - recent tool execution now outranks older user intent for vague follow-ups like `cek lagi dong`,
+  - recent user intent can now outrank weak direct-tool guesses like `update dong` when the current turn carries no real tool payload,
+  - fast direct-tool routing now still loads recent history for continuity-worthy follow-ups instead of skipping memory too early.
+- Follow-up continuity now emits a debuggable `continuity_source` across runtime metadata and smoke-friendly logs:
+  - message runtime metadata now records whether the current turn was grounded by `parser`, `answer_reference`, `tool_execution`, `user_intent`, or a stronger session continuity path,
+  - low-information contextual follow-ups such as `kalau untuk bepergian bagaimana` can now stay attached to the recent assistant answer topic instead of being treated as a brand-new generic question,
+  - runtime observability events and plain logs now include the resolved continuity source so field debugging no longer has to infer why a follow-up continued or reset.
+- Referential option follow-ups in real CLI sessions now stay grounded across more multilingual forms:
+  - compact Chinese and Thai ordinal clarifications such as `ç¬¬äºŒä¸ªæ˜¯ä»€ä¹ˆï¼Ÿç®€çŸ­å›žç­”ã€‚` and `à¸‚à¹‰à¸­à¸—à¸µà¹ˆà¸ªà¸­à¸‡à¸„à¸·à¸­à¸­à¸°à¹„à¸£ à¸•à¸­à¸šà¸ªà¸±à¹‰à¸™à¹†` now resolve as answer-reference continuity instead of losing context and asking the user to resend the list,
+  - option-reference extraction now tolerates short referential questions in unsegmented scripts without weakening path/URL payload guards for genuinely new requests,
+  - answer-reference turns now ignore stale non-offer pending intent context and can inject the exact referenced item from the previous assistant answer, reducing cases where the model repeated the whole list or drifted back to the original tool request,
+  - highly grounded answer-reference turns can now short-circuit to a direct fast reply when the exact referent is already known, so replies like `ç¬¬äºŒä¸ªæ˜¯ä»€ä¹ˆï¼Ÿ`, `à¸‚à¹‰à¸­à¸—à¸µà¹ˆà¸ªà¸­à¸‡à¸„à¸·à¸­à¸­à¸°à¹„à¸£`, and `ãã‚Œã£ã¦ã©ã†ã„ã†æ„å‘³ï¼Ÿ` stay anchored to the previous answer instead of inventing a fresh interpretation.
+- Filesystem follow-up fallback is now less hallucination-prone when an answer-reference is already stronger:
+  - `list_dir` fallback no longer overrides a recent-assistant-answer reference for short multilingual referential turns,
+  - Thai follow-ups that point to a numbered item from a previous directory listing now stay on the selected item instead of re-running the directory listing because a stale path fallback looked plausible.
+- `kabot.cli.agent_smoke_matrix` now supports multi-turn continuity smoke coverage:
+  - smoke cases can run follow-up prompts in the same session and assert the final `continuity_source`,
+  - added multilingual non-finance continuity cases plus an MCP local-echo follow-up continuity case,
+  - workflow smoke can now cover create/continue/upgrade transcripts such as the ping-pong web game regression, and forbidden output markers like `File not found: /↓` are checked across the whole transcript instead of only the last turn.
+  - new `--continuity-cases` flag makes those extra follow-up smoke scenarios opt-in for focused audits,
+  - continuity smoke cases can now assert positive and forbidden output fragments, which catches semantic regressions where the runtime keeps the right `continuity_source` but the final answer still repeats the wrong list items or explains the user's follow-up phrase instead of the referenced result.
+- Dashboard runtime status now exposes the latest continuity/routing snapshot:
+  - dashboard payloads include a `recent_turn` summary with session key, continuity source, routing profile, and required-tool hints,
+  - the runtime page renders that snapshot above the raw JSON payload so field debugging no longer requires opening logs first.
+- Runtime meta-feedback detection now matches full markers instead of loose substrings, so natural turns like `cek lagi dong` no longer get misclassified as `lag/slow` complaints and blocked from continuity reuse.
+- Explicit MCP prompt/resource references now outrank generic file-analysis heuristics, so URIs like `memory://field-guide` are treated as MCP resources when the user clearly says `resource ... dari server ...` instead of being hijacked as ordinary file-path analysis.
+- Explicit MCP prompt/resource turns now pass a dedicated `mcp_context_mode` budget hint into the context builder, allowing lean GENERAL prompt assembly without pretending the turn is a generic low-information probe.
+- Answer-reference continuity now suppresses stale non-offer pending intent context once the runtime has already grounded the turn on the latest assistant answer, preventing cases where referential multilingual follow-ups were still contaminated by old tool/file continuation text during broad suite execution.
+- Assistant follow-up continuity now also captures committed action promises such as `aku akan buat file...` or `saya akan kirim hasilnya`, so short confirmations like `lanjut` and `ya lakukan` stay attached to the promised task instead of being hijacked by stale reminder/system/tool continuity from earlier turns.
+- Committed-action continuity is now a first-class runtime lane instead of being treated like a generic assistant offer:
+  - promise-style assistant replies now persist as `assistant_committed_action` with the originating user request text, not just the promise sentence itself,
+  - low-information approvals such as `ya`, `buat sekarang`, `lanjutkan`, and similar follow-ups now prioritize that committed action over stale parser guesses or older tool execution,
+  - committed-action follow-ups are forced onto the agent/tool loop with explicit grounding notes so the model is pushed to actually perform the promised work instead of paraphrasing it or claiming completion without evidence.
+- Generic side-effect and artifact-generation requests are now escalated into the agent loop earlier, even when no deterministic parser tool matches:
+  - requests to create, generate, export, send, or save files/media/artifacts now avoid the shallow simple-chat lane,
+  - media-generation turns mentioning providers such as `Imagen` or `Nanobanana` now stay in AI-driven execution mode instead of being treated as ordinary advice/chat turns,
+  - this hardening applies broadly across file creation, image/video generation, and other tool-or-skill-backed output tasks rather than only finance or weather follow-ups.
+- Coding/build follow-ups are now less likely to drift into generic chat or wrong-tool blockers:
+  - concrete build requests like `bikin landing page ...` can now promote the route into `CODING` even when no single deterministic tool is obvious yet,
+  - short confirmations of committed coding work such as `YA` after `aku akan bikin landing page ...` now stay in a coding execution lane instead of being hijacked by stale generic follow-up context,
+  - guarded tool validation now allows normal coding workflow tools like `read_file`, `list_dir`, `write_file`, `edit_file`, and `exec` during coding execution continuity instead of blocking them for lacking explicit lexical payload in short follow-up turns.
+- Natural delivery shorthand is now recognized more often in multilingual chat:
+  - phrases like `ss kirim sini`, `ke sini`, `kesini`, and `di sini` now count as real delivery intent when the turn already contains a file/media artifact subject,
+  - coding/media requests that use that shorthand now mark `requires_message_delivery` earlier, so Kabot keeps pushing toward real send evidence instead of stopping at a local path or guessed completion text.
+- Action-backed generation/file requests now resolve to concrete execution tools more often instead of stopping at a generic â€œcomplexâ€ route:
+  - side-effect turns with explicit writable file targets such as `.smoke_tmp/example.txt` can now infer `write_file` directly after weak parser guesses are cleared,
+  - image-generation requests can now infer `image_gen` from natural prompts like `generate gambar ... pakai imagen`,
+  - registered media/MCP tools can now be selected by provider/media hints (for example `nanobanana` + `video`) even when the user does not type the full `mcp.server.tool` alias.
+- Deterministic action fallback is now stricter about evidence and better at simple artifact creation:
+  - explicit relative-dot paths such as `.smoke_tmp/file.txt` are now preserved end-to-end instead of collapsing to the basename,
+  - `write_file` fallback can now extract simple inline content like `berisi HALO_KABOT` and create the requested artifact without waiting for the model to improvise a tool call,
+  - direct action tools like `write_file` and `image_gen` now update follow-up execution context immediately after execution, which keeps later confirmations grounded in real tool output.
+- Real one-shot agent runs are now less likely to â€œhaluâ€ on file/media requests:
+  - if a concrete action request maps to a supported tool, runtime can bypass the fragile text-only LLM step and execute it directly,
+  - if image generation is requested but the configured provider is unavailable, Kabot now fails honestly with the provider/tool limitation instead of pretending the artifact already exists.
+- Reminder routing is now less eager around schedule-as-document prompts:
+  - requests like `buat file Excel jadwal lari 8 minggu` no longer get misclassified as cron/reminder intent just because they contain `jadwal` plus a duration,
+  - assistant promises about creating schedule documents or spreadsheets now keep their continuity path, so real CLI turns like `lanjut` stay attached to the promised file task instead of falling into reminder-time parsing.
+- General-knowledge chat is now less likely to be hijacked into stock fallback:
+  - bare fact questions like `jam berapa`, `IQ manusia berapa`, and `EQ manusia berapa` no longer become fake company-name lookups just because they contain `berapa`,
+  - stock name fallback is now more conservative for short all-caps tokens and generic multi-word phrases, so Kabot only forces stock tools when there is stronger market evidence instead of guessing from generic nouns.
+- Quoted or pasted assistant context is now less likely to hijack unrelated tools:
+  - long user turns that paste a previous answer and end with a new request now bias routing toward the trailing request instead of domain words inside the pasted block,
+  - personal HR-zone calculations and memory-save requests with birth years no longer get forced into `web_search` just because they contain `sekarang` or a four-digit year,
+  - weather routing is now more resistant to non-location phrases like `di atas 160 bpm`, and semantic arbitration can clear stale weather parsing when the actual request is a fitness/HR calculation.
+- Conversation persistence and memory-backed continuity are now more durable across fast paths:
+  - pending background memory writes are drained briefly before a new turn reads conversation history, which makes short follow-ups less likely to miss the immediately previous turn and fall back to stale parser/tool guesses,
+  - one-shot/direct runtime cleanup now waits for queued memory writes instead of dropping them on shutdown, improving the odds that every user/assistant turn really lands in session memory,
+  - slash-command replies now use the same session init/finalize persistence path as normal chat turns, so command interactions like `/status` also appear in conversation memory instead of bypassing it.
+- System-origin chat callbacks now use the same memory-backed lifecycle as normal turns more often:
+  - routed `system` messages (for example cron-style callbacks that target a real channel/chat) now enter the origin session through the normal init/finalize persistence path instead of only updating transient in-memory session history,
+  - persisted system turns are annotated as `[System: ...] ...`, which keeps reminder/callback context visible to later follow-ups without pretending those messages came from a normal user turn,
+  - real runtime verification now confirms those system-origin turns land in session memory and remain visible after resource cleanup.
+- Contextual answer-reference follow-ups now beat stale tool/user continuation more often when the user is clearly elaborating on the assistant's latest answer:
+  - natural prompts like `kalau untuk bepergian bagaimana` can now stay attached to the previous assistant weather answer instead of snapping back to the older raw weather tool intent,
+  - stale non-offer pending follow-up state no longer blocks this grounded answer-reference path when the new turn is clearly asking `for X, how about it?`,
+  - real CLI smoke now confirms this continuity path resolves as `answer_reference` instead of re-running `weather` for the wrong target.
+- `kabot.cli.agent_smoke_matrix` now has official multilingual memory follow-up probes:
+  - new `--memory-cases` runs explicit memory-save then recall flows across Indonesian, Chinese, and Thai prompts/follow-ups,
+  - these smoke cases exercise fresh-process continuity on the same session ID so regressions where turns stop landing in usable memory become visible before field reports do.
+- Short memory-recall turns are now less likely to pretend earlier context is unavailable:
+  - explicit recall prompts like `what is my preference code?`, `kode preferensiku apa?`, and `æˆ‘åˆšæ‰è®©ä½ è®°ä½çš„ä»£ç æ˜¯ä»€ä¹ˆï¼Ÿ` now skip the fragile no-history fast lane and force enough context/history to answer from the current session,
+  - router fast heuristics now keep those recall prompts in `GENERAL` instead of letting words like `code/ä»£ç /kode` promote them into accidental `CODING` classification.
 
 ## [0.6.2] - 2026-03-10
 
@@ -20,10 +199,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Assistant offer follow-ups now keep their pending offer context even when the runtime chooses the safer full-context lane, so numbered choices and brief confirmations stay connected to the previous answer.
   - Bare numeric replies and ordinal follow-ups such as `2`, `nomor 3`, `yang ketiga gimana`, and `lanjut yang tadi` now stay grounded to the latest assistant option prompt instead of echoing the number back or asking for context that was already present.
   - User-authored option prompts like `Kalau mau, aku bisa kasih 3 opsi...` are now treated as quoted choice prompts that require a follow-up selection, preventing Kabot from auto-picking an option on the user's behalf.
-  - Multilingual quoted option prompts and selections now stay grounded across Chinese, Japanese, and Thai flows, so replies such as `第二个`, `2番`, and `ข้อ 2` keep following the last option prompt instead of resetting or asking for already-known context.
-  - Assistant option blocks that use East Asian numbering styles such as `1）` without spaces are now preserved as real option prompts, so multilingual numbered follow-ups no longer lose the choice list during continuity recovery.
-  - Referential follow-ups such as `再简短一点`, `这是什么意思`, `もっと短く`, `それどういう意味`, `สั้นกว่านี้`, and `หมายความว่าไง` now inherit the most recent assistant answer as explicit answer-reference context, letting Kabot shorten or explain the last reply instead of falling back to generic translation/help text.
-  - Referential follow-ups can now keep the most recent assistant answer context even when an assistant-offer continuation is still pending, so turns like `第二个 -> 再简短一点 -> 这是什么意思` stay on the same answer instead of asking the user to resend it.
+  - Multilingual quoted option prompts and selections now stay grounded across Chinese, Japanese, and Thai flows, so replies such as `ç¬¬äºŒä¸ª`, `2ç•ª`, and `à¸‚à¹‰à¸­ 2` keep following the last option prompt instead of resetting or asking for already-known context.
+  - Assistant option blocks that use East Asian numbering styles such as `1ï¼‰` without spaces are now preserved as real option prompts, so multilingual numbered follow-ups no longer lose the choice list during continuity recovery.
+  - Referential follow-ups such as `å†ç®€çŸ­ä¸€ç‚¹`, `è¿™æ˜¯ä»€ä¹ˆæ„æ€`, `ã‚‚ã£ã¨çŸ­ã`, `ãã‚Œã©ã†ã„ã†æ„å‘³`, `à¸ªà¸±à¹‰à¸™à¸à¸§à¹ˆà¸²à¸™à¸µà¹‰`, and `à¸«à¸¡à¸²à¸¢à¸„à¸§à¸²à¸¡à¸§à¹ˆà¸²à¹„à¸‡` now inherit the most recent assistant answer as explicit answer-reference context, letting Kabot shorten or explain the last reply instead of falling back to generic translation/help text.
+  - Referential follow-ups can now keep the most recent assistant answer context even when an assistant-offer continuation is still pending, so turns like `ç¬¬äºŒä¸ª -> å†ç®€çŸ­ä¸€ç‚¹ -> è¿™æ˜¯ä»€ä¹ˆæ„æ€` stay on the same answer instead of asking the user to resend it.
   - Quoted option prompts now inject a stronger `User-Provided Option Prompt` note that tells the model the list came from the user and must not be auto-completed in-character, reducing cases where Kabot picked an option by itself in multilingual chats.
   - Short assistant-offer confirmations such as `ya`, `ya berikan`, and `ya lanjut` now inject an explicit acceptance note into the current turn so the model continues the promised answer instead of drifting into unrelated tools or topics.
   - Recent stock quote follow-ups can now promote into contextual stock analysis using the latest stock context instead of falling back to generic "need more context" replies.
@@ -72,7 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automatic success/error message clearing for a cleaner experience.
 
 - **Dashboard Feature Parity**:
-  - **6 Themes**: 3 dark (Midnight, Charcoal, Ocean) + 3 light (Snow, Cream, Mint) — switchable from header dropdown, persisted in localStorage.
+  - **6 Themes**: 3 dark (Midnight, Charcoal, Ocean) + 3 light (Snow, Cream, Mint) â€” switchable from header dropdown, persisted in localStorage.
   - **Top Metrics Bar**: Live CPU, RAM, disk usage with color-coded progress bars, gateway status badge, uptime counter, version display.
   - **Header Bar**: Bot logo, status dot with pulse animation, auto-refresh countdown (60s), theme picker.
   - **Alerts Banner**: Smart alerts for high CPU/RAM/disk (>90%), gateway offline status, custom alerts from `status_provider`.
@@ -84,7 +263,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Available Models Grid**: Per-provider model listing with configured/available badges and tag-style model names.
   - **Skills List**: Registered skills with active/disabled state badges.
   - **Cron Operator Actions**: Cron panel now shows last status, duration, and inline `Run`, `Enable/Disable`, and `Delete` actions via HTMX partial refresh.
-  - **Dashboard Action Buttons Fixed**: Replaced broken Tailwind CSS utility classes (`py-1`, `px-2`, `text-xs`, `bg-red-500`, `bg-slate-600`, `bg-emerald-500`, `mr-2`) with proper inline CSS styles — all action buttons across Sessions (Clear/Delete), Nodes (Restart/Stop/Start), Cron (Run/Enable-Disable/Delete), and Skills (Enable-Disable/Save Key) panels are now fully interactive and visually differentiated (accent/danger/success colors).
+  - **Dashboard Action Buttons Fixed**: Replaced broken Tailwind CSS utility classes (`py-1`, `px-2`, `text-xs`, `bg-red-500`, `bg-slate-600`, `bg-emerald-500`, `mr-2`) with proper inline CSS styles â€” all action buttons across Sessions (Clear/Delete), Nodes (Restart/Stop/Start), Cron (Run/Enable-Disable/Delete), and Skills (Enable-Disable/Save Key) panels are now fully interactive and visually differentiated (accent/danger/success colors).
   - **Real-Time Uptime Counter**: Overview uptime stat card now ticks every second client-side (JS `setInterval`) instead of waiting for the 5-second panel refresh, matching the metrics bar responsiveness without extra HTTP requests.
   - **Skills Operator Actions**: Skills panel now shows env readiness, inline `Enable/Disable`, and `Save Key` actions for API-key based skills.
   - **Sub-Agent Activity Panel**: Added dashboard panel for recent subagent runs with status and duration snapshots.
@@ -121,14 +300,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the official `kabot doctor smoke-agent` surface now wraps that runner directly, including threshold gates for `context_build_ms` and `first_response_ms` so latency regressions can fail health checks on demand,
   - README now documents `kabot doctor smoke-agent` examples, and the first repo-wide lint cleanup batch reduced Ruff findings from `508` to `402` without changing runtime behavior.
 - Narrow temporal chat prompts can now complete locally without waiting for the answer model:
-  - new `kabot/agent/loop_core/message_runtime_parts/temporal.py` generates local fast replies for tiny day/date/time/timezone prompts such as `hari apa sekarang`, `besok hari apa`, `今天星期几`, `今日は何曜日`, and `ตอนนี้วันอะไร`,
+  - new `kabot/agent/loop_core/message_runtime_parts/temporal.py` generates local fast replies for tiny day/date/time/timezone prompts such as `hari apa sekarang`, `besok hari apa`, `ä»Šå¤©æ˜ŸæœŸå‡ `, `ä»Šæ—¥ã¯ä½•æ›œæ—¥`, and `à¸•à¸­à¸™à¸™à¸µà¹‰à¸§à¸±à¸™à¸­à¸°à¹„à¸£`,
   - `process_message()` now uses that helper before context assembly or LLM execution when the turn is clearly simple, has no required tool, and is not inside another guarded workflow,
   - temporal matching now prioritizes the actual question type over trailing timezone hints, so prompts like `hari apa sekarang? ... pakai WIB ya` answer the weekday instead of being misclassified as timezone-only,
   - real CLI smoke on Windows now shows these prompts returning in roughly `first_response_ms=136-283`, while direct filesystem prompts still keep their own fast direct-tool path.
 - One-shot runtime is now faster before the main answer model even runs:
-  - `IntentRouter` now short-circuits obvious multilingual temporal/day-time prompts (`hari apa sekarang`, `今天星期几`, `ตอนนี้วันอะไร`, `今日は何曜日`) to `GENERAL` + simple flow without paying an extra routing LLM call,
+  - `IntentRouter` now short-circuits obvious multilingual temporal/day-time prompts (`hari apa sekarang`, `ä»Šå¤©æ˜ŸæœŸå‡ `, `à¸•à¸­à¸™à¸™à¸µà¹‰à¸§à¸±à¸™à¸­à¸°à¹„à¸£`, `ä»Šæ—¥ã¯ä½•æ›œæ—¥`) to `GENERAL` + simple flow without paying an extra routing LLM call,
   - `process_message()` now also skips `router.route()` entirely for fast direct-tool turns once `required_tool` already resolved to deterministic direct tools such as `list_dir` or `get_process_memory`, so direct filesystem/system queries stop wasting a classification hop before the real tool executes,
-  - real CLI smoke now shows filesystem prompts like `デスクトップのbotフォルダの中、最初の5件だけ見せて。` dropping from multi-second routing overhead to roughly `first_response_ms=175`, while lightweight temporal prompts shave off the old pre-route classification delay as well.
+  - real CLI smoke now shows filesystem prompts like `ãƒ‡ã‚¹ã‚¯ãƒˆãƒƒãƒ—ã®botãƒ•ã‚©ãƒ«ãƒ€ã®ä¸­ã€æœ€åˆã®5ä»¶ã ã‘è¦‹ã›ã¦ã€‚` dropping from multi-second routing overhead to roughly `first_response_ms=175`, while lightweight temporal prompts shave off the old pre-route classification delay as well.
 - CLI multilingual input is now more resilient to shell/codepage damage across Windows-hosted terminals and still safe for POSIX shells:
   - new text-safety repair logic performs a narrow best-effort fix for common mojibake patterns caused by UTF-8 text being mis-decoded as Latin-1/CP1252 before Python receives `argv`,
   - one-shot and interactive `kabot agent` entrypoints now normalize incoming CLI text through that repair step without altering already-clean Unicode input,
@@ -151,7 +330,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `kabot agent -m ...` now constructs `AgentLoop` with `lazy_probe_memory=True`, so probe-style one-shot runs start with lightweight SQLite-backed history and only boot the heavy hybrid memory backend if semantic memory tools are actually used,
   - the new `kabot.memory.lazy_probe_memory.LazyProbeMemory` backend preserves session history writes and recent context immediately while deferring Chroma/embedding startup until `search_memory`, `remember_fact`, or graph-memory access needs it,
   - `python -m kabot.cli.commands ...` no longer trips a circular import after the CLI refactor because the running `__main__` module is now aliased back to `kabot.cli.commands` for the extracted helper modules,
-  - filesystem list-dir fallback is now more tolerant of mixed-language special-directory prompts like `desktopのbot folder ...` by normalizing mixed separators and ignoring bogus relative candidates such as `3 item aja`.
+  - filesystem list-dir fallback is now more tolerant of mixed-language special-directory prompts like `desktopã®bot folder ...` by normalizing mixed separators and ignoring bogus relative candidates such as `3 item aja`.
 - Temporal and correction-style chat turns now preserve local runtime context more reliably:
   - compact fast-path chats that ask about day/date/time or timezone now keep a system prompt with explicit local timezone labels instead of sending only the raw user turn,
   - short memory-commit turns such as `simpan` now bypass the raw no-history fast path so recent conversation context can still be seen by the model,
@@ -228,8 +407,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Refactored `webhook_server.py` into handler mixin modules**:
   - Reduced `webhook_server.py` from 1425 lines to ~120 lines (init + route registration + start only).
   - Created 8 handler modules in `kabot/gateway/handlers/`: `_base.py`, `dashboard.py`, `chat.py`, `sessions.py`, `nodes.py`, `config.py`, `control.py`, `webhooks.py`.
-  - Uses mixin composition pattern — each module contributes handler methods via Python multiple inheritance.
-  - Zero behavior change — pure code-move refactoring — all 31 gateway tests pass unmodified.
+  - Uses mixin composition pattern â€” each module contributes handler methods via Python multiple inheritance.
+  - Zero behavior change â€” pure code-move refactoring â€” all 31 gateway tests pass unmodified.
 - **Fixed chat delay after sending**:
   - Restored HTMX polling interval (`every 3s`) on chat-log div with the new kb-bubble styled renderer.
 
@@ -261,7 +440,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - deterministic routing now treats folder-navigation prompts as `list_dir` instead of misclassifying `file/folder` phrases into `read_file("/folder")`,
   - path extraction now recognizes Windows drive paths (`C:\\...` and `C:/...`), UNC paths, POSIX paths (`/var/log`), and home-relative aliases like `Desktop`, `Downloads`, and `Documents`,
   - multilingual directory prompts now recognize common Indonesian, English, Chinese, Japanese, and Thai folder/location phrases for listing and follow-up navigation,
-  - multilingual relative follow-ups like `表示 フォルダ bot` and `เปิด โฟลเดอร์ bot` now count as fresh `list_dir` payloads, so session follow-up enrichment no longer drags old folder prompts back into the current turn,
+  - multilingual relative follow-ups like `è¡¨ç¤º ãƒ•ã‚©ãƒ«ãƒ€ bot` and `à¹€à¸›à¸´à¸” à¹‚à¸Ÿà¸¥à¹€à¸”à¸­à¸£à¹Œ bot` now count as fresh `list_dir` payloads, so session follow-up enrichment no longer drags old folder prompts back into the current turn,
   - directory follow-ups like `ya tampilkan` can reuse the last resolved folder path from session context instead of losing navigation state between turns,
   - `list_dir` now uses the same direct fast-path execution flow as other deterministic tools, so folder listings return immediately without waiting for an extra summarization pass,
   - natural location questions like `lokasimu sekarang dimana` now stay AI-driven while receiving exact workspace and last navigated path context, so the assistant can answer naturally without accidentally falling back into stale folder-list actions.
@@ -271,7 +450,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - strong primary listings now auto-win for clear global-company matches (`Microsoft` -> `MSFT`) while genuinely ambiguous cases like Toyota still stay explicit,
   - compact Japanese/Chinese/Thai weather phrasing now strips weather/time filler words more cleanly during location extraction,
   - multilingual wind follow-ups now carry the previous weather location more reliably across non-Latin scripts,
-  - native-script weather lookups for common cities like `東京`, `北京`, and `กรุงเทพ` now fall back to provider-friendly aliases (`Tokyo`, `Beijing`, `Bangkok`) before failing.
+  - native-script weather lookups for common cities like `æ±äº¬`, `åŒ—äº¬`, and `à¸à¸£à¸¸à¸‡à¹€à¸—à¸ž` now fall back to provider-friendly aliases (`Tokyo`, `Beijing`, `Bangkok`) before failing.
 - Weather alias learning is now persisted in a separate user dictionary file instead of bloating main config:
   - successful native-script weather resolutions can auto-write learned aliases into `~/.kabot/weather_aliases.json`,
   - custom user alias overrides are merged from that dedicated file at runtime,
@@ -416,7 +595,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - News-vs-market routing is now safer for conversational geopolitical queries:
   - strong geo-conflict topics (`iran/israel/war/conflict/...`) now boost `web_search` when users ask live/current context,
   - stock company-name fallback no longer triggers for those geo-conflict prompts (prevents misroute to stock ticker guidance),
-  - feedback/meta chat containing `berita/news` (e.g. “kenapa jawabnya...”) now scores as soft chat instead of forcing web search.
+  - feedback/meta chat containing `berita/news` (e.g. â€œkenapa jawabnya...â€) now scores as soft chat instead of forcing web search.
 - Google News RSS fallback quality improved:
   - added lightweight relevance filtering by query terms to suppress clearly unrelated headlines in fallback result lists,
   - explicit `google_news_rss` provider selection is now recognized directly in provider picker (no unknown-provider fallback warning).
@@ -441,7 +620,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Weather intent extraction is more conversationally robust:
   - handles natural phrasing like `gimana suhu ...`, `kalau suhu ...`, and confirmation-prefixed requests (`ya coba cek ...`),
   - strips conversational prefixes before location resolution so users do not need rigid location-only input.
-- Weather location extraction now supports non-Latin city names more reliably (e.g. `東京`) and removes multilingual weather terms before final location normalization.
+- Weather location extraction now supports non-Latin city names more reliably (e.g. `æ±äº¬`) and removes multilingual weather terms before final location normalization.
 - Weather fetch timeout is tightened to a shared 3s request timeout to reduce long waits on failing providers.
 - Deterministic fallback now has a generic stale-metadata guard (not stock-only):
   - short low-information follow-ups (e.g. `ya/ok/gas`) no longer reuse long assistant-style metadata blobs as fresh tool input,
@@ -569,7 +748,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - supports natural prompts like `toyota sekarang berapa` without requiring explicit `7203.T`,
   - keeps strict small-talk guard so non-market chat (`umur kamu berapa`) does not trigger symbol search/fetch.
 - Stock name resolution now handles non-Latin company queries more robustly:
-  - non-Latin compact company names (e.g. `トヨタ`) are now preserved as search candidates instead of being dropped by ASCII-only tokenization,
+  - non-Latin compact company names (e.g. `ãƒˆãƒ¨ã‚¿`) are now preserved as search candidates instead of being dropped by ASCII-only tokenization,
   - improves global novice flow where users type company names in native scripts without ticker suffix.
 - Stock intent lexicon/value markers expanded for multilingual market phrasing (Thai/Japanese/Chinese/Korean) to reduce rigid language dependence.
 - Stock symbol discovery fallback is now more resilient and market-aware:
@@ -1014,7 +1193,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Telegram stop path is now defensive (best-effort updater/app/shutdown sequence) to avoid noisy teardown failures.
   - Telegram progress status updates now handle `Message is not modified` safely:
     - keep existing mutable status bubble,
-    - do not emit duplicate “Processing your request…” status messages.
+    - do not emit duplicate â€œProcessing your requestâ€¦â€ status messages.
 - **Cross-Channel Mutable Status Hardening (Telegram/Slack/Discord)**:
   - Telegram mutable status lifecycle now keeps status-id state on transient update/delete failures:
     - prevents orphan + duplicate progress bubbles on temporary network hiccups,
@@ -1241,7 +1420,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added RESEARCH safety latch in message runtime:
     - when route profile is `RESEARCH` and query indicates live/current facts (latest/time/year/news markers), Kabot now forces `required_tool=web_search`.
   - Added execution-runtime RESEARCH fail-safe:
-    - if upstream routing metadata is `RESEARCH` and `web_search` exists, agent loop forces web search tool path to reduce hallucinated “from memory” answers.
+    - if upstream routing metadata is `RESEARCH` and `web_search` exists, agent loop forces web search tool path to reduce hallucinated â€œfrom memoryâ€ answers.
   - Extended critic speed policy:
     - skip critic retries for `RESEARCH` profile turns (in addition to existing short/chat/required-tool shortcuts) to prevent 20-40s retry loops on live-news prompts.
   - Added dedicated gap matrix document for operator parity tracking:
@@ -1415,7 +1594,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Serialized subprocess stdin/stdout request handling with an IO lock to prevent concurrent read/write interleaving that caused intermittent JSON parse errors (`char 0`, `char 8192`) under parallel embedding requests.
 - **High `context_build_ms` Mitigation (Chat Latency)**:
   - Added caching for skills listing/summary generation in `SkillsLoader` with lightweight root-snapshot invalidation to avoid re-validating all skills every turn.
-  - Reduced system-prompt overhead by skipping full “Available Skills” summary on routine `GENERAL`/`CHAT` turns (still shown for `CODING`/`RESEARCH` or explicit skill-related requests).
+  - Reduced system-prompt overhead by skipping full â€œAvailable Skillsâ€ summary on routine `GENERAL`/`CHAT` turns (still shown for `CODING`/`RESEARCH` or explicit skill-related requests).
   - Heartbeat turns now skip skills-summary injection to keep background patrol prompts lean.
 - **Cleanup UX Responsiveness**:
   - Direct `cleanup_system` execution now emits an immediate progress message before running long cleanup operations so users receive instant feedback instead of waiting on first completion output.
@@ -1531,7 +1710,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added aliases: `gemini31` and `gemini-3.1-pro`.
 - **Documentation UTF-8 Cleanup**:
   - Normalized mojibake/corrupted characters in `README.md` and `HOW_TO_USE.MD` to proper UTF-8 text.
-  - README title icon fixed to wolf emoji (`Kabot 🐺`).
+  - README title icon fixed to wolf emoji (`Kabot ðŸº`).
 - **Workspace Auto-Bootstrap for Persona Files**:
   - Workspace setup now auto-initializes baseline persona files (`AGENTS.md`, `SOUL.md`, `USER.md`) plus `memory/MEMORY.md` without extra manual commands.
   - Channel wizard auto-created agents now initialize their workspace templates automatically.
@@ -1777,14 +1956,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Manual unload API: `memory.unload_resources()` for explicit resource cleanup
   - Recursive PyTorch module clearing with `module.cpu()` + parameter/buffer dereferencing
   - Platform-specific memory trimming: Windows `EmptyWorkingSet`, Linux `malloc_trim`, macOS `gc.collect()`
-  - Model reloads transparently on next `search_memory()` â€” zero quality/intelligence loss
+  - Model reloads transparently on next `search_memory()` Ã¢â‚¬â€ zero quality/intelligence loss
   - Thread-safe with `threading.RLock` and double-check locking pattern
 - **ChromaDB Segment Cache Cap**: Added `chroma_memory_limit_bytes=50MB` to `Settings()` to limit in-memory HNSW segment cache
 - **Memory Statistics API**: `embeddings.get_memory_stats()` returns model state, load count, and unload count
 
 ### Changed
 - **Memory Factory** (`kabot/memory/memory_factory.py`): Added `auto_unload_seconds` passthrough from config with input validation
-- **Sentence Embeddings** (`kabot/memory/sentence_embeddings.py`): Complete rewrite â€” added lazy loading, timer-based auto-unload, `_unload_model_internal()` with recursive cleanup, `warmup()` for background pre-loading
+- **Sentence Embeddings** (`kabot/memory/sentence_embeddings.py`): Complete rewrite Ã¢â‚¬â€ added lazy loading, timer-based auto-unload, `_unload_model_internal()` with recursive cleanup, `warmup()` for background pre-loading
 - **Hybrid Memory Manager** (`kabot/memory/chroma_memory.py`): ChromaDB `PersistentClient` now uses `chroma_memory_limit_bytes` cache cap; cleaned up invalid legacy config parameters
 
 ### Fixed
@@ -1798,11 +1977,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### How Auto-Unload Works
 ```
-Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 450 MB)
-                                            â†“
-                   User goes quiet â†’ 5 min timer expires â†’ model unloaded (443 MB*)
-                                            â†“
-                   Next message â†’ model reloads (3-5s) â†’ fully functional
+Kabot idle (91 MB) Ã¢â€ â€™ User sends message Ã¢â€ â€™ model loads (+359 MB = 450 MB)
+                                            Ã¢â€ â€œ
+                   User goes quiet Ã¢â€ â€™ 5 min timer expires Ã¢â€ â€™ model unloaded (443 MB*)
+                                            Ã¢â€ â€œ
+                   Next message Ã¢â€ â€™ model reloads (3-5s) Ã¢â€ â€™ fully functional
 ```
 > *CPython's arena-based allocator does not return freed memory to OS. Only a process restart returns to 91 MB. This is expected Python behavior, not a leak.
 
@@ -1817,7 +1996,7 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
 ### Technical Details
 - Thread-safe lazy loading with `threading.RLock` + double-check locking
 - Timer-based auto-unload with `threading.Timer` (resets on every embed call)
-- Recursive module cleanup: `module.cpu()` â†’ clear parameters â†’ clear buffers â†’ `del` children
+- Recursive module cleanup: `module.cpu()` Ã¢â€ â€™ clear parameters Ã¢â€ â€™ clear buffers Ã¢â€ â€™ `del` children
 - Platform trimming: `ctypes.windll.kernel32.SetProcessWorkingSetSize` (Windows), `ctypes.CDLL(None).malloc_trim(0)` (Linux)
 - 874 tests passing, 6 skipped
 
@@ -1828,7 +2007,7 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
   - Configurable via `auto_unload_timeout` in config (default: 300s)
   - Manual unload: `memory.unload_resources()`
   - Recursive PyTorch module clearing + platform-specific memory trimming
-  - Model reloads transparently on next search â€” zero quality loss
+  - Model reloads transparently on next search Ã¢â‚¬â€ zero quality loss
 - **ChromaDB Segment Cache Cap**: Added `chroma_memory_limit_bytes=50MB` to limit in-memory segment cache
 
 ### Measured RAM (empirical, psutil RSS)
@@ -1851,7 +2030,7 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
 ### Added
 - **Tool Loop Detection** (`kabot/agent/loop_core/tool_loop_detection.py`): Detects stuck agents calling same tool repeatedly
   - Generic repeat detection (warning at 10, critical block at 20 identical calls)
-  - Ping-pong detection (Aâ†”B alternating tool calls)
+  - Ping-pong detection (AÃ¢â€ â€B alternating tool calls)
   - Sliding window of 30 calls with MD5 parameter hashing
 - **Tool Policy Profiles** (`kabot/agent/tools/tool_policy.py`): Per-agent tool access control
   - 5 profiles: minimal, coding, messaging, analysis, full
@@ -1864,7 +2043,7 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
   - Hard block below 16K tokens, warning below 32K tokens
 
 ### Changed
-- **Agent Loop**: Integrated LoopDetector â€” critical loops blocked, warnings logged
+- **Agent Loop**: Integrated LoopDetector Ã¢â‚¬â€ critical loops blocked, warnings logged
 - **Tool Registry**: Policy profile filtering in `get_definitions()`
 - **Resilience Layer**: Uses failover reason for smarter retry/fallback decisions
 
@@ -1934,13 +2113,13 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
 - **User-Friendly Error Messages**: Model failure errors (HTTP 400, rate limits, network drops) now show clean, actionable messages with `/switch` hints instead of raw Python exceptions with internal API URLs.
 - **Error Sanitization**: Added `_sanitize_error()` to strip internal URLs, API keys, and verbose tracebacks from all user-facing error messages in both simple and complex response paths.
 - **Multilingual Processing Status**: Replaced hardcoded Indonesian "Sedang memproses..." status with language-neutral English "Processing your request..." for global users.
-- **AI-as-Developer Execution Discipline**: Added critical system prompt rules that force the AI to write scripts on-the-fly, execute them immediately using `exec`, verify results, and schedule recurring jobs using `cron` â€” instead of just describing what to do. Includes cross-platform detection for Windows, Linux, macOS, and Termux.
+- **AI-as-Developer Execution Discipline**: Added critical system prompt rules that force the AI to write scripts on-the-fly, execute them immediately using `exec`, verify results, and schedule recurring jobs using `cron` Ã¢â‚¬â€ instead of just describing what to do. Includes cross-platform detection for Windows, Linux, macOS, and Termux.
 
 ### Added
 - **Cross-Platform Server Monitor Tool**: New `server_monitor` tool provides real-time resource usage (CPU load %, RAM used/free GB, disk usage %, uptime, network I/O) with full support for Windows (PowerShell), Linux (bash), macOS (bash), and Termux (Android). Triggered by 40+ multilingual keywords across 7 languages (EN, ID, MS, TH, ZH, KO, JA).
 
 ### Changed
-- **Startup Time Optimization (~40s â†’ ~3s to Chat-Ready)**: (1) HeartbeatService now waits 30s before first beat, preventing startup blocking. (2) SentenceTransformer embedding model pre-loads in a background thread via `warmup()`. (3) `AgentLoop.run()` kicks off `_warmup_memory()` as a non-blocking background task. Telegram is now chat-ready in ~3s instead of ~40s.
+- **Startup Time Optimization (~40s Ã¢â€ â€™ ~3s to Chat-Ready)**: (1) HeartbeatService now waits 30s before first beat, preventing startup blocking. (2) SentenceTransformer embedding model pre-loads in a background thread via `warmup()`. (3) `AgentLoop.run()` kicks off `_warmup_memory()` as a non-blocking background task. Telegram is now chat-ready in ~3s instead of ~40s.
 - **Zero-Latency Cold Start**: Migrated heavy LLM libraries (`litellm`, etc.) to lazy-loading scopes, dropping CLI startup time to `< 0.7s`.
 - **Asynchronous BM25 Indexing**: Deferred the synchronous `BM25Okapi` indexing to trigger only upon the first explicit user `search()`, removing background startup blocking.
 - **SQLite Database Tuning**: Injected PRAGMA `WAL`, `synchronous=NORMAL`, and Memory-Mapped IO pragmas to `sqlite_store.py` to massively speed up asynchronous `EpisodicExtractor` writes without locking the read loop.
@@ -1951,7 +2130,7 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
 
 - **HybridMemoryManager:** Modular memory orchestrator replacing monolithic `ChromaMemoryManager`.
 - **Smart Router:** Query-intent classifier routes to correct memory store (episodic/knowledge/hybrid). Multilingual keyword matching for 8 languages (ID, EN, ES, FR, JA, ZH, KO, TH).
-- **Reranker:** Three-stage filtering pipeline with configurable threshold (â‰¥0.6), top-k (3), and hard token guard (500 tokens max). Reduces token injection by 60-72%.
+- **Reranker:** Three-stage filtering pipeline with configurable threshold (Ã¢â€°Â¥0.6), top-k (3), and hard token guard (500 tokens max). Reduces token injection by 60-72%.
 - **Episodic Extractor:** LLM-based auto-extraction of user preferences, facts, and entities after each chat session. Uses existing LLM provider.
 - **Memory Pruner:** Scheduled cleanup of stale facts (>30 days) and duplicate merging. Integrates with CronService.
 - **Deduplicator:** BM25 + cosine similarity check prevents duplicate fact storage.
@@ -1968,7 +2147,7 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
 ### Added - Autopilot Wiring & System Events (2026-02-22)
 
 - **Heartbeat Tasks Execution:** Heartbeat now reads `HEARTBEAT.md` and dispatches active tasks as prompts on each beat.
-- **Cron â†’ System Events:** Cron callbacks now emit system events so the agent can react to scheduled job completions.
+- **Cron Ã¢â€ â€™ System Events:** Cron callbacks now emit system events so the agent can react to scheduled job completions.
 - **Heartbeat Event Publishing:** Heartbeat injector now publishes system events into the inbound pipeline for unified processing.
 
 ### Fixed & Audited - Routing Resilience & Full Roadmap Completion (2026-02-22)
@@ -2139,7 +2318,7 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
   - Critic retry is skipped for turns that already executed tools, preventing post-tool meta/hallucinated self-critique replies.
 - Expanded deterministic multilingual trigger/parse coverage:
   - Added reminder/weather/schedule-management keywords for Malay, Thai, and Chinese in `cron_fallback_nlp`.
-  - Extended relative-time parsing in `kabot/cron/parse.py` for `minit`, Thai units, and Chinese units (e.g. `åˆ†é’ŸåŽ`).
+  - Extended relative-time parsing in `kabot/cron/parse.py` for `minit`, Thai units, and Chinese units (e.g. `Ã¥Ë†â€ Ã©â€™Å¸Ã¥ÂÅ½`).
   - Improved weather location extraction for mixed queries (`tanggal + suhu` / `right now`) so city parsing no longer keeps noise tokens like `berapa` or `right`.
 - Fixed root weather-tool failure mode for noisy LLM tool arguments:
   - `WeatherTool` now normalizes incoming `location` text before fetch (`suhu di cilacap sekarang` -> `Cilacap`).
@@ -2149,7 +2328,7 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
   - Added support for `png` output mode as URL passthrough for wttr.
 - Improved weather reply quality to be more human-care oriented and actionable:
   - `WeatherTool` now appends a practical care tip based on parsed temperature + condition (heat/cold/rain/storm/fog), e.g. sunscreen, hydration, jacket, umbrella.
-  - Added explicit extreme-heat tier (`>=36Â°C`) with stronger heatstroke caution and midday outdoor activity guidance.
+  - Added explicit extreme-heat tier (`>=36Ã‚Â°C`) with stronger heatstroke caution and midday outdoor activity guidance.
   - Advice output is language-aware using existing fallback language detection (`id`/`en`/`ms`/`th`/`zh`) to reduce hardcoded single-language behavior.
   - Weather tool-call pipeline now forwards user message context (`context_text`) in both normal tool-call execution and deterministic fallback enforcement, so language matching stays consistent even when location is normalized.
 - Reduced auto-skill false positives in chat:
@@ -2567,7 +2746,7 @@ Kabot idle (91 MB) â†’ User sends message â†’ model loads (+359 MB = 4
 
 ### Added - Phase 14: Event Bus Expansion (2026-02-17)
 
-**Kabot Parity: 85% â†’ 100% (COMPLETE)**
+**Kabot Parity: 85% Ã¢â€ â€™ 100% (COMPLETE)**
 
 This phase expands the message bus from chat-only to full system event support, enabling real-time monitoring of agent internals.
 
@@ -2611,7 +2790,7 @@ This phase expands the message bus from chat-only to full system event support, 
 
 ### Fixed - Phase 13 Completion: Critical Gap Integration (2026-02-17)
 
-**Kabot Parity: 65% â†’ 85% (ACTUALLY ACHIEVED)**
+**Kabot Parity: 65% Ã¢â€ â€™ 85% (ACTUALLY ACHIEVED)**
 
 After deep verification analysis, discovered that Phase 13 initial implementation (2026-02-16) created the infrastructure but did NOT integrate it into the system. This update completes the integration:
 
@@ -2730,4 +2909,6 @@ After deep verification analysis, discovered that Phase 13 initial implementatio
 
 ### Phase 12 and Earlier
 See git history for previous changes.
+
+
 

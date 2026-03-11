@@ -197,6 +197,11 @@ def agent(
 
     if message:
         # Single message mode
+        async def _close_runtime_resources() -> None:
+            close_resources = getattr(agent_loop, "close_runtime_resources", None)
+            if callable(close_resources):
+                await close_resources()
+
         async def run_once():
             cron_started = False
             baseline_cli_jobs: set[str] = set()
@@ -275,6 +280,7 @@ def agent(
             finally:
                 if cron_started:
                     cron.stop()
+                await _close_runtime_resources()
 
         asyncio.run(run_once())
     else:
@@ -334,5 +340,8 @@ def agent(
             finally:
                 if cron_started:
                     cron.stop()
+                close_resources = getattr(agent_loop, "close_runtime_resources", None)
+                if callable(close_resources):
+                    await close_resources()
 
         asyncio.run(run_interactive())

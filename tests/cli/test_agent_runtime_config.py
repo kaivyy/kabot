@@ -120,6 +120,60 @@ def test_agent_cli_one_shot_without_explicit_session_uses_ephemeral_session(monk
     assert captured["session_key"] == "cli:oneshot:test"
 
 
+def test_agent_cli_one_shot_closes_runtime_resources(monkeypatch, tmp_path):
+    from kabot.cli.commands import app
+
+    runner = CliRunner()
+    cfg = Config()
+    cfg.logging.file_enabled = False
+    cfg.logging.db_enabled = False
+    cfg.agents.defaults.workspace = str(tmp_path / "workspace")
+
+    captured: dict[str, object] = {"closed": False}
+
+    monkeypatch.setattr("kabot.config.loader.load_config", lambda: cfg)
+    monkeypatch.setattr("kabot.config.loader.get_data_dir", lambda: Path(tmp_path / "data"))
+    monkeypatch.setattr("kabot.core.logger.configure_logger", lambda config, store: None)
+    monkeypatch.setattr("kabot.cli.commands._make_provider", lambda config: object())
+
+    class _DummyAgentLoop:
+        def __init__(self, **kwargs):
+            self.tools = type("_Tools", (), {"get": lambda self, name: None})()
+            self.heartbeat = type("_Heartbeat", (), {"inject_cron_result": lambda *args, **kwargs: None})()
+
+        def _required_tool_for_query(self, message):
+            return None
+
+        async def process_direct(
+            self,
+            message,
+            session_key,
+            suppress_post_response_warmup=False,
+            probe_mode=False,
+            persist_history=False,
+        ):
+            return "ok"
+
+        async def close_runtime_resources(self):
+            captured["closed"] = True
+
+    class _DummyCron:
+        def __init__(self, store_path):
+            self.on_job = None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr("kabot.agent.loop.AgentLoop", _DummyAgentLoop)
+    monkeypatch.setattr("kabot.cron.service.CronService", _DummyCron)
+
+    result = runner.invoke(app, ["agent", "-m", "halo", "--no-markdown"])
+
+    assert result.exit_code == 0
+    assert "ok" in result.output
+    assert captured["closed"] is True
+
+
 def test_agent_cli_uses_workspace_bound_agent_from_current_cwd(monkeypatch, tmp_path):
     from kabot.cli.commands import app
 

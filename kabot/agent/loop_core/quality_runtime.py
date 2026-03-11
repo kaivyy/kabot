@@ -22,6 +22,96 @@ IMMEDIATE_ACTION_PATTERNS = [
     "jam berapa",
 ]
 
+_HINT_TOKEN_RE = re.compile(r"[^\w\s]+", re.UNICODE)
+
+
+def _normalize_hint_text(text: str) -> str:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return ""
+    compact = _HINT_TOKEN_RE.sub(" ", lowered)
+    return re.sub(r"\s+", " ", compact).strip()
+
+
+def get_learned_execution_hints(
+    loop: Any,
+    question: str,
+    *,
+    required_tool: str | None = None,
+    limit: int = 3,
+) -> list[str]:
+    """Return bounded lesson-derived execution hints relevant to the current ask."""
+    memory_obj = getattr(loop, "memory", None)
+    lessons = None
+    for getter in (
+        getattr(memory_obj, "get_recent_lessons", None),
+        getattr(getattr(memory_obj, "metadata", None), "get_recent_lessons", None),
+    ):
+        if not callable(getter):
+            continue
+        try:
+            lessons = getter(limit=max(limit * 4, 8), task_type="complex")
+        except TypeError:
+            lessons = getter(limit=max(limit * 4, 8))
+        except Exception:
+            lessons = None
+        if isinstance(lessons, list):
+            break
+
+    normalized_query = _normalize_hint_text(question)
+    query_tokens = {token for token in normalized_query.split() if len(token) >= 4}
+    normalized_tool = _normalize_hint_text(required_tool or "")
+
+    hints: list[str] = []
+    if isinstance(lessons, list):
+        for lesson in lessons:
+            if not isinstance(lesson, dict):
+                continue
+            guardrail = str(lesson.get("guardrail") or "").strip()
+            fix = str(lesson.get("fix") or "").strip()
+            trigger = str(lesson.get("trigger") or "").strip()
+            hint_text = guardrail or fix or trigger
+            if not hint_text or hint_text in hints:
+                continue
+            haystack = _normalize_hint_text(" ".join(part for part in (guardrail, fix, trigger) if part))
+            matches_tool = bool(normalized_tool and normalized_tool in haystack)
+            matches_query = bool(query_tokens and any(token in haystack for token in query_tokens))
+            if normalized_query and not (matches_tool or matches_query):
+                continue
+            hints.append(hint_text)
+            if len(hints) >= max(1, int(limit or 3)):
+                return hints
+
+    guardrails = None
+    for getter in (
+        getattr(memory_obj, "get_guardrails", None),
+        getattr(getattr(memory_obj, "metadata", None), "get_guardrails", None),
+    ):
+        if not callable(getter):
+            continue
+        try:
+            guardrails = getter(limit=max(limit * 2, 5))
+        except Exception:
+            guardrails = None
+        if isinstance(guardrails, list):
+            break
+
+    if isinstance(guardrails, list):
+        for item in guardrails:
+            hint_text = str(item or "").strip()
+            if not hint_text or hint_text in hints:
+                continue
+            if normalized_query:
+                haystack = _normalize_hint_text(hint_text)
+                matches_tool = bool(normalized_tool and normalized_tool in haystack)
+                matches_query = bool(query_tokens and any(token in haystack for token in query_tokens))
+                if not (matches_tool or matches_query):
+                    continue
+            hints.append(hint_text)
+            if len(hints) >= max(1, int(limit or 3)):
+                break
+    return hints
+
 
 def self_evaluate(loop: Any, question: str, answer: str) -> tuple[bool, str | None]:
     """Quick heuristic: detect common refusal patterns."""
@@ -201,6 +291,22 @@ FEEDBACK: <one sentence explaining the score>"""
 async def log_lesson(loop: Any, question: str, feedback: str, score_before: int, score_after: int) -> None:
     """Log a metacognition lesson from critic-driven retries."""
     try:
+        save_lesson = getattr(getattr(loop, "memory", None), "save_lesson", None)
+        if callable(save_lesson):
+            result = save_lesson(
+                trigger=question[:200],
+                mistake=f"Initial response scored {score_before}/10",
+                fix=feedback[:200],
+                guardrail=f"Improved to {score_after}/10 after retry",
+                score_before=score_before,
+                score_after=score_after,
+                task_type="complex",
+            )
+            if hasattr(result, "__await__"):
+                await result
+            logger.info(f"Lesson logged via memory backend ({score_before}->{score_after})")
+            return
+
         import uuid
 
         lesson_id = str(uuid.uuid4())[:12]

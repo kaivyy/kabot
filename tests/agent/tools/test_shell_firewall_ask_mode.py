@@ -106,6 +106,29 @@ async def test_pending_approval_can_be_consumed_and_executed():
 
 
 @pytest.mark.asyncio
+async def test_pending_approval_persists_across_exec_tool_instances():
+    case_dir = _make_case_dir()
+    try:
+        config_path = case_dir / "command_approvals.yaml"
+        tool = ExecTool(timeout=5, firewall_config_path=config_path, auto_approve=False)
+
+        result = await tool.execute("echo persisted", _session_key="cli:direct")
+        assert "approval id" in result.lower()
+
+        fresh_tool = ExecTool(timeout=5, firewall_config_path=config_path, auto_approve=False)
+        pending = fresh_tool.get_pending_approval("cli:direct")
+
+        assert pending is not None
+        assert pending["command"] == "echo persisted"
+        consumed = fresh_tool.consume_pending_approval("cli:direct", pending["id"])
+        assert consumed is not None
+        assert consumed["command"] == "echo persisted"
+        assert fresh_tool.get_pending_approval("cli:direct") is None
+    finally:
+        shutil.rmtree(case_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
 async def test_ask_mode_respects_scoped_channel_policy():
     case_dir = _make_case_dir()
     try:

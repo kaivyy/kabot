@@ -36,6 +36,14 @@ Defines:
 - env values
 - install/setup choices
 
+### MCP
+Defines:
+- whether MCP is enabled
+- configured MCP servers
+- `stdio` command/args/env settings
+- `streamable_http` URL/header settings
+- which live MCP capability surface can exist at runtime
+
 ### Channels
 Defines:
 - credentials

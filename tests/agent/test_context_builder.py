@@ -347,3 +347,49 @@ def test_context_builder_probe_mode_keeps_temporal_system_note_turns_lean(tmp_pa
     assert calls["match"] == 0
     assert calls["memory"] == 0
     assert "VERY LARGE MEMORY BLOCK" not in prompt
+
+
+def test_context_builder_mcp_context_mode_skips_auto_skill_match_for_explicit_mcp_context(
+    tmp_path: Path,
+):
+    builder = ContextBuilder(tmp_path)
+    calls = {"match": 0}
+
+    def _match(_msg: str, _profile: str):
+        calls["match"] += 1
+        return ["weather"]
+
+    builder.skills.match_skills = _match  # type: ignore[assignment]
+
+    builder.build_messages(
+        history=[],
+        current_message=(
+            "gunakan prompt briefing dari server local lalu jawab satu kata.\n\n"
+            "[MCP Context Note]\n"
+            "Use the MCP prompt below as explicit context."
+        ),
+        profile="GENERAL",
+        budget_hints={"mcp_context_mode": True},
+    )
+
+    assert calls["match"] == 0
+
+
+def test_context_builder_mcp_context_mode_skips_memory_context_for_explicit_mcp_context(
+    tmp_path: Path,
+):
+    builder = ContextBuilder(tmp_path)
+    builder.memory.get_memory_context = lambda: "VERY LARGE MEMORY BLOCK"  # type: ignore[assignment]
+
+    prompt = builder.build_messages(
+        history=[],
+        current_message=(
+            "baca resource memory://field-guide dari server local.\n\n"
+            "[MCP Context Note]\n"
+            "Use the MCP resource below as explicit context."
+        ),
+        profile="GENERAL",
+        budget_hints={"mcp_context_mode": True},
+    )[0]["content"]
+
+    assert "VERY LARGE MEMORY BLOCK" not in prompt

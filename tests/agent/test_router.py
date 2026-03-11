@@ -50,4 +50,37 @@ async def test_route_temporal_queries_skip_llm_classification(query, expected_pr
 
     assert decision.profile == expected_profile
     assert decision.is_complex is False
+    assert getattr(decision, "turn_category", None) == "chat"
     assert provider.chat_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query",
+    [
+        "what is my preference code? answer with the code only.",
+        "kode preferensiku apa? jawab kode saja.",
+        "我刚才让你记住的代码是什么？只回答代码。",
+    ],
+)
+async def test_route_memory_recall_queries_skip_llm_coding_misclassification(query):
+    provider = _ChatOnlyProvider()
+    router = IntentRouter(provider)
+
+    decision = await router.route(query)
+
+    assert decision.profile == "GENERAL"
+    assert getattr(decision, "turn_category", None) == "chat"
+    assert provider.chat_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_route_general_knowledge_query_marks_chat_turn_category():
+    provider = _ChatOnlyProvider()
+    router = IntentRouter(provider)
+
+    decision = await router.route("IQ MANUSIA RATA RATA BERAPA")
+
+    assert decision.is_complex is False
+    assert getattr(decision, "turn_category", None) == "chat"
+    assert provider.chat_calls == 1

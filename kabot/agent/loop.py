@@ -25,6 +25,13 @@ from kabot.core.resilience import ResilienceLayer
 
 # Phase 13: Resilience & Security
 from kabot.core.sentinel import CrashSentinel, format_recovery_message
+from kabot.mcp import (
+    McpSessionRuntime,
+    register_mcp_tools,
+    resolve_mcp_server_definitions,
+    safe_list_server_tools,
+)
+from kabot.mcp.session_state import activate_mcp_runtime, get_active_mcp_runtime
 from kabot.plugins.hooks import HookManager
 from kabot.plugins.loader import load_dynamic_plugins, load_plugins
 from kabot.plugins.registry import PluginRegistry
@@ -90,6 +97,14 @@ class AgentLoop(AgentLoopDelegatesMixin):
         self._pending_memory_tasks: set[asyncio.Task] = set()
         self._tool_payload_cache: dict[str, tuple[float, str]] = {}
         self._tool_call_id_cache: dict[str, tuple[float, str]] = {}
+        self._mcp_enabled = bool(getattr(getattr(self.config, "mcp", None), "enabled", False))
+        self._mcp_server_definitions = (
+            resolve_mcp_server_definitions(self.config)
+            if self._mcp_enabled
+            else []
+        )
+        self._mcp_session_runtimes: dict[str, McpSessionRuntime] = {}
+        self._mcp_tools_loaded = False
 
         # Initialize mode manager and coordinator
         self.mode_manager = mode_manager or ModeManager(
@@ -231,6 +246,178 @@ class AgentLoop(AgentLoopDelegatesMixin):
         sentinel_path = Path.home() / ".kabot" / "crash.sentinel"
         self.sentinel = CrashSentinel(sentinel_path)
         self.last_usage: dict[str, Any] | None = None
+
+    async def _ensure_mcp_session_runtime(self, session_key: str) -> McpSessionRuntime | None:
+        if not self._mcp_enabled or not self._mcp_server_definitions:
+            return None
+        runtime = self._mcp_session_runtimes.get(session_key)
+        if runtime is not None:
+            return runtime
+        runtime = McpSessionRuntime(session_id=session_key)
+        for definition in self._mcp_server_definitions:
+            runtime.attach(definition)
+        self._mcp_session_runtimes[session_key] = runtime
+        return runtime
+
+    async def _ensure_mcp_tools_loaded(self, session_key: str) -> list[str]:
+        runtime = await self._ensure_mcp_session_runtime(session_key)
+        if runtime is None:
+            return []
+        if self._mcp_tools_loaded:
+            return [name for name in self.tools.tool_names if name.startswith("mcp.")]
+
+        registered_tools = []
+        for server_name in runtime.attached_server_names():
+            registered_tools.extend(await safe_list_server_tools(runtime, server_name))
+        if registered_tools:
+            register_mcp_tools(
+                self.tools,
+                runtime_resolver=self._get_active_mcp_runtime,
+                registered_tools=registered_tools,
+            )
+        self._mcp_tools_loaded = True
+        return [name for name in self.tools.tool_names if name.startswith("mcp.")]
+
+    @staticmethod
+    def _truncate_mcp_context_text(text: str, *, max_chars: int = 1600) -> str:
+        normalized = str(text or "").strip()
+        if len(normalized) <= max_chars:
+            return normalized
+        clipped = normalized[: max_chars - 13].rstrip()
+        return f"{clipped}...[truncated]"
+
+    async def _build_explicit_mcp_context_note(
+        self,
+        session_key: str,
+        *,
+        prompt_ref: tuple[str, str] | None = None,
+        resource_ref: tuple[str, str] | None = None,
+    ) -> str:
+        runtime = await self._ensure_mcp_session_runtime(session_key)
+        if runtime is None:
+            return ""
+
+        blocks: list[str] = []
+        guidance_block = (
+            "[MCP Context Note]\n"
+            "- The MCP prompt/resource below is explicit reference context for this turn.\n"
+            "- Prefer answering from that MCP context directly.\n"
+            "- Do not switch to unrelated stock, weather, web-search, or generic file tools unless the user explicitly asks for them."
+        )
+        if prompt_ref:
+            server_name, prompt_name = prompt_ref
+            if runtime.has_server(server_name):
+                try:
+                    prompts = await runtime.list_prompts(server_name)
+                    prompt_descriptor = next(
+                        (
+                            item
+                            for item in prompts
+                            if str(item.prompt_name or "").strip().lower() == prompt_name.strip().lower()
+                        ),
+                        None,
+                    )
+                    prompt_text = ""
+                    if prompt_descriptor is not None:
+                        required_args = [
+                            str(arg.get("name") or "").strip()
+                            for arg in (prompt_descriptor.arguments or [])
+                            if isinstance(arg, dict) and bool(arg.get("required"))
+                        ]
+                        if not required_args:
+                            prompt_payload = await runtime.get_prompt(server_name, prompt_descriptor.prompt_name, {})
+                            prompt_text = str(prompt_payload.get("text", "") or "").strip()
+                    lines = [
+                        "[MCP Prompt Context]",
+                        f"- Server: {server_name}",
+                        f"- Prompt: {prompt_name}",
+                    ]
+                    if prompt_descriptor is not None:
+                        if prompt_descriptor.description:
+                            lines.append(f"- Description: {prompt_descriptor.description}")
+                        if prompt_descriptor.arguments:
+                            arg_bits = []
+                            for item in prompt_descriptor.arguments:
+                                if not isinstance(item, dict):
+                                    continue
+                                name = str(item.get("name") or "").strip()
+                                if not name:
+                                    continue
+                                suffix = " (required)" if bool(item.get("required")) else ""
+                                arg_bits.append(f"{name}{suffix}")
+                            if arg_bits:
+                                lines.append(f"- Arguments: {', '.join(arg_bits)}")
+                    if prompt_text:
+                        lines.append("- Rendered prompt:")
+                        lines.append(self._truncate_mcp_context_text(prompt_text))
+                    blocks.append("\n".join(lines))
+                except Exception as exc:
+                    logger.debug(f"Failed building MCP prompt context for {server_name}.{prompt_name}: {exc}")
+
+        if resource_ref:
+            server_name, resource_identifier = resource_ref
+            if runtime.has_server(server_name):
+                try:
+                    resources = await runtime.list_resources(server_name)
+                    resource_descriptor = next(
+                        (
+                            item
+                            for item in resources
+                            if (
+                                str(item.uri or "").strip() == resource_identifier.strip()
+                                or str(item.name or "").strip().lower() == resource_identifier.strip().lower()
+                                or str(item.title or "").strip().lower() == resource_identifier.strip().lower()
+                            )
+                        ),
+                        None,
+                    )
+                    target_uri = (
+                        str(resource_descriptor.uri or "").strip()
+                        if resource_descriptor is not None
+                        else resource_identifier.strip()
+                    )
+                    resource_payload = await runtime.read_resource(server_name, target_uri)
+                    resource_text = str(resource_payload.get("text", "") or "").strip()
+                    lines = [
+                        "[MCP Resource Context]",
+                        f"- Server: {server_name}",
+                        f"- Resource: {target_uri}",
+                    ]
+                    if resource_descriptor is not None:
+                        if resource_descriptor.name:
+                            lines.append(f"- Name: {resource_descriptor.name}")
+                        if resource_descriptor.description:
+                            lines.append(f"- Description: {resource_descriptor.description}")
+                        if resource_descriptor.mime_type:
+                            lines.append(f"- MIME type: {resource_descriptor.mime_type}")
+                    if resource_text:
+                        lines.append("- Content:")
+                        lines.append(self._truncate_mcp_context_text(resource_text))
+                    blocks.append("\n".join(lines))
+                except Exception as exc:
+                    logger.debug(
+                        f"Failed building MCP resource context for {server_name}:{resource_identifier}: {exc}"
+                    )
+
+        if not blocks:
+            return ""
+        return "\n\n".join([guidance_block, *[block for block in blocks if block.strip()]])
+
+    def _get_active_mcp_runtime(self) -> object | None:
+        return get_active_mcp_runtime()
+
+    async def _execute_tool(self, name: str, params: dict[str, Any], *, session_key: str) -> str:
+        runtime = await self._ensure_mcp_session_runtime(session_key)
+        if runtime is None:
+            return await self.tools.execute(name, params)
+        with activate_mcp_runtime(runtime):
+            return await self.tools.execute(name, params)
+
+    async def _close_mcp_runtimes(self) -> None:
+        runtimes = list(self._mcp_session_runtimes.values())
+        self._mcp_session_runtimes.clear()
+        for runtime in runtimes:
+            await runtime.close()
 
     def _collect_api_keys(self, provider) -> list[str]:
         """Collect all available API keys from provider."""
@@ -430,7 +617,9 @@ class AgentLoop(AgentLoopDelegatesMixin):
         from kabot.agent.tools.browser import BrowserTool
         from kabot.agent.tools.cron import CronTool
         from kabot.agent.tools.filesystem import (
+            ArchivePathTool,
             EditFileTool,
+            FindFilesTool,
             ListDirTool,
             ReadFileTool,
             WriteFileTool,
@@ -453,8 +642,10 @@ class AgentLoop(AgentLoopDelegatesMixin):
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         self.tools.register(ReadFileTool(allowed_dir=allowed_dir))
         self.tools.register(WriteFileTool(allowed_dir=allowed_dir))
+        self.tools.register(ArchivePathTool(allowed_dir=allowed_dir))
         self.tools.register(EditFileTool(allowed_dir=allowed_dir))
         self.tools.register(ListDirTool(allowed_dir=allowed_dir))
+        self.tools.register(FindFilesTool(allowed_dir=allowed_dir))
 
         self.tools.register(ExecTool(
             working_dir=str(self.workspace),
@@ -764,6 +955,15 @@ class AgentLoop(AgentLoopDelegatesMixin):
             if not task.done():
                 task.cancel()
         self._pending_memory_tasks.clear()
+
+        if self._mcp_session_runtimes:
+            async def _close_all_mcp() -> None:
+                await self._close_mcp_runtimes()
+
+            try:
+                asyncio.get_running_loop().create_task(_close_all_mcp())
+            except RuntimeError:
+                pass
 
         # Phase 14: Emit lifecycle stop event
         from kabot.bus.events import SystemEvent

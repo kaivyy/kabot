@@ -4,10 +4,16 @@ from pathlib import Path
 from kabot.cli.agent_smoke_matrix import (
     SmokeCase,
     SmokeResult,
+    _create_mcp_local_echo_case,
+    _create_mcp_local_echo_continuity_case,
     _localized_weekday_expectations,
     _stdout_matches_expectations,
     apply_thresholds,
     build_agent_command,
+    build_continuity_smoke_cases,
+    build_memory_smoke_cases,
+    build_delivery_smoke_cases,
+    build_workflow_smoke_cases,
     build_smoke_cases,
     parse_run_metrics,
     run_case,
@@ -62,6 +68,9 @@ def test_parse_run_metrics_extracts_route_and_latency_values():
     stderr = "\n".join(
         (
             "2026-03-09 | INFO | Route: profile=GENERAL, complex=False",
+            "2026-03-09 | INFO | turn_id=abc continuity_source=answer_reference turn_category=chat",
+            "2026-03-09 | INFO | pending_interrupt_count=2 session=cli:smoke:test",
+            "2026-03-09 | INFO | completion_evidence artifact_verified=true delivery_verified=true executed_tools=write_file,message",
             "2026-03-09 | INFO | turn_id=abc context_build_ms=12",
             "2026-03-09 | INFO | turn_id=abc first_response_ms=345",
         )
@@ -70,6 +79,11 @@ def test_parse_run_metrics_extracts_route_and_latency_values():
     metrics = parse_run_metrics(stderr)
 
     assert metrics["route"] == "Route: profile=GENERAL, complex=False"
+    assert metrics["continuity_source"] == "answer_reference"
+    assert metrics["turn_category"] == "chat"
+    assert metrics["pending_interrupt_count"] == 2
+    assert metrics["completion_artifact_verified"] is True
+    assert metrics["completion_delivery_verified"] is True
     assert metrics["context_build_ms"] == 12
     assert metrics["first_response_ms"] == 345
 
@@ -154,6 +168,19 @@ def test_stdout_matches_expectations_ignores_separator_differences():
     )
 
 
+def test_stdout_matches_expectations_respects_forbidden_contains():
+    assert _stdout_matches_expectations(
+        "The second item is .claude.",
+        expected_any_contains=(".claude",),
+        forbidden_contains=(".basetemp", ".dockerignore"),
+    )
+    assert not _stdout_matches_expectations(
+        ".basetemp .claude .dockerignore",
+        expected_any_contains=(".claude",),
+        forbidden_contains=(".basetemp",),
+    )
+
+
 def test_run_case_returns_failed_result_when_subprocess_times_out(monkeypatch):
     def _boom(*_args, **_kwargs):
         raise subprocess.TimeoutExpired(cmd=["python", "-m", "kabot.cli.commands"], timeout=30)
@@ -170,3 +197,238 @@ def test_run_case_returns_failed_result_when_subprocess_times_out(monkeypatch):
     assert result.passed is False
     assert result.returncode == 124
     assert "timeout" in result.failure_reason.lower()
+
+
+def test_create_mcp_local_echo_case_writes_temp_config(tmp_path):
+    case = _create_mcp_local_echo_case(tmp_path, python_executable="python")
+
+    config_path = Path(case.env["KABOT_CONFIG"])
+    assert case.label == "mcp-local-echo"
+    assert "mcp.local_echo.echo" in case.prompt
+    assert config_path.exists()
+    assert "\"local_echo\"" in config_path.read_text(encoding="utf-8")
+
+
+def test_build_continuity_smoke_cases_include_multilingual_followups():
+    cases = build_continuity_smoke_cases(
+        cwd=Path(r"C:\Users\Arvy Kairi\Desktop\bot\kabot"),
+        os_profile="windows",
+    )
+
+    zh_case = next(case for case in cases if case.label == "continuity-fs-zh")
+    th_case = next(case for case in cases if case.label == "continuity-fs-th")
+
+    assert "C:\\" in zh_case.prompt
+    assert zh_case.followup_prompts
+    assert zh_case.expected_continuity_source == "answer_reference"
+    assert zh_case.expected_turn_category == "chat"
+    assert zh_case.expected_any_contains == (".claude",)
+    assert zh_case.forbidden_contains == (".basetemp", ".dockerignore")
+    assert "\u7b2c\u4e8c" in zh_case.followup_prompts[0]
+    assert th_case.followup_prompts
+    assert th_case.expected_continuity_source == "answer_reference"
+    assert th_case.expected_turn_category == "chat"
+    assert th_case.expected_any_contains == (".claude",)
+    assert th_case.forbidden_contains == (".basetemp", ".dockerignore")
+
+
+def test_build_delivery_smoke_cases_include_create_find_and_generate_send_flows():
+    cases = build_delivery_smoke_cases(
+        cwd=Path(r"C:\Users\Arvy Kairi\Desktop\bot\kabot"),
+        os_profile="windows",
+    )
+
+    create_case = next(case for case in cases if case.label == "delivery-create-send")
+    find_case = next(case for case in cases if case.label == "delivery-find-send")
+    image_case = next(case for case in cases if case.label == "delivery-image-send")
+
+    assert create_case.category == "delivery"
+    assert ".smoke_tmp" in create_case.prompt
+    assert create_case.expected_any_contains == ("Message sent to",)
+    assert create_case.expected_turn_category == "action"
+    assert create_case.expected_delivery_verified is True
+
+    assert find_case.category == "delivery"
+    assert "CHANGELOG.md" in find_case.prompt
+    assert "folder kerja saat ini" in find_case.prompt.lower()
+    assert find_case.expected_any_contains == ("Message sent to",)
+    assert find_case.expected_turn_category == "action"
+    assert find_case.expected_delivery_verified is True
+
+    assert image_case.category == "delivery"
+    assert "imagen" in image_case.prompt.lower()
+    assert image_case.expected_turn_category == "action"
+    assert image_case.expected_any_contains == (
+        "Message sent to",
+        "isn't available in this runtime yet",
+        "Configure a supported image provider first",
+    )
+    assert image_case.forbidden_contains == (
+        "I couldn't verify delivery because no file attachment was sent",
+        "File not found",
+    )
+
+
+def test_build_memory_smoke_cases_include_cross_lingual_followups():
+    cases = build_memory_smoke_cases()
+
+    id_case = next(case for case in cases if case.label == "memory-followup-id-en")
+    zh_case = next(case for case in cases if case.label == "memory-followup-zh-id")
+    th_case = next(case for case in cases if case.label == "memory-followup-th-en")
+
+    assert id_case.category == "memory"
+    assert "MEMID-271" in id_case.prompt
+    assert id_case.followup_prompts == ("what is my preference code? answer with the code only.",)
+    assert id_case.expected_any_contains == ("MEMID-271",)
+    assert id_case.expected_turn_category == "chat"
+
+    assert zh_case.category == "memory"
+    assert "MEMZH-314" in zh_case.prompt
+    assert zh_case.followup_prompts == ("我刚才让你记住的代码是什么？只回答代码。",)
+    assert zh_case.expected_any_contains == ("MEMZH-314",)
+    assert zh_case.expected_turn_category == "chat"
+
+    assert th_case.category == "memory"
+    assert "MEMTH-808" in th_case.prompt
+    assert th_case.followup_prompts == ("what is my preference code? answer with the code only.",)
+    assert th_case.expected_any_contains == ("MEMTH-808",)
+    assert th_case.expected_turn_category == "chat"
+
+
+def test_build_workflow_smoke_cases_include_ping_pong_upgrade_transcript():
+    cases = build_workflow_smoke_cases()
+
+    ping_pong_case = next(case for case in cases if case.label == "workflow-pingpong-upgrade")
+
+    assert ping_pong_case.category == "workflow"
+    assert ping_pong_case.prompt == "create a ping pong game web based"
+    assert ping_pong_case.followup_prompts == ("yes continue", "yes continue to upgrade")
+    assert ping_pong_case.expected_any_contains == ("ping-pong", "ping pong", "upgrade")
+    assert ping_pong_case.forbidden_contains == ("File not found", "/↓", "/↑")
+
+
+def test_create_mcp_local_echo_continuity_case_writes_temp_config(tmp_path):
+    case = _create_mcp_local_echo_continuity_case(tmp_path, python_executable="python")
+
+    config_path = Path(case.env["KABOT_CONFIG"])
+    assert case.label == "mcp-local-echo-followup"
+    assert "mcp.local_echo.echo" in case.prompt
+    assert case.followup_prompts
+    assert case.expected_continuity_source == "answer_reference"
+    assert case.expected_turn_category == "chat"
+    assert case.expected_any_contains == ("halo-mcp-konteks",)
+    assert case.forbidden_contains == ("\u305d\u308c\u3063\u3066\u3069\u3046\u3044\u3046\u610f\u5473",)
+    assert config_path.exists()
+
+
+def test_run_case_reuses_same_session_for_followup_turns_and_tracks_continuity(monkeypatch):
+    calls = []
+
+    def _run(command, **_kwargs):
+        calls.append(command)
+        prompt = command[command.index("agent") + 2]
+        if prompt == "lanjut":
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="lanjutan aman",
+                stderr="\n".join(
+                    (
+                        "2026-03-11 | INFO | Route: profile=CHAT, complex=False",
+                        "2026-03-11 | INFO | turn_id=abc continuity_source=answer_reference turn_category=chat",
+                        "2026-03-11 | INFO | completion_evidence artifact_verified=true delivery_verified=true executed_tools=find_files,message",
+                        "2026-03-11 | INFO | turn_id=abc context_build_ms=9",
+                        "2026-03-11 | INFO | turn_id=abc first_response_ms=21",
+                    )
+                ),
+            )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="awal aman",
+            stderr="\n".join(
+                (
+                    "2026-03-11 | INFO | Route: profile=GENERAL, complex=True",
+                    "2026-03-11 | INFO | turn_id=abc continuity_source=parser turn_category=action",
+                    "2026-03-11 | INFO | turn_id=abc context_build_ms=7",
+                    "2026-03-11 | INFO | turn_id=abc first_response_ms=18",
+                )
+            ),
+        )
+
+    monkeypatch.setattr("kabot.cli.agent_smoke_matrix.subprocess.run", _run)
+
+    result = run_case(
+        SmokeCase(
+            label="continuity-followup",
+            prompt="awal",
+            followup_prompts=("lanjut",),
+            expected_continuity_source="answer_reference",
+            expected_turn_category="chat",
+            expected_delivery_verified=True,
+        ),
+        cwd=Path.cwd(),
+        python_executable="python",
+        timeout=30,
+    )
+
+    assert len(calls) == 2
+    first_session = calls[0][calls[0].index("--session") + 1]
+    second_session = calls[1][calls[1].index("--session") + 1]
+    assert first_session == second_session
+    assert result.continuity_source == "answer_reference"
+    assert result.turn_category == "chat"
+    assert result.completion_delivery_verified is True
+    assert result.passed is True
+
+
+def test_run_case_fails_when_forbidden_text_appears_in_intermediate_followup_stdout(monkeypatch):
+    calls = []
+
+    def _run(command, **_kwargs):
+        calls.append(command)
+        prompt = command[command.index("agent") + 2]
+        if prompt == "yes continue":
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="File not found: /↓",
+                stderr="2026-03-12 | INFO | turn_id=abc continuity_source=committed_action turn_category=contextual_action",
+            )
+        if prompt == "yes continue to upgrade":
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="upgrade ping-pong game complete",
+                stderr="\n".join(
+                    (
+                        "2026-03-12 | INFO | turn_id=abc continuity_source=committed_action turn_category=contextual_action",
+                        "2026-03-12 | INFO | completion_evidence artifact_verified=true delivery_verified=false executed_tools=write_file",
+                    )
+                ),
+            )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="initial build ready",
+            stderr="2026-03-12 | INFO | turn_id=abc continuity_source=parser turn_category=action",
+        )
+
+    monkeypatch.setattr("kabot.cli.agent_smoke_matrix.subprocess.run", _run)
+
+    result = run_case(
+        SmokeCase(
+            label="workflow-pingpong-upgrade",
+            prompt="create a ping pong game web based",
+            followup_prompts=("yes continue", "yes continue to upgrade"),
+            expected_any_contains=("upgrade",),
+            forbidden_contains=("File not found", "/↓"),
+        ),
+        cwd=Path.cwd(),
+        python_executable="python",
+        timeout=30,
+    )
+
+    assert len(calls) == 3
+    assert result.passed is False
+    assert "forbidden_contains" in result.failure_reason

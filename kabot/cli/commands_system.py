@@ -563,6 +563,11 @@ def doctor(
         "--smoke-max-first-response-ms",
         help="With doctor smoke-agent, fail if first_response_ms exceeds this threshold.",
     ),
+    smoke_mcp_local_echo: bool = typer.Option(
+        False,
+        "--smoke-mcp-local-echo",
+        help="With doctor smoke-agent, add a local Python MCP echo smoke case.",
+    ),
 ):
     """Run system health and integrity checks."""
     mode_normalized = str(mode or "health").strip().lower()
@@ -600,6 +605,8 @@ def doctor(
             smoke_argv.extend(["--max-context-build-ms", str(smoke_max_context_build_ms)])
         if smoke_max_first_response_ms > 0:
             smoke_argv.extend(["--max-first-response-ms", str(smoke_max_first_response_ms)])
+        if smoke_mcp_local_echo:
+            smoke_argv.append("--mcp-local-echo")
         raise typer.Exit(agent_smoke_matrix.main(smoke_argv))
 
     from kabot.utils.doctor import KabotDoctor

@@ -164,3 +164,20 @@ def test_doctor_smoke_agent_invokes_smoke_matrix_with_threshold_args(monkeypatch
     assert captured["argv"][captured["argv"].index("--max-first-response-ms") + 1] == "800"
     assert "--max-context-build-ms" in captured["argv"]
     assert captured["argv"][captured["argv"].index("--max-context-build-ms") + 1] == "250"
+
+
+def test_doctor_smoke_agent_passes_mcp_local_echo_flag(monkeypatch, runner):
+    from kabot.cli.commands import app
+
+    captured: dict[str, list[str] | None] = {"argv": None}
+
+    def _fake_main(argv=None):
+        captured["argv"] = list(argv or [])
+        return 0
+
+    monkeypatch.setattr("kabot.cli.agent_smoke_matrix.main", _fake_main)
+    result = runner.invoke(app, ["doctor", "smoke-agent", "--smoke-mcp-local-echo"])
+
+    assert result.exit_code == 0
+    assert captured["argv"] is not None
+    assert "--mcp-local-echo" in captured["argv"]

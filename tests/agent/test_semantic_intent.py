@@ -91,3 +91,44 @@ def test_semantic_intent_reuses_stock_context_for_trend_followup():
 
     assert hint.required_tool == "stock_analysis"
     assert "apple" in str(hint.required_tool_query).lower()
+
+
+def test_semantic_intent_keeps_weather_metric_interpretation_ai_driven():
+    hint = arbitrate_semantic_intent(
+        "kecepatan angin 4.4km/h?",
+        parser_tool="weather",
+        pending_followup_tool="weather",
+        pending_followup_source="cuaca cilacap sekarang",
+        last_tool_context={
+            "tool": "weather",
+            "location": "Cilacap",
+            "source": "cuaca cilacap sekarang",
+        },
+    )
+
+    assert hint.kind == "weather_metric_interpretation"
+    assert hint.required_tool is None
+
+
+def test_semantic_intent_clears_weather_parser_for_quoted_hr_zone_request():
+    hint = arbitrate_semantic_intent(
+        """Iya, untuk laki-laki saat lari, HR (detak jantung) sering di atas 160 bpm itu belum tentu berbahaya.
+
+Perhatikan tidur, hidrasi, kafein, suhu cuaca (semua bisa bikin HR naik).
+
+dari sini hitung hr zona saya umur 25 tahun""",
+        parser_tool="weather",
+    )
+
+    assert hint.kind == "advice_turn"
+    assert hint.required_tool is None
+
+
+def test_semantic_intent_clears_stale_parser_tool_for_memory_recall_turn():
+    hint = arbitrate_semantic_intent(
+        "kode preferensiku apa?",
+        parser_tool="stock",
+    )
+
+    assert hint.kind == "memory_recall"
+    assert hint.required_tool is None

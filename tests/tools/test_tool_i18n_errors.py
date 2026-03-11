@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -36,6 +37,25 @@ async def test_message_tool_localizes_missing_sender_callback():
     result = await tool.execute(prompt)
 
     assert result == i18n_t("message.not_configured", prompt)
+
+
+@pytest.mark.asyncio
+async def test_message_tool_can_send_file_to_current_chat_context():
+    send_callback = AsyncMock(return_value=None)
+    tool = MessageTool(
+        send_callback=send_callback,
+        default_channel="telegram",
+        default_chat_id="chat-99",
+    )
+
+    result = await tool.execute("Ini file yang diminta.", files=["docs/report.pdf"])
+
+    assert result == "Message sent to telegram:chat-99"
+    outbound = send_callback.await_args.args[0]
+    assert outbound.channel == "telegram"
+    assert outbound.chat_id == "chat-99"
+    assert outbound.content == "Ini file yang diminta."
+    assert outbound.media == ["docs/report.pdf"]
 
 
 @pytest.mark.asyncio

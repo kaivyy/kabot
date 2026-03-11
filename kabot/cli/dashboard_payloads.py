@@ -306,6 +306,84 @@ def _build_dashboard_nodes(channels: Any) -> list[dict[str, Any]]:
     return nodes
 
 
+def _build_dashboard_recent_turn_snapshot(session_manager: Any) -> dict[str, Any]:
+    """Extract the latest message metadata that helps explain continuity/routing decisions."""
+    list_sessions = getattr(session_manager, "list_sessions", None)
+    get_or_create = getattr(session_manager, "get_or_create", None)
+    if not callable(list_sessions) or not callable(get_or_create):
+        return {}
+
+    try:
+        sessions = list(list_sessions())
+    except Exception:
+        return {}
+    if not sessions:
+        return {}
+
+    latest_key = ""
+    for item in sessions:
+        if isinstance(item, dict):
+            latest_key = str(item.get("key") or "").strip()
+        else:
+            latest_key = str(item or "").strip()
+        if latest_key:
+            break
+    if not latest_key:
+        return {}
+
+    try:
+        session = get_or_create(latest_key)
+    except Exception:
+        return {}
+    session_metadata = getattr(session, "metadata", None)
+    if not isinstance(session_metadata, dict):
+        session_metadata = {}
+    messages = getattr(session, "messages", None)
+    if not isinstance(messages, list):
+        return {}
+
+    for item in reversed(messages):
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata")
+        message_metadata = metadata if isinstance(metadata, dict) else {}
+        continuity_source = str(message_metadata.get("continuity_source") or "").strip()
+        route_profile = str(message_metadata.get("route_profile") or "").strip()
+        required_tool = str(message_metadata.get("required_tool") or "").strip()
+        turn_category = str(
+            message_metadata.get("turn_category")
+            or session_metadata.get("last_turn_category")
+            or ""
+        ).strip()
+        completion_evidence = message_metadata.get("completion_evidence")
+        if not isinstance(completion_evidence, dict):
+            completion_evidence = session_metadata.get("last_completion_evidence")
+        if not isinstance(completion_evidence, dict):
+            completion_evidence = {}
+        pending_interrupt_count = int(
+            message_metadata.get("pending_interrupt_count")
+            or session_metadata.get("pending_interrupt_count")
+            or 0
+        )
+        if not (continuity_source or route_profile or required_tool or turn_category or completion_evidence):
+            continue
+        snapshot = {
+            "session_key": latest_key,
+            "role": str(item.get("role") or "").strip().lower() or "assistant",
+            "timestamp": str(item.get("timestamp") or "").strip(),
+            "continuity_source": continuity_source or "none",
+            "turn_category": turn_category or "none",
+            "route_profile": route_profile,
+            "route_complex": bool(message_metadata.get("route_complex")),
+            "required_tool": required_tool,
+            "required_tool_query": str(message_metadata.get("required_tool_query") or "").strip(),
+            "pending_interrupt_count": pending_interrupt_count,
+            "completion_evidence": dict(completion_evidence) if completion_evidence else {},
+        }
+        return snapshot
+    return {}
+
+
 def _build_dashboard_cost_payload(
     session_manager: Any,
     *,
@@ -678,6 +756,7 @@ def _build_dashboard_status_payload(
 
     cron_status, cron_jobs_list = _build_dashboard_cron_snapshot(cron)
     channels_enabled = list(getattr(channels, "enabled_channels", []))
+    recent_turn = _build_dashboard_recent_turn_snapshot(session_manager)
     cost_payload = _build_dashboard_cost_payload(
         session_manager,
         runtime_models=[item for item in runtime_models if item],
@@ -701,6 +780,7 @@ def _build_dashboard_status_payload(
         "port": runtime_port,
         "tailscale_mode": tailscale_mode,
         "sessions": sessions,
+        "recent_turn": recent_turn,
         "nodes": _build_dashboard_nodes(channels),
         "config": _build_dashboard_config_summary(config),
         "system": {"pid": os.getpid(), "memory_mb": 0},

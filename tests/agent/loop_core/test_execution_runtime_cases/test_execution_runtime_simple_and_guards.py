@@ -18,6 +18,7 @@ from kabot.agent.loop_core.execution_runtime import (
     run_agent_loop,
     run_simple_response,
 )
+from kabot.agent.loop_core.execution_runtime_parts.helpers import _extract_single_result_path
 from kabot.bus.events import InboundMessage
 from kabot.providers.base import LLMResponse, ToolCallRequest
 
@@ -220,6 +221,578 @@ async def test_run_agent_loop_meta_feedback_with_live_marker_respects_suppressed
     assert result == "fallback-response"
     loop._execute_required_tool_fallback.assert_not_awaited()
 
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_action_request_skips_planning_when_tool_inference_is_suppressed():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: "read_file"
+    loop._plan_task = AsyncMock(return_value="should-not-plan")
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value="read-result")
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(True, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda _name: False)
+    loop.max_iterations = 2
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (LLMResponse(content="fallback-response"), None),
+            (LLMResponse(content="fallback-response"), None),
+        ]
+    )
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content},
+        ]
+    )
+
+    content = "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "continuity_source": "action_request",
+            "suppress_required_tool_inference": True,
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert "couldn't verify completion" in result.lower()
+    loop._plan_task.assert_not_awaited()
+    loop._execute_required_tool_fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_coding_request_skips_external_planner_and_rejects_text_only_completion_without_execution():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value="1. build page\n2. verify output")
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value="unused")
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(10, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda _name: False)
+    loop.max_iterations = 2
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content},
+        ]
+    )
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (LLMResponse(content="Saya akan kerjakan sekarang."), None),
+            (LLMResponse(content="Sudah jadi."), None),
+        ]
+    )
+
+    content = "YA"
+    effective_content = (
+        "YA\n\n[Committed Action Context]\n"
+        "buat website landing page KAIDUT tema dark style crypto lalu screenshot dan kirim ke chat ini\n\n"
+        "[Coding Build Note]\nTreat this as a coding task."
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": effective_content,
+            "route_profile": "CODING",
+            "runtime_locale": "id",
+            "continuity_source": "committed_coding_action",
+            "requires_message_delivery": True,
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert "couldn't verify completion" in result.lower()
+    loop._plan_task.assert_not_awaited()
+    second_messages = loop._call_llm_with_fallback.await_args_list[1].args[0]
+    assert "requires real execution with tools or approved skills" in second_messages[-1]["content"].lower()
+    assert not any("[SYSTEM PLAN]" in str(message.get("content", "")) for message in second_messages)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_action_request_retries_and_rejects_text_only_completion_without_tool_evidence():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value="unused")
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(10, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda _name: False)
+    loop.max_iterations = 2
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content},
+        ]
+    )
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (LLMResponse(content="smoke_action_request.txt"), None),
+            (LLMResponse(content="smoke_action_request.txt"), None),
+        ]
+    )
+
+    content = "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "continuity_source": "action_request",
+            "suppress_required_tool_inference": True,
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert "couldn't verify completion" in result.lower()
+    assert loop._call_llm_with_fallback.await_count == 2
+    second_messages = loop._call_llm_with_fallback.await_args_list[1].args[0]
+    assert "requires real execution with tools or approved skills" in second_messages[-1]["content"].lower()
+    loop._execute_required_tool_fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_action_request_retries_when_explicit_artifact_path_still_missing_after_tool_calls(tmp_path):
+    loop = _make_loop()
+    loop.workspace = tmp_path
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value="unused")
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(10, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda _name: False)
+    loop.max_iterations = 3
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, tool_calls=None, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})},
+        ]
+    )
+
+    async def _process_tool_calls(_msg, messages, _response, _session):
+        return [*messages, {"role": "tool", "content": "write failed"}]
+
+    loop._process_tool_calls = AsyncMock(side_effect=_process_tool_calls)
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (
+                LLMResponse(
+                    content="writing",
+                    tool_calls=[
+                        ToolCallRequest(
+                            id="call_write",
+                            name="write_file",
+                            arguments={
+                                "path": ".smoke_tmp/smoke_action_request.txt",
+                                "content": "HALO_KABOT",
+                            },
+                        )
+                    ],
+                ),
+                None,
+            ),
+            (LLMResponse(content="smoke_action_request.txt"), None),
+            (LLMResponse(content="smoke_action_request.txt"), None),
+        ]
+    )
+
+    content = "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "continuity_source": "action_request",
+            "suppress_required_tool_inference": True,
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert "target file still does not exist" in result.lower() or "requested artifact" in result.lower()
+    assert loop._call_llm_with_fallback.await_count == 3
+    third_messages = loop._call_llm_with_fallback.await_args_list[2].args[0]
+    assert "still does not exist" in third_messages[-1]["content"].lower()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_action_request_retries_and_rejects_delivery_without_message_evidence():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value="unused")
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(10, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda _name: False)
+    loop.max_iterations = 3
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, tool_calls=None, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})},
+        ]
+    )
+
+    async def _process_tool_calls(_msg, messages, _response, _session):
+        _msg.metadata["executed_tools"] = ["find_files"]
+        return [*messages, {"role": "tool", "content": "FILE report.pdf"}]
+
+    loop._process_tool_calls = AsyncMock(side_effect=_process_tool_calls)
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (
+                LLMResponse(
+                    content="searching",
+                    tool_calls=[ToolCallRequest(id="call_find", name="find_files", arguments={"query": "report.pdf"})],
+                ),
+                None,
+            ),
+            (LLMResponse(content="Sudah saya kirim."), None),
+            (LLMResponse(content="Sudah saya kirim."), None),
+        ]
+    )
+
+    content = "cari file report.pdf lalu kirim ke chat ini"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "continuity_source": "action_request",
+            "requires_message_delivery": True,
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert "couldn't verify delivery" in result.lower() or "won't claim the file was sent" in result.lower()
+    assert loop._call_llm_with_fallback.await_count == 3
+    third_messages = loop._call_llm_with_fallback.await_args_list[2].args[0]
+    assert "message" in third_messages[-1]["content"].lower()
+    assert "file" in third_messages[-1]["content"].lower()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_action_request_recovers_delivery_via_direct_message_fallback():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(10, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda _name: False)
+    loop.max_iterations = 3
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, tool_calls=None, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})},
+        ]
+    )
+
+    async def _process_tool_calls(_msg, messages, _response, _session):
+        _msg.metadata["executed_tools"] = ["find_files"]
+        _session.metadata["last_tool_context"] = {
+            "tool": "find_files",
+            "source": "report.pdf",
+            "path": r"C:\tmp\report.pdf",
+            "updated_at": 0.0,
+        }
+        return [*messages, {"role": "tool", "content": r"FILE C:\tmp\report.pdf"}]
+
+    loop._process_tool_calls = AsyncMock(side_effect=_process_tool_calls)
+
+    async def _fallback(tool_name, _msg):
+        if tool_name == "message":
+            return "Message sent to telegram:chat-1"
+        return "unused"
+
+    loop._execute_required_tool_fallback = AsyncMock(side_effect=_fallback)
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (
+                LLMResponse(
+                    content="searching",
+                    tool_calls=[ToolCallRequest(id="call_find", name="find_files", arguments={"query": "report.pdf"})],
+                ),
+                None,
+            ),
+            (LLMResponse(content="Sudah saya kirim."), None),
+        ]
+    )
+
+    content = "cari file report.pdf lalu kirim ke chat ini"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "continuity_source": "action_request",
+            "requires_message_delivery": True,
+        },
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=session,
+    )
+
+    assert result == "Message sent to telegram:chat-1"
+    assert msg.metadata.get("message_delivery_verified") is True
+    assert "message" in msg.metadata.get("executed_tools", [])
+    loop._execute_required_tool_fallback.assert_any_await("message", msg)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_coding_request_recovers_delivery_via_direct_message_fallback():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value="plan")
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(10, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda name: name == "message")
+    loop.max_iterations = 3
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, tool_calls=None, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})},
+        ]
+    )
+
+    async def _process_tool_calls(_msg, messages, _response, _session):
+        _msg.metadata["executed_tools"] = ["write_file"]
+        _session.metadata["last_tool_context"] = {
+            "tool": "write_file",
+            "source": "landing page",
+            "path": r"C:\tmp\kaidut-landing-ss.png",
+            "updated_at": 0.0,
+        }
+        return [*messages, {"role": "tool", "content": r"Screenshot saved: C:\tmp\kaidut-landing-ss.png"}]
+
+    loop._process_tool_calls = AsyncMock(side_effect=_process_tool_calls)
+
+    async def _fallback(tool_name, _msg):
+        if tool_name == "message":
+            return "Message sent to telegram:chat-1"
+        return "unused"
+
+    loop._execute_required_tool_fallback = AsyncMock(side_effect=_fallback)
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (
+                LLMResponse(
+                    content="building",
+                    tool_calls=[
+                        ToolCallRequest(
+                            id="call_write",
+                            name="write_file",
+                            arguments={"path": "kaidut-landing.html", "content": "<html></html>"},
+                        )
+                    ],
+                ),
+                None,
+            ),
+            (LLMResponse(content="Sudah saya kirim."), None),
+        ]
+    )
+
+    content = "YA"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": (
+                "YA\n\n[Committed Action Context]\n"
+                "buat website landing page KAIDUT tema dark style crypto lalu screenshot dan kirim ke chat ini"
+            ),
+            "route_profile": "CODING",
+            "runtime_locale": "id",
+            "continuity_source": "committed_coding_action",
+            "requires_message_delivery": True,
+        },
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=session,
+    )
+
+    assert result == "Message sent to telegram:chat-1"
+    assert msg.metadata.get("message_delivery_verified") is True
+    assert "message" in msg.metadata.get("executed_tools", [])
+    loop._execute_required_tool_fallback.assert_any_await("message", msg)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_action_request_recovers_delivery_from_generic_tool_path_context():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(10, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda name: name in {"message", "mcp__nanobanana__video"})
+    loop.max_iterations = 3
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, tool_calls=None, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})},
+        ]
+    )
+
+    async def _process_tool_calls(_msg, messages, _response, _session):
+        _msg.metadata["executed_tools"] = ["mcp__nanobanana__video"]
+        _session.metadata["last_tool_context"] = {
+            "tool": "mcp__nanobanana__video",
+            "source": "buat video promo",
+            "path": r"C:\tmp\promo.mp4",
+            "updated_at": 0.0,
+        }
+        return [*messages, {"role": "tool", "content": r"Video generated: C:\tmp\promo.mp4"}]
+
+    loop._process_tool_calls = AsyncMock(side_effect=_process_tool_calls)
+
+    async def _fallback(tool_name, _msg):
+        if tool_name == "message":
+            return "Message sent to telegram:chat-1"
+        return "unused"
+
+    loop._execute_required_tool_fallback = AsyncMock(side_effect=_fallback)
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (
+                LLMResponse(
+                    content="rendering",
+                    tool_calls=[
+                        ToolCallRequest(
+                            id="call_video",
+                            name="mcp__nanobanana__video",
+                            arguments={"prompt": "buat video promo"},
+                        )
+                    ],
+                ),
+                None,
+            ),
+            (LLMResponse(content="Sudah saya kirim."), None),
+        ]
+    )
+
+    content = "buat video promo lalu kirim ke chat ini"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "continuity_source": "action_request",
+            "requires_message_delivery": True,
+        },
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=session,
+    )
+
+    assert result == "Message sent to telegram:chat-1"
+    assert msg.metadata.get("message_delivery_verified") is True
+    assert "message" in msg.metadata.get("executed_tools", [])
+    loop._execute_required_tool_fallback.assert_any_await("message", msg)
+
 @pytest.mark.asyncio
 async def test_process_tool_calls_preserves_assistant_tool_calls_with_content(tmp_path):
     tool_executor = AsyncMock(return_value="scheduled")
@@ -270,6 +843,335 @@ async def test_process_tool_calls_preserves_assistant_tool_calls_with_content(tm
     assert assistant_entries[0].get("tool_calls")
     assert assistant_entries[0]["tool_calls"][0]["id"] == "call_abc"
     assert any(m.get("role") == "tool" and m.get("tool_call_id") == "call_abc" for m in updated)
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_marks_message_delivery_evidence(tmp_path):
+    tool_executor = AsyncMock(return_value="Message sent to telegram:8086")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content=r"kirim file C:\Users\Arvy Kairi\Desktop\report.pdf ke chat ini",
+        metadata={},
+    )
+    response = LLMResponse(
+        content="sending",
+        tool_calls=[
+            ToolCallRequest(
+                id="call_message",
+                name="message",
+                arguments={"content": "Ini file-nya.", "files": [r"C:\Users\Arvy Kairi\Desktop\report.pdf"]},
+            )
+        ],
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert msg.metadata.get("executed_tools") == ["message"]
+    assert msg.metadata.get("message_delivery_verified") is True
+    evidence = msg.metadata.get("completion_evidence")
+    assert evidence["executed_tools"] == ["message"]
+    assert evidence["artifact_paths"] == [r"C:\Users\Arvy Kairi\Desktop\report.pdf"]
+    assert evidence["artifact_verified"] is True
+    assert evidence["delivery_verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_captures_generic_tool_result_path_for_delivery_reuse(tmp_path):
+    tool_executor = AsyncMock(return_value=r"Video generated: C:\tmp\promo.mp4")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="buat video promo lalu kirim ke chat ini",
+        metadata={"requires_message_delivery": True},
+    )
+    response = LLMResponse(
+        content="rendering",
+        tool_calls=[
+            ToolCallRequest(
+                id="call_video",
+                name="mcp__nanobanana__video",
+                arguments={"prompt": "buat video promo"},
+            )
+        ],
+    )
+    session = SimpleNamespace(metadata={})
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=session,
+    )
+
+    last_tool_context = session.metadata.get("last_tool_context")
+    assert isinstance(last_tool_context, dict)
+    assert last_tool_context.get("path") == r"C:\tmp\promo.mp4"
+    assert msg.metadata.get("executed_tools") == ["mcp__nanobanana__video"]
+
+
+def test_extract_single_result_path_reads_relative_artifact_path_from_structured_result():
+    result = {
+        "artifacts": [
+            {"path": "outputs/promo.mp4", "mime_type": "video/mp4"},
+            {"path": "outputs/promo-alt.mp4", "mime_type": "video/mp4"},
+        ]
+    }
+
+    assert _extract_single_result_path("mcp__nanobanana__video", {}, result) == "outputs/promo.mp4"
+
+
+def test_extract_single_result_path_reads_artifact_path_from_exec_command_arguments():
+    command = (
+        "python -c \"from playwright.sync_api import sync_playwright; "
+        "page.screenshot(path='C:/tmp/kaidut-landing-ss.png', full_page=True)\""
+    )
+
+    assert (
+        _extract_single_result_path("exec", {"command": command}, "OK")
+        == "C:/tmp/kaidut-landing-ss.png"
+    )
+
+
+def test_extract_single_result_path_prefers_requested_directory_for_list_dir_results():
+    result = "📁 bot\n📄 note.txt"
+
+    assert (
+        _extract_single_result_path("list_dir", {"path": "/tmp/workspace/Desktop"}, result)
+        == "/tmp/workspace/Desktop"
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_captures_relative_structured_tool_result_path_for_delivery_reuse(tmp_path):
+    tool_executor = AsyncMock(
+        return_value={
+            "artifacts": [
+                {"path": "outputs/promo.mp4", "mime_type": "video/mp4"},
+                {"path": "outputs/promo-poster.jpg", "mime_type": "image/jpeg"},
+            ]
+        }
+    )
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="buat video promo lalu kirim ke chat ini",
+        metadata={"requires_message_delivery": True},
+    )
+    response = LLMResponse(
+        content="rendering",
+        tool_calls=[
+            ToolCallRequest(
+                id="call_video",
+                name="mcp__nanobanana__video",
+                arguments={"prompt": "buat video promo"},
+            )
+        ],
+    )
+    session = SimpleNamespace(metadata={})
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=session,
+    )
+
+    last_tool_context = session.metadata.get("last_tool_context")
+    assert isinstance(last_tool_context, dict)
+    assert last_tool_context.get("path") == "outputs/promo.mp4"
+    assert msg.metadata.get("executed_tools") == ["mcp__nanobanana__video"]
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_allows_find_files_for_find_then_send_workflow(tmp_path):
+    tool_executor = AsyncMock(return_value="FILE C:/tmp/report.pdf")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="cari file report.pdf lalu kirim ke chat ini",
+        metadata={"requires_message_delivery": True, "continuity_source": "action_request"},
+    )
+    response = LLMResponse(
+        content="searching",
+        tool_calls=[
+            ToolCallRequest(
+                id="call_find",
+                name="find_files",
+                arguments={"query": "report.pdf"},
+            )
+        ],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    tool_executor.assert_awaited_once()
+    assert any(
+        item.get("role") == "tool" and item.get("tool_call_id") == "call_find"
+        for item in updated
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_allows_message_for_find_then_send_workflow(tmp_path):
+    tool_executor = AsyncMock(return_value="Message sent to telegram:8086")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="cari file report.pdf lalu kirim ke chat ini",
+        metadata={"requires_message_delivery": True, "continuity_source": "action_request"},
+    )
+    response = LLMResponse(
+        content="sending",
+        tool_calls=[
+            ToolCallRequest(
+                id="call_message",
+                name="message",
+                arguments={"content": "Ini filenya.", "files": [r"C:\tmp\report.pdf"]},
+            )
+        ],
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    tool_executor.assert_awaited_once()
+    assert msg.metadata.get("executed_tools") == ["message"]
+    assert msg.metadata.get("message_delivery_verified") is True
 
 @pytest.mark.asyncio
 async def test_process_tool_calls_emits_tool_phase_status_metadata(tmp_path):
@@ -881,6 +1783,61 @@ async def test_process_tool_calls_keeps_valid_stock_execution(tmp_path):
     )
 
     tool_executor.assert_awaited_once_with("stock", {"symbol": "BBRI.JK"})
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_allows_read_file_for_coding_request_followup_without_explicit_payload(tmp_path):
+    tool_executor = AsyncMock(return_value="<html>KAIDUT</html>")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="YA",
+        metadata={
+            "effective_content": (
+                "YA\n\n[Committed Action Context]\n"
+                "buat website landing page KAIDUT tema dark style crypto lalu screenshot dan kirim ke chat ini"
+            ),
+            "route_profile": "CODING",
+            "continuity_source": "committed_coding_action",
+            "requires_message_delivery": True,
+        },
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_read", name="read_file", arguments={"path": "landing/index.html"})],
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    tool_executor.assert_awaited_once_with("read_file", {"path": "landing/index.html"})
 
 @pytest.mark.asyncio
 async def test_process_tool_calls_blocks_weather_for_non_weather_greeting(tmp_path):

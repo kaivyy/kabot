@@ -35,7 +35,12 @@ class MessageTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Send an EXTRA message or file to a specific channel. DO NOT use this for normal conversation replies - just respond with text for that. Use this ONLY when you need to send files or reach a user on a DIFFERENT channel than the current one."
+        return (
+            "Send an EXTRA message or local file attachment to a user. "
+            "DO NOT use this for normal conversation replies. "
+            "Use it when the user explicitly wants a file or follow-up message sent, "
+            "including back to the current chat/channel via the existing session context."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -81,11 +86,20 @@ class MessageTool(Tool):
         if not self._send_callback:
             return i18n_t("message.not_configured", context_text)
 
+        metadata = kwargs.get("metadata")
+        outbound_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        phase = str(kwargs.get("phase") or "").strip()
+        if phase and "phase" not in outbound_metadata:
+            outbound_metadata["phase"] = phase
+            outbound_metadata.setdefault("type", "status_update")
+            outbound_metadata.setdefault("lane", "status")
+
         msg = OutboundMessage(
             channel=channel,
             chat_id=chat_id,
             content=content,
-            media=files or []
+            media=files or [],
+            metadata=outbound_metadata,
         )
 
         try:

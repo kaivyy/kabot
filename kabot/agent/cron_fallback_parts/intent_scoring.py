@@ -36,6 +36,9 @@ from kabot.agent.cron_fallback_parts.constants import (
     _PATHLIKE_QUERY_RE,
     _PERSONAL_CHAT_MARKERS,
     _PRODUCTIVITY_DOC_MARKERS,
+    _PRODUCTIVITY_OUTPUT_ACTION_MARKERS,
+    _PRODUCTIVITY_PLAN_SUBJECT_MARKERS,
+    _PRODUCTIVITY_SCHEDULE_DOC_MARKERS,
     _RAM_CAPACITY_MARKERS,
     _RAM_USAGE_MARKERS,
     _READ_FILE_ACTION_MARKERS,
@@ -101,6 +104,87 @@ class ToolIntentScore:
 
 def _normalize_query(value: str) -> str:
     return " ".join(str(value or "").strip().lower().split())
+
+
+def _looks_like_verbose_non_query_blob(value: str) -> bool:
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    normalized = _normalize_query(raw)
+    if len(normalized) < 80:
+        return False
+    tokens = [part for part in normalized.split(" ") if part]
+    if len(tokens) < 14:
+        return False
+    sentence_like = raw.count(".") + raw.count("!") + raw.count("?") >= 2
+    structured = any(marker in raw for marker in ("\n", "•", "|"))
+    return sentence_like or structured
+
+
+_PRIMARY_INTENT_TAIL_MARKERS = (
+    "dari sini",
+    "dari jawaban ini",
+    "berdasarkan ini",
+    "from this",
+    "based on this",
+    "from here",
+    "using this",
+)
+_PRIMARY_INTENT_ACTION_RE = re.compile(
+    r"(?i)\b("
+    r"hitung|calculate|calc|jelaskan|explain|ringkas|summarize|buat|bikin|lanjut|"
+    r"tolong|please|berapa|apa|kenapa|bagaimana|gimana|bisa|bisakah|"
+    r"hr|heart rate|detak jantung|zona|zone|karvonen"
+    r")\b"
+)
+_MEMORY_COMMIT_INTENT_RE = re.compile(
+    r"(?i)\b("
+    r"simpan|save(?: it| this| that)?|ingat(?:kan)?|remember(?: it| this| that)?|"
+    r"catat(?:kan)?|note(?: it| this| that)?|save to memory|simpan ke memory|"
+    r"commit ke memory|masukkan ke memory"
+    r")\b"
+)
+_PERSONAL_HR_CALC_RE = re.compile(
+    r"(?i)\b("
+    r"zona hr|hr zona|hr zone|heart rate zone|detak jantung|"
+    r"karvonen|resting hr|max hr|hr max"
+    r")\b"
+)
+
+
+def _extract_primary_intent_text(text: str) -> str:
+    raw = str(text or "").strip()
+    if len(raw) < 140:
+        return raw
+
+    lines = [line.strip(" \t>") for line in raw.splitlines() if line.strip()]
+    if len(lines) < 3:
+        return raw
+
+    candidates: list[str] = []
+    if lines:
+        candidates.append(lines[-1])
+    if len(lines) >= 2:
+        candidates.append(" ".join(lines[-2:]).strip())
+
+    for candidate in candidates:
+        normalized = _normalize_query(candidate)
+        if not normalized or len(normalized) > 220:
+            continue
+        if "?" in candidate or _PRIMARY_INTENT_ACTION_RE.search(candidate):
+            return candidate.strip()
+        if any(marker in normalized for marker in _PRIMARY_INTENT_TAIL_MARKERS):
+            return candidate.strip()
+    return raw
+
+
+def _looks_like_personal_hr_or_memory_request(text: str) -> bool:
+    normalized = _normalize_query(text)
+    if not normalized:
+        return False
+    if _PERSONAL_HR_CALC_RE.search(normalized):
+        return True
+    return bool(_MEMORY_COMMIT_INTENT_RE.search(normalized) and re.search(r"\b(19|20)\d{2}\b", normalized))
 
 
 def _tokenize_latin_words(text: str) -> list[str]:
@@ -318,7 +402,7 @@ def score_required_tool_intents(
 
     This keeps deterministic fallback robust while reducing rigid keyword-only behavior.
     """
-    text = str(question or "").strip()
+    text = _extract_primary_intent_text(question)
     q_lower = _normalize_query(text)
     if not q_lower:
         return []
@@ -389,13 +473,28 @@ def score_required_tool_intents(
         add("system_update", 0.08, "apply-update-verb")
 
     # 2) Cron/reminder intent (management + creation).
+    has_productivity_doc_marker = _contains_any(q_lower, _PRODUCTIVITY_DOC_MARKERS, fuzzy_latin=True)
+    has_productivity_output_action = _contains_any(
+        q_lower, _PRODUCTIVITY_OUTPUT_ACTION_MARKERS, fuzzy_latin=True
+    )
+    has_schedule_doc_marker = _contains_any(
+        q_lower, _PRODUCTIVITY_SCHEDULE_DOC_MARKERS, fuzzy_latin=True
+    )
+    has_plan_subject_marker = _contains_any(
+        q_lower, _PRODUCTIVITY_PLAN_SUBJECT_MARKERS, fuzzy_latin=True
+    )
+    looks_like_schedule_document_request = (
+        has_schedule_doc_marker
+        and has_productivity_output_action
+        and (has_productivity_doc_marker or has_plan_subject_marker)
+    )
     if _contains_any(q_lower, CRON_MANAGEMENT_OPS, fuzzy_latin=True) and _contains_any(
         q_lower, CRON_MANAGEMENT_TERMS, fuzzy_latin=True
     ):
         add("cron", 0.96, "cron-management")
-    if _contains_any(q_lower, REMINDER_KEYWORDS, fuzzy_latin=True):
+    if _contains_any(q_lower, REMINDER_KEYWORDS, fuzzy_latin=True) and not looks_like_schedule_document_request:
         add("cron", 0.72, "reminder-lexicon")
-    if _REMINDER_TIME_RE.search(q_lower) and _contains_any(
+    if _REMINDER_TIME_RE.search(q_lower) and not looks_like_schedule_document_request and _contains_any(
         q_lower, ("ingat", "remind", "alarm", "timer", "schedule", "jadwal")
     ):
         add("cron", 0.22, "time-plus-reminder-structure")
@@ -419,7 +518,7 @@ def score_required_tool_intents(
                 _contains_any(q_lower, APPLY_UPDATE_KEYWORDS, fuzzy_latin=True),
             )
         )
-        if not looks_like_question and not has_other_domain_marker:
+        if not looks_like_question and not has_other_domain_marker and not looks_like_schedule_document_request:
             add("cron", 0.58, "time-action-structure")
 
     # 3) Weather.
@@ -514,7 +613,7 @@ def score_required_tool_intents(
         add("read_file", 0.93, "read-file-action-plus-path")
     elif has_read_file_action and has_read_file_subject:
         add("read_file", 0.74, "read-file-action-plus-subject")
-    elif has_file_payload and has_read_file_subject:
+    elif has_file_payload and has_read_file_subject and not _looks_like_verbose_non_query_blob(text):
         add("read_file", 0.58, "read-file-subject-plus-path")
 
     # 5) Stock/crypto with structural entity detection.
@@ -522,7 +621,6 @@ def score_required_tool_intents(
         q_lower, _GEO_NEWS_STRONG_TOPIC_MARKERS, fuzzy_latin=True
     )
     has_email_workflow_marker = _contains_any(q_lower, _EMAIL_WORKFLOW_MARKERS, fuzzy_latin=True)
-    has_productivity_doc_marker = _contains_any(q_lower, _PRODUCTIVITY_DOC_MARKERS, fuzzy_latin=True)
     stock_symbols = _extract_stock_symbol_candidates(text)
     crypto_symbol_set = {str(token).lower() for token in _CRYPTO_SYMBOL_MARKERS}
     stock_symbols_non_crypto = [
@@ -663,7 +761,12 @@ def score_required_tool_intents(
             add("web_search", 0.45, "news-soft")
     if has_geo_news_strong_marker and (has_live_marker or has_research_verb or ("?" in text)):
         add("web_search", 0.7, "geo-news-topic")
-    if has_live_marker and (has_research_verb or has_year) and not has_local_ops_marker:
+    if (
+        has_live_marker
+        and (has_research_verb or has_year)
+        and not has_local_ops_marker
+        and not _looks_like_personal_hr_or_memory_request(text)
+    ):
         add("web_search", 0.62, "live-query-structure")
     if has_year and _contains_any(q_lower, _GEO_NEWS_TOPIC_MARKERS):
         add("web_search", 0.2, "dated-geo-topic")

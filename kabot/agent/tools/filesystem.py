@@ -1,5 +1,8 @@
-"""File system tools: read, write, edit."""
+"""File system tools: read, write, edit, and search."""
 
+import fnmatch
+import os
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +16,28 @@ def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
     if allowed_dir and not str(resolved).startswith(str(allowed_dir.resolve())):
         raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
     return resolved
+
+
+def _resolve_search_root(path: str | None, allowed_dir: Path | None = None) -> Path:
+    if path:
+        return _resolve_path(path, allowed_dir)
+    if allowed_dir:
+        return allowed_dir.expanduser().resolve()
+    return Path.home().expanduser().resolve()
+
+
+def _matches_find_query(name: str, query: str) -> bool:
+    candidate = str(name or "").strip().lower()
+    needle = str(query or "").strip().lower()
+    if not candidate or not needle:
+        return False
+    if any(token in needle for token in ("*", "?", "[")):
+        return fnmatch.fnmatch(candidate, needle)
+    return needle in candidate
+
+
+def _default_archive_path(source_path: Path) -> Path:
+    return source_path.parent / f"{source_path.name}.zip"
 
 
 class ReadFileTool(Tool):
@@ -95,6 +120,73 @@ class WriteFileTool(Tool):
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {path}"
+        except PermissionError as e:
+            return i18n_t("filesystem.permission_denied", path, error=str(e))
+        except Exception as e:
+            return i18n_t("filesystem.write_error", path, error=str(e))
+
+
+class ArchivePathTool(Tool):
+    """Tool to archive a file or directory into a zip file."""
+
+    def __init__(self, allowed_dir: Path | None = None):
+        self._allowed_dir = allowed_dir
+
+    @property
+    def name(self) -> str:
+        return "archive_path"
+
+    @property
+    def description(self) -> str:
+        return "Archive a local file or folder into a .zip file and return the created archive path."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The file or directory path to archive"
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Optional output .zip path. Defaults to <path>.zip next to the source."
+                },
+            },
+            "required": ["path"]
+        }
+
+    async def execute(self, path: str, archive_path: str | None = None, **kwargs: Any) -> str:
+        try:
+            source_path = _resolve_path(path, self._allowed_dir)
+            if not source_path.exists():
+                return i18n_t("filesystem.file_not_found", path, path=path)
+
+            target_path = (
+                _resolve_path(archive_path, self._allowed_dir)
+                if archive_path
+                else _default_archive_path(source_path)
+            )
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with zipfile.ZipFile(target_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                if source_path.is_file():
+                    archive.write(source_path, arcname=source_path.name)
+                else:
+                    entries = sorted(source_path.rglob("*"))
+                    if not entries:
+                        archive.writestr(f"{source_path.name}/", "")
+                    for item in entries:
+                        relative = item.relative_to(source_path)
+                        arcname = str(Path(source_path.name) / relative).replace("\\", "/")
+                        if item.is_dir():
+                            if not any(item.iterdir()):
+                                archive.writestr(f"{arcname}/", "")
+                            continue
+                        archive.write(item, arcname=arcname)
+
+            return f"Created archive {target_path} from {source_path}"
         except PermissionError as e:
             return i18n_t("filesystem.permission_denied", path, error=str(e))
         except Exception as e:
@@ -228,3 +320,103 @@ class ListDirTool(Tool):
             return i18n_t("filesystem.permission_denied", path, error=str(e))
         except Exception as e:
             return i18n_t("filesystem.list_error", path, error=str(e))
+
+
+class FindFilesTool(Tool):
+    """Tool to search files and folders by name."""
+
+    def __init__(self, allowed_dir: Path | None = None):
+        self._allowed_dir = allowed_dir
+
+    @property
+    def name(self) -> str:
+        return "find_files"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Search for files or folders by name, partial name, or glob pattern. "
+            "Use this when the user asks you to find a file/folder before reading or sending it."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The file or folder name to search for. Supports partial matches and glob patterns like *.pdf.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Optional root directory to search from. Defaults to the allowed directory or the user's home directory.",
+                },
+                "kind": {
+                    "type": "string",
+                    "description": "Optional result type filter: any, file, or dir.",
+                    "enum": ["any", "file", "dir"],
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional maximum number of matches to return.",
+                },
+            },
+            "required": ["query"],
+        }
+
+    async def execute(
+        self,
+        query: str,
+        path: str | None = None,
+        kind: str = "any",
+        limit: int | None = None,
+        **kwargs: Any,
+    ) -> str:
+        search_query = str(query or "").strip()
+        if not search_query:
+            return i18n_t("filesystem.need_query", str(kwargs.get("context_text") or query or ""))
+
+        try:
+            root = _resolve_search_root(path, self._allowed_dir)
+            if not root.exists():
+                return i18n_t("filesystem.directory_not_found", str(path or root), path=str(path or root))
+            if not root.is_dir():
+                return i18n_t("filesystem.not_directory", str(path or root), path=str(path or root))
+
+            result_kind = str(kind or "any").strip().lower()
+            if result_kind not in {"any", "file", "dir"}:
+                result_kind = "any"
+
+            try:
+                max_results = int(limit) if limit is not None else 10
+            except Exception:
+                max_results = 10
+            if max_results <= 0:
+                max_results = 10
+
+            matches: list[str] = []
+            for current_root, dir_names, file_names in os.walk(root):
+                current_path = Path(current_root)
+                if result_kind in {"any", "dir"}:
+                    for dir_name in sorted(dir_names):
+                        if not _matches_find_query(dir_name, search_query):
+                            continue
+                        matches.append(f"DIR {(current_path / dir_name).resolve()}")
+                        if len(matches) >= max_results:
+                            return "\n".join(matches)
+                if result_kind in {"any", "file"}:
+                    for file_name in sorted(file_names):
+                        if not _matches_find_query(file_name, search_query):
+                            continue
+                        matches.append(f"FILE {(current_path / file_name).resolve()}")
+                        if len(matches) >= max_results:
+                            return "\n".join(matches)
+
+            if not matches:
+                return i18n_t("filesystem.no_matches", search_query, query=search_query)
+            return "\n".join(matches)
+        except PermissionError as e:
+            return i18n_t("filesystem.permission_denied", search_query, error=str(e))
+        except Exception as e:
+            return i18n_t("filesystem.search_error", search_query, error=str(e))

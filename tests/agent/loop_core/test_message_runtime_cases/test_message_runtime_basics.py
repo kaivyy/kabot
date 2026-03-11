@@ -1,4 +1,4 @@
-"""Split from tests/agent/loop_core/test_message_runtime.py to keep test modules below 1000 lines.
+﻿"""Split from tests/agent/loop_core/test_message_runtime.py to keep test modules below 1000 lines.
 Chunk 1: test_is_abort_request_text_detects_standalone_multilingual_stop_variants .. test_process_message_short_followup_does_not_infer_tool_from_assistant_history_text.
 """
 
@@ -54,8 +54,8 @@ def test_resolve_runtime_locale_persists_detected_non_english_locale():
     assert session.metadata.get("runtime_locale") == "id"
 
 def test_short_context_followup_does_not_misclassify_substantive_cjk_query():
-    assert message_runtime_module._is_short_context_followup("天气北京现在怎么样") is False
-    assert message_runtime_module._is_short_context_followup("是") is True
+    assert message_runtime_module._is_short_context_followup("\u5929\u6c14\u5317\u4eac\u73b0\u5728\u600e\u4e48\u6837") is False
+    assert message_runtime_module._is_short_context_followup("\u662f") is True
 
 def test_followup_helpers_detect_acknowledgement_without_hardcoded_wordlist():
     assert message_runtime_module._is_low_information_turn("oke makasih ya", max_tokens=6, max_chars=64)
@@ -82,6 +82,15 @@ def test_extract_assistant_followup_offer_text_supports_multilingual_offer_phras
     ) is None
 
 
+def test_extract_explicit_mcp_tool_name_maps_alias_to_api_safe_name():
+    assert (
+        message_runtime_module._extract_explicit_mcp_tool_name(
+            "Gunakan tool mcp.local_echo.echo dengan argumen text='halo'."
+        )
+        == "mcp__local_echo__echo"
+    )
+
+
 def test_extract_assistant_followup_offer_text_supports_polite_indonesian_offer_phrase():
     assert (
         message_runtime_module._extract_assistant_followup_offer_text(
@@ -91,6 +100,22 @@ def test_extract_assistant_followup_offer_text_supports_polite_indonesian_offer_
         )
         == "Jika Anda ingin, saya juga bisa menyesuaikan tingkat formalitasnya "
         "(misalnya: sangat resmi, profesional, atau semi-formal)."
+    )
+
+
+def test_extract_assistant_followup_offer_text_supports_action_oriented_offer_phrase():
+    text = "Kalau kamu mau, aku lanjut cek harga IHSG real-time sekarang pakai simbol ^JKSE."
+    assert message_runtime_module._extract_assistant_followup_offer_text(text) == text
+
+
+def test_extract_assistant_followup_offer_text_supports_committed_action_promise():
+    text = (
+        "Bisa banget. Aku akan buat file Excel jadwal lari 8 minggu kamu di workspace, "
+        "lalu langsung kirim filenya ke chat ini."
+    )
+    assert (
+        message_runtime_module._extract_assistant_followup_offer_text(text)
+        == "Aku akan buat file Excel jadwal lari 8 minggu kamu di workspace, lalu langsung kirim filenya ke chat ini."
     )
 
 
@@ -175,21 +200,21 @@ def test_extract_assistant_followup_offer_text_preserves_multiline_chinese_choic
 def test_extract_user_supplied_option_prompt_text_detects_multilingual_inline_choices():
     assert (
         message_runtime_module._extract_user_supplied_option_prompt_text(
-            "如果你愿意，我可以给你三个版本：1）正式标准 2）非常正式 3）正式但友好。选一个。"
+            "\u5982\u679c\u4f60\u613f\u610f\uff0c\u6211\u53ef\u4ee5\u7ed9\u4f60\u4e09\u4e2a\u7248\u672c\uff1a1\uff09\u6b63\u5f0f\u6807\u51c6 2\uff09\u975e\u5e38\u6b63\u5f0f 3\uff09\u6b63\u5f0f\u4f46\u53cb\u597d\u3002\u9009\u4e00\u4e2a\u3002"
         )
-        == "如果你愿意，我可以给你三个版本：1）正式标准 2）非常正式 3）正式但友好。选一个。"
+        == "\u5982\u679c\u4f60\u613f\u610f\uff0c\u6211\u53ef\u4ee5\u7ed9\u4f60\u4e09\u4e2a\u7248\u672c\uff1a1\uff09\u6b63\u5f0f\u6807\u51c6 2\uff09\u975e\u5e38\u6b63\u5f0f 3\uff09\u6b63\u5f0f\u4f46\u53cb\u597d\u3002\u9009\u4e00\u4e2a\u3002"
     )
     assert (
         message_runtime_module._extract_user_supplied_option_prompt_text(
-            "必要なら3つの文体を出せます。1) 標準的に丁寧 2) とても丁寧 3) 丁寧だけどやわらかい。1つ選んでください。"
+            "\u5fc5\u8981\u306a\u30893\u3064\u306e\u6587\u4f53\u3092\u51fa\u305b\u307e\u3059\u30021) \u6a19\u6e96\u7684\u306b\u4e01\u5be7 2) \u3068\u3066\u3082\u4e01\u5be7 3) \u4e01\u5be7\u3060\u3051\u3069\u3084\u308f\u3089\u304b\u3044\u30021\u3064\u9078\u3093\u3067\u304f\u3060\u3055\u3044\u3002"
         )
-        == "必要なら3つの文体を出せます。1) 標準的に丁寧 2) とても丁寧 3) 丁寧だけどやわらかい。1つ選んでください。"
+        == "\u5fc5\u8981\u306a\u30893\u3064\u306e\u6587\u4f53\u3092\u51fa\u305b\u307e\u3059\u30021) \u6a19\u6e96\u7684\u306b\u4e01\u5be7 2) \u3068\u3066\u3082\u4e01\u5be7 3) \u4e01\u5be7\u3060\u3051\u3069\u3084\u308f\u3089\u304b\u3044\u30021\u3064\u9078\u3093\u3067\u304f\u3060\u3055\u3044\u3002"
     )
     assert (
         message_runtime_module._extract_user_supplied_option_prompt_text(
-            "ถ้าคุณต้องการ ผมทำได้ 3 แบบ: 1) ทางการมาตรฐาน 2) ทางการมาก 3) ทางการแต่เป็นมิตร เลือกหนึ่งแบบ"
+            "\u0e16\u0e49\u0e32\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23 \u0e1c\u0e21\u0e17\u0e33\u0e44\u0e14\u0e49 3 \u0e41\u0e1a\u0e1a: 1) \u0e17\u0e32\u0e07\u0e01\u0e32\u0e23\u0e21\u0e32\u0e15\u0e23\u0e10\u0e32\u0e19 2) \u0e17\u0e32\u0e07\u0e01\u0e32\u0e23\u0e21\u0e32\u0e01 3) \u0e17\u0e32\u0e07\u0e01\u0e32\u0e23\u0e41\u0e15\u0e48\u0e40\u0e1b\u0e47\u0e19\u0e21\u0e34\u0e15\u0e23 \u0e40\u0e25\u0e37\u0e2d\u0e01\u0e2b\u0e19\u0e36\u0e48\u0e07\u0e41\u0e1a\u0e1a"
         )
-        == "ถ้าคุณต้องการ ผมทำได้ 3 แบบ: 1) ทางการมาตรฐาน 2) ทางการมาก 3) ทางการแต่เป็นมิตร เลือกหนึ่งแบบ"
+        == "\u0e16\u0e49\u0e32\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23 \u0e1c\u0e21\u0e17\u0e33\u0e44\u0e14\u0e49 3 \u0e41\u0e1a\u0e1a: 1) \u0e17\u0e32\u0e07\u0e01\u0e32\u0e23\u0e21\u0e32\u0e15\u0e23\u0e10\u0e32\u0e19 2) \u0e17\u0e32\u0e07\u0e01\u0e32\u0e23\u0e21\u0e32\u0e01 3) \u0e17\u0e32\u0e07\u0e01\u0e32\u0e23\u0e41\u0e15\u0e48\u0e40\u0e1b\u0e47\u0e19\u0e21\u0e34\u0e15\u0e23 \u0e40\u0e25\u0e37\u0e2d\u0e01\u0e2b\u0e19\u0e36\u0e48\u0e07\u0e41\u0e1a\u0e1a"
     )
 
 
@@ -222,19 +247,37 @@ def test_extract_option_selection_reference_supports_numeric_and_ordinal_followu
     assert message_runtime_module._extract_option_selection_reference("nomor 3") == "3"
     assert message_runtime_module._extract_option_selection_reference("yang ketiga gimana") == "3"
     assert message_runtime_module._extract_option_selection_reference("the second one") == "2"
-    assert message_runtime_module._extract_option_selection_reference("第二个") == "2"
-    assert message_runtime_module._extract_option_selection_reference("2番") == "2"
-    assert message_runtime_module._extract_option_selection_reference("ข้อ 2") == "2"
+    assert (
+        message_runtime_module._extract_option_selection_reference(
+            "\u7b2c\u4e8c\u4e2a\u662f\u4ec0\u4e48\uff1f\u7b80\u77ed\u56de\u7b54\u3002"
+        )
+        == "2"
+    )
+    assert message_runtime_module._extract_option_selection_reference("\u7b2c\u4e8c\u4e2a") == "2"
+    assert message_runtime_module._extract_option_selection_reference("2\u756a") == "2"
+    assert message_runtime_module._extract_option_selection_reference("\u0e02\u0e49\u0e2d 2") == "2"
     assert message_runtime_module._extract_option_selection_reference("yang formal gimana") is None
+    assert (
+        message_runtime_module._extract_option_selection_reference(
+            "\u0e02\u0e49\u0e2d\u0e17\u0e35\u0e48\u0e2a\u0e2d\u0e07\u0e04\u0e37\u0e2d\u0e2d\u0e30\u0e44\u0e23 \u0e15\u0e2d\u0e1a\u0e2a\u0e31\u0e49\u0e19\u0e46"
+        )
+        == "2"
+    )
 
 
 def test_contextual_followup_request_supports_option_ordinal_references():
     assert message_runtime_module._looks_like_contextual_followup_request("yang ketiga gimana")
     assert message_runtime_module._looks_like_contextual_followup_request("nomor 3")
     assert message_runtime_module._looks_like_contextual_followup_request("the second one")
-    assert message_runtime_module._looks_like_contextual_followup_request("第二个")
-    assert message_runtime_module._looks_like_contextual_followup_request("2番")
-    assert message_runtime_module._looks_like_contextual_followup_request("ข้อ 2")
+    assert message_runtime_module._looks_like_contextual_followup_request(
+        "\u7b2c\u4e8c\u4e2a\u662f\u4ec0\u4e48\uff1f\u7b80\u77ed\u56de\u7b54\u3002"
+    )
+    assert message_runtime_module._looks_like_contextual_followup_request("\u7b2c\u4e8c\u4e2a")
+    assert message_runtime_module._looks_like_contextual_followup_request("2\u756a")
+    assert message_runtime_module._looks_like_contextual_followup_request("\u0e02\u0e49\u0e2d 2")
+    assert message_runtime_module._looks_like_contextual_followup_request(
+        "\u0e02\u0e49\u0e2d\u0e17\u0e35\u0e48\u0e2a\u0e2d\u0e07\u0e04\u0e37\u0e2d\u0e2d\u0e30\u0e44\u0e23 \u0e15\u0e2d\u0e1a\u0e2a\u0e31\u0e49\u0e19\u0e46"
+    )
 
 
 def test_answer_reference_followup_detects_referential_clarification_requests():
@@ -243,24 +286,31 @@ def test_answer_reference_followup_detects_referential_clarification_requests():
     assert message_runtime_module._looks_like_answer_reference_followup("coba ulang versi singkat")
     assert message_runtime_module._looks_like_answer_reference_followup("ulang dari awal")
     assert message_runtime_module._looks_like_answer_reference_followup("maksudnya apa itu")
-    assert message_runtime_module._looks_like_answer_reference_followup("再简短一点")
-    assert message_runtime_module._looks_like_answer_reference_followup("这是什么意思")
-    assert message_runtime_module._looks_like_answer_reference_followup("もっと短く")
-    assert message_runtime_module._looks_like_answer_reference_followup("それどういう意味")
-    assert message_runtime_module._looks_like_answer_reference_followup("สั้นกว่านี้")
-    assert message_runtime_module._looks_like_answer_reference_followup("หมายความว่าไง")
+    assert message_runtime_module._looks_like_answer_reference_followup(
+        "\u7b2c\u4e8c\u4e2a\u662f\u4ec0\u4e48\uff1f\u7b80\u77ed\u56de\u7b54\u3002"
+    )
+    assert message_runtime_module._looks_like_answer_reference_followup("\u518d\u7b80\u77ed\u4e00\u70b9")
+    assert message_runtime_module._looks_like_answer_reference_followup("\u8fd9\u662f\u4ec0\u4e48\u610f\u601d")
+    assert message_runtime_module._looks_like_answer_reference_followup("\u3082\u3063\u3068\u77ed\u304f")
+    assert message_runtime_module._looks_like_answer_reference_followup("\u305d\u308c\u3069\u3046\u3044\u3046\u610f\u5473")
+    assert message_runtime_module._looks_like_answer_reference_followup("\u0e2a\u0e31\u0e49\u0e19\u0e01\u0e27\u0e48\u0e32\u0e19\u0e35\u0e49")
+    assert message_runtime_module._looks_like_answer_reference_followup("\u0e2b\u0e21\u0e32\u0e22\u0e04\u0e27\u0e32\u0e21\u0e27\u0e48\u0e32\u0e44\u0e07")
+    assert message_runtime_module._looks_like_answer_reference_followup(
+        "\u0e02\u0e49\u0e2d\u0e17\u0e35\u0e48\u0e2a\u0e2d\u0e07\u0e04\u0e37\u0e2d\u0e2d\u0e30\u0e44\u0e23 \u0e15\u0e2d\u0e1a\u0e2a\u0e31\u0e49\u0e19\u0e46"
+    )
     assert message_runtime_module._looks_like_answer_reference_followup("lanjut yang tadi") is False
 
 
 def test_non_action_meta_feedback_detects_short_hostile_feedback():
     assert message_runtime_module._looks_like_non_action_meta_feedback("tolol")
     assert message_runtime_module._looks_like_non_action_meta_feedback("goblok jawab apa loh")
+    assert message_runtime_module._looks_like_non_action_meta_feedback("cek lagi dong") is False
 
 def test_filesystem_location_query_helper_supports_multilingual_phrases():
     assert message_runtime_module._looks_like_filesystem_location_query("lokasimu sekarang dimana")
-    assert message_runtime_module._looks_like_filesystem_location_query("你现在在哪个文件夹")
-    assert message_runtime_module._looks_like_filesystem_location_query("今どのフォルダにいる")
-    assert message_runtime_module._looks_like_filesystem_location_query("ตอนนี้คุณอยู่โฟลเดอร์ไหน")
+    assert message_runtime_module._looks_like_filesystem_location_query("\u4f60\u73b0\u5728\u5728\u54ea\u4e2a\u6587\u4ef6\u5939")
+    assert message_runtime_module._looks_like_filesystem_location_query("\u4eca\u3069\u306e\u30d5\u30a9\u30eb\u30c0\u306b\u3044\u308b")
+    assert message_runtime_module._looks_like_filesystem_location_query("\u0e15\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e04\u0e38\u0e13\u0e2d\u0e22\u0e39\u0e48\u0e42\u0e1f\u0e25\u0e40\u0e14\u0e2d\u0e23\u0e4c\u0e44\u0e2b\u0e19")
     assert message_runtime_module._looks_like_filesystem_location_query("where are you now")
     assert message_runtime_module._looks_like_filesystem_location_query("tolong tampilkan isi folder desktop") is False
 
@@ -579,6 +629,7 @@ async def test_process_message_temporal_query_uses_local_fast_reply(monkeypatch)
     routed_context.build_messages.assert_not_called()
     loop._run_simple_response.assert_not_awaited()
     loop._run_agent_loop.assert_not_awaited()
+    assert msg.metadata.get("turn_category") == "chat"
 
 
 @pytest.mark.asyncio
@@ -1151,3 +1202,4 @@ def test_temporal_context_query_helper_supports_multilingual_phrases():
     assert message_runtime_module._looks_like_temporal_context_query("\u4eca\u5929\u662f\u4ec0\u4e48\u661f\u671f")
     assert message_runtime_module._looks_like_temporal_context_query("\u4eca\u65e5\u306f\u4f55\u66dc\u65e5\uff1f")
     assert message_runtime_module._looks_like_temporal_context_query("\u0e15\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e27\u0e31\u0e19\u0e2d\u0e30\u0e44\u0e23")
+

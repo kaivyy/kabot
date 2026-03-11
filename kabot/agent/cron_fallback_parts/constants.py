@@ -607,6 +607,42 @@ _PRODUCTIVITY_DOC_MARKERS = (
     "csv",
     "workbook",
 )
+_PRODUCTIVITY_OUTPUT_ACTION_MARKERS = (
+    "buat",
+    "buatkan",
+    "bikin",
+    "bikinkan",
+    "create",
+    "make",
+    "generate",
+    "susun",
+    "siapkan",
+    "tuliskan",
+)
+_PRODUCTIVITY_SCHEDULE_DOC_MARKERS = (
+    "jadwal",
+    "schedule",
+    "calendar",
+    "kalender",
+    "plan",
+    "rencana",
+    "program",
+)
+_PRODUCTIVITY_PLAN_SUBJECT_MARKERS = (
+    "lari",
+    "run",
+    "running",
+    "latihan",
+    "workout",
+    "belajar",
+    "study",
+    "konten",
+    "content",
+    "meal",
+    "diet",
+    "minggu",
+    "week",
+)
 _READ_FILE_ACTION_MARKERS = (
     "read file",
     "baca file",
@@ -709,7 +745,7 @@ _FILELIKE_QUERY_RE = re.compile(
     re.IGNORECASE,
 )
 _PATHLIKE_QUERY_RE = re.compile(
-    r"([a-zA-Z]:[\\/][^\n\r\"']+|\\\\[^\n\r\"']+|(?<![\w])/[^\"'\s]+|(?<![\w])~[\\/][^\s\"']+|[\w.\-]+\\[\w .\\/-]+)"
+    r"([a-zA-Z]:[\\/][^\n\r\"']+|\\\\[^\n\r\"']+|(?<![\w])/(?=[^\"'\s]*[\w.])[^\"'\s]+|(?<![\w])~[\\/][^\s\"']+|[\w.\-]+\\[\w .\\/-]+)"
 )
 _META_FEEDBACK_MARKERS = (
     "kenapa jawab",

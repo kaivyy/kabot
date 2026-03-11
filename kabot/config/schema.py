@@ -453,6 +453,37 @@ class MemoryConfig(BaseModel):
     auto_unload_timeout: int = 300
 
 
+class McpServerConfig(BaseModel):
+    """Configuration for a single MCP server."""
+
+    transport: str = "stdio"  # "stdio" | "streamable_http"
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    url: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+    @model_validator(mode="after")
+    def _validate_transport_requirements(self) -> "McpServerConfig":
+        transport = self.transport.strip().lower()
+        if transport not in {"stdio", "streamable_http"}:
+            raise ValueError("transport must be 'stdio' or 'streamable_http'")
+        if transport == "stdio" and not self.command.strip():
+            raise ValueError("command is required for stdio MCP servers")
+        if transport == "streamable_http" and not self.url.strip():
+            raise ValueError("url is required for streamable_http MCP servers")
+        self.transport = transport
+        return self
+
+
+class McpConfig(BaseModel):
+    """Top-level MCP runtime configuration."""
+
+    enabled: bool = False
+    servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+
+
 class RuntimeResilienceConfig(BaseModel):
     """Runtime safety controls for fallback and tool retry behavior."""
 
@@ -738,6 +769,7 @@ class Config(BaseSettings):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     bootstrap: BootstrapParityConfig = Field(default_factory=BootstrapParityConfig)

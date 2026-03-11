@@ -38,6 +38,13 @@ Controls:
 - skill env variables
 - install/setup planning for third-party dependencies
 
+### MCP
+Controls:
+- whether MCP runtime is enabled
+- which MCP servers are configured
+- transport settings for each server
+- whether Kabot can expose live MCP tools/resources/prompts in a session
+
 ### Channels
 Controls:
 - bot/channel credentials
@@ -69,6 +76,7 @@ Controls:
 | Channels | controls who can talk to Kabot |
 | Memory | changes performance and recall behavior |
 | Skills | changes which advanced capabilities can activate |
+| MCP | changes which live external capability servers Kabot can attach |
 
 ## Safe Change Workflow
 
@@ -88,3 +96,4 @@ kabot agent -m "say hello in one line"
 - [Authentication reference](../reference/authentication.md)
 - [CLI guide](cli.md)
 - [Gateway and dashboard guide](gateway-dashboard.md)
+- [MCP runtime](../advanced/mcp.md)

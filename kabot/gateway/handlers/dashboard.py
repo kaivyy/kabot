@@ -97,12 +97,27 @@ class DashboardMixin:
         if unauthorized is not None:
             return unauthorized
         status = self._read_dashboard_status()
+        recent_turn = status.get("recent_turn") if isinstance(status.get("recent_turn"), dict) else {}
         extra = {k: v for k, v in status.items() if k not in {"status", "uptime_seconds", "channels_enabled", "cron_jobs", "model"}}
         pretty = html.escape(json.dumps(extra or {}, ensure_ascii=False, indent=2))
+        recent_turn_block = ""
+        if recent_turn:
+            recent_turn_block = (
+                "<div style='margin:0 0 12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:rgba(15,23,42,.04);'>"
+                "<div style='font-size:11px;color:var(--muted);margin-bottom:8px;'>Latest continuity/routing snapshot</div>"
+                "<table class='mono' style='width:100%;font-size:11px;border-collapse:collapse;'>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Session</th><td>{html.escape(str(recent_turn.get('session_key') or ''))}</td></tr>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Continuity</th><td>{html.escape(str(recent_turn.get('continuity_source') or 'none'))}</td></tr>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Route</th><td>{html.escape(str(recent_turn.get('route_profile') or ''))}</td></tr>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Tool</th><td>{html.escape(str(recent_turn.get('required_tool') or ''))}</td></tr>"
+                "</table>"
+                "</div>"
+            )
         fragment = (
             "<div style='padding:18px;'>"
             "<h2 style='margin:0 0 12px;font-size:15px;font-weight:600;'>Runtime Details</h2>"
             "<div style='font-size:11px;color:var(--muted);margin-bottom:8px;'>Structured payload from runtime status provider.</div>"
+            f"{recent_turn_block}"
             f"<pre class='mono' style='font-size:11px;max-height:250px;overflow:auto;'>{pretty}</pre>"
             "</div>"
         )
@@ -797,4 +812,3 @@ class DashboardMixin:
         except Exception:
             pass
         return res
-

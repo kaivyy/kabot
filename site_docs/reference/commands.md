@@ -41,6 +41,7 @@ kabot agent
 kabot doctor --fix
 kabot doctor routing
 kabot doctor smoke-agent --smoke-timeout 30
+kabot doctor smoke-agent --smoke-mcp-local-echo
 ```
 
 ## Auth
@@ -57,6 +58,14 @@ kabot auth login google --method oauth
 kabot agents list
 kabot agents add work --name "Work Agent" --model openai/gpt-4o
 kabot agents delete work
+```
+
+## MCP
+
+```bash
+kabot mcp status
+kabot mcp example-config
+kabot mcp inspect local_echo
 ```
 
 ## Docs Build

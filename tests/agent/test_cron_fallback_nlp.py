@@ -44,9 +44,25 @@ def test_extract_weather_location_handles_degree_phrasing_without_weather_word()
 def test_extract_weather_location_handles_non_latin_city_name():
     query = "cuaca di 東京 sekarang"
     assert extract_weather_location(query) == "東京"
+
+
 def test_extract_weather_location_handles_attached_indonesian_di_prefix():
     query = "dibandung berangin apa ga"
     assert extract_weather_location(query) == "Bandung"
+
+
+def test_extract_weather_location_rejects_wind_speed_measurement_as_location():
+    query = "kecepatan angin 4.4km/h?"
+    assert extract_weather_location(query) is None
+
+
+def test_extract_weather_location_rejects_long_quoted_health_context_as_location():
+    query = """Iya, untuk laki-laki saat lari, HR (detak jantung) sering di atas 160 bpm itu belum tentu berbahaya.
+
+Perhatikan tidur, hidrasi, kafein, suhu cuaca (semua bisa bikin HR naik).
+
+dari sini hitung hr zona saya umur 25 tahun"""
+    assert extract_weather_location(query) is None
 
 
 def test_extract_weather_location_handles_japanese_compact_weather_question():

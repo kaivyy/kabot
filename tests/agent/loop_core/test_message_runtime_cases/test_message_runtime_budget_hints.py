@@ -371,6 +371,135 @@ async def test_process_message_contextual_offer_question_uses_pending_assistant_
 
 
 @pytest.mark.asyncio
+async def test_process_message_explicit_mcp_prompt_context_uses_full_context_builder():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: None,
+        _build_explicit_mcp_context_note=AsyncMock(
+            return_value="[MCP Prompt Context]\n- Server: local\n- Prompt: briefing"
+        ),
+        _run_simple_response=AsyncMock(return_value="ok"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="ok")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="gunakan prompt briefing dari server local untuk bantu jawab",
+    )
+    await process_message(loop, msg)
+
+    loop._build_explicit_mcp_context_note.assert_awaited_once()
+    context_builder.build_messages.assert_called_once()
+    kwargs = context_builder.build_messages.call_args.kwargs
+    current_message = kwargs["current_message"]
+    assert "[MCP Prompt Context]" in current_message
+    assert "- Prompt: briefing" in current_message
+    assert msg.metadata.get("mcp_context_mode") is True
+    assert kwargs["budget_hints"]["mcp_context_mode"] is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_explicit_mcp_resource_context_uses_full_context_builder():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: "stock",
+        _build_explicit_mcp_context_note=AsyncMock(
+            return_value="[MCP Resource Context]\n- Server: local\n- Resource: memory://field-guide"
+        ),
+        _run_simple_response=AsyncMock(return_value="ok"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="ok")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="baca resource memory://field-guide dari server local lalu jelaskan ringkas",
+    )
+    await process_message(loop, msg)
+
+    loop._build_explicit_mcp_context_note.assert_awaited_once()
+    context_builder.build_messages.assert_called_once()
+    kwargs = context_builder.build_messages.call_args.kwargs
+    current_message = kwargs["current_message"]
+    assert "[MCP Resource Context]" in current_message
+    assert "memory://field-guide" in current_message
+    assert msg.metadata.get("mcp_context_mode") is True
+    assert "required_tool" not in msg.metadata
+    assert kwargs["budget_hints"]["mcp_context_mode"] is True
+
+
+@pytest.mark.asyncio
 async def test_process_message_option_ordinal_followup_uses_pending_assistant_offer_context():
     context_builder = MagicMock()
     context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
@@ -602,8 +731,10 @@ async def test_process_message_multilingual_answer_reference_followup_uses_recen
     loop._run_simple_response.assert_awaited_once()
     loop._run_agent_loop.assert_not_called()
     current_message = captured_messages["current_message"]
-    assert current_message.startswith(f"{followup_text}\n\n[Answer Reference Context]\n")
+    assert current_message.startswith(f"{followup_text}\n\n[Answer Reference Target]\n")
     assert assistant_text in current_message
+    assert "[Answer Reference Context]\n" in current_message
+    assert "[Grounded Answer Note]\n" in current_message
     assert "[Answer Reference Note]" in current_message
 
 
@@ -847,6 +978,1094 @@ async def test_process_message_assistant_offer_followup_beats_stale_pending_weat
     assert "[Offer Acceptance Note]" in built
     assert "accepting the assistant offer" in built.lower()
     assert "paket darurat musim hujan" in built.lower()
+
+
+@pytest.mark.asyncio
+async def test_process_message_committed_action_offer_followup_beats_stale_last_tool_execution():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_execution": {
+                "tool": "get_system_info",
+                "source": "cek spek pc saya",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            },
+            "pending_followup_intent": {
+                "text": "Aku akan buat file Excel jadwal lari 8 minggu kamu di workspace, lalu langsung kirim filenya ke chat ini.",
+                "profile": "CHAT",
+                "kind": "assistant_committed_action",
+                "request_text": "buat file excel jadwal lari 8 minggu di workspace lalu kirim ke chat ini",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            },
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["get_system_info"], has=lambda name: name == "get_system_info"),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="Siap, saya akan buat file Excel-nya sekarang."),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(
+                channel="telegram",
+                chat_id="chat-1",
+                content="Siap, saya akan buat file Excel-nya sekarang.",
+            )
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="ya lakukan")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    built = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert built.startswith("ya lakukan\n\n[Committed Action Context]\n")
+    assert "[Committed Action Note]" in built
+    assert "follow through on the promised action now" in built.lower()
+    assert "file excel jadwal lari 8 minggu" in built.lower()
+    assert "cek spek pc saya" not in built.lower()
+    assert "buat file excel jadwal lari 8 minggu di workspace" in built.lower()
+
+
+@pytest.mark.asyncio
+async def test_process_message_committed_action_followup_reuses_original_media_request_text():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": "Saya akan generate gambar poster konsernya lalu kirim hasilnya.",
+                "profile": "CHAT",
+                "kind": "assistant_committed_action",
+                "request_text": "buat gambar poster konser synthwave pakai imagen dengan nuansa neon",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["image_gen"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="oke buat sekarang")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    built = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert "[Committed Action Context]" in built
+    assert "buat gambar poster konser synthwave pakai imagen" in built.lower()
+    assert "generate gambar poster konsernya" in built.lower()
+    assert msg.metadata.get("continuity_source") == "committed_action"
+    assert msg.metadata.get("turn_category") == "contextual_action"
+
+
+@pytest.mark.asyncio
+async def test_process_message_committed_action_followup_with_arrow_key_controls_does_not_force_read_file():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": (
+                    "Mantap, lanjut ya — aku akan upgrade game yang tadi dengan 4 fitur ini sekaligus:\n\n"
+                    "1) 2-player mode (P1: W/S, P2: ↑/↓)\n"
+                    "2) Mobile touch controls\n"
+                    "3) Sound effects\n"
+                    "4) Difficulty levels (Easy/Medium/Hard)\n\n"
+                    "Aku akan edit file ping-pong/index.html, ping-pong/style.css, dan "
+                    "ping-pong/game.js sekarang. Setelah itu aku kabarin kalau sudah selesai."
+                ),
+                "profile": "CHAT",
+                "kind": "assistant_committed_action",
+                "request_text": "yes continue",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["read_file"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="yes continue")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("required_tool_query") is None
+    built = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert "[Committed Action Context]" in built
+    assert "ping-pong/index.html" in built
+    assert "↑/↓" in built
+
+
+@pytest.mark.asyncio
+async def test_process_message_assistant_offer_followup_reuses_original_send_request_text():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": "Kalau mau, saya bisa lanjut kirim file report.pdf ke chat ini.",
+                "profile": "CHAT",
+                "kind": "assistant_offer",
+                "request_text": r"kirim file C:\Users\Arvy Kairi\Desktop\report.pdf ke chat ini",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["message"], has=lambda name: name == "message"),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="oke lanjut")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    built = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert "[Offer Acceptance Note]" in built
+    assert "[Offer Request Context]" in built
+    assert r"kirim file C:\Users\Arvy Kairi\Desktop\report.pdf ke chat ini".lower() in built.lower()
+    assert msg.metadata.get("required_tool") == "message"
+    assert msg.metadata.get("continuity_source") == "action_request"
+    assert msg.metadata.get("requires_message_delivery") is True
+    assert msg.metadata.get("turn_category") == "contextual_action"
+
+
+@pytest.mark.asyncio
+async def test_process_message_assistant_offer_followup_reuses_original_file_build_request_text():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": "Kalau mau, saya bisa lanjut bikin file jadwal HM-nya dan kirim ke chat ini.",
+                "profile": "CHAT",
+                "kind": "assistant_offer",
+                "request_text": "buat file .smoke_tmp/jadwal_hm.txt berisi TARGET PACE 7:00 lalu kirim ke chat ini",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["write_file", "message"], has=lambda name: name in {"write_file", "message"}),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="oke lanjut")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    built = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert "[Offer Request Context]" in built
+    assert "buat file .smoke_tmp/jadwal_hm.txt" in built.lower()
+    assert msg.metadata.get("required_tool") == "write_file"
+    assert msg.metadata.get("continuity_source") == "action_request"
+    assert msg.metadata.get("requires_message_delivery") is True
+    assert msg.metadata.get("turn_category") == "contextual_action"
+
+
+@pytest.mark.asyncio
+async def test_process_message_assistant_offer_followup_promotes_coding_request_from_original_offer_context():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": "Kalau mau, saya bisa lanjut bikin landing page dan kirim screenshotnya.",
+                "profile": "CHAT",
+                "kind": "assistant_offer",
+                "request_text": "buat website landing page KAIDUT tema dark style crypto lalu screenshot dan kirim ke chat ini",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["exec", "message"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="ya lanjut")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    built = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert "[Offer Acceptance Note]" in built
+    assert "[Offer Request Context]" in built
+    assert "[Coding Build Note]" in built
+    assert "buat website landing page kaidut" in built.lower()
+    assert msg.metadata.get("route_profile") == "CODING"
+    assert msg.metadata.get("continuity_source") == "coding_request"
+    assert msg.metadata.get("requires_message_delivery") is True
+    assert msg.metadata.get("turn_category") == "contextual_action"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        "buat file excel jadwal lari 8 minggu di workspace lalu kirim ke chat ini",
+        "generate gambar poster produk pakai imagen dan simpan hasilnya di workspace",
+        "buat video singkat promosi pakai nanobanana lalu export mp4",
+    ],
+)
+async def test_process_message_generic_side_effect_requests_escalate_to_agent_loop(content: str):
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["write_file", "image_gen", "exec"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    context_builder.build_messages.assert_called_once()
+    built = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert content in built
+    assert msg.metadata.get("turn_category") == "action"
+
+
+@pytest.mark.asyncio
+async def test_process_message_side_effect_request_beats_weak_read_file_parser_guess():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    def _required_tool(text: str) -> str | None:
+        normalized = (text or "").lower()
+        if ".txt" in normalized or "file" in normalized:
+            return "read_file"
+        return None
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["read_file", "write_file", "exec"]),
+        _required_tool_for_query=_required_tool,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") == "write_file"
+    assert msg.metadata.get("required_tool_query") == content
+    assert msg.metadata.get("continuity_source") == "action_request"
+    assert msg.metadata.get("suppress_required_tool_inference") is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_side_effect_request_infers_write_file_tool_when_path_is_explicit():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["write_file", "read_file"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "write_file"
+    assert msg.metadata.get("required_tool_query") == content
+    assert msg.metadata.get("continuity_source") == "action_request"
+
+
+@pytest.mark.asyncio
+async def test_process_message_side_effect_request_infers_image_gen_for_image_generation_prompt():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["image_gen"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "generate gambar poster produk pakai imagen dan simpan hasilnya di workspace"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "image_gen"
+    assert msg.metadata.get("required_tool_query") == content
+
+
+@pytest.mark.asyncio
+async def test_process_message_coding_build_request_promotes_to_coding_route_without_crypto_tool_guess():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(metadata={})
+
+    def _required_tool(text: str) -> str | None:
+        return "crypto" if "crypto" in (text or "").lower() else None
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=True))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["crypto"]),
+        _required_tool_for_query=_required_tool,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "BUATKAN WEBSITE LANDING PAGE UNTUK PAYMENT GATEWAY, DENGAN TEMA DARK, STYLENYA SEPERTI WEBSITE CRYPTO"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("continuity_source") == "coding_request"
+    assert msg.metadata.get("route_profile") == "CODING"
+    current_message = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert "[Coding Build Note]" in current_message
+    assert "landing page" in current_message.lower()
+
+
+@pytest.mark.asyncio
+async def test_process_message_side_effect_request_infers_message_for_explicit_send_file_prompt():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["message"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = r"kirim file C:\Users\Arvy Kairi\Desktop\report.pdf ke chat ini"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "message"
+    assert msg.metadata.get("required_tool_query") == content
+    assert msg.metadata.get("requires_message_delivery") is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_committed_coding_action_followup_promotes_to_coding_route():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": "Aku akan bikin landing page KAIDUT lalu ambil screenshot dan kirim ke chat ini.",
+                "profile": "CHAT",
+                "kind": "assistant_committed_action",
+                "request_text": "buat website landing page KAIDUT tema dark style crypto lalu screenshot dan kirim ke chat ini",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="YA")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("continuity_source") == "committed_coding_action"
+    assert msg.metadata.get("route_profile") == "CODING"
+    current_message = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert "[Committed Action Context]" in current_message
+    assert "[Coding Build Note]" in current_message
+    assert "landing page kaidut" in current_message.lower()
+    assert msg.metadata.get("requires_message_delivery") is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_coding_build_request_marks_delivery_required_for_shorthand_ss_kirim_sini():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "NAMA BRAND: KAIDUT. CTA WA: 08888888. LANJUT BIKIN WEBSITE LANDING PAGE NYA DAN SS KIRIM SINI"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("continuity_source") == "coding_request"
+    assert msg.metadata.get("route_profile") == "CODING"
+    assert msg.metadata.get("requires_message_delivery") is True
+    current_message = context_builder.build_messages.call_args.kwargs["current_message"]
+    assert "[Coding Build Note]" in current_message
+
+
+@pytest.mark.asyncio
+async def test_process_message_find_then_send_file_request_stays_ai_driven_and_marks_delivery_required():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["find_files", "message"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "cari file report.pdf di workspace lalu kirim ke chat ini"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("continuity_source") == "action_request"
+    assert msg.metadata.get("requires_message_delivery") is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_create_then_send_file_request_prefers_write_file_and_marks_delivery_required():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["write_file", "message"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "buat file .smoke_tmp/report.txt berisi HALO lalu kirim ke chat ini"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "write_file"
+    assert msg.metadata.get("required_tool_query") == content
+    assert msg.metadata.get("requires_message_delivery") is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_generate_then_send_image_request_prefers_image_gen_and_marks_delivery_required():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["image_gen", "message"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "generate gambar poster kopi pakai imagen lalu kirim ke chat ini"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "image_gen"
+    assert msg.metadata.get("required_tool_query") == content
+    assert msg.metadata.get("requires_message_delivery") is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_side_effect_request_infers_registered_media_mcp_tool():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["mcp__nanobanana__generate_video"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "buat video singkat promosi pakai nanobanana lalu export mp4"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "mcp__nanobanana__generate_video"
+    assert msg.metadata.get("required_tool_query") == content
 
 
 @pytest.mark.asyncio

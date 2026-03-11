@@ -81,6 +81,7 @@ nav:
   - Advanced:
       - Overview: advanced/index.md
       - Runtime Architecture: advanced/runtime-architecture.md
+      - MCP Runtime: advanced/mcp.md
       - Operator Patterns: advanced/operator-patterns.md
       - Integrations and Extensions: advanced/integrations.md
   - Reference:

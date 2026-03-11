@@ -184,6 +184,25 @@ async def test_execute_required_tool_fallback_stock_without_ticker_routes_to_web
         },
     )
 
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_stock_uses_jkse_alias_without_prompting_symbol(agent_loop):
+    execute_mock = AsyncMock(return_value="stock-ok")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="cek harga ihsg realtime pakai simbol jkse",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("stock", msg)
+    assert result == "stock-ok"
+    execute_mock.assert_awaited_once_with("stock", {"symbol": "^JKSE"})
+
+
 @pytest.mark.asyncio
 async def test_execute_required_tool_fallback_stock_ignores_verbose_stale_metadata_on_short_confirmation(agent_loop):
     execute_mock = AsyncMock(return_value="stock-ok")

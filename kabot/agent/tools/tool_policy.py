@@ -4,7 +4,7 @@ from __future__ import annotations
 
 # Tool groups for easier policy management
 TOOL_GROUPS = {
-    "fs": ["read_file", "write_file", "edit_file", "list_dir"],
+    "fs": ["read_file", "write_file", "edit_file", "list_dir", "find_files"],
     "runtime": ["exec", "spawn"],
     "sessions": ["session_status", "message"],
     "web": ["web_search", "web_fetch", "browser"],

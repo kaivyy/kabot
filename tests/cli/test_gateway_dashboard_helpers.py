@@ -459,6 +459,77 @@ def test_build_dashboard_status_payload_includes_enriched_monitoring_data(monkey
     assert payload["git_log"][0]["sha"] == "abc123"
 
 
+def test_build_dashboard_status_payload_includes_recent_turn_continuity_metadata(tmp_path):
+    from kabot.cli import commands
+    from kabot.config.schema import Config
+
+    cfg = Config()
+    recent_session = SimpleNamespace(
+        metadata={
+            "last_turn_category": "chat",
+            "pending_interrupt_count": 2,
+            "last_completion_evidence": {
+                "executed_tools": ["weather"],
+                "artifact_paths": [],
+                "artifact_verified": False,
+                "delivery_verified": False,
+            },
+        },
+        messages=[
+            {
+                "role": "assistant",
+                "content": "Untuk bepergian di Cilacap, pakai pakaian ringan.",
+                "timestamp": "2026-03-11T10:00:00",
+                "metadata": {
+                    "continuity_source": "answer_reference",
+                    "route_profile": "CHAT",
+                    "route_complex": False,
+                    "required_tool": "weather",
+                    "required_tool_query": "cek suhu cilacap sekarang",
+                },
+            }
+        ]
+    )
+
+    payload = commands._build_dashboard_status_payload(
+        gateway_started_at=1709800000,
+        runtime_model="gpt-4o-mini",
+        runtime_fallbacks=[],
+        runtime_host="127.0.0.1",
+        runtime_port=18790,
+        tailscale_mode="off",
+        session_manager=SimpleNamespace(
+            sessions_dir=tmp_path,
+            list_sessions=lambda: [
+                {
+                    "key": "telegram:123",
+                    "updated_at": "2026-03-11T10:00:01",
+                }
+            ],
+            get_or_create=lambda key: recent_session if key == "telegram:123" else None,
+        ),
+        channels=SimpleNamespace(
+            enabled_channels=["telegram"],
+            get_status=lambda: {"telegram": {"running": True, "connected": True}},
+        ),
+        cron=SimpleNamespace(
+            status=lambda: {"enabled": True, "jobs": 0},
+            list_jobs=lambda include_disabled=False: [],
+            get_run_history=lambda job_id: [],
+        ),
+        config=cfg,
+        agent=SimpleNamespace(subagents=SimpleNamespace(registry=SimpleNamespace(list_all=lambda: []))),
+    )
+
+    assert payload["recent_turn"]["session_key"] == "telegram:123"
+    assert payload["recent_turn"]["continuity_source"] == "answer_reference"
+    assert payload["recent_turn"]["turn_category"] == "chat"
+    assert payload["recent_turn"]["required_tool"] == "weather"
+    assert payload["recent_turn"]["required_tool_query"] == "cek suhu cilacap sekarang"
+    assert payload["recent_turn"]["pending_interrupt_count"] == 2
+    assert payload["recent_turn"]["completion_evidence"]["executed_tools"] == ["weather"]
+
+
 @pytest.mark.asyncio
 async def test_gateway_dashboard_control_action_cron_disable_updates_job_state():
     from kabot.cli import commands

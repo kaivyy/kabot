@@ -50,6 +50,9 @@ Before we go section by section, this is the important mental model:
 3. **Skills** manages skill definitions, skill env keys, and **manual dependency setup plans**.
    - It does **not** auto-run `npm`, `pnpm`, `bun`, or `brew` installs for you.
 4. When wizard says built-in skills are installed/synced, it means Kabot copies the skill definitions (`SKILL.md`) into your workspace so the agent can discover them. It does **not** mean every external CLI/API dependency is already ready.
+5. **MCP** is now a real Kabot runtime capability.
+   - Kabot can attach configured MCP servers per session and expose only real tools/resources/prompts from those servers.
+   - It is not just a prompt trick anymore.
 
 ### a) Workspace (Set path + sessions)
 *   **What it does:** Defines the specific "identity" and memory bank of the AI agent you are currently talking to. You can easily create multiple distinct agents.
@@ -176,6 +179,24 @@ sv-disable kabot
 ### i) Doctor (Health Check)
 *   **What it does:** Runs an automatic system diagnostic. If Kabot isn't responding or throws an error, click this menu to instantly check if an API connection is broken or if a local database file is corrupted.
 
+### j) MCP (Model Context Protocol)
+*   **What it does:** Connects Kabot to real MCP servers so the agent can use live MCP tools, resources, and prompts.
+*   **What it does NOT do:** It does not make Kabot invent MCP tools from memory. If the server is not configured or unavailable, Kabot should say so honestly.
+*   **How to use it:**
+    *   Inspect configured MCP servers:
+        ```bash
+        kabot mcp status
+        ```
+    *   Print a starter config:
+        ```bash
+        kabot mcp example-config
+        ```
+    *   Inspect one server's live capabilities:
+        ```bash
+        kabot mcp inspect local_echo
+        ```
+*   **Current transports:** `stdio` and `streamable_http`.
+
 ---
 
 ## 3. Starting an Interactive Chat
@@ -189,6 +210,18 @@ kabot agent -m "Hello Kabot, please schedule a daily standup meeting in my calen
 
 **To open the Interactive Chat Room:**
 If you simply type `kabot agent` without the `-m` message flag, you will enter the **Interactive Shell**. This functions exactly like the ChatGPT interface, but right inside your command-line terminal.
+
+### How Kabot decides: answer vs tool vs skill
+
+Recent runtime hardening makes this much more predictable:
+
+1. If you ask a normal question, Kabot should answer directly.
+2. If you ask for a real side effect, Kabot should use tools.
+3. If you need a structured workflow, Kabot can use skills.
+4. If you reply with short follow-ups like `yes continue`, `lanjut`, or `yang kedua`, Kabot should continue the prior real context instead of randomly guessing a new tool.
+5. If Kabot cannot verify completion, it should fail honestly instead of pretending the artifact already exists or was already sent.
+
+That is what "AI-driven but grounded" means in practice.
 
 ---
 
@@ -248,6 +281,13 @@ Kabot now includes sophisticated backend systems that prevent common AI agent fa
 - **Context Window Guard**: Prevents crashes from small context windows (blocks < 16K tokens, warns < 32K)
 - **Auto-Compaction**: Summarizes old messages when context overflows (keeps recent 10 exchanges)
 - **Result Truncation**: Caps tool results at 30% of context window to prevent bloat
+
+### Runtime Continuity And Anti-Hallucination Upgrades (v0.6.3)
+
+- **Committed action continuity:** if Kabot says it will create, send, or upgrade something, replies like `ya`, `yes continue`, and `lanjut` are much more likely to continue that exact task.
+- **Answer-reference continuity:** follow-ups like `yang kedua`, `lebih singkat`, or `maksudnya apa` can stay attached to the latest real answer.
+- **Evidence-based completion:** Kabot is more strict about claiming a file/image/video was sent only when runtime evidence exists.
+- **Workflow regression smoke:** multi-turn regressions like `create -> continue -> upgrade` are now locked in smoke coverage, not left to chance.
 
 ---
 
@@ -970,6 +1010,15 @@ Kabot includes 36 built-in tools that give AI powerful capabilities. Here's the 
 ### **Advanced Tools**
 - **meta_graph** - Query knowledge graph
   - Example: "Show me all related concepts to 'authentication'"
+
+### **MCP Runtime**
+- **kabot mcp status** - Show configured MCP servers
+  - Example: `kabot mcp status`
+- **kabot mcp example-config** - Print starter MCP config JSON
+  - Example: `kabot mcp example-config`
+- **kabot mcp inspect <server>** - Inspect live MCP tools/resources/prompts from one server
+  - Example: `kabot mcp inspect local_echo`
+- **MCP in chat** - When MCP is enabled and attached, Kabot can expose namespaced tools such as `mcp.local_echo.echo`
 
 ---
 

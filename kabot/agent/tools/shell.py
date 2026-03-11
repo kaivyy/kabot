@@ -1,6 +1,7 @@
 """Shell execution tool."""
 
 import asyncio
+import json
 import os
 import re
 import time
@@ -61,12 +62,67 @@ class ExecTool(Tool):
             logger.error(f"Failed to initialize CommandFirewall: {e}")
             self.firewall = None
 
+        config_root = firewall_config_path.parent if firewall_config_path else Path.home() / ".kabot"
+        self._pending_approvals_path = config_root / "pending_exec_approvals.json"
+        self._pending_approvals = self._load_pending_approvals()
+
     def set_approval_callback(self, callback: ApprovalCallback | None) -> None:
         """Set interactive approval callback used when firewall policy returns ASK."""
         self.approval_callback = callback
 
+    def _load_pending_approvals(self) -> dict[str, dict[str, Any]]:
+        path = self._pending_approvals_path
+        if not path.exists():
+            return {}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning(f"Failed to read pending exec approvals from {path}: {exc}")
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        normalized: dict[str, dict[str, Any]] = {}
+        for session_key, payload in raw.items():
+            if not isinstance(session_key, str) or not isinstance(payload, dict):
+                continue
+            command = payload.get("command")
+            approval_id = payload.get("id")
+            if not isinstance(command, str) or not command.strip():
+                continue
+            if not isinstance(approval_id, str) or not approval_id.strip():
+                continue
+            entry: dict[str, Any] = {
+                "id": approval_id.strip(),
+                "command": command,
+                "working_dir": str(payload.get("working_dir") or ""),
+                "created_at": float(payload.get("created_at") or time.time()),
+            }
+            normalized[session_key] = entry
+        return normalized
+
+    def _persist_pending_approvals(self) -> None:
+        path = self._pending_approvals_path
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not self._pending_approvals:
+                if path.exists():
+                    path.unlink()
+                return
+            temp_path = path.with_suffix(path.suffix + ".tmp")
+            temp_path.write_text(
+                json.dumps(self._pending_approvals, ensure_ascii=True, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            temp_path.replace(path)
+        except Exception as exc:
+            logger.warning(f"Failed to persist pending exec approvals to {path}: {exc}")
+
+    def _refresh_pending_approvals(self) -> None:
+        self._pending_approvals = self._load_pending_approvals()
+
     def _store_pending_approval(self, session_key: str, command: str, cwd: str) -> str:
         """Store pending approval request for later /approve handling."""
+        self._refresh_pending_approvals()
         approval_id = uuid.uuid4().hex[:8]
         self._pending_approvals[session_key] = {
             "id": approval_id,
@@ -74,6 +130,7 @@ class ExecTool(Tool):
             "working_dir": cwd,
             "created_at": time.time(),
         }
+        self._persist_pending_approvals()
         return approval_id
 
     def set_pending_approval(self, session_key: str, command: str, working_dir: str | None = None) -> str:
@@ -83,6 +140,7 @@ class ExecTool(Tool):
 
     def get_pending_approval(self, session_key: str, approval_id: str | None = None) -> dict[str, Any] | None:
         """Get pending approval for a session (optionally constrained by approval id)."""
+        self._refresh_pending_approvals()
         pending = self._pending_approvals.get(session_key)
         if not pending:
             return None
@@ -92,22 +150,26 @@ class ExecTool(Tool):
 
     def consume_pending_approval(self, session_key: str, approval_id: str | None = None) -> dict[str, Any] | None:
         """Consume pending approval and remove it from queue."""
+        self._refresh_pending_approvals()
         pending = self._pending_approvals.get(session_key)
         if not pending:
             return None
         if approval_id and pending.get("id") != approval_id:
             return None
         self._pending_approvals.pop(session_key, None)
+        self._persist_pending_approvals()
         return dict(pending)
 
     def clear_pending_approval(self, session_key: str, approval_id: str | None = None) -> bool:
         """Clear pending approval without executing it."""
+        self._refresh_pending_approvals()
         pending = self._pending_approvals.get(session_key)
         if not pending:
             return False
         if approval_id and pending.get("id") != approval_id:
             return False
         self._pending_approvals.pop(session_key, None)
+        self._persist_pending_approvals()
         return True
 
     @staticmethod

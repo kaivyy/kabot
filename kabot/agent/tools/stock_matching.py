@@ -48,6 +48,11 @@ _STOCK_STOPWORDS = {
 }
 
 _BASE_IDX_ALIAS_TO_SYMBOL = {
+    "IHSG": "^JKSE",
+    "JKSE": "^JKSE",
+    "^JKSE": "^JKSE",
+    "JAKARTA COMPOSITE INDEX": "^JKSE",
+    "IDX COMPOSITE": "^JKSE",
     "BBCA": "BBCA.JK",
     "BCA": "BBCA.JK",
     "BANK CENTRAL ASIA": "BBCA.JK",
@@ -68,6 +73,9 @@ _BASE_IDX_ALIAS_TO_SYMBOL = {
     "UNVR": "UNVR.JK",
     "INDF": "INDF.JK",
     "ICBP": "ICBP.JK",
+    "BREN": "BREN.JK",
+    "BARITO RENEWABLES": "BREN.JK",
+    "BARITO RENEWABLES ENERGY": "BREN.JK",
     "ADARO": "ADRO.JK",
     "ADARO ENERGY": "ADRO.JK",
     "ADARO ENERGY INDONESIA": "ADRO.JK",
@@ -99,6 +107,7 @@ _KNOWN_IDX_SYMBOLS = {
     "UNVR",
     "INDF",
     "ICBP",
+    "BREN",
     "ADRO",
     "TOBA",
     "MDKA",
@@ -291,6 +300,15 @@ _STOCK_NAME_STOPWORDS = {
     "old",
     "tahun",
     "year",
+    "jam",
+    "iq",
+    "eq",
+    "manusia",
+    "human",
+    "average",
+    "avg",
+    "rata",
+    "rata-rata",
 }
 _COMPANY_HINT_TOKENS = {
     "bank",
@@ -415,6 +433,8 @@ def _normalize_stock_symbol(value: str) -> str | None:
     symbol = str(value or "").upper().strip()
     if not symbol:
         return None
+    if symbol == "^JKSE":
+        return symbol
     if _FX_SYMBOL_RE.match(symbol):
         return symbol
     if _EXPLICIT_SYMBOL_RE.match(symbol):
@@ -440,9 +460,11 @@ def _normalize_search_symbol(value: str) -> str | None:
     symbol = str(value or "").upper().strip()
     if not symbol:
         return None
+    if symbol == "^JKSE":
+        return symbol
     if _GENERAL_SYMBOL_RE.match(symbol):
         if symbol.startswith("^"):
-            # Skip indices in this stock tool path; they are not equities.
+            # Skip other indices in this stock tool path; they are not equities.
             return None
         return symbol
     return None
@@ -519,6 +541,15 @@ def _is_non_latin_compact_query(text: str) -> bool:
     return True
 
 
+def _is_title_cased_company_token(token: str) -> bool:
+    value = str(token or "").strip()
+    if not value:
+        return False
+    if not value[:1].isupper():
+        return False
+    return any(char.islower() for char in value[1:])
+
+
 def extract_stock_name_candidates(raw: str) -> list[str]:
     """
     Extract probable company-name phrases from free-text stock queries.
@@ -577,13 +608,20 @@ def extract_stock_name_candidates(raw: str) -> list[str]:
             and not (has_market_hint or has_value_hint)
         ):
             continue
+        if (
+            len(phrase_tokens) == 1
+            and not has_market_hint
+            and phrase.isalpha()
+            and phrase.upper() == phrase
+            and len(phrase) < 5
+        ):
+            continue
         if len(phrase_tokens) >= 2:
             has_company_hint = any(token in _COMPANY_HINT_TOKENS for token in phrase_tokens)
-            has_title_like = any(bool(token[:1].isupper()) for token in kept if token)
+            has_title_like = any(_is_title_cased_company_token(token) for token in kept)
             has_non_latin = bool(_NON_ASCII_RE.search(phrase))
             if not (
                 has_market_hint
-                or has_value_hint
                 or has_company_hint
                 or has_title_like
                 or has_non_latin
@@ -711,6 +749,9 @@ def extract_stock_symbols(raw: str) -> list[str]:
 
         if _EXPLICIT_SYMBOL_RE.match(symbol):
             left, right = symbol.split(".", 1)
+            if right == "JK" and left in {"IHSG", "JKSE"}:
+                _add("^JKSE")
+                continue
             if left in _PLACEHOLDER_ROOTS:
                 continue
             if right in _NON_TICKER_FILE_SUFFIXES and left not in _KNOWN_IDX_SYMBOLS and left not in _KNOWN_GLOBAL_SYMBOLS:

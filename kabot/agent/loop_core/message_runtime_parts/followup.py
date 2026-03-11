@@ -37,6 +37,8 @@ _PENDING_FOLLOWUP_INTENT_KEY = "pending_followup_intent"
 _PENDING_FOLLOWUP_TTL_SECONDS = 15 * 60
 _LAST_TOOL_CONTEXT_KEY = "last_tool_context"
 _LAST_TOOL_CONTEXT_TTL_SECONDS = 2 * 60 * 60
+_LAST_TOOL_EXECUTION_KEY = "last_tool_execution"
+_LAST_TOOL_EXECUTION_TTL_SECONDS = 2 * 60 * 60
 _SKILL_CREATION_FLOW_KEY = "skill_creation_flow"
 _SKILL_CREATION_FLOW_TTL_SECONDS = 60 * 60
 _KEEPALIVE_INITIAL_DELAY_SECONDS = 1.0
@@ -327,6 +329,24 @@ def _get_last_tool_context(session: Any, now_ts: float) -> dict[str, Any] | None
     return payload
 
 
+def _get_last_tool_execution(session: Any, now_ts: float) -> dict[str, Any] | None:
+    metadata = getattr(session, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    payload = metadata.get(_LAST_TOOL_EXECUTION_KEY)
+    if not isinstance(payload, dict):
+        return None
+    updated_at = payload.get("updated_at")
+    try:
+        updated_ts = float(updated_at)
+    except Exception:
+        updated_ts = 0.0
+    if updated_ts and updated_ts + _LAST_TOOL_EXECUTION_TTL_SECONDS < now_ts:
+        metadata.pop(_LAST_TOOL_EXECUTION_KEY, None)
+        return None
+    return payload
+
+
 def _set_last_tool_context(session: Any, tool_name: str, now_ts: float, source_text: str) -> None:
     metadata = getattr(session, "metadata", None)
     if not isinstance(metadata, dict):
@@ -399,6 +419,7 @@ def _get_pending_followup_intent(session: Any, now_ts: float) -> dict[str, str] 
     intent_text = str(pending.get("text") or "").strip()
     profile = str(pending.get("profile") or "").strip().upper() or "GENERAL"
     kind = str(pending.get("kind") or "").strip().lower()
+    request_text = str(pending.get("request_text") or "").strip()
     expires_at = pending.get("expires_at")
     try:
         expires_ts = float(expires_at)
@@ -411,6 +432,8 @@ def _get_pending_followup_intent(session: Any, now_ts: float) -> dict[str, str] 
     payload = {"text": intent_text, "profile": profile}
     if kind:
         payload["kind"] = kind
+    if request_text:
+        payload["request_text"] = request_text
     return payload
 
 
@@ -421,6 +444,7 @@ def _set_pending_followup_intent(
     now_ts: float,
     *,
     kind: str | None = None,
+    request_text: str | None = None,
 ) -> None:
     metadata = getattr(session, "metadata", None)
     if not isinstance(metadata, dict):
@@ -437,6 +461,9 @@ def _set_pending_followup_intent(
     normalized_kind = str(kind or "").strip().lower()
     if normalized_kind:
         payload["kind"] = normalized_kind
+    normalized_request_text = _normalize_followup_text(request_text)[:260]
+    if normalized_request_text:
+        payload["request_text"] = normalized_request_text
     metadata[_PENDING_FOLLOWUP_INTENT_KEY] = payload
 
 

@@ -26,6 +26,19 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
+## What's New In v0.6.3
+
+- **Python-native MCP runtime** with session-scoped server attachment, tool/resource/prompt support, and `kabot mcp` CLI commands.
+- **Skyclaw/OpenClaw-style continuity hardening** so short follow-ups like `yes continue`, `lanjut`, and referential replies stay grounded to the real prior answer or tool result.
+- **Evidence-first delivery/runtime behavior** so Kabot is much less likely to claim a file, screenshot, or generated artifact was sent unless the runtime can verify it.
+- **Smoke coverage for real workflows** including continuity, memory recall, MCP echo flows, and multi-turn `create -> continue -> upgrade` regressions.
+
+If you are upgrading from `0.6.2`, the two most important new surfaces are:
+- `kabot mcp status`
+- the improved AI-driven runtime that is more deliberate about when it should answer directly versus when it should call tools or skills.
+
+---
+
 ## 📑 Table of Contents
 
 - [🚀 Quick Start](#-quick-start)
@@ -59,6 +72,10 @@ If you are new, follow this exact flow:
 4. **Test chat** (`kabot agent -m "Hello"`)
 
 No need to clone repo for normal usage.
+
+Recommended optional step for `v0.6.3`:
+
+5. **Inspect MCP availability** (`kabot mcp status`)
 
 ### 1) Install Kabot
 
@@ -106,6 +123,7 @@ In wizard:
 Notes:
 - `Google Suite` in setup wizard is Kabot's native Google auth path. It does not require npm, Node.js, or `gog`.
 - `Skills` in setup wizard manages skill config, env keys, and manual dependency install plans. It does not auto-run npm/brew installs for you.
+- `MCP` is now a first-class runtime capability. Use config plus `kabot mcp ...` commands to inspect what is really available instead of relying on prompt-only assumptions.
 - When setup wizard syncs built-in skills, it is copying skill definitions (`SKILL.md`) into the workspace. That is separate from installing third-party runtimes or logging into external services.
 
 ### 3) Start Kabot
@@ -127,7 +145,42 @@ kabot config       # open setup wizard
 kabot gateway      # run the bot gateway
 kabot doctor --fix # auto-diagnose and repair common issues
 kabot doctor routing # validate routing/guard sanity before deploy
+kabot mcp status   # inspect configured MCP servers
 ```
+
+### Python-Native MCP Quickstart
+
+Kabot `0.6.3` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
+
+Useful commands:
+
+```bash
+kabot mcp status
+kabot mcp example-config
+kabot mcp inspect local_echo
+```
+
+Minimal config shape:
+
+```json
+{
+  "mcp": {
+    "enabled": true,
+    "servers": {
+      "local_echo": {
+        "transport": "stdio",
+        "command": "python",
+        "args": ["-m", "kabot.mcp.dev.echo_server"]
+      }
+    }
+  }
+}
+```
+
+Why this matters:
+- Kabot now knows which MCP tools are real for the current session.
+- MCP resources and prompts can be pulled into a turn without pretending they are ordinary files.
+- follow-up continuity stays stronger, so MCP context is reused when helpful but does not override a newer clear user request.
 
 ### Runtime Token Mode (Boros vs Hemat)
 
@@ -246,6 +299,17 @@ Once the gateway is running, you can talk to Kabot via:
 *   **CLI**: `kabot agent -m "Hello"` (Fastest for testing)
 *   **Telegram**: DM your bot.
 *   **Discord**: Mention the bot in a channel.
+
+### AI-Driven, But Grounded
+
+Recent runtime work makes Kabot behave more like a serious coding/operator agent:
+
+- if the user asks a normal question, Kabot should answer directly,
+- if the user asks for a real side effect, Kabot should choose tools or skills,
+- if the user follows up with `yes continue` or `lanjut`, Kabot should continue the pending task instead of guessing a new tool,
+- if delivery or execution cannot be verified, Kabot should fail honestly instead of pretending the task is already done.
+
+That balance matters more than "always use tools" or "never use tools". Kabot is designed to stay AI-driven while still being evidence-based.
 
 ---
 
@@ -841,13 +905,26 @@ The core execution engine found in `kabot/agent/loop.py`. It implements a ReAct 
 4.  **Reflect**: Analyze tool output.
 5.  **Repeat**: Until the task is done.
 
-#### 3. Hybrid Memory
+Recent Skyclaw-inspired hardening added:
+- stronger turn categorization (`chat`, `action`, `contextual_action`, `command`)
+- continuity resolution that prefers recent answer/tool evidence over weak parser guesses
+- unified completion evidence so "done" claims are checked against real artifact/delivery proof
+
+#### 3. MCP Session Runtime
+Located in `kabot/mcp/`. This layer lets Kabot attach MCP servers per session, discover real tools/resources/prompts, and expose them through the runtime without hallucinating availability.
+
+Key properties:
+*   **Session-scoped**: MCP capabilities are attached to a session, not globally improvised.
+*   **Python-native**: Kabot itself does not need Node.js just to act as the MCP client.
+*   **Grounded**: tool names are namespaced (`mcp.<server>.<tool>`) and only available when the server is actually configured and attached.
+
+#### 4. Hybrid Memory
 Located in `kabot/memory/`. It solves the "context window limit" problem.
 *   **Vector Store**: Semantic search for fuzzy concepts ("What did we discuss about architecture?").
 *   **SQL Store**: Exact matching for facts ("What is the API key for Stripe?").
 *   **Summarizer**: Automatically condenses old conversation turns into summaries to save tokens.
 
-#### 4. Doctor (Self-Healing)
+#### 5. Doctor (Self-Healing)
 Located in `kabot/core/doctor.py`. A diagnostic engine that runs on startup.
 *   Checks database integrity.
 *   Validates API keys.
@@ -869,6 +946,9 @@ kabot doctor smoke-agent --smoke-json \
 kabot doctor smoke-agent \
   --smoke-skill weather \
   --smoke-skill-locales en,id,zh,ja,th
+
+# Add a local Python MCP echo verification
+kabot doctor smoke-agent --smoke-mcp-local-echo
 ```
 
 ---

@@ -24,6 +24,22 @@ Choose skills or external capabilities when you need:
 - a specific API integration
 - a task-specific capability that does not require a new core runtime surface
 
+## MCP Sits Between Core And Skills
+
+MCP is not just another skill, and it is not the same as writing a brand-new built-in product surface either.
+
+Use MCP when you need:
+- a live external server capability
+- tools discovered from that server at runtime
+- resources or prompts that belong to that server
+- session-scoped attachment instead of global hardcoding
+
+In Kabot `v0.6.3`, MCP is now a grounded runtime capability:
+- configured through the typed config surface
+- inspectable through `kabot mcp ...`
+- attached per session
+- exposed only when the server is actually available
+
 ## When A Core Code Change Is Actually Needed
 
 A core change is more likely necessary when you need:

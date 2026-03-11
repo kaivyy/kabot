@@ -235,12 +235,13 @@ async def test_process_system_message_wrapper_delegates_to_message_runtime(monke
 async def test_process_isolated_wrapper_delegates_to_message_runtime(monkeypatch, agent_loop):
     from kabot.agent.loop_core import message_runtime
 
-    async def _fake_process_isolated(loop, content, channel, chat_id, job_id):
+    async def _fake_process_isolated(loop, content, channel, chat_id, job_id, fresh_context=False):
         assert loop is agent_loop
         assert content == "ping"
         assert channel == "cli"
         assert chat_id == "direct"
         assert job_id == "job-1"
+        assert fresh_context is False
         return "isolated-ok"
 
     monkeypatch.setattr(message_runtime, "process_isolated", _fake_process_isolated)

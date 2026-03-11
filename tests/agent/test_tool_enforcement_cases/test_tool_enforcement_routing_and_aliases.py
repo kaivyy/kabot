@@ -4,6 +4,7 @@ Chunk 1: test_required_tool_for_query_detects_weather_and_reminder .. test_execu
 
 import re
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,8 +14,11 @@ from kabot.agent.loop import AgentLoop
 from kabot.agent.loop_core import tool_enforcement as tool_enforcement_module
 from kabot.agent.loop_core.tool_enforcement import (
     _extract_list_dir_path,
+    _extract_message_delivery_path,
     _extract_read_file_path,
     _query_has_tool_payload,
+    infer_action_required_tool_for_loop,
+    execute_required_tool_fallback,
 )
 from kabot.bus.events import InboundMessage
 from kabot.bus.queue import MessageBus
@@ -202,12 +206,58 @@ def test_required_tool_for_query_does_not_misclassify_file_or_stop_messages_as_s
     assert agent_loop._required_tool_for_query("buat draft email ke tim support") is None
     assert agent_loop._required_tool_for_query("bikin excel laporan penjualan bulan ini") is None
     assert agent_loop._required_tool_for_query("buat spreadsheet budget proyek xlsx") is None
+    assert agent_loop._required_tool_for_query("buat file excel jadwal lari 8 minggu") is None
+    assert (
+        agent_loop._required_tool_for_query(
+            "Aku akan buat file Excel jadwal lari 8 minggu kamu di workspace, lalu langsung kirim filenya ke chat ini."
+        )
+        is None
+    )
     assert agent_loop._required_tool_for_query("stop bahas saham") is None
     assert agent_loop._required_tool_for_query("bukan tentang saham ini loh") is None
     assert agent_loop._required_tool_for_query("stop bahas cuaca") is None
     assert agent_loop._required_tool_for_query("jangan bahas crypto") is None
     assert agent_loop._required_tool_for_query("bukan tentang berita") is None
     assert agent_loop._required_tool_for_query("market cap bbca sekarang") == "stock"
+
+
+def test_required_tool_for_query_does_not_route_general_knowledge_questions_to_stock(agent_loop):
+    assert agent_loop._required_tool_for_query("JAM BERAPA") is None
+    assert agent_loop._required_tool_for_query("jam berapa sekarang") is None
+    assert agent_loop._required_tool_for_query("IQ MANUSIA BERAPA") is None
+    assert agent_loop._required_tool_for_query("iq manusia berapa") is None
+    assert agent_loop._required_tool_for_query("IQ MANUSIA RATA RATA BERAPA") is None
+    assert agent_loop._required_tool_for_query("KALAU EQ MANUSIA BERAPA") is None
+
+
+def test_required_tool_for_query_does_not_route_personal_hr_zone_or_quoted_health_context_to_web_or_weather(agent_loop):
+    assert (
+        agent_loop._required_tool_for_query(
+            "simpan di memory umurku sekarang 25 tahun kelahiran 16 juni 2000. tolong hitung zona hr personal"
+        )
+        is None
+    )
+    assert (
+        agent_loop._required_tool_for_query(
+            "umurku sekarang 25 tahun tolong hitung zona hr personal"
+        )
+        is None
+    )
+    quoted_health_context = """Iya, untuk laki-laki saat lari, HR (detak jantung) sering di atas 160 bpm itu belum tentu berbahaya, tergantung:
+
+1. Umur
+2. Level kebugaran
+3. Durasi di HR tinggi
+4. Ada gejala atau tidak (pusing, nyeri dada, sesak, berdebar tidak normal)
+
+Patokan cepat
+• Estimasi HR max kasar: 220 - usia
+• Perhatikan tidur, hidrasi, kafein, suhu cuaca (semua bisa bikin HR naik)
+
+Kalau kamu mau, aku bisa bantu hitung zona HR personal berdasarkan usia kamu dan target lari.
+
+dari sini hitung hr zona saya umur 25 tahun"""
+    assert agent_loop._required_tool_for_query(quoted_health_context) is None
 
 def test_required_tool_for_query_does_not_treat_workspace_paths_as_system_info(agent_loop):
     assert (
@@ -222,6 +272,19 @@ def test_required_tool_for_query_does_not_treat_workspace_paths_as_system_info(a
         )
         is None
     )
+
+
+def test_required_tool_for_query_does_not_treat_verbose_upgrade_promise_with_arrow_controls_as_read_file(agent_loop):
+    text = """Mantap, lanjut ya — aku akan upgrade game yang tadi dengan 4 fitur ini sekaligus:
+
+1) 2-player mode (P1: W/S, P2: ↑/↓)
+2) Mobile touch controls
+3) Sound effects
+4) Difficulty levels (Easy/Medium/Hard)
+
+Aku akan edit file ping-pong/index.html, ping-pong/style.css, dan ping-pong/game.js sekarang. Setelah itu aku kabarin kalau sudah selesai."""
+
+    assert agent_loop._required_tool_for_query(text) is None
 
 def test_required_tool_for_query_does_not_force_cleanup_or_sysinfo_for_large_file_scan_requests(agent_loop):
     assert (
@@ -273,6 +336,34 @@ def test_extract_read_file_path_trims_trailing_natural_language_after_file_exten
         )
         == "C:/Users/Arvy Kairi/.kabot/workspace/landing_hacker.html"
     )
+    assert (
+        _extract_read_file_path(
+            "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+        )
+        == ".smoke_tmp/smoke_action_request.txt"
+    )
+
+
+def test_extract_read_file_path_does_not_treat_arrow_key_controls_as_filesystem_paths():
+    assert _extract_read_file_path("2-player mode (P1: W/S, P2: ↑/↓)") is None
+
+
+def test_extract_read_file_path_does_not_treat_letter_slash_letter_controls_as_filesystem_paths():
+    assert _extract_read_file_path("2-player mode (P1: W/S, P2: A/D)") is None
+    assert _extract_read_file_path("controls: W/S vs A/D") is None
+
+
+def test_extract_read_file_path_prefers_real_relative_file_path_over_arrow_key_controls():
+    text = """Mantap, lanjut ya — aku akan upgrade game yang tadi dengan 4 fitur ini sekaligus:
+
+1) 2-player mode (P1: W/S, P2: ↑/↓)
+2) Mobile touch controls
+3) Sound effects
+4) Difficulty levels (Easy/Medium/Hard)
+
+Aku akan edit file ping-pong/index.html, ping-pong/style.css, dan ping-pong/game.js sekarang. Setelah itu aku kabarin kalau sudah selesai."""
+
+    assert _extract_read_file_path(text) == "ping-pong/index.html"
 
 def test_filesystem_extractors_support_multilingual_directory_aliases(monkeypatch):
     monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
@@ -298,6 +389,74 @@ def test_required_tool_for_query_tolerates_common_typos_for_core_intents(agent_l
     assert agent_loop._required_tool_for_query("bersihkn cache ssd skrg") == "cleanup_system"
     assert agent_loop._required_tool_for_query("cek updat kabot sekarang") == "check_update"
     assert agent_loop._required_tool_for_query("disk cleenup now") == "cleanup_system"
+
+
+def test_infer_action_required_tool_for_loop_infers_find_files_for_search_request():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name == "find_files",
+            tool_names=["find_files"],
+        )
+    )
+
+    tool_name, source = infer_action_required_tool_for_loop(
+        loop,
+        "cari file report.pdf di server ini",
+    )
+
+    assert tool_name == "find_files"
+    assert source == "cari file report.pdf di server ini"
+
+
+def test_infer_action_required_tool_for_loop_infers_message_for_explicit_send_file_request():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name == "message",
+            tool_names=["message"],
+        )
+    )
+
+    tool_name, source = infer_action_required_tool_for_loop(
+        loop,
+        r"kirim file C:\Users\Arvy Kairi\Desktop\report.pdf ke chat ini",
+    )
+
+    assert tool_name == "message"
+    assert source == r"kirim file C:\Users\Arvy Kairi\Desktop\report.pdf ke chat ini"
+
+
+def test_infer_action_required_tool_for_loop_prefers_write_file_for_create_then_send_request():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name in {"write_file", "message"},
+            tool_names=["write_file", "message"],
+        )
+    )
+
+    tool_name, source = infer_action_required_tool_for_loop(
+        loop,
+        "buat file .smoke_tmp/report.txt berisi HALO lalu kirim ke chat ini",
+    )
+
+    assert tool_name == "write_file"
+    assert source == "buat file .smoke_tmp/report.txt berisi HALO lalu kirim ke chat ini"
+
+
+def test_infer_action_required_tool_for_loop_does_not_force_write_file_for_path_only_code_authoring_request():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name == "write_file",
+            tool_names=["write_file"],
+        )
+    )
+
+    tool_name, source = infer_action_required_tool_for_loop(
+        loop,
+        "buat file src/index.html untuk landing page payment gateway dark style crypto",
+    )
+
+    assert tool_name is None
+    assert source is None
 
 def test_required_tool_for_query_detects_reminder_from_time_plus_action_without_explicit_keyword(agent_loop):
     assert agent_loop._required_tool_for_query("2 menit lagi makan") == "cron"
@@ -434,6 +593,208 @@ async def test_execute_required_tool_fallback_read_file_uses_last_file_context_p
         "read_file",
         {"path": r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html"},
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_write_file_creates_dot_relative_artifact(tmp_path):
+    async def _exec_tool(name: str, payload: dict[str, str], session_key: str | None = None):
+        assert name == "write_file"
+        target = tmp_path / str(payload["path"])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(str(payload["content"]), encoding="utf-8")
+        return f"Successfully wrote {len(str(payload['content']))} bytes to {payload['path']}"
+
+    loop = SimpleNamespace(
+        _execute_tool=_exec_tool,
+        tools=SimpleNamespace(execute=AsyncMock()),
+    )
+    content = "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={"required_tool_query": content},
+    )
+
+    result = await execute_required_tool_fallback(loop, "write_file", msg)
+
+    assert "successfully wrote" in result.lower()
+    assert (tmp_path / ".smoke_tmp" / "smoke_action_request.txt").read_text(encoding="utf-8") == "HALO_KABOT"
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_find_files_calls_find_files_tool(agent_loop):
+    execute_mock = AsyncMock(return_value="FILE report.pdf")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="cari file report.pdf",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("find_files", msg)
+
+    assert result == "FILE report.pdf"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "find_files"
+    assert params["query"] == "report.pdf"
+    assert params["context_text"] == "cari file report.pdf"
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_find_files_uses_current_working_directory_phrase(
+    agent_loop,
+    tmp_path,
+    monkeypatch,
+):
+    execute_mock = AsyncMock(return_value="FILE C:/tmp/report.pdf")
+    agent_loop.tools.execute = execute_mock
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="cari file report.pdf di folder kerja saat ini lalu kirim ke chat ini",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("find_files", msg)
+
+    assert result == "FILE C:/tmp/report.pdf"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "find_files"
+    assert params["query"] == "report.pdf"
+    assert params["path"] == str(cwd.resolve())
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_sends_explicit_file_path(agent_loop):
+    execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
+    agent_loop.tools.execute = execute_mock
+    report_path = agent_loop.workspace / "report.pdf"
+    report_path.write_text("hello", encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=f"kirim file {report_path} ke chat ini",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    assert result == "Message sent to telegram:chat-1"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "message"
+    assert params["files"] == [str(report_path.resolve())]
+    assert params["content"]
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_prefers_existing_cwd_relative_path(
+    agent_loop,
+    tmp_path,
+    monkeypatch,
+):
+    execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
+    agent_loop.tools.execute = execute_mock
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    relative_path = ".smoke_tmp/report.pdf"
+    report_path = cwd / ".smoke_tmp" / "report.pdf"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("hello-from-cwd", encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=f"kirim file {relative_path} ke chat ini",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    assert result == "Message sent to telegram:chat-1"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "message"
+    assert params["files"] == [str(report_path.resolve())]
+    assert params["content"]
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_prefers_last_found_path_over_bare_filename(agent_loop):
+    execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
+    agent_loop.tools.execute = execute_mock
+    report_path = agent_loop.workspace / ".smoke_tmp" / "report.pdf"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("hello", encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="kirim file report.pdf ke chat ini",
+        metadata={"last_tool_context": {"tool": "find_files", "path": str(report_path.resolve())}},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    assert result == "Message sent to telegram:chat-1"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "message"
+    assert params["files"] == [str(report_path.resolve())]
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_archives_directory_before_sending(agent_loop):
+    execute_mock = AsyncMock()
+    agent_loop.tools.execute = execute_mock
+    reports_dir = agent_loop.workspace / ".smoke_tmp" / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    (reports_dir / "summary.txt").write_text("hello", encoding="utf-8")
+    archive_path = agent_loop.workspace / ".smoke_tmp" / "reports.zip"
+    archive_path.write_text("zip-placeholder", encoding="utf-8")
+
+    async def _execute(tool_name, params, **_kwargs):
+        if tool_name == "archive_path":
+            return f"Created archive {archive_path.resolve()} from {reports_dir.resolve()}"
+        if tool_name == "message":
+            return "Message sent to telegram:chat-1"
+        raise AssertionError(f"unexpected tool {tool_name}")
+
+    execute_mock.side_effect = _execute
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="kirim folder .smoke_tmp/reports ke chat ini",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    assert result == "Message sent to telegram:chat-1"
+    assert execute_mock.await_args_list[0].args[0] == "archive_path"
+    assert execute_mock.await_args_list[1].args[0] == "message"
+    assert execute_mock.await_args_list[1].args[1]["files"] == [str(archive_path.resolve())]
+    assert execute_mock.await_args_list[1].args[1]["content"]
 
 @pytest.mark.asyncio
 async def test_execute_required_tool_fallback_list_dir_uses_platform_aliases_and_followup_context(agent_loop, monkeypatch):
@@ -913,6 +1274,22 @@ def test_extract_list_dir_path_supports_nested_special_directory_plus_subfolder(
     assert _extract_list_dir_path(
         "\u30c7\u30b9\u30af\u30c8\u30c3\u30d7\u306ebot\u30d5\u30a9\u30eb\u30c0\u306e\u4e2d\u3001\u6700\u521d\u306e5\u4ef6\u3060\u3051\u898b\u305b\u3066\u3002"
     ) == str(tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop/bot"))
+
+
+def test_extract_message_delivery_path_uses_monkeypatched_special_directory_home(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+
+    assert _extract_message_delivery_path("kirim desktop ke chat ini") == str(
+        tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop")
+    )
+
+
+def test_extract_message_delivery_path_does_not_treat_delivery_verb_as_desktop_subfolder(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+
+    assert _extract_message_delivery_path("kirim folder desktop ke chat ini") == str(
+        tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop")
+    )
 
 
 @pytest.mark.asyncio

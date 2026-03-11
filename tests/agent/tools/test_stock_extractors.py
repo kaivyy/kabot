@@ -15,6 +15,19 @@ def test_extract_stock_symbols_supports_usd_idr_natural_language_queries():
     assert extract_stock_symbols("kurs usd ke idr hari ini") == ["USDIDR=X"]
 
 
+def test_extract_stock_symbols_supports_ihsg_alias_queries():
+    assert extract_stock_symbols("harga ihsg sekarang") == ["^JKSE"]
+    assert extract_stock_symbols("cek IHSG hari ini") == ["^JKSE"]
+
+
+def test_extract_stock_symbols_normalizes_explicit_ihsg_suffix_to_jkse():
+    assert extract_stock_symbols("IHSG.JK") == ["^JKSE"]
+
+
+def test_extract_stock_symbols_supports_bren_alias_queries():
+    assert extract_stock_symbols("kalau saham bren?") == ["BREN.JK"]
+
+
 def test_extract_stock_name_candidates_trim_fx_conversion_filler_words():
     query = "how much is Apple stock now in rupiah?"
     assert extract_stock_name_candidates(query) == ["Apple"]
@@ -54,3 +67,12 @@ def test_extract_stock_name_candidates_ignores_generic_product_advice_phrase():
 
 def test_extract_stock_name_candidates_trims_trailing_question_noise_from_company_name():
     assert extract_stock_name_candidates("How much is Microsoft stock right now?") == ["Microsoft"]
+
+
+def test_extract_stock_name_candidates_ignores_general_knowledge_questions():
+    assert extract_stock_name_candidates("JAM BERAPA") == []
+    assert extract_stock_name_candidates("jam berapa sekarang") == []
+    assert extract_stock_name_candidates("IQ MANUSIA BERAPA") == []
+    assert extract_stock_name_candidates("iq manusia berapa") == []
+    assert extract_stock_name_candidates("IQ MANUSIA RATA RATA BERAPA") == []
+    assert extract_stock_name_candidates("KALAU EQ MANUSIA BERAPA") == []

@@ -40,6 +40,7 @@ Kabot is not just a chat wrapper around an LLM. It is a local-first agent framew
 - tool execution with safety layers
 - channels such as Telegram, Discord, Slack, WhatsApp, and more
 - operator surfaces for live monitoring and management
+- a Python-native MCP runtime for real tool/resource/prompt attachment
 
 ## What You Can Do With It
 
@@ -71,6 +72,7 @@ Kabot is not just a chat wrapper around an LLM. It is a local-first agent framew
 5. [Configuration guide](guide/configuration.md)
 6. [Gateway and dashboard guide](guide/gateway-dashboard.md)
 7. [Advanced overview](advanced/index.md)
+8. [MCP runtime](advanced/mcp.md)
 
 ## Docs Scope
 

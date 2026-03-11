@@ -1,11 +1,23 @@
 """Tests for explicit exec approval flow in AgentLoop."""
 
+import shutil
+import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from kabot.agent.loop import AgentLoop
+from kabot.agent.tools.shell import ExecTool
 from kabot.bus.events import InboundMessage, OutboundMessage
+
+
+def _make_case_dir() -> Path:
+    root = Path.cwd() / ".tmp-test-exec-approval-flow"
+    root.mkdir(parents=True, exist_ok=True)
+    case_dir = root / f"case-{uuid.uuid4().hex[:8]}"
+    case_dir.mkdir(parents=True, exist_ok=True)
+    return case_dir
 
 
 def test_parse_approval_command_supports_approve_and_deny():
@@ -81,3 +93,40 @@ async def test_process_pending_exec_approval_denies_pending_command():
 
     exec_tool.clear_pending_approval.assert_called_once_with("telegram:123", "abc123")
     assert result.content == "Pending command approval denied."
+
+
+@pytest.mark.asyncio
+async def test_process_pending_exec_approval_uses_persisted_pending_entry_from_fresh_exec_tool():
+    case_dir = _make_case_dir()
+    try:
+        config_path = case_dir / "command_approvals.yaml"
+        first_tool = ExecTool(timeout=5, firewall_config_path=config_path, auto_approve=False)
+        approval_id = first_tool.set_pending_approval("cli:direct", "echo persisted", working_dir=str(case_dir))
+
+        loop = AgentLoop.__new__(AgentLoop)
+        session = MagicMock()
+        msg = InboundMessage(
+            channel="cli",
+            sender_id="user",
+            chat_id="direct",
+            content=f"/approve {approval_id}",
+            _session_key="cli:direct",
+        )
+
+        fresh_tool = ExecTool(timeout=5, firewall_config_path=config_path, auto_approve=False)
+        fresh_tool.execute = AsyncMock(return_value="persisted-ok")
+
+        loop.tools = MagicMock()
+        loop.tools.get.return_value = fresh_tool
+        loop._init_session = AsyncMock(return_value=session)
+        loop._finalize_session = AsyncMock(
+            return_value=OutboundMessage(channel="cli", chat_id="direct", content="persisted-ok")
+        )
+
+        result = await loop._process_pending_exec_approval(msg, action="approve", approval_id=approval_id)
+
+        fresh_tool.execute.assert_awaited_once()
+        assert result.content == "persisted-ok"
+        assert fresh_tool.get_pending_approval("cli:direct") is None
+    finally:
+        shutil.rmtree(case_dir, ignore_errors=True)

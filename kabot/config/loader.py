@@ -14,6 +14,9 @@ from kabot.utils.pid_lock import PIDLock
 
 def get_config_path() -> Path:
     """Get the default configuration file path."""
+    override = str(os.getenv("KABOT_CONFIG") or "").strip()
+    if override:
+        return Path(override).expanduser()
     return Path.home() / ".kabot" / "config.json"
 
 

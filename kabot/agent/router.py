@@ -17,6 +17,7 @@ from kabot.providers.base import LLMProvider
 logger = logging.getLogger(__name__)
 
 IntentType = Literal["CODING", "CHAT", "RESEARCH", "GENERAL"]
+TurnCategory = Literal["chat", "action", "contextual_action", "command"]
 
 # Patterns that indicate SIMPLE requests (no tools needed)
 # Multilingual: covers EN, ID, ES, FR, DE, PT, RU, JA, KO, ZH, AR, TH, etc.
@@ -104,6 +105,16 @@ _TEMPORAL_FAST_RE = re.compile(
     r"何曜日|何時|何日|タイムゾーン|"
     r"ตอนนี้วันอะไร|ตอนนี้กี่โมง|เขตเวลา|โซนเวลา"
 )
+_MEMORY_RECALL_FAST_RE = re.compile(
+    r"(?i)\b("
+    r"what is my preference code|what was my preference code|my preference code|"
+    r"kode preferensiku apa|apa kode preferensiku|kode yang tadi kamu ingat|"
+    r"remembered code|saved code|memory code"
+    r")\b|"
+    r"我刚才让你记住的代码是什么|你记得我的代码|偏好代码|"
+    r"さっき覚えていたコード|好みのコード|"
+    r"รหัสความชอบของฉัน|รหัสที่คุณจำไว้"
+)
 
 
 @dataclass
@@ -111,6 +122,7 @@ class RouteDecision:
     """Result of routing a user message."""
     profile: IntentType     # Personality profile for system prompt
     is_complex: bool        # True = needs Planner→Executor→Critic loop
+    turn_category: TurnCategory = "chat"
 
 
 class IntentRouter:
@@ -138,14 +150,14 @@ class IntentRouter:
             RouteDecision with profile and complexity.
         """
         if not content or len(content.strip()) < 3:
-            return RouteDecision(profile="GENERAL", is_complex=False)
+            return RouteDecision(profile="GENERAL", is_complex=False, turn_category="chat")
 
         content_stripped = content.strip()
 
         # --- Fast heuristic: obvious SIMPLE cases ---
         for pattern in _SIMPLE_RE:
             if pattern.match(content_stripped):
-                return RouteDecision(profile="CHAT", is_complex=False)
+                return RouteDecision(profile="CHAT", is_complex=False, turn_category="chat")
 
         # --- Fast heuristic: obvious COMPLEX cases ---
         # Action keywords ALWAYS need tools → force COMPLEX, skip LLM classification
@@ -153,27 +165,29 @@ class IntentRouter:
         content_lower = content_stripped.lower()
         for keyword in _COMPLEX_KEYWORDS:
             if keyword in content_lower:
-                return RouteDecision(profile="GENERAL", is_complex=True)
+                return RouteDecision(profile="GENERAL", is_complex=True, turn_category="action")
 
         if _TEMPORAL_FAST_RE.search(content_stripped):
-            return RouteDecision(profile="GENERAL", is_complex=False)
+            return RouteDecision(profile="GENERAL", is_complex=False, turn_category="chat")
+        if _MEMORY_RECALL_FAST_RE.search(content_stripped):
+            return RouteDecision(profile="GENERAL", is_complex=False, turn_category="chat")
 
         # --- Ambiguous: use LLM classification ---
         profile = await self.classify(content)
 
         # Short CHAT messages are usually simple
         if profile == "CHAT" and len(content_stripped) < 150:
-            return RouteDecision(profile=profile, is_complex=False)
+            return RouteDecision(profile=profile, is_complex=False, turn_category="chat")
 
         # CODING and RESEARCH are always complex
         if profile in ("CODING", "RESEARCH"):
-            return RouteDecision(profile=profile, is_complex=True)
+            return RouteDecision(profile=profile, is_complex=True, turn_category="action")
 
         # GENERAL with moderate length → complex
         if len(content_stripped) > 100:
-            return RouteDecision(profile=profile, is_complex=True)
+            return RouteDecision(profile=profile, is_complex=True, turn_category="action")
 
-        return RouteDecision(profile=profile, is_complex=False)
+        return RouteDecision(profile=profile, is_complex=False, turn_category="chat")
 
     async def classify(self, content: str) -> IntentType:
         """

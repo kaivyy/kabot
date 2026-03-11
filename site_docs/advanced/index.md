@@ -5,6 +5,7 @@ This section is for operators, power users, and contributors who want to underst
 ## What You Will Find Here
 
 - runtime architecture
+- MCP runtime and capability attachment
 - operator workflow patterns
 - integrations and extension strategy
 - mental models for performance, safety, and maintainability
@@ -21,5 +22,6 @@ Use this section if you are:
 ## Suggested Order
 
 1. [Runtime Architecture](runtime-architecture.md)
-2. [Operator Patterns](operator-patterns.md)
-3. [Integrations and Extensions](integrations.md)
+2. [MCP Runtime](mcp.md)
+3. [Operator Patterns](operator-patterns.md)
+4. [Integrations and Extensions](integrations.md)

@@ -306,6 +306,11 @@ from kabot.cli.commands_models_auth import (  # noqa: E402,I001
     models_scan,
     models_set,
 )
+from kabot.cli.commands_mcp import (  # noqa: E402,I001
+    mcp_example_config,
+    mcp_inspect,
+    mcp_status,
+)
 from kabot.cli.commands_provider_runtime import (  # noqa: E402,I001
     _cli_exec_approval_prompt,
     _collect_cli_delivery_job_ids,
@@ -448,6 +453,10 @@ __all__ = [
     "gateway",
     "google_auth",
     "main",
+    "mcp_app",
+    "mcp_example_config",
+    "mcp_inspect",
+    "mcp_status",
     "mode",
     "models_app",
     "models_info",
@@ -489,6 +498,9 @@ app.add_typer(cron_app, name="cron")
 backup_app = typer.Typer(help="Create and inspect backups")
 app.add_typer(backup_app, name="backup")
 
+mcp_app = typer.Typer(help="Manage MCP configuration and diagnostics")
+app.add_typer(mcp_app, name="mcp")
+
 app.add_typer(agents.app, name="agents")
 app.add_typer(mode.app, name="mode")
 
@@ -526,6 +538,9 @@ cron_app.command("status")(cron_status)
 cron_app.command("update")(cron_update)
 cron_app.command("runs")(cron_runs)
 backup_app.command("create")(backup_create)
+mcp_app.command("status")(mcp_status)
+mcp_app.command("inspect")(mcp_inspect)
+mcp_app.command("example-config")(mcp_example_config)
 app.command()(status)
 app.command("env-check")(env_check)
 app.command("remote-bootstrap")(remote_bootstrap)

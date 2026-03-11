@@ -265,6 +265,34 @@ class MessageBus:
                 self._forget_inbound_token(token)
             return msg
 
+    def take_pending_inbound_for_session(self, session_key: str, *, limit: int = 3) -> list[InboundMessage]:
+        """Non-blockingly drain up to `limit` pending inbound messages for one session."""
+        if not session_key or limit <= 0:
+            return []
+        raw_queue = getattr(self.inbound, "_queue", None)
+        if raw_queue is None:
+            return []
+
+        retained = deque()
+        taken: list[InboundMessage] = []
+        try:
+            while raw_queue:
+                msg = raw_queue.popleft()
+                if (
+                    isinstance(msg, InboundMessage)
+                    and msg.session_key == session_key
+                    and len(taken) < limit
+                ):
+                    taken.append(msg)
+                    token = self._token_from_message(msg)
+                    if token:
+                        self._forget_inbound_token(token)
+                    continue
+                retained.append(msg)
+        finally:
+            raw_queue.extend(retained)
+        return taken
+
     async def publish_outbound(self, msg: OutboundMessage) -> None:
         """Publish a response from the agent to channels."""
         await self.outbound.put(msg)

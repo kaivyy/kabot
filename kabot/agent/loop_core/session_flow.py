@@ -48,6 +48,37 @@ def _schedule_memory_write(loop: Any, coro: Any, *, label: str) -> None:
     task.add_done_callback(_done_callback)
 
 
+async def drain_pending_memory_writes(loop: Any, *, max_wait_ms: int = 250) -> int:
+    """Wait briefly for already-scheduled memory writes so history stays fresh."""
+    pending = getattr(loop, "_pending_memory_tasks", None)
+    if not isinstance(pending, set) or not pending:
+        return 0
+
+    live_tasks = [
+        task for task in list(pending)
+        if isinstance(task, asyncio.Task) and not task.done()
+    ]
+    if not live_tasks:
+        return 0
+
+    timeout = None
+    if isinstance(max_wait_ms, (int, float)) and max_wait_ms > 0:
+        timeout = float(max_wait_ms) / 1000.0
+
+    done, _pending = await asyncio.wait(live_tasks, timeout=timeout)
+    drained = 0
+    for task in done:
+        pending.discard(task)
+        drained += 1
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            continue
+        except Exception as exc:
+            logger.warning(f"Background memory write failed during drain: {exc}")
+    return drained
+
+
 def get_session_key(loop: Any, msg: InboundMessage) -> str:
     """Resolve session key using existing route resolver."""
     route = loop._resolve_route_for_message(msg)
@@ -175,6 +206,12 @@ async def finalize_session(
                 setattr(loop, "last_usage", None)
             else:
                 session.add_message("assistant", final_content)
+        refresh_snapshot = getattr(session, "refresh_durable_history_snapshot", None)
+        if callable(refresh_snapshot):
+            try:
+                refresh_snapshot()
+            except Exception as exc:
+                logger.warning(f"Session snapshot refresh failed for {msg.session_key}: {exc}")
         try:
             loop.sessions.save(session)
         except Exception as exc:

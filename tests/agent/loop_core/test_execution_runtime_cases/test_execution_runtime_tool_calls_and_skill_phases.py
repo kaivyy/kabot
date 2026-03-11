@@ -124,6 +124,55 @@ async def test_process_tool_calls_allows_image_tool_for_image_intent(tmp_path):
     tool_executor.assert_awaited_once_with("image_gen", {"prompt": "mobil di hutan"})
 
 @pytest.mark.asyncio
+async def test_process_tool_calls_updates_session_followup_context_from_tool_args(tmp_path):
+    tool_executor = AsyncMock(return_value='{"symbol":"^JKSE","price":7210.31}')
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek ihsg realtime")
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_mcp", name="mcp__yahoo_finance__quote", arguments={"symbol": "^JKSE"})],
+    )
+    session = SimpleNamespace(metadata={})
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=session,
+    )
+
+    last_ctx = session.metadata.get("last_tool_context")
+    assert isinstance(last_ctx, dict)
+    assert last_ctx.get("tool") == "mcp__yahoo_finance__quote"
+    assert "^jkse" in str(last_ctx.get("source") or "").lower()
+    followup = session.metadata.get("pending_followup_tool")
+    assert isinstance(followup, dict)
+    assert followup.get("tool") == "mcp__yahoo_finance__quote"
+    assert "^jkse" in str(followup.get("source") or "").lower()
+
+@pytest.mark.asyncio
 async def test_process_tool_calls_blocks_tts_tool_for_non_tts_intent(tmp_path):
     tool_executor = AsyncMock(return_value="Audio generated")
     loop = SimpleNamespace(
@@ -568,6 +617,100 @@ async def test_run_agent_loop_status_text_comes_from_i18n_translator(monkeypatch
     assert "<runtime.status.tool>" in contents
     assert "<runtime.status.done>" in contents
     loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_injects_pending_user_messages_after_tool_phase():
+    published = []
+    pending = [
+        InboundMessage(
+            channel="telegram",
+            chat_id="chat-1",
+            sender_id="user",
+            content="tambahin CTA WhatsApp juga",
+            _session_key="telegram:chat-1",
+        )
+    ]
+
+    async def _publish(msg):
+        published.append(msg)
+
+    def _take_pending(session_key: str, limit: int = 3):
+        assert session_key == "telegram:chat-1"
+        if not pending:
+            return []
+        drained = list(pending[:limit])
+        pending.clear()
+        return drained
+
+    def _add_assistant_message(messages, content, tool_calls=None, reasoning_content=None):
+        item = {"role": "assistant", "content": content}
+        if tool_calls:
+            item["tool_calls"] = tool_calls
+        if reasoning_content:
+            item["reasoning_content"] = reasoning_content
+        return [*messages, item]
+
+    first_response = LLMResponse(
+        content="sedang proses",
+        tool_calls=[ToolCallRequest(id="call_read", name="read_file", arguments={"path": "index.html"})],
+    )
+    second_response = LLMResponse(content="siap, CTA ikut ditambahkan")
+
+    loop = SimpleNamespace(
+        max_iterations=3,
+        context_guard=SimpleNamespace(check_overflow=lambda _messages, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _is_weak_model=lambda _model: False,
+        _required_tool_for_query=lambda _q: None,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(side_effect=[(first_response, None), (second_response, None)]),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(10, "ok")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, messages, _response, _session: [*messages, {"role": "tool", "content": "ok"}]),
+        _execute_required_tool_fallback=AsyncMock(return_value=None),
+        _should_log_verbose=lambda _session: False,
+        context=SimpleNamespace(
+            add_assistant_message=_add_assistant_message,
+            add_tool_result=lambda messages, _id, _name, result: [*messages, {"role": "tool", "content": result}],
+        ),
+        provider=SimpleNamespace(),
+        bus=SimpleNamespace(
+            publish_outbound=AsyncMock(side_effect=_publish),
+            take_pending_inbound_for_session=_take_pending,
+        ),
+        tools=SimpleNamespace(get=lambda _name: None),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user",
+        content="bikin landing page dulu",
+        _session_key="telegram:chat-1",
+        metadata={"route_profile": "CODING", "turn_category": "action"},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "siap, CTA ikut ditambahkan"
+    second_call_messages = loop._call_llm_with_fallback.await_args_list[1].args[0]
+    assert any(
+        item.get("role") == "user"
+        and "[Pending User Messages]" in str(item.get("content") or "")
+        and "CTA WhatsApp" in str(item.get("content") or "")
+        for item in second_call_messages
+    )
+    assert msg.metadata.get("pending_interrupt_count") == 1
+    interrupt_updates = [
+        outbound for outbound in published
+        if (outbound.metadata or {}).get("phase") == "interrupt"
+    ]
+    assert interrupt_updates
 
 @pytest.mark.asyncio
 async def test_run_agent_loop_status_text_uses_runtime_locale_from_message_metadata(monkeypatch):

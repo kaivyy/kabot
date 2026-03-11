@@ -148,6 +148,9 @@ class AgentLoopDelegatesMixin:
     async def _finalize_session(self, msg: InboundMessage, session: Any, final_content: str | None) -> OutboundMessage:
         return await loop_session_flow.finalize_session(self, msg, session, final_content)
 
+    async def _drain_pending_memory_writes(self, max_wait_ms: int = 250) -> int:
+        return await loop_session_flow.drain_pending_memory_writes(self, max_wait_ms=max_wait_ms)
+
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
         return await loop_message_runtime.process_system_message(self, msg)
 
@@ -193,12 +196,20 @@ class AgentLoopDelegatesMixin:
         response = await self._process_message(msg)
         return response.content if response else ""
 
+    async def close_runtime_resources(self) -> None:
+        drain_pending = getattr(self, "_drain_pending_memory_writes", None)
+        if callable(drain_pending):
+            await drain_pending(max_wait_ms=1500)
+        if getattr(self, "_mcp_session_runtimes", None):
+            await self._close_mcp_runtimes()
+
     async def process_isolated(
         self,
         content: str,
         channel: str = "cli",
         chat_id: str = "direct",
         job_id: str = "",
+        fresh_context: bool = False,
     ) -> str:
         return await loop_message_runtime.process_isolated(
             self,
@@ -206,6 +217,7 @@ class AgentLoopDelegatesMixin:
             channel=channel,
             chat_id=chat_id,
             job_id=job_id,
+            fresh_context=fresh_context,
         )
 
     def _apply_think_mode(self, messages: list, session: Any) -> list:

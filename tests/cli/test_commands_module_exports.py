@@ -8,6 +8,7 @@ from kabot.cli import (
     commands_agent_command,
     commands_approvals,
     commands_gateway,
+    commands_mcp,
     commands_models_auth,
     commands_provider_runtime,
     commands_setup,
@@ -23,6 +24,7 @@ def test_commands_reexports_new_command_modules():
     assert commands.gateway is commands_gateway.gateway
     assert commands.agent is commands_agent_command.agent
     assert commands.auth_list is commands_models_auth.auth_list
+    assert commands.mcp_status is commands_mcp.mcp_status
     assert commands.approvals_status is commands_approvals.approvals_status
     assert commands.cron_list is commands_system.cron_list
     assert commands.plugins_cmd is commands_system.plugins_cmd
