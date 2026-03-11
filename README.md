@@ -29,7 +29,7 @@ If you want a personal, single-user assistant that feels local, fast, and always
 ## What's New In v0.6.3
 
 - **Python-native MCP runtime** with session-scoped server attachment, tool/resource/prompt support, and `kabot mcp` CLI commands.
-- **Skyclaw/OpenClaw-style continuity hardening** so short follow-ups like `yes continue`, `lanjut`, and referential replies stay grounded to the real prior answer or tool result.
+- **Continuity hardening** so short follow-ups like `yes continue`, `lanjut`, and referential replies stay grounded to the real prior answer or tool result.
 - **Evidence-first delivery/runtime behavior** so Kabot is much less likely to claim a file, screenshot, or generated artifact was sent unless the runtime can verify it.
 - **Smoke coverage for real workflows** including continuity, memory recall, MCP echo flows, and multi-turn `create -> continue -> upgrade` regressions.
 
@@ -253,7 +253,7 @@ Gateway runtime notes:
 - If gateway bind mode is set to `tailscale`, Kabot activates Tailscale Serve at startup and keeps gateway bind on loopback for safer exposure.
 - If `gateway.tailscale=true` (with non-tailscale bind mode), Kabot activates Tailscale Funnel at startup.
 - Lightweight dashboard is available at `/dashboard` (SSR + HTMX, low-RAM friendly).
-  - OpenClaw-style operator panels now available in the same surface:
+  - richer operator panels are now available in the same surface:
     - Chat panel (runtime prompt send + live log auto-refresh, now with SSE stream),
       with per-message model controls:
       - provider selector (all registered providers),
@@ -905,7 +905,7 @@ The core execution engine found in `kabot/agent/loop.py`. It implements a ReAct 
 4.  **Reflect**: Analyze tool output.
 5.  **Repeat**: Until the task is done.
 
-Recent Skyclaw-inspired hardening added:
+Recent runtime hardening added:
 - stronger turn categorization (`chat`, `action`, `contextual_action`, `command`)
 - continuity resolution that prefers recent answer/tool evidence over weak parser guesses
 - unified completion evidence so "done" claims are checked against real artifact/delivery proof

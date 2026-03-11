@@ -65,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - filesystem path extraction no longer treats slash-separated control hints like `↑/↓` as real filesystem paths, so game-upgrade follow-ups stop hallucinating `read_file` targets such as `/↓`,
   - explicit file-analysis mode now only extracts file paths from the user's raw turn instead of synthetic `[Committed Action Context]` / `[Assistant Promise]` sections, which prevents short follow-ups like `yes continue` from being hijacked into stale `read_file` flows just because the assistant promise mentioned filenames.
 
-- Skyclaw/OpenClaw-style continuity parity is now much more explicit and observable across the runtime:
+- Continuity parity is now much more explicit and observable across the runtime:
   - message routing now records a first-class `turn_category` (`chat`, `action`, `contextual_action`, `command`) instead of leaving short follow-ups to weak parser guesses,
   - durable session snapshots now backstop history hydration across normal, isolated, slash, and system-origin turns so recent context survives fresh loop instances and fail-open history gaps,
   - layered context assembly now gives bounded priority to recent history, recent answer/tool context, saved memory facts, and learned execution hints before weaker fallback heuristics,
@@ -286,7 +286,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Documentation**: Added comprehensive guide for Auto-start (background daemon) and Tailscale tunneling to `HOW_TO_USE.MD`, including native security middleware explanations and Windows troubleshooting.
-- **Native Tailscale Security Middleware**: Kabot's Gateway now features an IP-level Tailnet middleware. When `gateway.tailscale` is enabled in the configuration, the `webhook_server` natively drops any incoming UI/Webhook connection (`403 Forbidden`) that does not originate from Localhost (`127.0.0.1`, `::1`) or the secure Tailscale subnet (`100.x.x.x`). This mirrors OpenClaw's security posture, ensuring that even if port 18790 is exposed via `0.0.0.0`, malicious public traffic is immediately blocked before touching the application logic.
+- **Native Tailscale Security Middleware**: Kabot's Gateway now features an IP-level Tailnet middleware. When `gateway.tailscale` is enabled in the configuration, the `webhook_server` natively drops any incoming UI/Webhook connection (`403 Forbidden`) that does not originate from Localhost (`127.0.0.1`, `::1`) or the secure Tailscale subnet (`100.x.x.x`). This enforces a stricter tailnet-first security posture, ensuring that even if port 18790 is exposed via `0.0.0.0`, malicious public traffic is immediately blocked before touching the application logic.
 
 ### Changed
 - One-shot CLI session behavior is now safer for ad-hoc probes:
