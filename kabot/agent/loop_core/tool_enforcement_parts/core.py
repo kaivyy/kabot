@@ -212,6 +212,16 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             path = str(last_tool_context.get("path") or "").strip()
         if not path:
             return i18n_t("filesystem.need_path", source_text)
+
+        resolved_path = _resolve_delivery_path(loop, path)
+        if resolved_path.exists() and resolved_path.is_dir() and _tool_name_available(loop, "list_dir"):
+            payload: dict[str, Any] = {"path": str(resolved_path)}
+            limit = _extract_list_dir_limit(source_text)
+            if limit is not None:
+                payload["limit"] = limit
+            result = await _exec_tool("list_dir", payload)
+            return str(result)
+
         result = await _exec_tool("read_file", {"path": path})
         return str(result)
 
