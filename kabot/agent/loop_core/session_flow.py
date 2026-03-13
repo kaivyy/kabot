@@ -111,10 +111,12 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
     session_meta = getattr(session, "metadata", None)
     if isinstance(session_meta, dict):
         session_last_nav = str(session_meta.get("last_navigated_path") or "").strip()
-        if session_last_nav:
+        session_last_delivery = str(session_meta.get("last_delivery_path") or "").strip()
+        if session_last_nav or session_last_delivery:
             if not isinstance(msg.metadata, dict):
                 msg.metadata = {}
                 inbound_meta = msg.metadata
+        if session_last_nav:
             if not str(inbound_meta.get("last_navigated_path") or "").strip():
                 inbound_meta["last_navigated_path"] = session_last_nav
             if not isinstance(inbound_meta.get("last_tool_context"), dict):
@@ -122,6 +124,8 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
                     "tool": "list_dir",
                     "path": session_last_nav,
                 }
+        if session_last_delivery and not str(inbound_meta.get("last_delivery_path") or "").strip():
+            inbound_meta["last_delivery_path"] = session_last_delivery
 
     persist_probe_history = _should_persist_probe_history(msg)
     if not _is_probe_mode_message(msg) or persist_probe_history:
@@ -230,6 +234,9 @@ async def finalize_session(
             last_navigated_path = str(inbound_meta.get("last_navigated_path") or "").strip()
             if last_navigated_path:
                 session_meta["last_navigated_path"] = last_navigated_path
+            last_delivery_path = str(inbound_meta.get("last_delivery_path") or "").strip()
+            if last_delivery_path:
+                session_meta["last_delivery_path"] = last_delivery_path
 
         refresh_snapshot = getattr(session, "refresh_durable_history_snapshot", None)
         if callable(refresh_snapshot):

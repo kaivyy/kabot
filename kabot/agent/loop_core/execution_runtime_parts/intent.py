@@ -307,6 +307,17 @@ def _resolve_query_text_from_message(msg: InboundMessage) -> str:
     return str(msg.content or "").strip()
 
 
+def _session_metadata(loop: Any, msg: InboundMessage) -> dict[str, Any] | None:
+    try:
+        session = loop.sessions.get_or_create(msg.session_key)
+    except Exception:
+        return None
+    metadata = getattr(session, "metadata", None)
+    if isinstance(metadata, dict):
+        return metadata
+    return None
+
+
 def _skill_creation_status_phase(message_metadata: dict[str, Any] | None) -> str | None:
     if not isinstance(message_metadata, dict):
         return None
@@ -511,9 +522,23 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
 
     query_text = _resolve_query_text_from_message(msg)
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    session_meta = _session_metadata(loop, msg) if hasattr(loop, "sessions") else None
 
     if normalized_tool == "web_search" and _looks_like_direct_page_fetch_request(query_text):
         return None
+
+    if normalized_tool == "message":
+        has_send_verb = bool(re.search(r"(?i)\b(kirim|send|share|attach|lampirkan|upload)\b", query_text))
+        has_explicit_target = bool(_FILELIKE_QUERY_RE.search(query_text) or _PATHLIKE_QUERY_RE.search(query_text))
+        if has_send_verb and not has_explicit_target:
+            last_delivery = str(metadata.get("last_delivery_path") or "").strip()
+            if not last_delivery and isinstance(session_meta, dict):
+                last_delivery = str(session_meta.get("last_delivery_path") or "").strip()
+            last_nav = str(metadata.get("last_navigated_path") or "").strip()
+            if not last_nav and isinstance(session_meta, dict):
+                last_nav = str(session_meta.get("last_navigated_path") or "").strip()
+            if last_delivery or last_nav:
+                return None
 
     allowed_workflow_tools: set[str] = set()
     if query_text:

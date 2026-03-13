@@ -171,6 +171,34 @@ def _looks_like_internal_temp_path(candidate: Path) -> bool:
     return bool(parts.intersection(internal_markers))
 
 
+def _get_last_delivery_path(loop: Any, msg: InboundMessage, metadata: dict[str, Any]) -> str:
+    direct = str(metadata.get("last_delivery_path") or "").strip()
+    if direct:
+        return direct
+    session_meta = _get_session_metadata(loop, msg)
+    if isinstance(session_meta, dict):
+        return str(session_meta.get("last_delivery_path") or "").strip()
+    return ""
+
+
+def _set_last_delivery_path(loop: Any, msg: InboundMessage, metadata: dict[str, Any], path_value: str) -> str | None:
+    raw = str(path_value or "").strip()
+    if not raw:
+        return None
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except Exception:
+        return None
+    if not resolved.exists() or not resolved.is_file():
+        return None
+    normalized = str(resolved)
+    metadata["last_delivery_path"] = normalized
+    session_meta = _get_session_metadata(loop, msg)
+    if isinstance(session_meta, dict):
+        session_meta["last_delivery_path"] = normalized
+    return normalized
+
+
 async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: InboundMessage) -> str | None:
     """Deterministic fallback when model skips required tools repeatedly."""
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
@@ -340,10 +368,23 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             source_text,
             last_tool_context=last_tool_context,
         )
+
+        normalized_source = _normalize_text(source_text)
+        has_send_verb = bool(re.search(r"(?i)\b(kirim|send|share|attach|lampirkan|upload)\b", source_text))
+        has_explicit_target = bool(_FILELIKE_QUERY_RE.search(source_text) or _PATHLIKE_QUERY_RE.search(source_text))
+        send_without_target = bool(has_send_verb and not has_explicit_target)
+
+        last_delivery_path = _get_last_delivery_path(loop, msg, metadata)
+        if send_without_target and last_delivery_path:
+            path = last_delivery_path
+
         if not path:
             return i18n_t("filesystem.need_path", source_text)
 
         requested_file = _extract_read_file_path(source_text)
+        if not requested_file and send_without_target and last_delivery_path:
+            requested_file = Path(last_delivery_path).name
+
         resolved_path = _resolve_delivery_path(loop, path)
 
         is_bare_file_request = bool(
@@ -412,6 +453,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             return i18n_t("filesystem.not_file", path, path=path)
 
         _set_last_navigated_path(loop, msg, metadata, str(resolved_path.parent))
+        _set_last_delivery_path(loop, msg, metadata, str(resolved_path))
 
         result = await _exec_tool(
             "message",

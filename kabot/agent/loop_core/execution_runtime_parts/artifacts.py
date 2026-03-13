@@ -598,3 +598,11 @@ def _update_followup_context_from_tool_execution(
                 candidate_path = None
             if candidate_path is not None and candidate_path.exists() and candidate_path.is_dir():
                 metadata["last_navigated_path"] = str(candidate_path)
+
+        if normalized_tool == "message":
+            try:
+                delivered_path = Path(str(extracted_path)).expanduser().resolve()
+            except Exception:
+                delivered_path = None
+            if delivered_path is not None and delivered_path.exists() and delivered_path.is_file():
+                metadata["last_delivery_path"] = str(delivered_path)

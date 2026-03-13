@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - message fallback now also reads `last_navigated_path` from session metadata (not only inbound message metadata), so CLI/agent direct turns keep navigation continuity across turns,
   - finalized session state now copies `last_navigated_path` from inbound metadata into persisted session metadata, ensuring one-shot agent invocations still remember the last opened folder on the next turn,
   - session initialization now hydrates `last_navigated_path` back into inbound turn metadata (and seeds `last_tool_context` when missing), so follow-up file actions can reuse prior folder context without re-asking path,
+  - follow-up send commands without explicit target (for example `kirim langsung`) now reuse persisted `last_delivery_path` from session context when available,
   - if a bare-filename send still resolves to an internal temp path outside the active navigated folder, Kabot now returns not-found instead of sending stale temp artifacts.
 - Find-files fallback now respects active navigation context:
   - `find_files` root resolution now checks `last_navigated_path` before falling back to older `last_tool_context.path`, preventing context drift during search→send workflows,
@@ -36,7 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - when `read_file` is requested but the resolved context path is a directory, Kabot now falls back to `list_dir` (when available) instead of returning `Not a file` immediately.
 - Low-information follow-ups now ignore stale assistant helper prompts more reliably:
   - assistant-style text like `Please provide the file path ... (example: config.json or C:\path\to\file.json)` is treated as stale metadata on short follow-ups,
-  - placeholder path patterns such as `C:\path\to\file.json` are now filtered from explicit path extraction.
+  - placeholder path patterns such as `C:\path\to\file.json` are now filtered from explicit path extraction,
+  - intent-mismatch guards now allow `message` tool execution on short send-only turns (for example `kirim langsung`) when session delivery context is present.
 
 ## [0.6.4] - 2026-03-13
 

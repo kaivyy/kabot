@@ -19,6 +19,7 @@ from kabot.agent.loop_core.execution_runtime import (
     run_simple_response,
 )
 from kabot.agent.loop_core.execution_runtime_parts.helpers import _extract_single_result_path
+from kabot.agent.loop_core.execution_runtime_parts.intent import _tool_call_intent_mismatch_reason
 from kabot.bus.events import InboundMessage
 from kabot.providers.base import LLMResponse, ToolCallRequest
 
@@ -1996,3 +1997,23 @@ async def test_process_tool_calls_blocks_weather_for_non_weather_greeting(tmp_pa
     tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_weather"]
     assert tool_messages
     assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+def test_tool_call_intent_mismatch_allows_message_send_without_explicit_path_when_session_has_delivery_context():
+    session = SimpleNamespace(metadata={"last_delivery_path": r"C:\\Users\\Arvy Kairi\\Desktop\\bot\\tes.md"})
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(has=lambda name: name == "message"),
+        sessions=SimpleNamespace(get_or_create=lambda _key: session),
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="kirim langsung",
+        metadata={},
+    )
+
+    reason = _tool_call_intent_mismatch_reason(loop, msg, "message")
+
+    assert reason is None
