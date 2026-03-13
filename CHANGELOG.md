@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Message delivery now prefers explicit navigation context over stale internal paths:
   - when `last_tool_context.path` drifts to an internal temp folder (for example `.basetemp`) but `last_navigated_path` points to the actual user-opened folder, bare-filename sends like `kirim file tes.md ke sini` now resolve against the navigated folder first,
   - `list_dir` and read-file directory fallbacks now persist `last_navigated_path` so follow-up send-file turns can anchor to the folder the user just opened,
-  - message fallback now also reads `last_navigated_path` from session metadata (not only inbound message metadata), so CLI/agent direct turns keep navigation continuity across turns.
+  - message fallback now also reads `last_navigated_path` from session metadata (not only inbound message metadata), so CLI/agent direct turns keep navigation continuity across turns,
+  - finalized session state now copies `last_navigated_path` from inbound metadata into persisted session metadata, ensuring one-shot agent invocations still remember the last opened folder on the next turn.
 - Read-file fallback no longer hard-fails on directory context for broad project-inspection turns:
   - when `read_file` is requested but the resolved context path is a directory, Kabot now falls back to `list_dir` (when available) instead of returning `Not a file` immediately.
 - Low-information follow-ups now ignore stale assistant helper prompts more reliably:

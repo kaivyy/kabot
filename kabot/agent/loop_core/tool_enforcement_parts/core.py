@@ -117,6 +117,45 @@ def _query_has_tool_payload(tool_name: str, text: str) -> bool:
     return False
 
 
+def _get_session_metadata(loop: Any, msg: InboundMessage) -> dict[str, Any] | None:
+    try:
+        session = loop.sessions.get_or_create(msg.session_key)
+    except Exception:
+        return None
+    session_meta = getattr(session, "metadata", None)
+    if not isinstance(session_meta, dict):
+        return None
+    return session_meta
+
+
+def _set_last_navigated_path(loop: Any, msg: InboundMessage, metadata: dict[str, Any], path_value: str) -> str | None:
+    raw = str(path_value or "").strip()
+    if not raw:
+        return None
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except Exception:
+        return None
+    if not resolved.exists() or not resolved.is_dir():
+        return None
+    normalized = str(resolved)
+    metadata["last_navigated_path"] = normalized
+    session_meta = _get_session_metadata(loop, msg)
+    if isinstance(session_meta, dict):
+        session_meta["last_navigated_path"] = normalized
+    return normalized
+
+
+def _get_last_navigated_path(loop: Any, msg: InboundMessage, metadata: dict[str, Any]) -> str:
+    direct = str(metadata.get("last_navigated_path") or "").strip()
+    if direct:
+        return direct
+    session_meta = _get_session_metadata(loop, msg)
+    if isinstance(session_meta, dict):
+        return str(session_meta.get("last_navigated_path") or "").strip()
+    return ""
+
+
 async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: InboundMessage) -> str | None:
     """Deterministic fallback when model skips required tools repeatedly."""
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
@@ -186,7 +225,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
 
         resolved_list_dir = _resolve_delivery_path(loop, path)
         if resolved_list_dir.exists() and resolved_list_dir.is_dir() and isinstance(metadata, dict):
-            metadata["last_navigated_path"] = str(resolved_list_dir)
+            _set_last_navigated_path(loop, msg, metadata, str(resolved_list_dir))
 
         result = await _exec_tool("list_dir", payload)
         return str(result)
@@ -226,7 +265,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             if limit is not None:
                 payload["limit"] = limit
             if isinstance(metadata, dict):
-                metadata["last_navigated_path"] = str(resolved_path)
+                _set_last_navigated_path(loop, msg, metadata, str(resolved_path))
             result = await _exec_tool("list_dir", payload)
             return str(result)
 
@@ -291,23 +330,30 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
 
         requested_file = _extract_read_file_path(source_text)
         resolved_path = _resolve_delivery_path(loop, path)
-        if not resolved_path.exists():
-            navigation_hint = str(metadata.get("last_navigated_path") or "").strip()
-            if not navigation_hint:
-                try:
-                    session = loop.sessions.get_or_create(msg.session_key)
-                except Exception:
-                    session = None
-                session_meta = getattr(session, "metadata", None)
-                if isinstance(session_meta, dict):
-                    navigation_hint = str(session_meta.get("last_navigated_path") or "").strip()
 
-            is_bare_file_request = bool(
-                requested_file
-                and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", requested_file)
-                and "/" not in requested_file
-                and "\\" not in requested_file
-            )
+        is_bare_file_request = bool(
+            requested_file
+            and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", requested_file)
+            and "/" not in requested_file
+            and "\\" not in requested_file
+        )
+        navigation_hint = _get_last_navigated_path(loop, msg, metadata)
+
+        # Prioritize active navigated folder for bare-filename sends, even when
+        # stale fallback paths still exist (e.g. internal temp folders).
+        if navigation_hint and is_bare_file_request:
+            try:
+                nav_base = Path(navigation_hint).expanduser().resolve()
+            except Exception:
+                nav_base = None
+            if nav_base is not None and nav_base.exists() and nav_base.is_dir():
+                candidate = (nav_base / str(requested_file)).resolve()
+                if candidate.exists() and candidate.is_file():
+                    resolved_path = candidate
+                    path = str(candidate)
+                    _set_last_navigated_path(loop, msg, metadata, str(nav_base))
+
+        if not resolved_path.exists():
             if navigation_hint and is_bare_file_request:
                 try:
                     nav_base = Path(navigation_hint).expanduser().resolve()
@@ -334,6 +380,8 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
                 return i18n_t("filesystem.file_not_found", archived_path, path=archived_path)
         elif not resolved_path.is_file():
             return i18n_t("filesystem.not_file", path, path=path)
+
+        _set_last_navigated_path(loop, msg, metadata, str(resolved_path.parent))
 
         result = await _exec_tool(
             "message",

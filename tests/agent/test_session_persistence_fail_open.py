@@ -132,3 +132,30 @@ def test_session_manager_restores_history_from_durable_snapshot(tmp_path):
         {"role": "user", "content": "cuaca cilacap sekarang bagaimana"},
         {"role": "assistant", "content": "Sekarang berawan, paling aman bawa payung kecil."},
     ]
+
+
+@pytest.mark.asyncio
+async def test_finalize_session_persists_last_navigated_path_from_message_metadata():
+    class _Memory:
+        async def add_message(self, session_key, role, content):
+            return None
+
+    class _Sessions:
+        def save(self, session):
+            return None
+
+    fake_self = type("_FakeLoop", (), {"memory": _Memory(), "sessions": _Sessions()})()
+    session = Session(key="telegram:chat-42")
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="user",
+        chat_id="chat-42",
+        content="kirim file tes.md ke sini",
+        _session_key="telegram:chat-42",
+        metadata={"last_navigated_path": r"C:\Users\Arvy Kairi\Desktop\bot"},
+    )
+
+    result = await AgentLoop._finalize_session(fake_self, msg, session, "Message sent")
+
+    assert result.content == "Message sent"
+    assert session.metadata.get("last_navigated_path") == r"C:\Users\Arvy Kairi\Desktop\bot"

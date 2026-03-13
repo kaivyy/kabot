@@ -206,6 +206,14 @@ async def finalize_session(
                 setattr(loop, "last_usage", None)
             else:
                 session.add_message("assistant", final_content)
+
+        inbound_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
+        session_meta = getattr(session, "metadata", None)
+        if isinstance(session_meta, dict):
+            last_navigated_path = str(inbound_meta.get("last_navigated_path") or "").strip()
+            if last_navigated_path:
+                session_meta["last_navigated_path"] = last_navigated_path
+
         refresh_snapshot = getattr(session, "refresh_durable_history_snapshot", None)
         if callable(refresh_snapshot):
             try:
