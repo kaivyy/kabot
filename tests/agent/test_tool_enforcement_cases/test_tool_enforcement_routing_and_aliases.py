@@ -990,6 +990,36 @@ async def test_execute_required_tool_fallback_message_resolves_bare_filename_ins
 
 
 @pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_prefers_last_navigated_path_when_last_tool_path_is_stale(agent_loop):
+    execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
+    agent_loop.tools.execute = execute_mock
+    report_dir = agent_loop.workspace / "desktop" / "bot"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "tes.md"
+    report_path.write_text("demo", encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="kirim file tes.md ke sini",
+        metadata={
+            "last_tool_context": {"tool": "list_dir", "path": str((agent_loop.workspace / ".basetemp").resolve())},
+            "last_navigated_path": str(report_dir.resolve()),
+        },
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    assert result == "Message sent to telegram:chat-1"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "message"
+    assert params["files"] == [str(report_path.resolve())]
+
+
+@pytest.mark.asyncio
 async def test_execute_required_tool_fallback_message_archives_directory_before_sending(agent_loop):
     execute_mock = AsyncMock()
     agent_loop.tools.execute = execute_mock
@@ -1056,6 +1086,28 @@ async def test_execute_required_tool_fallback_list_dir_uses_platform_aliases_and
     followup_result = await agent_loop._execute_required_tool_fallback("list_dir", followup_msg)
     assert "bot" in followup_result
     execute_mock.assert_awaited_once_with("list_dir", {"path": expected_desktop})
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_list_dir_updates_last_navigated_path(agent_loop):
+    execute_mock = AsyncMock(return_value="📄 README.md")
+    agent_loop.tools.execute = execute_mock
+    target_dir = agent_loop.workspace / "desktop" / "bot"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content=f"buka {target_dir}",
+        metadata={},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("list_dir", msg)
+
+    assert "README" in result
+    assert msg.metadata.get("last_navigated_path") == str(target_dir.resolve())
+
 
 @pytest.mark.asyncio
 async def test_execute_required_tool_fallback_list_dir_resolves_relative_subfolder_from_last_context(agent_loop):

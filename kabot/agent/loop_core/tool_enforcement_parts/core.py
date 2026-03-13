@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from kabot.agent.cron_fallback_nlp import (
@@ -182,6 +183,11 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         limit = _extract_list_dir_limit(source_text)
         if limit is not None:
             payload["limit"] = limit
+
+        resolved_list_dir = _resolve_delivery_path(loop, path)
+        if resolved_list_dir.exists() and resolved_list_dir.is_dir() and isinstance(metadata, dict):
+            metadata["last_navigated_path"] = str(resolved_list_dir)
+
         result = await _exec_tool("list_dir", payload)
         return str(result)
 
@@ -219,6 +225,8 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             limit = _extract_list_dir_limit(source_text)
             if limit is not None:
                 payload["limit"] = limit
+            if isinstance(metadata, dict):
+                metadata["last_navigated_path"] = str(resolved_path)
             result = await _exec_tool("list_dir", payload)
             return str(result)
 
@@ -281,7 +289,27 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         if not path:
             return i18n_t("filesystem.need_path", source_text)
 
+        requested_file = _extract_read_file_path(source_text)
         resolved_path = _resolve_delivery_path(loop, path)
+        if not resolved_path.exists():
+            navigation_hint = str(metadata.get("last_navigated_path") or "").strip()
+            is_bare_file_request = bool(
+                requested_file
+                and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", requested_file)
+                and "/" not in requested_file
+                and "\\" not in requested_file
+            )
+            if navigation_hint and is_bare_file_request:
+                try:
+                    nav_base = Path(navigation_hint).expanduser().resolve()
+                except Exception:
+                    nav_base = None
+                if nav_base is not None and nav_base.exists() and nav_base.is_dir():
+                    candidate = (nav_base / str(requested_file)).resolve()
+                    if candidate.exists():
+                        resolved_path = candidate
+                        path = str(candidate)
+
         if not resolved_path.exists():
             return i18n_t("filesystem.file_not_found", path, path=path)
         if resolved_path.is_dir():

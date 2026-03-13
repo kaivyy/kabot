@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `cari file ... lalu kirim ke chat ini` stays on the search lane (`find_files`) instead of prematurely collapsing into direct message-send routing,
   - `kirim file X di folder Y\ kesini` now prefers explicit filename extraction and correctly joins with folder context instead of treating delivery suffix text as part of the path.
 - Relative folder navigation parsing now handles shorthand open commands with trailing slashes (`buka bot\`) more reliably.
+- Message delivery now prefers explicit navigation context over stale internal paths:
+  - when `last_tool_context.path` drifts to an internal temp folder (for example `.basetemp`) but `last_navigated_path` points to the actual user-opened folder, bare-filename sends like `kirim file tes.md ke sini` now resolve against the navigated folder first,
+  - `list_dir` and read-file directory fallbacks now persist `last_navigated_path` so follow-up send-file turns can anchor to the folder the user just opened.
 - Read-file fallback no longer hard-fails on directory context for broad project-inspection turns:
   - when `read_file` is requested but the resolved context path is a directory, Kabot now falls back to `list_dir` (when available) instead of returning `Not a file` immediately.
 - Low-information follow-ups now ignore stale assistant helper prompts more reliably:
