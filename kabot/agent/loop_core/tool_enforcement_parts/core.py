@@ -114,6 +114,11 @@ def _query_has_tool_payload(tool_name: str, text: str) -> bool:
         return bool(_extract_list_dir_path(raw) or _extract_relative_directory_candidate(raw))
     if tool == "image_gen":
         return bool(_looks_like_media_action_request(raw, kind="image"))
+    if tool == "message":
+        explicit = _extract_read_file_path(raw)
+        if explicit and _looks_like_message_send_file_request(raw, explicit_path=explicit):
+            return True
+        return False
     return False
 
 

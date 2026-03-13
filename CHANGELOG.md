@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - assistant-style text like `Please provide the file path ... (example: config.json or C:\path\to\file.json)` is treated as stale metadata on short follow-ups,
   - placeholder path patterns such as `C:\path\to\file.json` are now filtered from explicit path extraction,
   - intent-mismatch guards now allow `message` tool execution on short send-only turns (for example `kirim langsung`) when session delivery context is present.
+- Explicit send-file requests no longer get downgraded into directory-followup routing:
+  - side-effect demotion now keeps parser-selected tools when concrete payload is present (for example `kirim file tes.md kesini`),
+  - this prevents a stale `list_dir` follow-up latch from overriding `message` intent and returning false `File not found: tes.md` errors.
 
 ## [0.6.4] - 2026-03-13
 

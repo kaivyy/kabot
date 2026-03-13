@@ -523,6 +523,12 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     is_contextual_followup_request = bool(
         not required_tool and raw_is_contextual_followup_request and not is_weather_context_followup
     )
+    parser_required_tool_has_payload = False
+    if required_tool and required_tool == parser_required_tool:
+        try:
+            parser_required_tool_has_payload = _query_has_tool_payload(required_tool, effective_content)
+        except Exception:
+            parser_required_tool_has_payload = False
     if (
         not pending_followup_intent_text
         and recent_assistant_option_prompt
@@ -585,6 +591,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and required_tool
         and required_tool != "save_memory"
         and required_tool == parser_required_tool
+        and not parser_required_tool_has_payload
         and not semantic_tool_override
         and not explicit_mcp_tool_routing
         and not meta_skill_reference_turn
