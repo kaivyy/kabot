@@ -10,6 +10,9 @@ from urllib.parse import urlparse
 from kabot.agent.cron_fallback_nlp import required_tool_for_query
 from kabot.agent.cron_fallback_nlp import build_group_id as nlp_build_group_id
 from kabot.agent.cron_fallback_nlp import make_unique_schedule_title as nlp_make_unique_schedule_title
+from kabot.agent.loop_core.tool_enforcement_parts.action_requests import (
+    infer_action_required_tool_for_loop,
+)
 from kabot.agent.loop_core.tool_enforcement_parts.common import (
     _is_low_information_followup,
     _normalize_text,
@@ -116,6 +119,11 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_check_update_tool=loop.tools.has("check_update"),
         has_system_update_tool=loop.tools.has("system_update"),
     )
+    if resolved_tool == "read_file":
+        action_tool, _ = infer_action_required_tool_for_loop(loop, question)
+        if action_tool == "message":
+            return "message"
+
     if resolved_tool in {"stock", "stock_analysis", "crypto"}:
         # Keep legacy finance tools available for the model as fallback, but stop
         # forcing them through deterministic parser routing.

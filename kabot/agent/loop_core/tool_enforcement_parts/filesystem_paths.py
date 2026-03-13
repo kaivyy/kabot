@@ -77,10 +77,15 @@ _FILESYSTEM_TARGET_MARKERS = (
 )
 _FILESYSTEM_TRAILING_TAIL_RE = re.compile(
     r"(?i)\s+(?:sekarang|now|please|tolong|tampilkan|tampilin|show|display|list|lihat|lihatkan|"
-    r"buka|open|masuk|enter|read|baca|dong|ya|lagi|again|pc)$"
+    r"buka|open|masuk|enter|read|baca|dong|ya|lagi|again|pc|"
+    r"ke\s+sini|kesini|ke\s+chat\s+ini|chat\s+ini|chat\s+here|"
+    r"to\s+(?:this\s+)?chat|to\s+(?:this\s+)?channel|channel\s+here|channel\s+ini)$"
 )
 _RELATIVE_DIRECTORY_QUERY_RE = re.compile(
     r"(?i)(?:\b(?:subfolder|folder|direktori|directory|dir)\b|文件夹|文件夾|资料夹|資料夾|目录|目錄|フォルダ|ディレクトリ|โฟลเดอร์|ไดเรกทอรี)\s+(.+)$"
+)
+_RELATIVE_DIRECTORY_COMMAND_RE = re.compile(
+    r"(?i)^\s*(?:buka|open|masuk|enter|cd|chdir|goto|go\s+to|lihat|list|tampilkan|show)\s+([A-Za-z0-9._\\/-]+)\s*$"
 )
 _RELATIVE_DIRECTORY_SUFFIX_RE = re.compile(
     r"(?i)\s+(?:ada\b.*|isinya\b.*|isi\b.*|apa\b.*|what\b.*|which\b.*|show\b.*|display\b.*|list\b.*|lihat\b.*|lihatkan\b.*|tampilkan\b.*|open\b.*|buka\b.*|please\b.*|tolong\b.*|ke\s+chat\s+ini\b.*|ke\s+channel\s+ini\b.*|ke\s+sini\b.*|kesini\b.*|to\s+(?:this\s+)?chat\b.*|chat\s+here\b.*|channel\s+here\b.*|最初.*|件だけ.*|รายการ.*)$"
@@ -133,6 +138,21 @@ def _trim_candidate_after_filelike(candidate: str) -> str:
     return raw
 
 
+def _is_placeholder_filesystem_path(candidate: str) -> bool:
+    normalized = str(candidate or "").strip().lower().replace("/", "\\")
+    if not normalized:
+        return False
+    if normalized.startswith("c:\\path\\to\\"):
+        return True
+    if normalized.startswith("\\path\\to\\"):
+        return True
+    if normalized.startswith("path\\to\\"):
+        return True
+    if "\\path\\to\\" in normalized and re.search(r"(?i)\\file\.[a-z0-9]{1,8}$", normalized):
+        return True
+    return False
+
+
 def _extract_explicit_path_candidate(text: str) -> str | None:
     raw = str(text or "").strip()
     if not raw:
@@ -142,12 +162,13 @@ def _extract_explicit_path_candidate(text: str) -> str | None:
     for candidate in quoted:
         cleaned = _trim_candidate_after_filelike(_normalize_filesystem_candidate(candidate))
         if cleaned and (_FILELIKE_QUERY_RE.search(cleaned) or _PATHLIKE_QUERY_RE.search(cleaned)):
-            return cleaned
+            if not _is_placeholder_filesystem_path(cleaned):
+                return cleaned
 
     path_match = _PATHLIKE_QUERY_RE.search(raw)
     if path_match:
         cleaned = _trim_candidate_after_filelike(_normalize_filesystem_candidate(path_match.group(1)))
-        if cleaned:
+        if cleaned and not _is_placeholder_filesystem_path(cleaned):
             return cleaned
 
     relative_file_match = _RELATIVE_FILE_PATH_RE.search(raw)
@@ -155,13 +176,13 @@ def _extract_explicit_path_candidate(text: str) -> str | None:
         cleaned = _trim_candidate_after_filelike(
             _normalize_filesystem_candidate(relative_file_match.group(1))
         )
-        if cleaned:
+        if cleaned and not _is_placeholder_filesystem_path(cleaned):
             return cleaned
 
     relative_dir_match = _RELATIVE_DIRECTORY_PATH_RE.search(raw)
     if relative_dir_match:
         cleaned = _normalize_filesystem_candidate(relative_dir_match.group(1))
-        if cleaned:
+        if cleaned and not _is_placeholder_filesystem_path(cleaned):
             return cleaned
     return None
 
@@ -279,6 +300,19 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
     raw = str(text or "").strip()
     if not raw:
         return None
+
+    command_match = _RELATIVE_DIRECTORY_COMMAND_RE.search(raw)
+    if command_match:
+        command_candidate = _normalize_filesystem_candidate(command_match.group(1))
+        command_candidate = command_candidate.rstrip("\\/").strip()
+        if command_candidate:
+            if re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", command_candidate):
+                return None
+            if re.search(r"(?i)\.(?:com|net|org|io|ai|co|id|app|dev)$", command_candidate):
+                return None
+            if not command_candidate.isdigit():
+                return command_candidate
+
     match = _RELATIVE_DIRECTORY_QUERY_RE.search(raw)
     if not match:
         return None
@@ -286,6 +320,9 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
     if not candidate:
         return None
     candidate = _RELATIVE_DIRECTORY_SUFFIX_RE.sub("", candidate).strip(" ,.;:!?")
+    candidate = candidate.rstrip("\\/").strip()
+    if not candidate:
+        return None
     if any(sep in candidate for sep in ("/", "\\")):
         return None
     normalized = _normalize_text(candidate)
@@ -306,11 +343,21 @@ def _extract_read_file_path(text: str) -> str | None:
         return None
 
     explicit_path = _extract_explicit_path_candidate(raw)
+    file_match = _FILELIKE_QUERY_RE.search(raw)
+
     if explicit_path:
+        explicit_suffix = Path(str(explicit_path).rstrip("\\/")).suffix.lower()
+        # When the extracted explicit path is directory-shaped but the sentence
+        # also includes an explicit filename token, prefer the filename token.
+        # This avoids cases like: "kirim file X di folder bot\\ kesini"
+        # being interpreted as path "bot\\ kesini".
+        if not explicit_suffix and file_match:
+            cleaned_file = _normalize_filesystem_candidate(file_match.group(0))
+            if cleaned_file:
+                return cleaned_file
         return explicit_path
 
     # Finally, plain filename.ext tokens.
-    file_match = _FILELIKE_QUERY_RE.search(raw)
     if file_match:
         cleaned = _normalize_filesystem_candidate(file_match.group(0))
         if cleaned:
@@ -330,6 +377,14 @@ def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | Non
 
     explicit_path = _extract_explicit_path_candidate(raw)
     if explicit_path:
+        trimmed_explicit = str(explicit_path).strip().rstrip("\\/")
+        if fallback_path and trimmed_explicit and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", trimmed_explicit):
+            explicit_parts = [part for part in re.split(r"[\\/]", trimmed_explicit) if part]
+            if len(explicit_parts) == 1:
+                fallback_name = Path(fallback_path).name.strip().lower()
+                if fallback_name and fallback_name == explicit_parts[0].lower():
+                    return fallback_path
+            return str(Path(fallback_path) / trimmed_explicit)
         return explicit_path
 
     relative_dir = _extract_relative_directory_candidate(raw)

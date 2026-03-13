@@ -144,6 +144,49 @@ async def test_run_agent_loop_direct_message_returns_raw_without_summary_chat():
 
 
 @pytest.mark.asyncio
+async def test_run_agent_loop_direct_message_resolves_bare_filename_from_last_folder_context(tmp_path):
+    report_dir = tmp_path / "bot"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "TELEGRAM_DEMO.md"
+    report_path.write_text("demo", encoding="utf-8")
+
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "message",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value="Message sent to telegram:chat-1"),
+        workspace=tmp_path,
+        tools=SimpleNamespace(has=lambda name: name == "message"),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="kirim file TELEGRAM_DEMO.md kesini",
+        metadata={
+            "required_tool": "message",
+            "requires_message_delivery": True,
+            "last_tool_context": {"tool": "list_dir", "path": str(report_dir)},
+        },
+    )
+    session = SimpleNamespace(metadata={"last_tool_context": {"tool": "list_dir", "path": str(report_dir)}})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "Message sent to telegram:chat-1"
+    loop._execute_required_tool_fallback.assert_awaited_once_with("message", msg)
+    assert msg.metadata.get("message_delivery_verified") is True
+    evidence = msg.metadata.get("completion_evidence")
+    assert evidence["artifact_verified"] is True
+    assert str(report_path.resolve()) in evidence["artifact_paths"]
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_direct_find_then_send_workflow_bypasses_llm(tmp_path):
     report_path = tmp_path / "report.pdf"
     report_path.write_text("report", encoding="utf-8")

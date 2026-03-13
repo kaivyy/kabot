@@ -575,6 +575,54 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             ):
                 artifact_path = verified_artifact_path or direct_artifact_path
                 if artifact_path and artifact_exists:
+                    archive_replaced_directory = False
+                    try:
+                        resolved_artifact = Path(str(artifact_path)).expanduser().resolve()
+                    except Exception:
+                        resolved_artifact = None
+
+                    if (
+                        resolved_artifact is not None
+                        and resolved_artifact.exists()
+                        and resolved_artifact.is_dir()
+                        and callable(has_tool)
+                        and has_tool("archive_path")
+                    ):
+                        archive_result = await loop._execute_required_tool_fallback("archive_path", msg)
+                        archive_text = str(archive_result or "").strip()
+                        archive_candidate = _extract_single_result_path(
+                            "archive_path",
+                            {"path": str(resolved_artifact)},
+                            archive_result,
+                        )
+                        if archive_candidate:
+                            verified_archive_path, archive_exists = _verify_completion_artifact_path(
+                                loop,
+                                archive_candidate,
+                            )
+                            if verified_archive_path and archive_exists:
+                                artifact_path = verified_archive_path
+                                artifact_exists = True
+                                archive_replaced_directory = True
+                                if isinstance(message_metadata, dict):
+                                    executed_tools = message_metadata.get("executed_tools")
+                                    if not isinstance(executed_tools, list):
+                                        executed_tools = []
+                                    if "archive_path" not in executed_tools:
+                                        executed_tools.append("archive_path")
+                                    message_metadata["executed_tools"] = executed_tools
+                                _update_followup_context_from_tool_execution(
+                                    session,
+                                    tool_name="archive_path",
+                                    tool_args={"path": str(resolved_artifact)},
+                                    fallback_source=source_hint,
+                                    tool_result=archive_text or archive_result,
+                                )
+                            elif archive_text:
+                                return await progress_runtime.return_with_phase(archive_text)
+                        elif archive_text:
+                            return await progress_runtime.return_with_phase(archive_text)
+
                     if isinstance(message_metadata, dict):
                         last_tool_context = message_metadata.get("last_tool_context")
                         if not isinstance(last_tool_context, dict):
@@ -600,6 +648,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                             message_metadata["executed_tools"] = executed_tools
                             if message_text.lower().startswith("message sent to "):
                                 message_metadata["message_delivery_verified"] = True
+                            if archive_replaced_directory:
+                                existing_evidence = message_metadata.get("completion_evidence")
+                                if isinstance(existing_evidence, dict):
+                                    existing_evidence["artifact_paths"] = [artifact_path]
+                                    message_metadata["completion_evidence"] = existing_evidence
                         _update_completion_evidence(
                             message_metadata,
                             session,

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Runtime now hardens follow-up/tool continuity for action turns:
+  - unavailable `required_tool` routes are dropped only when tool-registry availability is known, avoiding false negatives in sparse/mock runtimes while still preventing stale parser latches from forcing removed tools,
+  - direct action-delivery flow (`required_tool` + `requires_message_delivery`) now archives directory artifacts before sending when `archive_path` is available, keeping artifact evidence aligned with the actually delivered file.
+- Built-in finance execution lane is now disabled in the default agent tool registry:
+  - `stock`, `stock_analysis`, and `crypto` are no longer registered by default in `AgentLoop`,
+  - this keeps finance execution on skill/explicit-tool lanes instead of accidental parser fallback reuse.
+
+### Fixed
+- Indonesian file-delivery parsing is more robust for real chat phrasing:
+  - `kirim file TELEGRAM_DEMO.md kesini` now resolves as a valid message-send request even with bare filenames,
+  - concise direct-send turns like `kirim file tes.md` now map to message delivery intent (instead of being trapped on read-only file parsing),
+  - `cari file ... lalu kirim ke chat ini` stays on the search lane (`find_files`) instead of prematurely collapsing into direct message-send routing,
+  - `kirim file X di folder Y\ kesini` now prefers explicit filename extraction and correctly joins with folder context instead of treating delivery suffix text as part of the path.
+- Relative folder navigation parsing now handles shorthand open commands with trailing slashes (`buka bot\`) more reliably.
+- Read-file fallback no longer hard-fails on directory context for broad project-inspection turns:
+  - when `read_file` is requested but the resolved context path is a directory, Kabot now falls back to `list_dir` (when available) instead of returning `Not a file` immediately.
+- Low-information follow-ups now ignore stale assistant helper prompts more reliably:
+  - assistant-style text like `Please provide the file path ... (example: config.json or C:\path\to\file.json)` is treated as stale metadata on short follow-ups,
+  - placeholder path patterns such as `C:\path\to\file.json` are now filtered from explicit path extraction.
+
 ## [0.6.4] - 2026-03-13
 
 ### Changed

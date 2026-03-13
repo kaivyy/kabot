@@ -103,3 +103,26 @@ def test_required_tool_for_query_handles_runtime_server_phrase():
         has_system_update_tool=False,
     )
     assert tool == "server_monitor"
+
+
+def test_required_tool_for_query_routes_tolong_ingat_to_save_memory():
+    tool = required_tool_for_query(
+        question="tolong ingat ini ya",
+        has_weather_tool=False,
+        has_cron_tool=False,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_save_memory_tool=True,
+        has_stock_tool=True,
+        has_stock_analysis_tool=True,
+        has_crypto_tool=True,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=False,
+        has_system_update_tool=False,
+    )
+    assert tool == "save_memory"

@@ -40,16 +40,31 @@ def _looks_like_verbose_non_query_text(value: str) -> bool:
     Detect assistant-style/stale metadata blobs that are unlikely to be direct user queries.
 
     This intentionally uses structural signals (length + sentence/list formatting)
-    to stay language-agnostic.
+    plus common assistant-prompt markers ("please provide ...", "example:")
+    so short follow-ups don't accidentally reuse stale helper text as tool input.
     """
     raw = str(value or "").strip()
     if not raw:
         return False
     normalized = _normalize_text(raw)
-    if len(normalized) < 80:
+
+    assistant_prompt_markers = (
+        "please provide",
+        "silakan berikan",
+        "mohon berikan",
+        "contoh:",
+        "example:",
+        "if you want",
+        "kalau kamu setuju",
+        "langkah ini",
+    )
+    if any(marker in normalized for marker in assistant_prompt_markers):
+        return True
+
+    if len(normalized) < 60:
         return False
     tokens = [part for part in normalized.split(" ") if part]
-    if len(tokens) < 14:
+    if len(tokens) < 10:
         return False
     sentence_like = raw.count(".") + raw.count("!") + raw.count("?") >= 2
     structured = any(marker in raw for marker in ("\n", "•", "|"))

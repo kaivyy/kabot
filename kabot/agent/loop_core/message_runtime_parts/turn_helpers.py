@@ -208,6 +208,13 @@ def _extract_reusable_last_tool_execution(
     execution_source = str((last_tool_execution or {}).get("source") or "").strip()
     if not execution_tool or not execution_source:
         return None, None
+
+    # Finance quote tools are high-risk for stale follow-up reuse (e.g. generic
+    # "kenapa?" turns accidentally re-trigger stock prompts). Require fresh
+    # intent/payload instead of blindly inheriting prior execution context.
+    if execution_tool in {"stock", "stock_analysis", "crypto"}:
+        return None, None
+
     can_reuse_execution_tool = bool(
         execution_tool.startswith("mcp__")
         or _tool_registry_has(loop, execution_tool)

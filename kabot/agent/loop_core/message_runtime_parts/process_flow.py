@@ -865,6 +865,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
 
     if (
         pending_followup_tool
+        and _tool_registry_has(loop, pending_followup_tool)
         and not decision.is_complex
         and not required_tool
         and (is_short_confirmation or is_weather_context_followup)
@@ -1157,6 +1158,40 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         )
     elif current_skill_flow and is_explicit_new_request:
         _clear_skill_creation_flow(session)
+
+    unavailable_required_tool = str(required_tool or "").strip()
+    tool_registry_known = False
+    unavailable_by_registry = False
+    if unavailable_required_tool and not unavailable_required_tool.startswith("mcp__"):
+        tools_obj = getattr(loop, "tools", None)
+        has_callable = getattr(tools_obj, "has", None)
+        if callable(has_callable):
+            try:
+                tool_registry_known = True
+                unavailable_by_registry = not bool(has_callable(unavailable_required_tool))
+            except Exception:
+                tool_registry_known = False
+                unavailable_by_registry = False
+        else:
+            tool_names = getattr(tools_obj, "tool_names", None)
+            if isinstance(tool_names, list) and len(tool_names) > 0:
+                tool_registry_known = True
+                unavailable_by_registry = unavailable_required_tool not in {
+                    str(name).strip() for name in tool_names if str(name or "").strip()
+                }
+
+    if unavailable_required_tool and tool_registry_known and unavailable_by_registry:
+        logger.info(
+            "Dropping unavailable required tool route "
+            f"required_tool={unavailable_required_tool} for '{_normalize_text(effective_content)[:120]}'"
+        )
+        required_tool = None
+        required_tool_query = effective_content
+        continuity_source = None
+        if pending_followup_tool == unavailable_required_tool:
+            _clear_pending_followup_tool(session)
+            pending_followup_tool = None
+            pending_followup_source = ""
 
     if (
         not forced_skill_names

@@ -52,7 +52,8 @@ __all__ = [
 _SAVE_MEMORY_EXPLICIT_RE = re.compile(
     r"(?i)\b("
     r"save to memory|simpan di memori|simpan ke memori|simpan di memory|simpan ke memory|"
-    r"save this memory|commit to memory|masukkan ke memori|masukkan ke memory|"
+    r"save this memory|remember this|commit to memory|masukkan ke memori|masukkan ke memory|"
+    r"tolong ingat|ingat ini|ingat bahwa|"
     r"call me|panggil aku|panggil saya|"
     r"kalau aku tanya siapa aku|jika aku tanya siapa aku|if i ask who am i"
     r")\b"

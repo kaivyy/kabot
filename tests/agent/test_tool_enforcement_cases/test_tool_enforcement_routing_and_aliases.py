@@ -111,6 +111,8 @@ def test_required_tool_for_query_detects_weather_and_reminder(agent_loop):
     assert agent_loop._required_tool_for_query("tolong list jadwal reminder saya") == "cron"
     assert agent_loop._required_tool_for_query("cek update kabot sekarang") == "check_update"
     assert agent_loop._required_tool_for_query("update kabot sekarang") == "system_update"
+    assert agent_loop._required_tool_for_query("kirim file tes.md") == "message"
+    assert agent_loop._required_tool_for_query("cari file report.pdf lalu kirim ke chat ini") == "read_file"
     assert agent_loop._required_tool_for_query("kapasitas ram berapa") == "get_system_info"
     assert agent_loop._required_tool_for_query("cek ram proses sekarang") == "get_process_memory"
     assert agent_loop._required_tool_for_query("carikan berita perang us israel vs iran terbaru") == "web_search"
@@ -487,6 +489,57 @@ def test_infer_action_required_tool_for_loop_infers_message_for_explicit_send_fi
     assert source == r"kirim file C:\Users\Arvy Kairi\Desktop\report.pdf ke chat ini"
 
 
+def test_infer_action_required_tool_for_loop_infers_message_for_bare_filename_send_request():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name == "message",
+            tool_names=["message"],
+        )
+    )
+
+    tool_name, source = infer_action_required_tool_for_loop(
+        loop,
+        "kirim file TELEGRAM_DEMO.md kesini",
+    )
+
+    assert tool_name == "message"
+    assert source == "kirim file TELEGRAM_DEMO.md kesini"
+
+
+def test_infer_action_required_tool_for_loop_keeps_find_files_for_search_then_send_phrase():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name in {"find_files", "message"},
+            tool_names=["find_files", "message"],
+        )
+    )
+
+    tool_name, source = infer_action_required_tool_for_loop(
+        loop,
+        "cari file report.pdf lalu kirim ke chat ini",
+    )
+
+    assert tool_name == "find_files"
+    assert source == "cari file report.pdf lalu kirim ke chat ini"
+
+
+def test_infer_action_required_tool_for_loop_does_not_force_message_for_howto_send_phrase():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name in {"message", "web_search"},
+            tool_names=["message", "web_search"],
+        )
+    )
+
+    tool_name, source = infer_action_required_tool_for_loop(
+        loop,
+        "cara kirim file tes.md lewat python",
+    )
+
+    assert tool_name is None
+    assert source is None
+
+
 def test_infer_action_required_tool_for_loop_prefers_write_file_for_create_then_send_request():
     loop = SimpleNamespace(
         tools=SimpleNamespace(
@@ -800,6 +853,32 @@ async def test_execute_required_tool_fallback_find_files_uses_current_working_di
 
 
 @pytest.mark.asyncio
+async def test_execute_required_tool_fallback_read_file_uses_list_dir_when_last_context_is_directory(agent_loop):
+    execute_mock = AsyncMock(return_value="📄 README.md\n📄 pyproject.toml")
+    agent_loop.tools.execute = execute_mock
+    project_dir = agent_loop.workspace / "waton"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "README.md").write_text("demo", encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="baca seluruh file, aplikasi apa ini",
+        metadata={"last_tool_context": {"tool": "list_dir", "path": str(project_dir.resolve())}},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("read_file", msg)
+
+    assert "README.md" in result
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "list_dir"
+    assert params["path"] == str(project_dir.resolve())
+
+
+@pytest.mark.asyncio
 async def test_execute_required_tool_fallback_message_sends_explicit_file_path(agent_loop):
     execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
     agent_loop.tools.execute = execute_mock
@@ -872,6 +951,32 @@ async def test_execute_required_tool_fallback_message_prefers_last_found_path_ov
         sender_id="user-1",
         content="kirim file report.pdf ke chat ini",
         metadata={"last_tool_context": {"tool": "find_files", "path": str(report_path.resolve())}},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    assert result == "Message sent to telegram:chat-1"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "message"
+    assert params["files"] == [str(report_path.resolve())]
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_resolves_bare_filename_inside_last_opened_folder(agent_loop):
+    execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
+    agent_loop.tools.execute = execute_mock
+    report_path = agent_loop.workspace / ".smoke_tmp" / "TELEGRAM_DEMO.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("demo", encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="kirim file TELEGRAM_DEMO.md kesini",
+        metadata={"last_tool_context": {"tool": "list_dir", "path": str(report_path.parent.resolve())}},
         timestamp=datetime.now(),
     )
 
@@ -1141,6 +1246,27 @@ async def test_execute_required_tool_fallback_web_search_ignores_verbose_stale_m
     execute_mock.assert_not_awaited()
 
 @pytest.mark.asyncio
+async def test_execute_required_tool_fallback_read_file_ignores_verbose_stale_prompt_on_low_information_followup(agent_loop):
+    execute_mock = AsyncMock(return_value="file-content")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="lanjut",
+        metadata={
+            "required_tool_query": "Please provide the file path to read (example: config.json or C:\\path\\to\\file.json)."
+        },
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("read_file", msg)
+    assert result == i18n_t("filesystem.need_path", msg.content)
+    execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_execute_required_tool_fallback_web_search_requires_query_when_empty(agent_loop):
     execute_mock = AsyncMock(return_value="search-ok")
     agent_loop.tools.execute = execute_mock
@@ -1309,7 +1435,10 @@ async def test_execute_required_tool_fallback_stock_routes_tracking_requests_to_
 
     result = await agent_loop._execute_required_tool_fallback("stock", msg)
     assert result == "analysis-ok"
-    execute_mock.assert_awaited_once_with("stock_analysis", {"symbol": "BBRI.JK", "days": "30"})
+    if agent_loop.tools.has("stock_analysis"):
+        execute_mock.assert_awaited_once_with("stock_analysis", {"symbol": "BBRI.JK", "days": "30"})
+    else:
+        execute_mock.assert_awaited_once_with("stock", {"symbol": "BBRI.JK"})
 
 
 @pytest.mark.asyncio
@@ -1444,6 +1573,28 @@ def test_extract_message_delivery_path_does_not_treat_delivery_verb_as_desktop_s
     assert _extract_message_delivery_path("kirim folder desktop ke chat ini") == str(
         tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop")
     )
+
+
+def test_extract_list_dir_path_handles_open_relative_folder_with_trailing_slash(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+
+    assert _extract_list_dir_path(
+        r"buka bot\\",
+        last_tool_context={"path": str(tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop"))},
+    ) == str(tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop") / "bot")
+
+
+def test_extract_read_file_path_prefers_filename_when_sentence_contains_folder_hint_with_delivery_tail():
+    assert _extract_read_file_path(r"kirim file telegram_demo.md di folder bot\\ kesini") == "telegram_demo.md"
+
+
+def test_extract_message_delivery_path_joins_relative_filename_with_folder_context_hint(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+
+    assert _extract_message_delivery_path(
+        r"kirim file telegram_demo.md di folder bot\\ kesini",
+        last_tool_context={"path": str(tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop/bot"))},
+    ) == str(tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop/bot") / "telegram_demo.md")
 
 
 @pytest.mark.asyncio

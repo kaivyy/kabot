@@ -633,8 +633,6 @@ class AgentLoop(AgentLoopDelegatesMixin):
         from kabot.agent.tools.shell import ExecTool
         from kabot.agent.tools.spawn import SpawnTool
         from kabot.agent.tools.speedtest import SpeedtestTool
-        from kabot.agent.tools.stock import CryptoTool, StockTool
-        from kabot.agent.tools.stock_analysis import StockAnalysisTool
         from kabot.agent.tools.weather import WeatherTool
         from kabot.agent.tools.web_fetch import WebFetchTool
         from kabot.agent.tools.web_search import WebSearchTool
@@ -712,9 +710,6 @@ class AgentLoop(AgentLoopDelegatesMixin):
         self.tools.register(MemorySearchTool(store=lambda: self.vector_store))
 
         self.tools.register(WeatherTool())
-        self.tools.register(StockTool())
-        self.tools.register(CryptoTool())
-        self.tools.register(StockAnalysisTool())
         self.tools.register(ImageGenTool(workspace=self.workspace, config=self.config))
         self.tools.register(MetaGraphTool(config=self.config))
 

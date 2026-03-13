@@ -81,10 +81,13 @@ _SEND_FILE_DELIVERY_MARKERS = (
     "chat ini",
     "chat here",
     "chat this",
+    "to this chat",
     "kirim ke chat",
     "send it here",
+    "ke sini",
+    "kesini",
     "channel ini",
-    "channel ini",
+    "channel here",
 )
 _IMAGE_ACTION_MARKERS = (
     "gambar",
@@ -196,10 +199,6 @@ def _looks_like_find_files_request(text: str, *, explicit_path: str | None = Non
         return False
     if explicit_path and _looks_like_explicit_filesystem_path(explicit_path):
         return False
-    if any(marker in normalized for marker in _SEND_FILE_ACTION_MARKERS) and any(
-        marker in normalized for marker in _SEND_FILE_DELIVERY_MARKERS
-    ):
-        return False
     return True
 
 
@@ -208,15 +207,34 @@ def _looks_like_message_send_file_request(text: str, *, explicit_path: str | Non
     normalized = _normalize_text(raw)
     if not normalized or not explicit_path:
         return False
-    if not _looks_like_explicit_filesystem_path(explicit_path):
-        return False
     if not any(marker in normalized for marker in _SEND_FILE_ACTION_MARKERS):
         return False
-    return bool(
+
+    # Avoid hijacking explanatory/help-style turns.
+    if re.match(r"(?i)^\s*(?:cara|bagaimana|how\s+to)\b", raw):
+        return False
+
+    has_find_intent = any(marker in normalized for marker in _FIND_FILE_ACTION_MARKERS)
+    explicit_is_pathlike = _looks_like_explicit_filesystem_path(explicit_path)
+
+    # Keep search-first phrasing on the find_files lane when the user asks to
+    # search first (e.g. "cari file report.pdf lalu kirim").
+    if has_find_intent and not explicit_is_pathlike:
+        return False
+
+    if not explicit_is_pathlike:
+        # Bare filenames (e.g. "kirim file TELEGRAM_DEMO.md kesini") are valid
+        # send intents; resolution will use recent folder context when available.
+        if not _FILELIKE_QUERY_RE.search(str(explicit_path)):
+            return False
+
+    delivery_marker = bool(
         any(marker in normalized for marker in _SEND_FILE_DELIVERY_MARKERS)
         or "chat" in normalized
         or "channel" in normalized
     )
+    imperative_send = bool(re.match(r"(?i)^\s*(?:tolong\s+)?(?:kirim|send|share|attach|lampirkan|upload)\b", raw))
+    return delivery_marker or imperative_send
 
 
 def _extract_find_files_query(text: str) -> str | None:
@@ -324,20 +342,39 @@ def _extract_message_delivery_path(
     *,
     last_tool_context: dict[str, Any] | None = None,
 ) -> str | None:
-    path = _extract_read_file_path(text)
-    if not path:
-        path = _extract_list_dir_path(text, last_tool_context=last_tool_context)
+    file_path = _extract_read_file_path(text)
+    dir_path = _extract_list_dir_path(text, last_tool_context=last_tool_context)
     last_found_path = (
         str(last_tool_context.get("path") or "").strip()
         if isinstance(last_tool_context, dict)
         else ""
     )
-    if path and not _looks_like_explicit_filesystem_path(path) and last_found_path:
-        path = last_found_path
-    if not path:
-        path = last_found_path
-    normalized = str(path or "").strip()
-    return normalized or None
+
+    if file_path:
+        normalized_file = str(file_path).strip()
+        if _looks_like_explicit_filesystem_path(normalized_file):
+            return normalized_file
+
+        if dir_path:
+            dir_obj = Path(str(dir_path).strip())
+            if dir_obj.suffix:
+                if dir_obj.name.lower() == normalized_file.lower():
+                    return str(dir_obj)
+                return str(dir_obj.parent / normalized_file)
+            return str(dir_obj / normalized_file)
+
+        if last_found_path:
+            last_path_obj = Path(last_found_path)
+            if last_path_obj.suffix:
+                if last_path_obj.name.lower() == normalized_file.lower():
+                    return str(last_path_obj)
+                return str(last_path_obj.parent / normalized_file)
+            return str(last_path_obj / normalized_file)
+
+        return normalized_file
+
+    path = str(dir_path or last_found_path or "").strip()
+    return path or None
 
 
 def _trim_write_content_candidate(value: str) -> str:
