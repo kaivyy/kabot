@@ -26,7 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - when `last_tool_context.path` drifts to an internal temp folder (for example `.basetemp`) but `last_navigated_path` points to the actual user-opened folder, bare-filename sends like `kirim file tes.md ke sini` now resolve against the navigated folder first,
   - `list_dir` and read-file directory fallbacks now persist `last_navigated_path` so follow-up send-file turns can anchor to the folder the user just opened,
   - message fallback now also reads `last_navigated_path` from session metadata (not only inbound message metadata), so CLI/agent direct turns keep navigation continuity across turns,
-  - finalized session state now copies `last_navigated_path` from inbound metadata into persisted session metadata, ensuring one-shot agent invocations still remember the last opened folder on the next turn.
+  - finalized session state now copies `last_navigated_path` from inbound metadata into persisted session metadata, ensuring one-shot agent invocations still remember the last opened folder on the next turn,
+  - session initialization now hydrates `last_navigated_path` back into inbound turn metadata (and seeds `last_tool_context` when missing), so follow-up file actions can reuse prior folder context without re-asking path,
+  - if a bare-filename send still resolves to an internal temp path outside the active navigated folder, Kabot now returns not-found instead of sending stale temp artifacts.
+- Find-files fallback now respects active navigation context:
+  - `find_files` root resolution now checks `last_navigated_path` before falling back to older `last_tool_context.path`, preventing context drift during search→send workflows,
+  - this behavior is now aligned in both filesystem and action-request resolver paths used by the tool-enforcement facade.
 - Read-file fallback no longer hard-fails on directory context for broad project-inspection turns:
   - when `read_file` is requested but the resolved context path is a directory, Kabot now falls back to `list_dir` (when available) instead of returning `Not a file` immediately.
 - Low-information follow-ups now ignore stale assistant helper prompts more reliably:

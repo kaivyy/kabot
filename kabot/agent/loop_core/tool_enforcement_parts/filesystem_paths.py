@@ -226,6 +226,16 @@ def _resolve_find_files_root(
     if list_path:
         return list_path
 
+    if isinstance(metadata, dict):
+        last_nav = str(metadata.get("last_navigated_path") or "").strip()
+        if last_nav:
+            try:
+                resolved_nav = Path(last_nav).expanduser().resolve()
+                if resolved_nav.exists() and resolved_nav.is_dir():
+                    return str(resolved_nav)
+            except Exception:
+                return last_nav
+
     if isinstance(last_tool_context, dict):
         last_path = str(last_tool_context.get("path") or "").strip()
         if last_path:

@@ -853,6 +853,32 @@ async def test_execute_required_tool_fallback_find_files_uses_current_working_di
 
 
 @pytest.mark.asyncio
+async def test_execute_required_tool_fallback_find_files_prefers_last_navigated_path_as_root(agent_loop):
+    execute_mock = AsyncMock(return_value="FILE C:/Users/Arvy Kairi/Desktop/bot/tes.md")
+    agent_loop.tools.execute = execute_mock
+    nav_dir = agent_loop.workspace
+    nav_dir.mkdir(parents=True, exist_ok=True)
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="cari file tes.md",
+        metadata={"last_navigated_path": str(nav_dir.resolve())},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("find_files", msg)
+
+    assert "tes.md" in result
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "find_files"
+    assert params["query"] == "tes.md"
+    assert params["path"] == str(nav_dir.resolve())
+
+
+@pytest.mark.asyncio
 async def test_execute_required_tool_fallback_read_file_uses_list_dir_when_last_context_is_directory(agent_loop):
     execute_mock = AsyncMock(return_value="📄 README.md\n📄 pyproject.toml")
     agent_loop.tools.execute = execute_mock
@@ -987,6 +1013,38 @@ async def test_execute_required_tool_fallback_message_resolves_bare_filename_ins
     tool_name, params = execute_mock.await_args.args
     assert tool_name == "message"
     assert params["files"] == [str(report_path.resolve())]
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_rejects_internal_temp_file_when_navigated_folder_missing_target(agent_loop):
+    execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
+    agent_loop.tools.execute = execute_mock
+
+    nav_dir = agent_loop.workspace / "desktop" / "bot"
+    nav_dir.mkdir(parents=True, exist_ok=True)
+
+    stale_dir = agent_loop.workspace / ".basetemp"
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    stale_file = stale_dir / "tes.md"
+    stale_file.write_text("stale", encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="kirim file tes.md ke sini",
+        metadata={
+            "last_tool_context": {"tool": "list_dir", "path": str(stale_dir.resolve())},
+            "last_navigated_path": str(nav_dir.resolve()),
+        },
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    expected_candidate = str((nav_dir / "tes.md").resolve())
+    assert result == i18n_t("filesystem.file_not_found", expected_candidate, path=expected_candidate)
+    execute_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

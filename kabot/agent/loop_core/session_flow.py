@@ -106,6 +106,23 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
     )
 
     session = loop.sessions.get_or_create(session_key)
+
+    inbound_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
+    session_meta = getattr(session, "metadata", None)
+    if isinstance(session_meta, dict):
+        session_last_nav = str(session_meta.get("last_navigated_path") or "").strip()
+        if session_last_nav:
+            if not isinstance(msg.metadata, dict):
+                msg.metadata = {}
+                inbound_meta = msg.metadata
+            if not str(inbound_meta.get("last_navigated_path") or "").strip():
+                inbound_meta["last_navigated_path"] = session_last_nav
+            if not isinstance(inbound_meta.get("last_tool_context"), dict):
+                inbound_meta["last_tool_context"] = {
+                    "tool": "list_dir",
+                    "path": session_last_nav,
+                }
+
     persist_probe_history = _should_persist_probe_history(msg)
     if not _is_probe_mode_message(msg) or persist_probe_history:
         loop.memory.create_session(session_key, msg.channel, msg.chat_id, msg.sender_id)

@@ -156,6 +156,21 @@ def _get_last_navigated_path(loop: Any, msg: InboundMessage, metadata: dict[str,
     return ""
 
 
+def _looks_like_internal_temp_path(candidate: Path) -> bool:
+    try:
+        parts = {str(part).lower() for part in candidate.parts}
+    except Exception:
+        return False
+    internal_markers = {
+        ".basetemp",
+        ".tmp",
+        ".tmp-tests-json-storage",
+        ".pytest_cache",
+        "__pycache__",
+    }
+    return bool(parts.intersection(internal_markers))
+
+
 async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: InboundMessage) -> str | None:
     """Deterministic fallback when model skips required tools repeatedly."""
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
@@ -338,32 +353,47 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             and "\\" not in requested_file
         )
         navigation_hint = _get_last_navigated_path(loop, msg, metadata)
-
-        # Prioritize active navigated folder for bare-filename sends, even when
-        # stale fallback paths still exist (e.g. internal temp folders).
+        nav_base: Path | None = None
         if navigation_hint and is_bare_file_request:
             try:
                 nav_base = Path(navigation_hint).expanduser().resolve()
             except Exception:
                 nav_base = None
-            if nav_base is not None and nav_base.exists() and nav_base.is_dir():
-                candidate = (nav_base / str(requested_file)).resolve()
-                if candidate.exists() and candidate.is_file():
-                    resolved_path = candidate
-                    path = str(candidate)
-                    _set_last_navigated_path(loop, msg, metadata, str(nav_base))
+            if nav_base is not None and not (nav_base.exists() and nav_base.is_dir()):
+                nav_base = None
+
+        # Prioritize active navigated folder for bare-filename sends, even when
+        # stale fallback paths still exist (e.g. internal temp folders).
+        if nav_base is not None and is_bare_file_request:
+            candidate = (nav_base / str(requested_file)).resolve()
+            if candidate.exists() and candidate.is_file():
+                resolved_path = candidate
+                path = str(candidate)
+                _set_last_navigated_path(loop, msg, metadata, str(nav_base))
+
+        # If we still point to an internal temp artifact outside the active
+        # navigated folder, prefer a not-found response over sending stale files.
+        if (
+            nav_base is not None
+            and is_bare_file_request
+            and resolved_path.exists()
+            and resolved_path.is_file()
+            and _looks_like_internal_temp_path(resolved_path)
+        ):
+            try:
+                outside_nav = not resolved_path.resolve().is_relative_to(nav_base)
+            except Exception:
+                outside_nav = True
+            if outside_nav:
+                resolved_path = Path("__missing__")
+                path = str((nav_base / str(requested_file)).resolve())
 
         if not resolved_path.exists():
-            if navigation_hint and is_bare_file_request:
-                try:
-                    nav_base = Path(navigation_hint).expanduser().resolve()
-                except Exception:
-                    nav_base = None
-                if nav_base is not None and nav_base.exists() and nav_base.is_dir():
-                    candidate = (nav_base / str(requested_file)).resolve()
-                    if candidate.exists():
-                        resolved_path = candidate
-                        path = str(candidate)
+            if nav_base is not None and is_bare_file_request:
+                candidate = (nav_base / str(requested_file)).resolve()
+                if candidate.exists():
+                    resolved_path = candidate
+                    path = str(candidate)
 
         if not resolved_path.exists():
             return i18n_t("filesystem.file_not_found", path, path=path)

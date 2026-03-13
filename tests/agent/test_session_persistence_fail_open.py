@@ -159,3 +159,62 @@ async def test_finalize_session_persists_last_navigated_path_from_message_metada
 
     assert result.content == "Message sent"
     assert session.metadata.get("last_navigated_path") == r"C:\Users\Arvy Kairi\Desktop\bot"
+
+
+@pytest.mark.asyncio
+async def test_init_session_hydrates_last_navigated_path_into_inbound_metadata():
+    class _Memory:
+        def create_session(self, session_key, channel, chat_id, sender_id):
+            return None
+
+        async def add_message(self, session_key, role, content):
+            return None
+
+    class _Sessions:
+        def __init__(self, session):
+            self._session = session
+
+        def get_or_create(self, key):
+            return self._session
+
+    class _Sentinel:
+        def mark_session_active(self, **_kwargs):
+            return None
+
+    class _Tools:
+        def __init__(self):
+            self._run_id = None
+
+        def get(self, _name):
+            return None
+
+    session = Session(
+        key="cli:direct",
+        metadata={"last_navigated_path": r"C:\Users\Arvy Kairi\Desktop\bot"},
+    )
+    fake_self = type(
+        "_FakeLoop",
+        (),
+        {
+            "memory": _Memory(),
+            "sessions": _Sessions(session),
+            "sentinel": _Sentinel(),
+            "tools": _Tools(),
+            "runtime_performance": None,
+        },
+    )()
+
+    msg = InboundMessage(
+        channel="cli",
+        sender_id="user",
+        chat_id="direct",
+        content="kirim file tes.md",
+        _session_key="cli:direct",
+        metadata={},
+    )
+
+    restored = await AgentLoop._init_session(fake_self, msg)
+
+    assert restored is session
+    assert msg.metadata.get("last_navigated_path") == r"C:\Users\Arvy Kairi\Desktop\bot"
+    assert msg.metadata.get("last_tool_context", {}).get("path") == r"C:\Users\Arvy Kairi\Desktop\bot"
