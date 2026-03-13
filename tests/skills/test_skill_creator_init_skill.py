@@ -56,3 +56,21 @@ def test_find_skills_dir_falls_back_to_repo_builtin_when_workspace_not_available
 
     expected = REPO_ROOT / "kabot" / "skills"
     assert module.find_skills_dir() == expected
+
+
+def test_init_skill_creates_assets_dir_and_seed_files(tmp_path):
+    module = _load_init_skill_module()
+    target = tmp_path / "skills"
+    target.mkdir(parents=True)
+
+    module.init_skill("meta-threads-official", target)
+
+    skill_dir = target / "meta-threads-official"
+    assert (skill_dir / "assets").is_dir()
+    assert (skill_dir / "assets" / "README.md").exists()
+    assert (skill_dir / "references").is_dir()
+    assert (skill_dir / "scripts").is_dir()
+
+    skill_text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert "## References" in skill_text
+    assert "## Assets" in skill_text

@@ -29,9 +29,15 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _set_pending_followup_intent,
     _update_skill_creation_flow_after_response,
 )
+from kabot.agent.loop_core.message_runtime_parts.bootstrap_onboarding import (
+    update_bootstrap_onboarding_state,
+)
 from kabot.agent.loop_core.message_runtime_parts.temporal import build_temporal_fast_reply
 from kabot.agent.loop_core.message_runtime_parts.turn_helpers import (
     _build_answer_reference_fast_reply,
+)
+from kabot.agent.loop_core.message_runtime_parts.user_profile import (
+    resolve_self_identity_fast_reply,
 )
 from kabot.bus.events import OutboundMessage
 
@@ -93,6 +99,7 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
             referenced_item=recent_answer_referenced_item,
         )
     temporal_fast_reply = None
+    profile_fast_reply = None
     if (
         not decision.is_complex
         and not required_tool
@@ -100,10 +107,13 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
         and not explicit_file_analysis_note
         and not mcp_context_note
     ):
+        profile_fast_reply = resolve_self_identity_fast_reply(session, effective_content)
         temporal_fast_reply = grounded_followup_fast_reply or build_temporal_fast_reply(
             effective_content,
             locale=runtime_locale,
         )
+        if profile_fast_reply:
+            temporal_fast_reply = profile_fast_reply
 
     fast_simple_context = bool(
         perf_cfg
@@ -115,6 +125,9 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
         and not mcp_context_note
         and not accuracy_context_required
     )
+    if forced_skill_names:
+        fast_direct_context = False
+        fast_simple_context = False
 
     queue_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
     queue_info = queue_meta.get("queue") if isinstance(queue_meta.get("queue"), dict) else {}
@@ -315,6 +328,13 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
                 with suppress(asyncio.CancelledError):
                     await keepalive_task
         _update_skill_creation_flow_after_response(
+            session,
+            msg,
+            final_content,
+            now_ts=time.time(),
+        )
+        update_bootstrap_onboarding_state(
+            loop,
             session,
             msg,
             final_content,

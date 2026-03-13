@@ -22,10 +22,12 @@ from kabot.agent.loop_core.execution_runtime_parts.artifacts import (
     _verify_completion_artifact_path,
 )
 from kabot.agent.loop_core.execution_runtime_parts.intent import (
+    _extract_direct_fetch_url_candidate,
     _extract_primary_intent_text,
     _is_image_like_tool,
     _is_low_information_turn,
     _is_tts_like_tool,
+    _looks_like_direct_page_fetch_request,
     _looks_like_live_research_query,
     _looks_like_short_confirmation,
     _normalize_text,
@@ -72,6 +74,7 @@ __all__ = [
     "_classify_runtime_error",
     "_emit_runtime_event",
     "_estimate_message_tokens",
+    "_extract_direct_fetch_url_candidate",
     "_extract_file_uri_path",
     "_extract_path_candidates_from_string",
     "_extract_path_candidates_from_value",
@@ -83,6 +86,7 @@ __all__ = [
     "_is_low_information_turn",
     "_is_result_path_key",
     "_is_tts_like_tool",
+    "_looks_like_direct_page_fetch_request",
     "_looks_like_live_research_query",
     "_looks_like_local_result_path",
     "_looks_like_short_confirmation",

@@ -68,11 +68,15 @@ from kabot.agent.loop_core.tool_enforcement_parts.history_routing import (
     make_unique_schedule_title_for_loop,
     required_tool_for_query_for_loop,
 )
+from kabot.agent.loop_core.message_runtime_parts.user_profile import (
+    infer_user_profile_updates,
+)
 from kabot.agent.tools.stock import (
     extract_crypto_ids,
     extract_stock_name_candidates,
     extract_stock_symbols,
 )
+from kabot.agent.tools.weather import infer_weather_request_profile
 from kabot.bus.events import InboundMessage
 
 def _query_has_tool_payload(tool_name: str, text: str) -> bool:
@@ -221,6 +225,25 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         result = await _exec_tool("write_file", {"path": path, "content": content})
         return str(result)
 
+    if required_tool == "save_memory":
+        inferred_profile = infer_user_profile_updates(source_text)
+        address = str(inferred_profile.get("address") or "").strip()
+        self_identity_answer = str(inferred_profile.get("self_identity_answer") or "").strip()
+        if self_identity_answer:
+            content = f'If the user asks "who am I?", answer: {self_identity_answer}.'
+            category = "preference"
+        elif address:
+            content = f"User prefers to be called {address}."
+            category = "preference"
+        else:
+            content = source_text
+            category = "fact"
+        result = await _exec_tool(
+            "save_memory",
+            {"content": content, "category": category},
+        )
+        return str(result)
+
     if required_tool == "archive_path":
         path = _extract_read_file_path(source_text)
         if not path:
@@ -328,9 +351,19 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
                 location = fallback_location
         if not location:
             return i18n_t("weather.need_location", source_text)
+        resolved_mode, resolved_hours_start, resolved_hours_end = infer_weather_request_profile(
+            source_text,
+        )
+        payload: dict[str, Any] = {"location": location, "context_text": source_text}
+        if resolved_mode != "current":
+            payload["mode"] = resolved_mode
+        if resolved_hours_start is not None:
+            payload["hours_ahead_start"] = resolved_hours_start
+        if resolved_hours_end is not None:
+            payload["hours_ahead_end"] = resolved_hours_end
         result = await _exec_tool(
             "weather",
-            {"location": location, "context_text": source_text},
+            payload,
         )
         return str(result)
 
@@ -384,6 +417,9 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         )
         return str(result)
 
+    # Built-in market tools stay available as a fallback path.
+    # Skill-first precedence is decided earlier in routing/history helpers so
+    # installed external finance skills can take the lead when relevant.
     if required_tool == "stock":
         # Guard against stale assistant-style metadata being reused as ticker query
         # when user only sends a short confirmation like "iya/ok/gas".
@@ -475,6 +511,8 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
                 return i18n_t("stock.need_symbol", source_text)
             return stock_text
 
+    # Same fallback rule for crypto: keep the tool, but do not force it when
+    # a matching external skill already owns the request.
     if required_tool == "crypto":
         coins = extract_crypto_ids(source_text)
         coin_arg = ",".join(coins) if coins else "bitcoin"

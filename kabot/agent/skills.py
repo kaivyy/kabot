@@ -1,5 +1,6 @@
 """Skills loader for agent capabilities."""
 
+import hashlib
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from kabot.agent.tools.stock_matching import extract_crypto_ids, extract_stock_symbols
 from kabot.agent.skills_matching import (
     BUILTIN_SKILLS_DIR,
     WORKFLOW_CHAINS,
@@ -52,6 +54,40 @@ from kabot.utils.skill_validator import validate_skill
 
 logger = logging.getLogger(__name__)
 
+_FINANCE_SKILL_MARKERS = {
+    "stock",
+    "stocks",
+    "saham",
+    "crypto",
+    "market",
+    "markets",
+    "ticker",
+    "tickers",
+    "quote",
+    "quotes",
+    "finance",
+    "trading",
+    "watchlist",
+    "analysis",
+}
+_FINANCE_QUERY_MARKERS = (
+    "stock",
+    "saham",
+    "crypto",
+    "btc",
+    "eth",
+    "harga",
+    "price",
+    "ticker",
+    "market",
+    "quote",
+    "ihsg",
+    "idx",
+)
+
+_TRUEISH_FRONTMATTER_VALUES = {"1", "true", "yes", "on"}
+_FALSEISH_FRONTMATTER_VALUES = {"0", "false", "no", "off"}
+
 __all__ = [
     "BUILTIN_SKILLS_DIR",
     "SkillsLoader",
@@ -64,6 +100,43 @@ __all__ = [
     "looks_like_skill_install_request",
     "normalize_skill_reference_name",
 ]
+
+
+def _looks_like_finance_request(text: str) -> bool:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return False
+    try:
+        if extract_stock_symbols(text):
+            return True
+    except Exception:
+        pass
+    try:
+        if extract_crypto_ids(text):
+            return True
+    except Exception:
+        pass
+    return any(marker in normalized for marker in _FINANCE_QUERY_MARKERS)
+
+
+def _is_finance_skill_candidate(skill_name: str, description: str) -> bool:
+    haystack = f"{skill_name} {description}".strip().lower()
+    if not haystack:
+        return False
+    return any(marker in haystack for marker in _FINANCE_SKILL_MARKERS)
+
+
+def _coerce_frontmatter_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in _TRUEISH_FRONTMATTER_VALUES:
+        return True
+    if normalized in _FALSEISH_FRONTMATTER_VALUES:
+        return False
+    return default
 
 class SkillsLoader:
     """
@@ -121,6 +194,8 @@ class SkillsLoader:
         index: dict[str, set[str]] = {}
         body_index: dict[str, set[str]] = {}
         for skill in self.list_skills(filter_unavailable=False):
+            if bool(skill.get("disable_model_invocation")):
+                continue
             desc = self._get_skill_description(skill["name"])
             # Primary keywords: from description + skill name (high signal)
             keywords = _extract_keywords(desc)
@@ -200,6 +275,17 @@ class SkillsLoader:
                 snapshot.append((str(root), 1, int(stat.st_mtime_ns), int(child_count)))
             except OSError:
                 snapshot.append((str(root), 1, 0, 0))
+        env_pairs = [f"{key}={value}" for key, value in sorted(os.environ.items())]
+        env_blob = "\0".join(env_pairs).encode("utf-8", errors="ignore")
+        env_digest = hashlib.sha1(env_blob).hexdigest()
+        snapshot.append(
+            (
+                "__env__",
+                int(env_digest[:12], 16),
+                len(env_pairs),
+                len(os.environ.get("PATH", "")),
+            )
+        )
         snapshot.sort(key=lambda item: item[0])
         return tuple(snapshot)
 
@@ -233,9 +319,11 @@ class SkillsLoader:
 
         index = self._build_skill_index()
         msg_keywords = _extract_keywords(message)
+        finance_request = _looks_like_finance_request(message_lower)
 
         if not msg_keywords:
-            return []
+            if not finance_request:
+                return []
 
         # Score each skill
         body_idx = self._body_index or {}
@@ -261,6 +349,10 @@ class SkillsLoader:
                 if len(kw) >= 2 and any(ord(ch) > 127 for ch in kw) and kw in message_lower
             }
             alias_bonus = _intent_alias_bonus(skill_name, message_lower)
+            finance_skill = _is_finance_skill_candidate(
+                skill_name,
+                self._get_skill_description(skill_name),
+            )
 
             if (
                 not overlap
@@ -268,12 +360,15 @@ class SkillsLoader:
                 and not contain_overlap
                 and not contain_body_overlap
                 and alias_bonus <= 0
+                and not (finance_request and finance_skill)
             ):
                 continue
 
             # Primary keywords score 1.0 each, body keywords 0.2 each
             score = len(overlap) + 0.2 * len(body_overlap)
             score += 0.8 * len(contain_overlap) + 0.2 * len(contain_body_overlap)
+            if finance_request and finance_skill:
+                score += 2.5
 
             # Strong bonus: exact skill name match (e.g., user says "spotify" or "discord")
             name_words = set(skill_name.replace("-", " ").split())
@@ -306,7 +401,13 @@ class SkillsLoader:
 
             # Skip weak matches: require 2+ overlaps unless name matches
             total_overlap = len(overlap) + len(body_overlap) + len(contain_overlap) + len(contain_body_overlap)
-            if alias_bonus <= 0 and not explicit_full_name_match and not name_overlap and total_overlap < 2:
+            if (
+                alias_bonus <= 0
+                and not explicit_full_name_match
+                and not name_overlap
+                and not (finance_request and finance_skill)
+                and total_overlap < 2
+            ):
                 continue
 
             scored.append((skill_name, explicit_full_name_match, score))
@@ -351,6 +452,102 @@ class SkillsLoader:
                 validated.append(f"{skill_name} [NEEDS: {missing}]")
 
         return validated[:max_results + 2]  # Allow up to 5 with chains
+
+    def match_skill_details(
+        self,
+        message: str,
+        profile: str = "GENERAL",
+        max_results: int = 3,
+        *,
+        filter_unavailable: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return matched skills enriched with source and eligibility metadata."""
+        matched_names = self.match_skills(message, profile=profile, max_results=max_results)
+        if not matched_names:
+            return []
+
+        statuses = {
+            normalize_skill_reference_name(str(item.get("name") or "")): item
+            for item in self.list_skills(filter_unavailable=filter_unavailable)
+        }
+        details: list[dict[str, Any]] = []
+        for raw_name in matched_names:
+            normalized = normalize_skill_reference_name(raw_name)
+            if not normalized:
+                continue
+            status = statuses.get(normalized)
+            if isinstance(status, dict):
+                details.append(dict(status))
+        return details
+
+    def has_preferred_external_skill_match(
+        self,
+        message: str,
+        profile: str = "GENERAL",
+        max_results: int = 3,
+    ) -> bool:
+        """
+        Return True when an eligible non-builtin skill matches this request.
+
+        Built-in stock/crypto tools stay available as fallback, but external
+        skills should win when they clearly match the query.
+        """
+        for detail in self.match_skill_details(
+            message,
+            profile=profile,
+            max_results=max_results,
+            filter_unavailable=False,
+        ):
+            if not bool(detail.get("eligible")):
+                continue
+            source = str(detail.get("source") or "").strip().lower()
+            if source and source != "builtin":
+                return True
+        return False
+
+    def has_external_finance_skill_available(self) -> bool:
+        """Return True when any non-builtin finance skill is installed."""
+        for detail in self.list_skills(filter_unavailable=False):
+            source = str(detail.get("source") or "").strip().lower()
+            if not source or source == "builtin":
+                continue
+            if _is_finance_skill_candidate(
+                str(detail.get("name") or ""),
+                str(detail.get("description") or ""),
+            ):
+                return True
+        return False
+
+    def should_prefer_external_finance_skill(
+        self,
+        message: str,
+        profile: str = "GENERAL",
+    ) -> bool:
+        """
+        Return True when finance/crypto requests should stay on the external-skill lane.
+
+        This keeps legacy built-in finance tools archived behind workspace/managed
+        skill packs, which is closer to the OpenClaw skill-first model.
+        """
+        if not self.has_external_finance_skill_available():
+            return False
+        for detail in self.match_skill_details(
+            message,
+            profile=profile,
+            max_results=3,
+            filter_unavailable=False,
+        ):
+            source = str(detail.get("source") or "").strip().lower()
+            if not source or source == "builtin":
+                continue
+            if _is_finance_skill_candidate(
+                str(detail.get("name") or ""),
+                str(detail.get("description") or ""),
+            ):
+                return True
+        if self.has_preferred_external_skill_match(message, profile=profile):
+            return True
+        return _looks_like_finance_request(message)
 
     def _match_explicit_skill_fast_path(
         self,
@@ -549,7 +746,9 @@ class SkillsLoader:
                 return
             seen_names.add(name)
 
+            frontmatter = self.get_skill_metadata(name) or {}
             meta = self._get_skill_meta(name)
+            invocation_policy = self._resolve_skill_invocation_policy(frontmatter)
             install_specs = self._normalize_install_specs(meta.get("install", {}))
             desc = self._get_skill_description(name)
             skill_key = str(meta.get("skillKey") or name).strip() or name
@@ -623,7 +822,14 @@ class SkillsLoader:
                     "os": unsupported_os
                 },
                 "install": install_specs,
-                "description": desc
+                "description": desc,
+                "user_invocable": bool(invocation_policy.get("user_invocable", True)),
+                "disable_model_invocation": bool(
+                    invocation_policy.get("disable_model_invocation", False)
+                ),
+                "command_dispatch": str(invocation_policy.get("command_dispatch") or "").strip(),
+                "command_tool": str(invocation_policy.get("command_tool") or "").strip(),
+                "command_arg_mode": str(invocation_policy.get("command_arg_mode") or "raw").strip() or "raw",
             }
             if install_specs:
                 skill_info["install_recommended"] = install_specs[0].get("id")
@@ -766,6 +972,39 @@ class SkillsLoader:
 
         return "\n\n---\n\n".join(parts) if parts else ""
 
+    def _render_skills_summary(
+        self,
+        skills: list[dict[str, Any]],
+        *,
+        root_tag: str = "skills",
+    ) -> str:
+        if not skills:
+            return ""
+
+        def escape_xml(s: str) -> str:
+            return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        lines = [f"<{root_tag}>"]
+        for s in skills:
+            name = escape_xml(s["name"])
+            path = s["path"]
+            desc = escape_xml(str(s.get("description") or self._get_skill_description(s["name"])))
+            available = bool(s.get("eligible"))
+
+            lines.append(f'  <skill available="{str(available).lower()}">')
+            lines.append(f"    <name>{name}</name>")
+            lines.append(f"    <description>{desc}</description>")
+            lines.append(f"    <location>{path}</location>")
+
+            if not available:
+                missing = self._format_skill_unavailability(s)
+                if missing:
+                    lines.append(f"    <requires>{escape_xml(missing)}</requires>")
+
+            lines.append("  </skill>")
+        lines.append(f"</{root_tag}>")
+        return "\n".join(lines)
+
     def build_skills_summary(self) -> str:
         """
         Build a summary of all skills (name, description, path, availability).
@@ -784,36 +1023,35 @@ class SkillsLoader:
                 return cached_summary
 
         all_skills = self.list_skills(filter_unavailable=False)
+        all_skills = [
+            skill for skill in all_skills if not bool(skill.get("disable_model_invocation"))
+        ]
         if not all_skills:
             return ""
 
-        def escape_xml(s: str) -> str:
-            return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-        lines = ["<skills>"]
-        for s in all_skills:
-            name = escape_xml(s["name"])
-            path = s["path"]
-            desc = escape_xml(str(s.get("description") or self._get_skill_description(s["name"])))
-            available = bool(s.get("eligible"))
-
-            lines.append(f"  <skill available=\"{str(available).lower()}\">")
-            lines.append(f"    <name>{name}</name>")
-            lines.append(f"    <description>{desc}</description>")
-            lines.append(f"    <location>{path}</location>")
-
-            # Show missing requirements for unavailable skills
-            if not available:
-                missing = self._format_skill_unavailability(s)
-                if missing:
-                    lines.append(f"    <requires>{escape_xml(missing)}</requires>")
-
-            lines.append("  </skill>")
-        lines.append("</skills>")
-
-        summary = "\n".join(lines)
+        summary = self._render_skills_summary(all_skills, root_tag="skills")
         self._summary_cache = (now, roots_snapshot, summary)
         return summary
+
+    def build_skills_summary_for_names(self, skill_names: list[str]) -> str:
+        """Build a summary for a selected subset of skills."""
+        normalized_names = {
+            normalize_skill_reference_name(skill_name)
+            for skill_name in (skill_names or [])
+            if normalize_skill_reference_name(skill_name)
+        }
+        if not normalized_names:
+            return ""
+
+        selected_skills = [
+            skill
+            for skill in self.list_skills(filter_unavailable=False)
+            if normalize_skill_reference_name(str(skill.get("name") or "")) in normalized_names
+            and not bool(skill.get("disable_model_invocation"))
+        ]
+        if not selected_skills:
+            return ""
+        return self._render_skills_summary(selected_skills, root_tag="skills")
 
     def _get_missing_requirements(self, skill_meta: dict) -> str:
         """Get a description of missing requirements."""
@@ -871,12 +1109,22 @@ class SkillsLoader:
         return content
 
     def _parse_kabot_metadata(self, raw: str | dict) -> dict:
-        """Parse kabot metadata JSON from frontmatter."""
+        """Parse Kabot/OpenClaw-compatible metadata JSON from frontmatter."""
         if isinstance(raw, dict):
-            return raw.get("kabot", {})
+            if isinstance(raw.get("kabot"), dict):
+                return raw.get("kabot", {})
+            if isinstance(raw.get("openclaw"), dict):
+                return raw.get("openclaw", {})
+            return {}
         try:
             data = json.loads(raw)
-            return data.get("kabot", {}) if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                return {}
+            if isinstance(data.get("kabot"), dict):
+                return data.get("kabot", {})
+            if isinstance(data.get("openclaw"), dict):
+                return data.get("openclaw", {})
+            return {}
         except (json.JSONDecodeError, TypeError):
             return {}
 
@@ -937,6 +1185,22 @@ class SkillsLoader:
         """Get kabot metadata for a skill (cached in frontmatter)."""
         meta = self.get_skill_metadata(name) or {}
         return self._parse_kabot_metadata(meta.get("metadata", ""))
+
+    def _resolve_skill_invocation_policy(self, frontmatter: dict | None) -> dict[str, Any]:
+        frontmatter = frontmatter if isinstance(frontmatter, dict) else {}
+        command_dispatch = str(frontmatter.get("command-dispatch") or "").strip().lower()
+        command_tool = str(frontmatter.get("command-tool") or "").strip()
+        command_arg_mode = str(frontmatter.get("command-arg-mode") or "raw").strip().lower() or "raw"
+        return {
+            "user_invocable": _coerce_frontmatter_bool(frontmatter.get("user-invocable"), True),
+            "disable_model_invocation": _coerce_frontmatter_bool(
+                frontmatter.get("disable-model-invocation"),
+                False,
+            ),
+            "command_dispatch": command_dispatch,
+            "command_tool": command_tool,
+            "command_arg_mode": command_arg_mode,
+        }
 
     def get_always_skills(self) -> list[str]:
         """Get skills marked as always=true that meet requirements."""

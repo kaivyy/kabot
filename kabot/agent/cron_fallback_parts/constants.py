@@ -88,6 +88,8 @@ PROCESS_RAM_KEYWORDS = (
     "ram per app", "ram per aplikasi", "ram per proses",
     "ram terbesar", "aplikasi boros", "aplikasi makan ram",
     "proses boros", "proses makan ram", "proses terbesar",
+    "proses yang paling makan", "yang paling makan ram", "yang paling makan cpu",
+    "proses teratas", "proses top", "makan resource", "pakai resource terbesar",
     "daftar proses", "top proses",
     "berapa ram", "ram berapa", "kapasitas ram", "kapasitas memori",
     "total ram", "total memori", "ram pc", "ram laptop", "ram komputer",
@@ -133,6 +135,7 @@ SERVER_MONITOR_KEYWORDS = (
     "how much ram", "how much cpu", "how much memory",
     "system monitor", "server monitor", "pc monitor",
     "uptime", "server uptime",
+    "runtime server", "server runtime", "cek runtime server", "cek runtime vps",
     # Indonesian / Malay
     "monitor server", "monitoring server", "monitor pc", "pantau server",
     "penggunaan cpu", "penggunaan ram", "penggunaan memori",

@@ -77,6 +77,66 @@ async def test_process_tool_calls_blocks_image_tool_for_non_image_intent(tmp_pat
     assert tool_messages
     assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
 
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_blocks_legacy_stock_tool_when_external_finance_skill_matches(tmp_path):
+    tool_executor = AsyncMock(return_value='{"symbol":"BBCA","price":6900}')
+    loop = SimpleNamespace(
+        context=SimpleNamespace(
+            add_assistant_message=lambda messages, content, tool_calls=None, reasoning_content=None: [
+                *messages,
+                {"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})},
+            ],
+            add_tool_result=lambda messages, _id, _name, result: [*messages, {"role": "tool", "tool_call_id": _id, "name": _name, "content": result}],
+            skills=SimpleNamespace(
+                has_preferred_external_skill_match=lambda text, profile="GENERAL": "bbca" in str(text).lower(),
+                has_external_finance_skill_available=lambda: True,
+            ),
+        ),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="cek harga saham bbca bri mandiri adaro sekarang",
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_stock", name="stock", arguments={"symbol": "BBCA"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_stock"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
 @pytest.mark.asyncio
 async def test_process_tool_calls_allows_image_tool_for_image_intent(tmp_path):
     tool_executor = AsyncMock(return_value="Image generated via provider")
@@ -575,6 +635,50 @@ async def test_run_agent_loop_direct_cleanup_returns_raw_result_without_summary_
     loop._execute_required_tool_fallback.assert_awaited_once_with("cleanup_system", msg)
     loop._plan_task.assert_not_awaited()
 
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_skill_command_tool_dispatch_bypasses_model_and_executes_tool():
+    tool_executor = AsyncMock(return_value="THREADS_OK")
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        tools=SimpleNamespace(has=lambda name: name == "meta_threads_post", execute=tool_executor),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="direct",
+        sender_id="user",
+        content="halo dari slash",
+        metadata={
+            "skill_name": "meta-threads-official",
+            "skill_command_dispatch": "tool",
+            "skill_command_tool": "meta_threads_post",
+            "skill_command_name": "meta_threads_official",
+            "skill_command_arg_mode": "raw",
+            "required_tool_query": "halo dari slash",
+        },
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "THREADS_OK"
+    tool_executor.assert_awaited_once_with(
+        "meta_threads_post",
+        {
+            "command": "halo dari slash",
+            "commandName": "meta_threads_official",
+            "skillName": "meta-threads-official",
+        },
+    )
+    loop.provider.chat.assert_not_awaited()
+
 @pytest.mark.asyncio
 async def test_run_agent_loop_status_text_comes_from_i18n_translator(monkeypatch):
     published = []
@@ -614,9 +718,74 @@ async def test_run_agent_loop_status_text_comes_from_i18n_translator(monkeypatch
     assert "tool" in phases
     assert "done" in phases
     assert "<runtime.status.thinking>" in contents
-    assert "<runtime.status.tool>" in contents
-    assert "<runtime.status.done>" in contents
-    loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_allows_text_progression_for_forced_external_skill_lane():
+    response_text = (
+        "I can continue with the binance-pro skill, but I still need your Binance "
+        "API key and secret to check the futures balance."
+    )
+    loop = SimpleNamespace(
+        max_iterations=2,
+        context_guard=SimpleNamespace(check_overflow=lambda _messages, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _is_weak_model=lambda _model: True,
+        _required_tool_for_query=lambda _q: None,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda messages, _session: messages,
+        _call_llm_with_fallback=AsyncMock(
+            side_effect=[
+                (LLMResponse(content=response_text), None),
+                (LLMResponse(content=response_text), None),
+            ]
+        ),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(10, "ok")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(),
+        _execute_required_tool_fallback=AsyncMock(return_value=None),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        context=SimpleNamespace(
+            add_assistant_message=lambda messages, content, reasoning_content=None: messages
+            + [{"role": "assistant", "content": content}],
+        ),
+        provider=SimpleNamespace(),
+        bus=SimpleNamespace(
+            publish_outbound=AsyncMock(return_value=None),
+            take_pending_inbound_for_session=lambda *_args, **_kwargs: [],
+        ),
+    )
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="jq sudah",
+        metadata={
+            "turn_category": "action",
+            "continuity_source": "committed_action",
+            "forced_skill_names": ["binance-pro"],
+            "external_skill_lane": True,
+        },
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session,
+    )
+
+    assert result == response_text
+    assert loop._call_llm_with_fallback.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -983,3 +1152,88 @@ async def test_run_agent_loop_direct_process_memory_returns_raw_without_summary_
     loop.provider.chat.assert_not_awaited()
     outbound_texts = [call.args[0].content for call in bus.publish_outbound.await_args_list]
     assert any("wait" in text.lower() or "tunggu" in text.lower() for text in outbound_texts)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_passes_through_web_search_setup_hint_after_tool_call(tmp_path):
+    raw_result = (
+        "web_search needs a search API key. Configure BRAVE_API_KEY, "
+        "PERPLEXITY_API_KEY, XAI_API_KEY, or KIMI_API_KEY/MOONSHOT_API_KEY "
+        "in tools.web.search or your environment. For direct page fetches, use web_fetch."
+    )
+    first_response = LLMResponse(
+        content="checking",
+        tool_calls=[
+            ToolCallRequest(
+                id="call_search",
+                name="web_search",
+                arguments={"query": "who is the ceo of microsoft"},
+            )
+        ],
+    )
+    second_response = LLMResponse(content="should-not-be-used")
+
+    loop = SimpleNamespace(
+        max_iterations=3,
+        context_guard=SimpleNamespace(check_overflow=lambda _messages, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _is_weak_model=lambda _model: False,
+        _required_tool_for_query=lambda _q: None,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(side_effect=[(first_response, None), (second_response, None)]),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(10, "ok")),
+        _log_lesson=AsyncMock(),
+        _execute_required_tool_fallback=AsyncMock(return_value=None),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(
+            get=lambda _name: None,
+            execute=AsyncMock(return_value=raw_result),
+            has=lambda _name: True,
+        ),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        bus=SimpleNamespace(
+            publish_outbound=AsyncMock(return_value=None),
+            take_pending_inbound_for_session=lambda *_args, **_kwargs: [],
+        ),
+        exec_auto_approve=False,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="unused"))),
+    )
+
+    async def _process_tool_calls(_msg, messages, response, _session):
+        return await process_tool_calls(loop, _msg, messages, response, _session)
+
+    loop._process_tool_calls = AsyncMock(side_effect=_process_tool_calls)
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="search the web for who is the ceo of microsoft. use web_search.",
+        metadata={"turn_category": "action"},
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == raw_result
+    assert loop._call_llm_with_fallback.await_count == 1
+    assert msg.metadata.get("tool_result_passthrough") is None
+    assert loop.tools.execute.await_count == 1

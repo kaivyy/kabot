@@ -6,6 +6,7 @@ import pytest
 
 from kabot.agent.tools import web_search as web_search_module
 from kabot.agent.tools.web_search import WebSearchTool
+from kabot.agent.fallback_i18n import t as i18n_t
 
 
 class _DummyResponse:
@@ -161,6 +162,30 @@ async def test_web_search_no_keys_falls_back_to_google_news_rss(monkeypatch):
 
     result = await tool.execute("berita terbaru 2026 sekarang", count=5)
     assert "rss-fallback-ok:berita terbaru 2026 sekarang:5" in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_no_keys_general_query_returns_setup_hint(monkeypatch):
+    web_search_module._SEARCH_CACHE.clear()
+    tool = WebSearchTool(
+        provider="brave",
+        api_key="",
+        perplexity_api_key="",
+        xai_api_key="",
+        kimi_api_key="",
+    )
+
+    async def _rss_should_not_run(query: str, count: int) -> str:
+        raise AssertionError("google news rss fallback should not run for general web search")
+
+    monkeypatch.setattr(tool, "_search_google_news_rss", _rss_should_not_run)
+
+    result = await tool.execute("who is the ceo of microsoft", count=5)
+    assert result == i18n_t(
+        "web_search.provider_missing",
+        "who is the ceo of microsoft",
+        provider="brave",
+    )
 
 
 @pytest.mark.asyncio

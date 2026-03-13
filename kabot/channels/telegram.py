@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -22,6 +24,13 @@ from kabot.bus.events import OutboundMessage
 from kabot.bus.queue import MessageBus
 from kabot.channels.base import BaseChannel
 from kabot.config.schema import TelegramConfig
+from kabot.core.command_surfaces import (
+    CommandSurfaceSpec,
+    build_command_surface_specs,
+    list_workspace_skill_command_specs,
+)
+from kabot.core.command_router import CommandContext
+from kabot.utils.helpers import get_data_path
 from kabot.utils.text_safety import ensure_utf8_text
 
 if TYPE_CHECKING:
@@ -31,6 +40,9 @@ _TELEGRAM_TYPING_INTERVAL_SECONDS = 4.0
 _TELEGRAM_TYPING_RETRY_DELAY_SECONDS = 2.0
 _TELEGRAM_TYPING_MAX_DURATION_SECONDS = 120.0
 _TELEGRAM_TYPING_MAX_CONSECUTIVE_FAILURES = 6
+_TELEGRAM_MAX_COMMANDS = 100
+_TELEGRAM_COMMAND_NAME_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+_TELEGRAM_COMMAND_RETRY_RATIO = 0.8
 
 
 def _markdown_to_telegram_html(text: str) -> str:
@@ -199,12 +211,14 @@ class TelegramChannel(BaseChannel):
         groq_api_key: str = "",
         session_manager: SessionManager | None = None,
         command_router: Any = None,
+        workspace: str | Path | None = None,
     ):
         super().__init__(config, bus)
         self.config: TelegramConfig = config
         self.groq_api_key = groq_api_key
         self.session_manager = session_manager
         self.command_router = command_router
+        self.workspace = Path(workspace).expanduser() if workspace else None
         self._app: Application | None = None
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
         self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
@@ -212,7 +226,42 @@ class TelegramChannel(BaseChannel):
         self._status_message_ids: dict[str, int] = {}
         # Track stale status bubbles that should be cleaned before final reply.
         self._stale_status_message_ids: dict[str, set[int]] = {}
+        # Keep one mutable preview message per chat for draft/reasoning updates.
+        self._preview_message_ids: dict[str, int] = {}
+        # Track stale preview bubbles that should be cleaned before/after final reply.
+        self._stale_preview_message_ids: dict[str, set[int]] = {}
         self._polling_conflict_handled: bool = False
+
+    @staticmethod
+    def _normalize_telegram_command_name(value: str) -> str:
+        raw = str(value or "").strip()
+        raw = raw.split(None, 1)[0] if raw else raw
+        if raw.startswith("/"):
+            raw = raw[1:]
+        raw = raw.split("@", 1)[0]
+        return raw.strip().lower().replace("-", "_").replace(" ", "_")
+
+    def _is_valid_telegram_command_name(self, value: str) -> bool:
+        return bool(value and _TELEGRAM_COMMAND_NAME_RE.match(value))
+
+    def _get_skill_command_specs(self, reserved: set[str] | None = None) -> list[CommandSurfaceSpec]:
+        return list_workspace_skill_command_specs(
+            self.workspace,
+            normalize_name=self._normalize_telegram_command_name,
+            is_valid_name=self._is_valid_telegram_command_name,
+            reserved=reserved,
+        )
+
+    def _get_command_surface_specs(self, router: Any | None = None) -> list[CommandSurfaceSpec]:
+        static_commands = [(cmd.command, cmd.description) for cmd in self.BOT_COMMANDS]
+        return build_command_surface_specs(
+            static_commands=static_commands,
+            router=router if router is not None else self.command_router,
+            workspace=self.workspace,
+            normalize_name=self._normalize_telegram_command_name,
+            is_valid_name=self._is_valid_telegram_command_name,
+            max_commands=_TELEGRAM_MAX_COMMANDS,
+        )
 
     def _allow_keepalive_passthrough(self) -> bool:
         """Telegram needs keepalive pulses to maintain typing continuity."""
@@ -231,25 +280,102 @@ class TelegramChannel(BaseChannel):
         Returns:
             List of BotCommand objects for Telegram bot API
         """
-        commands = []
+        return [
+            BotCommand(spec.name, spec.description)
+            for spec in self._get_command_surface_specs(router)
+        ]
 
-        # Always include static commands
-        commands.extend(self.BOT_COMMANDS)
+    def _get_reserved_non_skill_commands(self) -> set[str]:
+        """Return static + router command names so skill slash commands can avoid collisions."""
+        return {
+            spec.name
+            for spec in self._get_command_surface_specs()
+            if spec.source != "skill"
+        }
 
-        # Add commands from router if available
-        if router and hasattr(router, '_commands'):
-            for cmd_name, registration in router._commands.items():
-                # Remove leading slash for Telegram API
-                cmd_name_clean = cmd_name.lstrip('/')
+    @staticmethod
+    def _hash_bot_commands(commands: list[BotCommand]) -> str:
+        payload = sorted(
+            [{"command": cmd.command, "description": cmd.description} for cmd in commands],
+            key=lambda item: item["command"],
+        )
+        return hashlib.sha256(str(payload).encode("utf-8")).hexdigest()[:16]
 
-                # Skip if already in static commands
-                if any(cmd.command == cmd_name_clean for cmd in self.BOT_COMMANDS):
-                    continue
+    @staticmethod
+    def _command_cache_suffix(bot_identity: str = "") -> str:
+        normalized = str(bot_identity or "").strip() or "default"
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
-                # Add command with description
-                commands.append(BotCommand(cmd_name_clean, registration.description))
+    def _command_hash_cache_path(self, bot_identity: str = "") -> Path:
+        state_dir = get_data_path() / "telegram"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir / f"command-hash-{self._command_cache_suffix(bot_identity)}.txt"
 
-        return commands
+    def _read_cached_command_hash(self, bot_identity: str = "") -> str:
+        try:
+            return self._command_hash_cache_path(bot_identity).read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+
+    def _write_cached_command_hash(self, command_hash: str, bot_identity: str = "") -> None:
+        try:
+            self._command_hash_cache_path(bot_identity).write_text(command_hash, encoding="utf-8")
+        except Exception as exc:
+            logger.debug(f"Failed to cache Telegram command hash: {exc}")
+
+    @staticmethod
+    def _is_bot_commands_too_much_error(err: Exception | str | None) -> bool:
+        if not err:
+            return False
+        if isinstance(err, str):
+            return "BOT_COMMANDS_TOO_MUCH" in err.upper()
+        text = str(err)
+        return "BOT_COMMANDS_TOO_MUCH" in text.upper()
+
+    async def _sync_bot_commands(self, bot: Any, commands_to_register: list[BotCommand], *, bot_identity: str = "") -> None:
+        current_hash = self._hash_bot_commands(commands_to_register)
+        if self._read_cached_command_hash(bot_identity) == current_hash:
+            logger.debug("Telegram bot commands unchanged; skipping sync")
+            return
+
+        delete_succeeded = True
+        delete_fn = getattr(bot, "delete_my_commands", None)
+        if callable(delete_fn):
+            try:
+                await delete_fn()
+            except Exception as exc:
+                delete_succeeded = False
+                logger.warning(f"Failed to clear Telegram bot commands before sync: {exc}")
+
+        if not commands_to_register:
+            if delete_succeeded:
+                self._write_cached_command_hash(current_hash, bot_identity)
+            return
+
+        retry_commands = list(commands_to_register)
+        while retry_commands:
+            try:
+                await bot.set_my_commands(retry_commands)
+                self._write_cached_command_hash(current_hash, bot_identity)
+                logger.debug(f"Telegram bot commands registered: {len(retry_commands)} commands")
+                return
+            except Exception as exc:
+                if not self._is_bot_commands_too_much_error(exc):
+                    raise
+                next_count = int(len(retry_commands) * _TELEGRAM_COMMAND_RETRY_RATIO)
+                reduced_count = next_count if next_count < len(retry_commands) else len(retry_commands) - 1
+                if reduced_count <= 0:
+                    logger.warning(
+                        "Telegram rejected command menu with BOT_COMMANDS_TOO_MUCH; "
+                        "no commands were registered."
+                    )
+                    return
+                logger.warning(
+                    "Telegram rejected {} commands with BOT_COMMANDS_TOO_MUCH; retrying with {}",
+                    len(retry_commands),
+                    reduced_count,
+                )
+                retry_commands = retry_commands[:reduced_count]
 
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
@@ -275,6 +401,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("reset", self._on_reset))
         self._app.add_handler(CommandHandler("help", self._on_help))
         self._app.add_handler(CallbackQueryHandler(self._on_callback_query))
+        self._app.add_handler(MessageHandler(filters.COMMAND, self._on_router_command))
 
         # Add message handler for text, photos, voice, documents
         self._app.add_handler(
@@ -296,14 +423,12 @@ class TelegramChannel(BaseChannel):
         logger.info(f"Telegram bot @{bot_info.username} connected")
 
         try:
-            # Get commands from router if available, otherwise use static commands
-            commands_to_register = (
-                self.get_bot_commands_from_router(self.command_router)
-                if self.command_router
-                else self.BOT_COMMANDS
+            commands_to_register = self.get_bot_commands_from_router(self.command_router)
+            await self._sync_bot_commands(
+                self._app.bot,
+                commands_to_register,
+                bot_identity=str(getattr(bot_info, "username", "") or ""),
             )
-            await self._app.bot.set_my_commands(commands_to_register)
-            logger.debug(f"Telegram bot commands registered: {len(commands_to_register)} commands")
         except Exception as e:
             logger.warning(f"Failed to register bot commands: {e}")
 
@@ -327,6 +452,8 @@ class TelegramChannel(BaseChannel):
             self._stop_typing(chat_id)
         self._status_message_ids.clear()
         self._stale_status_message_ids.clear()
+        self._preview_message_ids.clear()
+        self._stale_preview_message_ids.clear()
 
         if self._app:
             logger.info("Stopping Telegram bot...")
@@ -401,6 +528,12 @@ class TelegramChannel(BaseChannel):
         bucket = self._stale_status_message_ids.setdefault(str(chat_id), set())
         bucket.add(int(message_id))
 
+    def _mark_stale_preview(self, chat_id: str, message_id: int | None) -> None:
+        if not message_id:
+            return
+        bucket = self._stale_preview_message_ids.setdefault(str(chat_id), set())
+        bucket.add(int(message_id))
+
     async def _cleanup_stale_status_messages(self, chat_id_str: str, chat_id: int) -> None:
         stale_ids = sorted(self._stale_status_message_ids.get(chat_id_str, set()))
         if not stale_ids:
@@ -418,6 +551,28 @@ class TelegramChannel(BaseChannel):
                 )
         self._stale_status_message_ids.pop(chat_id_str, None)
 
+    async def _cleanup_stale_preview_messages(self, chat_id_str: str, chat_id: int) -> None:
+        stale_ids = sorted(self._stale_preview_message_ids.get(chat_id_str, set()))
+        if not stale_ids:
+            return
+        for stale_id in stale_ids:
+            try:
+                await self._app.bot.delete_message(chat_id=chat_id, message_id=stale_id)
+            except Exception as exc:
+                if self._is_message_not_found_error(exc):
+                    continue
+                if self._is_transient_message_error(exc):
+                    continue
+                logger.debug(
+                    f"Telegram stale preview delete failed chat={chat_id_str} msg_id={stale_id}: {exc}"
+                )
+        self._stale_preview_message_ids.pop(chat_id_str, None)
+
+    @staticmethod
+    def _progress_update_type(msg: OutboundMessage) -> str:
+        metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+        return str(metadata.get("type") or "").strip().lower()
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Telegram."""
         if not self._app:
@@ -426,6 +581,8 @@ class TelegramChannel(BaseChannel):
 
         chat_id_str = str(msg.chat_id)
         is_progress_update, _phase, _status_text = self._status_update_payload(msg)
+        progress_update_type = self._progress_update_type(msg)
+        is_preview_update = progress_update_type in {"draft_update", "reasoning_update"}
 
         if not is_progress_update:
             self._clear_status_state(msg.chat_id)
@@ -443,7 +600,15 @@ class TelegramChannel(BaseChannel):
                     status_text = ensure_utf8_text(msg.content or "").strip()
                     if not status_text:
                         return
-                    existing_status_id = self._status_message_ids.get(chat_id_str)
+                    active_message_ids = (
+                        self._preview_message_ids if is_preview_update else self._status_message_ids
+                    )
+                    existing_status_id = active_message_ids.get(chat_id_str)
+                    reply_to_message_id = (
+                        int(str(msg.reply_to).strip())
+                        if str(msg.reply_to or "").strip().isdigit()
+                        else None
+                    )
                     if existing_status_id:
                         try:
                             await self._app.bot.edit_message_text(
@@ -459,11 +624,18 @@ class TelegramChannel(BaseChannel):
                             if self._is_transient_message_error(exc):
                                 # Keep current status bubble and retry on next keepalive/status pulse.
                                 return
-                            self._mark_stale_status(chat_id_str, existing_status_id)
-                            self._status_message_ids.pop(chat_id_str, None)
-                    sent_status = await self._app.bot.send_message(chat_id=chat_id, text=status_text)
+                            if is_preview_update:
+                                self._mark_stale_preview(chat_id_str, existing_status_id)
+                            else:
+                                self._mark_stale_status(chat_id_str, existing_status_id)
+                            active_message_ids.pop(chat_id_str, None)
+                    sent_status = await self._app.bot.send_message(
+                        chat_id=chat_id,
+                        text=status_text,
+                        reply_to_message_id=reply_to_message_id,
+                    )
                     if getattr(sent_status, "message_id", None):
-                        self._status_message_ids[chat_id_str] = int(sent_status.message_id)
+                        active_message_ids[chat_id_str] = int(sent_status.message_id)
                     return
 
             # Clear stale status indicator when sending the final/non-progress response.
@@ -488,36 +660,89 @@ class TelegramChannel(BaseChannel):
                 inline_rows = msg.metadata.get("inline_keyboard")
                 if isinstance(inline_rows, list):
                     reply_markup = build_inline_keyboard(inline_rows)
+            reply_to_message_id = (
+                int(str(msg.reply_to).strip())
+                if str(msg.reply_to or "").strip().isdigit()
+                else None
+            )
+            preview_message_id = self._preview_message_ids.get(chat_id_str)
+            materialized_preview = False
+            if preview_message_id and (msg.media or not (msg.content and msg.content.strip())):
+                self._mark_stale_preview(chat_id_str, preview_message_id)
+                self._preview_message_ids.pop(chat_id_str, None)
+                preview_message_id = None
 
             # 1. Send text content if present (and not just a placeholder)
             if msg.content and msg.content.strip():
                 safe_content = ensure_utf8_text(msg.content)
                 chunks = _split_message(safe_content, max_length=4000)
+                if preview_message_id and len(chunks) != 1:
+                    self._mark_stale_preview(chat_id_str, preview_message_id)
+                    self._preview_message_ids.pop(chat_id_str, None)
+                    preview_message_id = None
 
-                for i, chunk in enumerate(chunks):
-                    chunk = ensure_utf8_text(chunk)
-                    # Only attach reply_markup to the last chunk
-                    chunk_markup = reply_markup if i == len(chunks) - 1 else None
-
+                if preview_message_id and not msg.media and len(chunks) == 1:
+                    chunk = ensure_utf8_text(chunks[0])
                     try:
-                        # Convert markdown to Telegram HTML
                         html_content = _markdown_to_telegram_html(chunk)
-                        await self._app.bot.send_message(
+                        await self._app.bot.edit_message_text(
                             chat_id=chat_id,
+                            message_id=preview_message_id,
                             text=html_content,
                             parse_mode="HTML",
-                            reply_markup=chunk_markup,
+                            reply_markup=reply_markup,
                         )
-                    except Exception as e:
-                        logger.warning(f"HTML parse failed for chunk {i+1}/{len(chunks)}, falling back to plain text: {e}")
+                        materialized_preview = True
+                    except Exception as exc:
+                        if self._is_message_not_modified_error(exc):
+                            materialized_preview = True
+                        else:
+                            try:
+                                await self._app.bot.edit_message_text(
+                                    chat_id=chat_id,
+                                    message_id=preview_message_id,
+                                    text=chunk,
+                                    reply_markup=reply_markup,
+                                )
+                                materialized_preview = True
+                            except Exception as fallback_exc:
+                                if self._is_message_not_modified_error(fallback_exc):
+                                    materialized_preview = True
+                                else:
+                                    self._mark_stale_preview(chat_id_str, preview_message_id)
+                                    logger.warning(
+                                        f"Telegram preview materialization failed for chat={chat_id_str}: {fallback_exc}"
+                                    )
+                    finally:
+                        self._preview_message_ids.pop(chat_id_str, None)
+
+                if not materialized_preview:
+                    for i, chunk in enumerate(chunks):
+                        chunk = ensure_utf8_text(chunk)
+                        # Only attach reply_markup to the last chunk
+                        chunk_markup = reply_markup if i == len(chunks) - 1 else None
+
                         try:
+                            # Convert markdown to Telegram HTML
+                            html_content = _markdown_to_telegram_html(chunk)
                             await self._app.bot.send_message(
                                 chat_id=chat_id,
-                                text=chunk,
+                                text=html_content,
+                                parse_mode="HTML",
                                 reply_markup=chunk_markup,
+                                reply_to_message_id=reply_to_message_id,
                             )
-                        except Exception as e2:
-                            logger.error(f"Error sending Telegram chunk {i+1}/{len(chunks)}: {e2}")
+                        except Exception as e:
+                            logger.warning(f"HTML parse failed for chunk {i+1}/{len(chunks)}, falling back to plain text: {e}")
+                            try:
+                                await self._app.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=chunk,
+                                    reply_markup=chunk_markup,
+                                    reply_to_message_id=reply_to_message_id,
+                                )
+                            except Exception as e2:
+                                logger.error(f"Error sending Telegram chunk {i+1}/{len(chunks)}: {e2}")
 
             # 2. Send media files if present
             if msg.media:
@@ -539,7 +764,8 @@ class TelegramChannel(BaseChannel):
                             await self._app.bot.send_document(
                                 chat_id=chat_id,
                                 document=f,
-                                filename=path.name
+                                filename=path.name,
+                                reply_to_message_id=reply_to_message_id,
                             )
                     except Exception as e:
                         logger.error(f"Failed to send file {file_path}: {e}")
@@ -547,6 +773,8 @@ class TelegramChannel(BaseChannel):
                             chat_id=chat_id,
                             text=f"⚠️ Failed to send file {path.name}: {str(e)}"
                         )
+
+            await self._cleanup_stale_preview_messages(chat_id_str, chat_id)
 
         except ValueError:
             logger.error(f"Invalid chat_id: {msg.chat_id}")
@@ -606,6 +834,22 @@ class TelegramChannel(BaseChannel):
             return
 
         user = update.effective_user
+        bootstrap_path = self.workspace / "BOOTSTRAP.md" if isinstance(self.workspace, Path) else None
+        if bootstrap_path and bootstrap_path.exists():
+            chat_type = getattr(getattr(update.message, "chat", None), "type", "private")
+            await self._handle_message(
+                sender_id=str(user.id),
+                chat_id=str(update.message.chat_id),
+                content="/start",
+                metadata={
+                    "message_id": update.message.message_id,
+                    "user_id": user.id,
+                    "username": user.username,
+                    "first_name": user.first_name,
+                    "is_group": chat_type != "private",
+                },
+            )
+            return
         await update.message.reply_text(
             f"👋 Hi {user.first_name}! I'm kabot.\n\n"
             "Send me a message and I'll respond!\n"
@@ -645,20 +889,105 @@ class TelegramChannel(BaseChannel):
         lines.append("/start — Start the bot")
         lines.append("/reset — Reset conversation history")
         lines.append("/help — Show this help message")
+        command_specs = self._get_command_surface_specs()
+        for spec in command_specs:
+            if spec.source in {"static", "skill"}:
+                continue
+            admin_badge = " 🔒" if getattr(spec, "admin_only", False) else ""
+            lines.append(f"/{spec.name} — {spec.description}{admin_badge}")
 
-        # 2. Dynamic commands from CommandRouter
-        if self.command_router and hasattr(self.command_router, '_commands'):
-            for cmd_name, reg in sorted(self.command_router._commands.items()):
-                cmd_clean = cmd_name.lstrip('/')
-                # Skip if already listed above
-                if cmd_clean in ("start", "reset", "help"):
-                    continue
-                admin_badge = " 🔒" if reg.admin_only else ""
-                lines.append(f"/{cmd_clean} — {reg.description}{admin_badge}")
+        skill_commands = [spec for spec in command_specs if spec.source == "skill"]
+        if skill_commands:
+            lines.append("\n<b>Skills</b>")
+            for spec in skill_commands:
+                lines.append(f"/{spec.name} — {spec.description}")
 
         lines.append("\nJust send me a text message to chat!")
         help_text = "\n".join(lines)
         await update.message.reply_text(help_text, parse_mode="HTML")
+
+    async def _on_router_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle non-static slash commands via CommandRouter or workspace skill commands."""
+        if not update.message or not update.effective_user:
+            return
+
+        message_text = str(update.message.text or "").strip()
+        if not message_text.startswith("/"):
+            return
+
+        command_name = self._normalize_telegram_command_name(message_text)
+        if command_name in {cmd.command for cmd in self.BOT_COMMANDS}:
+            return
+
+        user = update.effective_user
+        sender_id = str(user.id)
+        if user.username:
+            sender_id = f"{sender_id}|{user.username}"
+        chat_id = str(update.message.chat_id)
+        self._chat_ids[sender_id] = update.message.chat_id
+
+        if self.command_router and self.command_router.is_command(message_text):
+            result = await self.command_router.route(
+                message_text,
+                CommandContext(
+                    message=message_text,
+                    args=[],
+                    sender_id=sender_id,
+                    channel=self.name,
+                    chat_id=chat_id,
+                    session_key=f"{self.name}:{chat_id}",
+                    agent_loop=getattr(self, "agent_loop", None),
+                ),
+            )
+            if result is not None:
+                await update.message.reply_text(result)
+                return
+
+        skill_commands = {
+            spec.name: spec
+            for spec in self._get_skill_command_specs()
+        }
+        skill_spec = skill_commands.get(command_name)
+        if skill_spec:
+            parts = message_text.split(maxsplit=1)
+            trailing = parts[1].strip() if len(parts) > 1 else ""
+            skill_name = skill_spec.skill_name
+            metadata = {
+                "message_id": update.message.message_id,
+                "user_id": user.id,
+                "username": user.username,
+                "first_name": user.first_name,
+                "is_group": update.message.chat.type != "private",
+                "is_native_skill_command": True,
+                "skill_name": skill_name,
+                "original_command": message_text,
+            }
+            if skill_spec.command_dispatch == "tool" and skill_spec.command_tool:
+                content = trailing
+                metadata.update(
+                    {
+                        "skill_command_dispatch": "tool",
+                        "skill_command_tool": skill_spec.command_tool,
+                        "skill_command_name": skill_spec.name,
+                        "skill_command_arg_mode": skill_spec.command_arg_mode or "raw",
+                        "required_tool": skill_spec.command_tool,
+                        "required_tool_query": trailing,
+                        "suppress_required_tool_inference": True,
+                    }
+                )
+            else:
+                content = f"Please use the {skill_name} skill for this request."
+                if trailing:
+                    content = f"{content}\n\n{trailing}"
+            await self._handle_message(
+                sender_id=sender_id,
+                chat_id=chat_id,
+                content=content,
+                metadata=metadata,
+            )
+            return
+
+        await update.message.reply_text("Unknown command. Type /help to see available commands.")
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming messages (text, photos, voice, documents)."""

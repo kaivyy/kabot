@@ -1,75 +1,82 @@
 # Output Patterns and Templates
 
-Use these templates to ensure consistency across Kabot skills.
+Use these templates to keep Kabot skills consistent, compact, and distribution-friendly.
 
 ## SKILL.md Template
 
 ```markdown
 ---
+name: my-skill
+description: "What this skill does and when to use it."
 metadata:
   kabot:
-    emoji: 🧩
+    emoji: "🧩"
     description: "Short description of what the skill does."
 ---
-# Skill Name
+
+# My Skill
 
 ## Overview
-Briefly describe the purpose of this skill and when to use it.
+Describe the outcome this skill owns and the problem it solves.
 
-## Persona
-Define the specific role the agent should adopt (e.g., "Expert Data Analyst", "Senior Python Developer").
+## When to Use
+- Trigger condition 1
+- Trigger condition 2
 
-## Goals
-1. Primary goal.
-2. Secondary goal.
+## When Not to Use
+- Avoid condition 1
+- Avoid condition 2
 
 ## Instructions
-1. **Step 1**: Description of action.
-2. **Step 2**: Description of action.
-   - Detail: ...
-3. **Step 3**: ...
-
-## Commands
-- `/command_name`: Description of what this command triggers.
+1. Clarify only the details that matter.
+2. Prefer existing Kabot tools before inventing manual workarounds.
+3. Read `references/` only when relevant.
+4. Run `scripts/` when deterministic execution helps.
 
 ## References
-- [Workflow Guide](references/workflows.md)
-- [Templates](references/output-patterns.md)
+- `references/api.md` for docs, schemas, and examples.
+
+## Scripts
+- `scripts/main.py` for deterministic helper logic when needed.
+
+## Assets
+- `assets/template.json` for payload samples or output templates.
 ```
 
 ## Script Template (Python)
 
 ```python
 #!/usr/bin/env python3
-"""
-Description of the script's purpose.
-"""
+"""Deterministic helper for a Kabot skill."""
+
 import argparse
-import sys
 import json
+import sys
 
-def main():
+
+def main() -> int:
     parser = argparse.ArgumentParser(description="Script description")
-    parser.add_argument("--input", required=True, help="Input argument")
+    parser.add_argument("action", help="Action to perform")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
-
     args = parser.parse_args()
 
     try:
-        # Core logic here
-        result = process_data(args.input)
+        result = {"status": "success", "action": args.action}
+        print(json.dumps(result, indent=2))
+        return 0
+    except Exception as exc:
+        print(json.dumps({"status": "error", "message": str(exc)}), file=sys.stderr)
+        return 1
 
-        # Output JSON or text to stdout
-        print(json.dumps({"status": "success", "data": result}))
-
-    except Exception as e:
-        print(json.dumps({"status": "error", "message": str(e)}), file=sys.stderr)
-        sys.exit(1)
-
-def process_data(input_val):
-    # Implementation details
-    return f"Processed {input_val}"
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
+```
+
+## Packaging Checklist
+
+```text
+1. python skills/skill-creator/scripts/quick_validate.py skills/<skill-name>
+2. python skills/skill-creator/scripts/package_skill.py skills/<skill-name> dist/
+3. Inspect the resulting .skill bundle before sharing it
 ```

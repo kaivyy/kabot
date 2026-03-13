@@ -682,9 +682,10 @@ class AgentLoop(AgentLoopDelegatesMixin):
         self.tools.register(SpeedtestTool())
         self.tools.register(BrowserTool())
 
-        from kabot.agent.tools.system import ProcessMemoryTool, SystemInfoTool
+        from kabot.agent.tools.system import ProcessMemoryTool, ServerMonitorTool, SystemInfoTool
         self.tools.register(SystemInfoTool())
         self.tools.register(ProcessMemoryTool())
+        self.tools.register(ServerMonitorTool())
 
         from kabot.agent.tools.update import CheckUpdateTool, SystemUpdateTool
         self.tools.register(CheckUpdateTool())

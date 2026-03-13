@@ -340,6 +340,7 @@ async def test_dashboard_shell_uses_outerhtml_placeholders_for_wrapped_panels(ai
     assert 'id="panel-sessions" class="config-section-card" hx-get="/dashboard/partials/sessions?token=test-token"' in body
     assert 'id="panel-cron" class="config-section-card" hx-get="/dashboard/partials/cron?token=test-token"' in body
     assert 'id="panel-skills" class="config-section-card" hx-get="/dashboard/partials/skills?token=test-token"' in body
+    assert 'id="panel-commands" class="config-section-card" hx-get="/dashboard/partials/commands?token=test-token"' in body
     assert 'id="panel-git" class="config-section-card" hx-get="/dashboard/partials/git?token=test-token"' in body
 
 @pytest.mark.asyncio
@@ -458,6 +459,58 @@ async def test_dashboard_skills_partial_toggle_uses_disabled_flag_not_readiness(
     assert "missing env" in body
     assert "Disable" in body
     assert "Enable" not in body
+
+
+@pytest.mark.asyncio
+async def test_dashboard_commands_partial_renders_router_and_skill_commands(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: {
+            "status": "running",
+            "command_surface": [
+                {
+                    "name": "start",
+                    "description": "Start or resume the conversation",
+                    "source": "static",
+                    "skill_name": "",
+                    "admin_only": False,
+                },
+                {
+                    "name": "update",
+                    "description": "Update bot",
+                    "source": "router",
+                    "skill_name": "",
+                    "admin_only": True,
+                },
+                {
+                    "name": "meta_threads_official",
+                    "description": "Connect to Meta Threads",
+                    "source": "skill",
+                    "skill_name": "meta-threads-official",
+                    "admin_only": False,
+                },
+            ],
+        },
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard/partials/commands",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "/start" in body
+    assert "/update" in body
+    assert "admin only" in body.lower()
+    assert "meta_threads_official" in body
+    assert "skill" in body.lower()
 
 @pytest.mark.asyncio
 async def test_dashboard_partial_post_routes_for_cron_and_skills_are_available(aiohttp_client):

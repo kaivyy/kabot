@@ -764,7 +764,13 @@ def gateway(
     )
 
     # Create channel manager
-    channels = ChannelManager(config, bus, session_manager=session_manager)
+    channels = ChannelManager(
+        config,
+        bus,
+        session_manager=session_manager,
+        command_router=agent.command_router,
+        agent_loop=agent,
+    )
     # Expose channel capabilities to runtime (e.g., keepalive/status behavior).
     setattr(agent, "channel_manager", channels)
 

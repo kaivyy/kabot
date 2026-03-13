@@ -13,7 +13,13 @@ from kabot.config.schema import ChannelInstance, Config
 
 
 def _factory_from_path(module_path: str, class_name: str, *, telegram: bool = False):
-    def _factory(channel_cfg: Any, config: Config, bus: Any, session_manager: Any | None = None):
+    def _factory(
+        channel_cfg: Any,
+        config: Config,
+        bus: Any,
+        session_manager: Any | None = None,
+        command_router: Any | None = None,
+    ):
         module = importlib.import_module(module_path)
         channel_cls = getattr(module, class_name)
         if telegram:
@@ -22,6 +28,8 @@ def _factory_from_path(module_path: str, class_name: str, *, telegram: bool = Fa
                 bus,
                 groq_api_key=config.providers.groq.api_key,
                 session_manager=session_manager,
+                command_router=command_router,
+                workspace=config.agents.defaults.workspace,
             )
         if class_name == "WhatsAppChannel":
             return channel_cls(channel_cfg, bus)
@@ -30,7 +38,13 @@ def _factory_from_path(module_path: str, class_name: str, *, telegram: bool = Fa
     return _factory
 
 
-def _placeholder_factory(channel_cfg: Any, config: Config, bus: Any, session_manager: Any | None = None):
+def _placeholder_factory(
+    channel_cfg: Any,
+    config: Config,
+    bus: Any,
+    session_manager: Any | None = None,
+    command_router: Any | None = None,
+):
     raise NotImplementedError("Adapter implementation not available in this build")
 
 
@@ -89,6 +103,7 @@ class AdapterRegistry:
         config: Config,
         bus: Any,
         session_manager: Any | None = None,
+        command_router: Any | None = None,
     ) -> Any | None:
         spec = self.get(key)
         if not spec:
@@ -104,7 +119,7 @@ class AdapterRegistry:
             return None
 
         try:
-            return spec.factory(channel_cfg, config, bus, session_manager)
+            return spec.factory(channel_cfg, config, bus, session_manager, command_router)
         except Exception as exc:
             logger.warning(f"{key} adapter not available: {exc}")
             return None
@@ -115,6 +130,7 @@ class AdapterRegistry:
         config: Config,
         bus: Any,
         session_manager: Any | None = None,
+        command_router: Any | None = None,
     ) -> Any | None:
         spec = self.get(instance.type)
         if not spec:
@@ -138,7 +154,7 @@ class AdapterRegistry:
                 return None
 
         try:
-            return spec.factory(channel_cfg, config, bus, session_manager)
+            return spec.factory(channel_cfg, config, bus, session_manager, command_router)
         except Exception as exc:
             logger.warning(f"Failed to initialize {instance.type}:{instance.id}: {exc}")
             return None

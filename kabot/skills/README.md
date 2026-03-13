@@ -18,7 +18,7 @@ The skill format and metadata structure follow Kabot's conventions to maintain c
 | Skill | Description |
 |-------|-------------|
 | `github` | Interact with GitHub using the `gh` CLI |
-| `weather` | Get weather info using wttr.in and Open-Meteo |
+| `weather` | Get weather info using Open-Meteo (primary) with wttr.in fallback |
 | `summarize` | Summarize URLs, files, and YouTube videos |
 | `tmux` | Remote-control tmux sessions |
 | `skill-creator` | Create new skills |

@@ -6,6 +6,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -239,6 +241,118 @@ def install_skill_from_git(
         skill_name=skill_slug,
         skill_key=skill_key,
     )
+
+
+def _copy_installed_skill(
+    *,
+    source_label: str,
+    repo_root: Path,
+    selected: Path,
+    target_dir: Path,
+    skill_name: str | None,
+    overwrite: bool,
+) -> InstalledSkill:
+    target = Path(target_dir).expanduser().resolve()
+    target.mkdir(parents=True, exist_ok=True)
+
+    selected_relative = Path(_relative(repo_root, selected))
+    skill_slug, skill_key = _derive_skill_identity(selected, skill_name)
+
+    destination = target / skill_slug
+    if destination.exists():
+        if not overwrite:
+            raise ValueError(f"Skill destination already exists: {destination}")
+        shutil.rmtree(destination, ignore_errors=True)
+
+    shutil.copytree(selected, destination)
+    errors = validate_skill(destination)
+    if errors:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise ValueError("; ".join(errors))
+
+    return InstalledSkill(
+        repo_url=source_label,
+        selected_dir=selected_relative,
+        installed_dir=destination,
+        skill_name=skill_slug,
+        skill_key=skill_key,
+    )
+
+
+def install_skill_from_path(
+    *,
+    source_path: str | Path,
+    target_dir: Path,
+    subdir: str | None,
+    skill_name: str | None,
+    overwrite: bool,
+) -> InstalledSkill:
+    """Install a skill from a local directory or packaged archive."""
+    source_value = Path(source_path).expanduser().resolve()
+    if not source_value.exists():
+        raise ValueError(f"Skill source not found: {source_value}")
+
+    def _install_from_repo_root(repo_root: Path) -> InstalledSkill:
+        candidates = discover_skill_dirs(repo_root)
+        selected = resolve_skill_source_dir(repo_root, candidates, subdir)
+        return _copy_installed_skill(
+            source_label=str(source_value),
+            repo_root=repo_root,
+            selected=selected,
+            target_dir=target_dir,
+            skill_name=skill_name,
+            overwrite=overwrite,
+        )
+
+    if source_value.is_dir():
+        return _install_from_repo_root(source_value)
+
+    suffix = source_value.suffix.lower()
+    if suffix not in {".skill", ".zip"}:
+        raise ValueError(f"Unsupported local skill source: {source_value}")
+
+    with tempfile.TemporaryDirectory(prefix="kabot-skill-local-") as tmp:
+        extract_root = Path(tmp) / "extracted"
+        extract_root.mkdir(parents=True, exist_ok=True)
+        try:
+            with zipfile.ZipFile(source_value, "r") as bundle:
+                bundle.extractall(extract_root)
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f"Invalid skill archive: {source_value}") from exc
+        return _install_from_repo_root(extract_root)
+
+
+def install_skill_from_url(
+    *,
+    source_url: str,
+    target_dir: Path,
+    subdir: str | None,
+    skill_name: str | None,
+    overwrite: bool,
+) -> InstalledSkill:
+    """Download and install a skill bundle from any URL."""
+    url_value = str(source_url).strip()
+    if not url_value:
+        raise ValueError("Skill URL is required.")
+
+    suffix = Path(url_value.split("?", 1)[0]).suffix.lower()
+    if suffix not in {".skill", ".zip"}:
+        raise ValueError(f"Unsupported remote skill source: {url_value}")
+
+    with tempfile.TemporaryDirectory(prefix="kabot-skill-url-") as tmp:
+        archive_path = Path(tmp) / f"downloaded{suffix}"
+        try:
+            with urllib.request.urlopen(url_value, timeout=20) as response:  # noqa: S310
+                archive_path.write_bytes(response.read())
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"Failed to download skill archive: {url_value}") from exc
+        return install_skill_from_path(
+            source_path=archive_path,
+            target_dir=target_dir,
+            subdir=subdir,
+            skill_name=skill_name,
+            overwrite=overwrite,
+        )
 
 
 def list_skill_candidates_from_git(repo_url: str, ref: str | None = None) -> list[str]:

@@ -12,9 +12,19 @@ from typing import Any
 from loguru import logger
 
 from kabot import __version__
+from kabot.core.command_surfaces import (
+    build_command_surface_specs,
+    is_basic_slash_command_name,
+    normalize_slash_command_name,
+)
 
 _DASHBOARD_PROVIDER_MODELS_CACHE_TS = 0.0
 _DASHBOARD_PROVIDER_MODELS_CACHE: dict[str, list[str]] = {}
+_DASHBOARD_STATIC_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("start", "Start or resume the conversation"),
+    ("reset", "Clear conversation context"),
+    ("help", "Show available commands"),
+)
 
 
 def _resolve_commands_override(name: str, fallback: Any) -> Any:
@@ -656,6 +666,49 @@ def _build_dashboard_skills_snapshot(config: Any) -> list[dict[str, Any]]:
     return skills
 
 
+def _build_dashboard_command_surface(agent: Any, config: Any) -> list[dict[str, Any]]:
+    workspace = getattr(agent, "workspace", None)
+    if workspace is None:
+        workspace = getattr(config, "workspace_path", None)
+
+    build_specs = _resolve_commands_override(
+        "build_command_surface_specs",
+        build_command_surface_specs,
+    )
+    normalize_name = _resolve_commands_override(
+        "normalize_slash_command_name",
+        normalize_slash_command_name,
+    )
+    is_valid_name = _resolve_commands_override(
+        "is_basic_slash_command_name",
+        is_basic_slash_command_name,
+    )
+    try:
+        specs = build_specs(
+            static_commands=_DASHBOARD_STATIC_COMMANDS,
+            router=getattr(agent, "command_router", None),
+            workspace=workspace,
+            normalize_name=normalize_name,
+            is_valid_name=is_valid_name,
+        )
+    except Exception as exc:
+        logger.warning(f"Command surface snapshot failed: {exc}")
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for spec in specs:
+        rows.append(
+            {
+                "name": str(getattr(spec, "name", "") or ""),
+                "description": str(getattr(spec, "description", "") or ""),
+                "source": str(getattr(spec, "source", "") or ""),
+                "skill_name": str(getattr(spec, "skill_name", "") or ""),
+                "admin_only": bool(getattr(spec, "admin_only", False)),
+            }
+        )
+    return rows
+
+
 def _build_dashboard_subagent_activity(agent: Any, *, limit: int = 10) -> list[dict[str, Any]]:
     registry = getattr(getattr(agent, "subagents", None), "registry", None)
     if registry is None or not hasattr(registry, "list_all"):
@@ -762,6 +815,7 @@ def _build_dashboard_status_payload(
         runtime_models=[item for item in runtime_models if item],
     )
     skills = _build_dashboard_skills_snapshot(config)
+    command_surface = _build_dashboard_command_surface(agent, config)
     subagent_activity = _build_dashboard_subagent_activity(agent)
     git_log = _build_dashboard_git_log(config.workspace_path)
 
@@ -785,6 +839,7 @@ def _build_dashboard_status_payload(
         "config": _build_dashboard_config_summary(config),
         "system": {"pid": os.getpid(), "memory_mb": 0},
         "skills": skills,
+        "command_surface": command_surface,
         "subagent_activity": subagent_activity,
         "git_log": git_log,
         **cost_payload,
@@ -793,6 +848,7 @@ def _build_dashboard_status_payload(
 
 __all__ = [
     "_build_dashboard_channel_rows",
+    "_build_dashboard_command_surface",
     "_build_dashboard_config_summary",
     "_build_dashboard_cost_payload",
     "_build_dashboard_cron_snapshot",

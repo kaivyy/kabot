@@ -94,6 +94,38 @@ _LOCATION_ALIAS_VARIANTS: dict[str, tuple[str, ...]] = {
 
 _WEATHER_ALIAS_ENV_PATH = "KABOT_WEATHER_ALIASES_PATH"
 _WEATHER_ALIAS_FILENAME = "weather_aliases.json"
+_WEATHER_HOURLY_WINDOW_RE = re.compile(
+    r"(?i)\b(?:next\s+)?(\d{1,2})\s*(?:-|to|until|sampai|hingga)\s*(\d{1,2})\s*(?:hours?|jam)\b"
+)
+_WEATHER_SINGLE_HOURS_RE = re.compile(
+    r"(?i)\b(?:next|for the next|dalam|selama)\s*(\d{1,2})\s*(?:hours?|jam)\b"
+)
+_WEATHER_DAILY_MARKERS = (
+    "tomorrow",
+    "besok",
+    "lusa",
+    "minggu",
+    "week",
+    "weekly",
+    "7 day",
+    "7-day",
+    "harian",
+    "per hari",
+    "daily",
+)
+_WEATHER_FORECAST_MARKERS = (
+    "forecast",
+    "prediksi",
+    "prakiraan",
+    "ramalan",
+    "hourly",
+    "jam ke depan",
+    "next few hours",
+    "next hours",
+    "will it rain",
+    "bakal hujan",
+    "akan hujan",
+)
 
 
 def _format_openmeteo_wind_suffix(current: dict[str, Any]) -> str:
@@ -429,6 +461,99 @@ def attach_source(weather_text: str, source_name: str) -> str:
     return f"{weather_text}\nSource: {source_name}"
 
 
+def infer_weather_request_profile(
+    text: str | None,
+    *,
+    mode: str | None = None,
+    hours_ahead_start: int | None = None,
+    hours_ahead_end: int | None = None,
+) -> tuple[str, int | None, int | None]:
+    """Infer whether a weather request needs current, hourly, or daily data."""
+    normalized_mode = str(mode or "").strip().lower()
+    raw_text = " ".join(str(text or "").strip().lower().split())
+
+    start = hours_ahead_start
+    end = hours_ahead_end
+
+    match = _WEATHER_HOURLY_WINDOW_RE.search(raw_text)
+    if match:
+        try:
+            parsed_start = int(match.group(1))
+            parsed_end = int(match.group(2))
+            start = min(parsed_start, parsed_end)
+            end = max(parsed_start, parsed_end)
+        except Exception:
+            start = start
+            end = end
+    elif start is None and end is None:
+        single_match = _WEATHER_SINGLE_HOURS_RE.search(raw_text)
+        if single_match:
+            try:
+                parsed_end = max(int(single_match.group(1)), 1)
+                start = 1
+                end = parsed_end
+            except Exception:
+                start = start
+                end = end
+
+    if normalized_mode not in {"current", "hourly", "daily"}:
+        if start is not None or end is not None:
+            normalized_mode = "hourly"
+        elif any(marker in raw_text for marker in _WEATHER_DAILY_MARKERS):
+            normalized_mode = "daily"
+        elif any(marker in raw_text for marker in _WEATHER_FORECAST_MARKERS):
+            normalized_mode = "hourly"
+        else:
+            normalized_mode = "current"
+
+    if normalized_mode == "hourly":
+        start = max(1, int(start or 1))
+        end = max(start, int(end or 6))
+    else:
+        start = None
+        end = None
+
+    return normalized_mode, start, end
+
+
+async def _geocode_openmeteo(
+    location: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[str, float, float] | None:
+    encoded = quote_plus(location)
+    geo_url = (
+        "https://geocoding-api.open-meteo.com/v1/search"
+        f"?name={encoded}&count=1&language=en&format=json"
+    )
+    async def _run(active_client: httpx.AsyncClient) -> tuple[str, float, float] | None:
+        geo_response = await active_client.get(geo_url, timeout=_WEATHER_REQUEST_TIMEOUT_SECONDS)
+        if geo_response.status_code != 200:
+            logger.debug(
+                "Weather geocode failed status={} location={}",
+                geo_response.status_code,
+                location,
+            )
+            return None
+
+        geo_data = geo_response.json()
+        results = geo_data.get("results") or []
+        if not results:
+            logger.debug("Weather geocode no results for location={}", location)
+            return None
+
+        match = results[0]
+        lat = float(match["latitude"])
+        lon = float(match["longitude"])
+        city_name = str(match.get("name", location)).strip() or location
+        return city_name, lat, lon
+
+    if client is not None:
+        return await _run(client)
+    async with _weather_client() as owned_client:
+        return await _run(owned_client)
+
+
 def _weather_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         headers={"User-Agent": "kabot-weather/1.0"},
@@ -470,32 +595,11 @@ async def fetch_wttr(location: str, format: str = "simple") -> str | None:
 async def fetch_openmeteo(location: str) -> str | None:
     """Fetch weather from Open-Meteo as fallback. Returns None if fails."""
     try:
-        encoded = quote_plus(location)
-        geo_url = (
-            "https://geocoding-api.open-meteo.com/v1/search"
-            f"?name={encoded}&count=1&language=en&format=json"
-        )
         async with _weather_client() as client:
-            geo_response = await client.get(geo_url, timeout=_WEATHER_REQUEST_TIMEOUT_SECONDS)
-            if geo_response.status_code != 200:
-                logger.debug(
-                    "Weather geocode failed status={} location={}",
-                    geo_response.status_code,
-                    location,
-                )
+            geo = await _geocode_openmeteo(location, client=client)
+            if not geo:
                 return None
-
-            geo_data = geo_response.json()
-            results = geo_data.get("results") or []
-            if not results:
-                logger.debug("Weather geocode no results for location={}", location)
-                return None
-
-            match = results[0]
-            lat = match["latitude"]
-            lon = match["longitude"]
-            city_name = str(match.get("name", location)).strip() or location
-
+            city_name, lat, lon = geo
             weather_url = (
                 "https://api.open-meteo.com/v1/forecast"
                 f"?latitude={lat}&longitude={lon}&current_weather=true"
@@ -523,14 +627,119 @@ async def fetch_openmeteo(location: str) -> str | None:
         return None
 
 
+async def fetch_openmeteo_forecast(
+    location: str,
+    *,
+    mode: str = "hourly",
+    hours_ahead_start: int | None = None,
+    hours_ahead_end: int | None = None,
+) -> str | None:
+    """Fetch hourly or daily weather forecasts from Open-Meteo."""
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode not in {"hourly", "daily"}:
+        return None
+
+    try:
+        async with _weather_client() as client:
+            geo = await _geocode_openmeteo(location, client=client)
+            if not geo:
+                return None
+            city_name, lat, lon = geo
+            if normalized_mode == "hourly":
+                weather_url = (
+                    "https://api.open-meteo.com/v1/forecast"
+                    f"?latitude={lat}&longitude={lon}"
+                    "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m"
+                    "&forecast_days=2&timezone=auto"
+                )
+                response = await client.get(weather_url, timeout=_WEATHER_REQUEST_TIMEOUT_SECONDS)
+                if response.status_code != 200:
+                    logger.debug(
+                        "Weather hourly forecast failed status={} location={}",
+                        response.status_code,
+                        location,
+                    )
+                    return None
+                payload = response.json()
+                hourly = payload.get("hourly") or {}
+                temperatures = list(hourly.get("temperature_2m") or [])
+                rain_probs = list(hourly.get("precipitation_probability") or [])
+                rain_amounts = list(hourly.get("precipitation") or [])
+                weather_codes = list(hourly.get("weather_code") or [])
+                wind_speeds = list(hourly.get("wind_speed_10m") or [])
+                if not temperatures:
+                    return None
+
+                start = max(1, int(hours_ahead_start or 1))
+                end = max(start, int(hours_ahead_end or 6))
+                last_index = min(
+                    len(temperatures),
+                    len(rain_probs) or len(temperatures),
+                    len(rain_amounts) or len(temperatures),
+                    len(weather_codes) or len(temperatures),
+                    len(wind_speeds) or len(temperatures),
+                ) - 1
+                if last_index < start:
+                    start = 0
+                end = min(end, last_index)
+
+                lines = [f"{city_name} forecast (next {start}-{end} hours):"]
+                for index in range(start, end + 1):
+                    temp = temperatures[index] if index < len(temperatures) else "?"
+                    rain_prob = rain_probs[index] if index < len(rain_probs) else "?"
+                    rain_amount = rain_amounts[index] if index < len(rain_amounts) else "?"
+                    weather_code = int(weather_codes[index]) if index < len(weather_codes) else -1
+                    wind_speed = wind_speeds[index] if index < len(wind_speeds) else "?"
+                    condition = _WEATHER_CODE_LABELS.get(weather_code, "[Unknown]")
+                    lines.append(
+                        f"- +{index}h: {condition} {temp}C | Rain: {rain_prob}% ({rain_amount} mm) | Wind: {wind_speed} km/h"
+                    )
+                return "\n".join(lines)
+
+            weather_url = (
+                "https://api.open-meteo.com/v1/forecast"
+                f"?latitude={lat}&longitude={lon}"
+                "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+                "&forecast_days=7&timezone=auto"
+            )
+            response = await client.get(weather_url, timeout=_WEATHER_REQUEST_TIMEOUT_SECONDS)
+            if response.status_code != 200:
+                logger.debug(
+                    "Weather daily forecast failed status={} location={}",
+                    response.status_code,
+                    location,
+                )
+                return None
+            payload = response.json()
+            daily = payload.get("daily") or {}
+            dates = list(daily.get("time") or [])
+            max_temps = list(daily.get("temperature_2m_max") or [])
+            min_temps = list(daily.get("temperature_2m_min") or [])
+            rain_probs = list(daily.get("precipitation_probability_max") or [])
+            weather_codes = list(daily.get("weather_code") or [])
+            if not dates:
+                return None
+            lines = [f"{city_name} forecast:"]
+            for index in range(0, min(3, len(dates))):
+                condition = _WEATHER_CODE_LABELS.get(int(weather_codes[index]), "[Unknown]")
+                lines.append(
+                    f"- {dates[index]}: {condition}, {min_temps[index]}-{max_temps[index]}C, rain {rain_probs[index]}%"
+                )
+            return "\n".join(lines)
+    except Exception as exc:
+        logger.debug("Weather Open-Meteo forecast exception for location={}: {}", location, exc)
+        return None
+
+
 class WeatherTool(Tool):
     """Get current weather and forecast for a location."""
 
     name = "weather"
     description = (
-        "Get CURRENT weather information for a location using wttr.in or Open-Meteo "
+        "Get CURRENT weather or short-term forecast information for a location using Open-Meteo as the primary source "
+        "with wttr.in fallback "
         "(no API key required). ALWAYS use this tool when the user asks about weather, "
-        "temperature, or climate conditions. Do not use training data - always fetch "
+        "temperature, rain chance, forecast, or climate conditions. Do not use training data - always fetch "
         "real-time data from this tool. IMPORTANT: The tool output includes a care "
         "advice/suggestion (e.g., 'Saran: ...'). You MUST include this advice in your response."
     )
@@ -552,6 +761,21 @@ class WeatherTool(Tool):
                 "enum": ["simple", "full", "png"],
                 "default": "simple",
             },
+            "mode": {
+                "type": "string",
+                "description": "Weather mode: 'current', 'hourly', or 'daily'. If omitted, infer from the user request.",
+                "enum": ["current", "hourly", "daily"],
+            },
+            "hours_ahead_start": {
+                "type": "integer",
+                "description": "Optional starting hour offset for hourly forecasts, e.g. 3 for +3h.",
+                "minimum": 0,
+            },
+            "hours_ahead_end": {
+                "type": "integer",
+                "description": "Optional ending hour offset for hourly forecasts, e.g. 6 for +6h.",
+                "minimum": 0,
+            },
         },
         "required": ["location"],
     }
@@ -560,6 +784,9 @@ class WeatherTool(Tool):
         self,
         location: str,
         format: str = "simple",
+        mode: str | None = None,
+        hours_ahead_start: int | None = None,
+        hours_ahead_end: int | None = None,
         context_text: str | None = None,
         **kwargs: Any,
     ) -> str:
@@ -569,10 +796,31 @@ class WeatherTool(Tool):
             return i18n_t("weather.need_location", context_text or location)
 
         normalized = candidates[0]
+        request_profile = context_text or location
+        resolved_mode, resolved_hours_start, resolved_hours_end = infer_weather_request_profile(
+            request_profile,
+            mode=mode,
+            hours_ahead_start=hours_ahead_start,
+            hours_ahead_end=hours_ahead_end,
+        )
 
         try:
             pending_wttr_result: str | None = None
             for candidate in candidates:
+                if resolved_mode in {"hourly", "daily"} and format == "simple":
+                    forecast_result = await fetch_openmeteo_forecast(
+                        candidate,
+                        mode=resolved_mode,
+                        hours_ahead_start=resolved_hours_start,
+                        hours_ahead_end=resolved_hours_end,
+                    )
+                    if forecast_result:
+                        _persist_user_weather_alias(
+                            normalized,
+                            _extract_weather_result_location(forecast_result),
+                        )
+                        result = attach_source(forecast_result, f"Open-Meteo ({resolved_mode} forecast)")
+                        return attach_care_advice(result, context_text or location)
                 if format == "simple":
                     # Run providers in parallel to reduce tail latency on slow networks.
                     openmeteo_result, wttr_result = await asyncio.gather(

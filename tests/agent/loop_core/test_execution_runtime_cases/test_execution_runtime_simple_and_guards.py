@@ -277,6 +277,59 @@ async def test_run_agent_loop_action_request_skips_planning_when_tool_inference_
 
 
 @pytest.mark.asyncio
+async def test_run_agent_loop_save_memory_direct_tool_gets_llm_summary_not_raw_tool_text():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: "save_memory"
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(
+        return_value="[OK] preference saved: User prefers to be called Maha Raja..."
+    )
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(True, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda name: name == "save_memory")
+    loop.max_iterations = 1
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, tool_calls=None, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})},
+        ]
+    )
+    loop.provider = SimpleNamespace(
+        chat=AsyncMock(return_value=LLMResponse(content="Siap, Maha Raja. Mulai sekarang aku panggil begitu."))
+    )
+
+    content = "setiap kali kamu balas harus panggil aku Maha Raja ingat itu"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "CHAT",
+            "runtime_locale": "id",
+            "required_tool": "save_memory",
+            "required_tool_query": content,
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert result == "Siap, Maha Raja. Mulai sekarang aku panggil begitu."
+    loop._execute_required_tool_fallback.assert_awaited_once()
+    loop.provider.chat.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_coding_request_skips_external_planner_and_rejects_text_only_completion_without_execution():
     loop = _make_loop()
     loop._required_tool_for_query = lambda _text: None
@@ -391,6 +444,67 @@ async def test_run_agent_loop_action_request_retries_and_rejects_text_only_compl
     second_messages = loop._call_llm_with_fallback.await_args_list[1].args[0]
     assert "requires real execution with tools or approved skills" in second_messages[-1]["content"].lower()
     loop._execute_required_tool_fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_existing_skill_runtime_followup_uses_server_monitor_fallback_instead_of_generic_error():
+    loop = _make_loop()
+    raw_result = "### Server Resource Monitor\n**CPU Load:** 12.0%\n**RAM:** 2.00 / 8.00 GB"
+    summarized_result = "Status server sudah dicek: CPU 12.0%, RAM 2.00 / 8.00 GB."
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value=raw_result)
+    loop.provider.chat = AsyncMock(return_value=LLMResponse(content=summarized_result))
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(10, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda name: name == "server_monitor")
+    loop.max_iterations = 2
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content},
+        ]
+    )
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (LLMResponse(content="Saya akan lanjut cek server."), None),
+            (LLMResponse(content="Saya akan lanjut cek server."), None),
+        ]
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="lanjut",
+        metadata={
+            "effective_content": "lanjut",
+            "route_profile": "CHAT",
+            "runtime_locale": "id",
+            "continuity_source": "existing_skill_followup",
+            "required_tool": "server_monitor",
+            "required_tool_query": "cek runtime server saat ini",
+            "forced_skill_names": ["cek-runtime-vps"],
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert result == summarized_result
+    loop._execute_required_tool_fallback.assert_awaited_once_with("server_monitor", msg)
+    loop.provider.chat.assert_awaited_once()
+    summary_messages = loop.provider.chat.await_args.kwargs["messages"]
+    assert any(raw_result in str(item.get("content") or "") for item in summary_messages)
+    assert "couldn't verify completion" not in result.lower()
 
 
 @pytest.mark.asyncio

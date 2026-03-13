@@ -12,11 +12,13 @@ from loguru import logger
 from kabot.agent.fallback_i18n import t
 from kabot.agent.loop_core.execution_runtime_parts.helpers import (
     _apply_channel_tool_result_hard_cap,
+    _extract_direct_fetch_url_candidate,
     _extract_single_result_path,
     _apply_response_quota_usage,
     _build_pending_interrupt_note,
     _emit_runtime_event,
     _looks_like_live_research_query,
+    _looks_like_direct_page_fetch_request,
     _looks_like_short_confirmation,
     _prune_expiring_cache,
     _query_has_explicit_payload_for_tool,
@@ -53,6 +55,91 @@ from kabot.agent.loop_core.tool_enforcement import (
     infer_action_required_tool_for_loop,
 )
 from kabot.bus.events import InboundMessage, OutboundMessage
+
+
+_SETUP_HINT_PASSTHROUGH_MARKERS: dict[str, tuple[str, ...]] = {
+    "web_search": (
+        "web_search needs a search api key",
+        "use web_fetch",
+        "tools.web.search",
+    ),
+    "image_gen": (
+        "image generation isn't available yet because the image provider api key is not configured",
+        "configure a supported image provider first",
+    ),
+}
+_NO_RESULTS_PASSTHROUGH_MARKERS = (
+    "i couldn't find relevant web results for:",
+    "saya belum menemukan hasil web yang relevan untuk:",
+    "saya belum jumpa hasil web yang relevan untuk:",
+)
+
+
+def _tool_result_passthrough_payload(
+    tool_name: str,
+    result_text: str,
+    *,
+    tool_call_count: int,
+) -> dict[str, str] | None:
+    normalized_tool = str(tool_name or "").strip().lower()
+    normalized_result = str(result_text or "").strip()
+    if tool_call_count != 1 or not normalized_tool or not normalized_result:
+        return None
+    markers = _SETUP_HINT_PASSTHROUGH_MARKERS.get(normalized_tool)
+    if not markers:
+        return None
+    lowered = normalized_result.lower()
+    if all(marker in lowered for marker in markers):
+        return {
+            "content": normalized_result,
+            "phase": "error",
+            "tool": normalized_tool,
+            "reason": "capability_unavailable",
+        }
+    return None
+
+
+def _tool_result_fetch_fallback_payload(
+    msg: InboundMessage,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    result_text: str,
+    *,
+    tool_call_count: int,
+) -> dict[str, Any] | None:
+    normalized_tool = str(tool_name or "").strip().lower()
+    if normalized_tool != "web_search" or tool_call_count != 1:
+        return None
+
+    raw_result = str(result_text or "").strip()
+    if not raw_result:
+        return None
+    lowered = raw_result.lower()
+    is_setup_hint = "web_search needs a search api key" in lowered and "use web_fetch" in lowered
+    is_no_results = any(marker in lowered for marker in _NO_RESULTS_PASSTHROUGH_MARKERS)
+    if not is_setup_hint and not is_no_results:
+        return None
+
+    query_hint = str(tool_args.get("query") or "").strip()
+    source_text = query_hint or _resolve_query_text_from_message(msg)
+    if not _looks_like_direct_page_fetch_request(source_text):
+        return None
+
+    resolved_url = _extract_direct_fetch_url_candidate(source_text)
+    if not resolved_url:
+        return None
+
+    return {
+        "execute_tool": "web_fetch",
+        "arguments": {
+            "url": resolved_url,
+            "extract_mode": "markdown",
+        },
+        "phase": "tool",
+        "tool": "web_fetch",
+        "reason": "page_fetch_fallback",
+    }
+
 
 async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, response: Any, session: Any) -> list:
     """Execute tool calls and append results to conversation context."""
@@ -436,6 +523,24 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
             tool_name=tc.name,
             token_mode=token_mode,
         )
+        passthrough_payload = _tool_result_fetch_fallback_payload(
+            msg,
+            tc.name,
+            tool_params,
+            result_str,
+            tool_call_count=len(response.tool_calls),
+        )
+        if passthrough_payload is None:
+            passthrough_payload = _tool_result_passthrough_payload(
+                tc.name,
+                result_str,
+                tool_call_count=len(response.tool_calls),
+            )
+        if passthrough_payload and isinstance(message_metadata, dict):
+            message_metadata["tool_result_passthrough"] = passthrough_payload
+            session_metadata = getattr(session, "metadata", None)
+            if isinstance(session_metadata, dict):
+                session_metadata["tool_result_passthrough"] = passthrough_payload
         messages = loop.context.add_tool_result(messages, tc.id, tc.name, result_for_llm)
         if dedupe_enabled:
             expires_at = time.time() + ttl_seconds

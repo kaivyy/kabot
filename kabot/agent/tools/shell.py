@@ -121,7 +121,7 @@ class ExecTool(Tool):
         self._pending_approvals = self._load_pending_approvals()
 
     def _store_pending_approval(self, session_key: str, command: str, cwd: str) -> str:
-        """Store pending approval request for later /approve handling."""
+        """Store pending approval request for later chat-driven approval handling."""
         self._refresh_pending_approvals()
         approval_id = uuid.uuid4().hex[:8]
         self._pending_approvals[session_key] = {
@@ -277,7 +277,8 @@ class ExecTool(Tool):
                             "Error: Command requires approval by security policy.\n"
                             f"Command: {command}\n"
                             f"Approval ID: {approval_id}\n"
-                            f"Reply with '/approve {approval_id}' to run once, or '/deny {approval_id}' to reject."
+                            "Reply naturally to approve, for example: 'ya jalankan sekarang' or 'oke lanjut eksekusi'.\n"
+                            "Reply 'jangan jalankan' to deny."
                         )
 
                     logger.info(f"Command requires approval: {command}")

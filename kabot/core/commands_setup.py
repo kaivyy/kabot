@@ -7,6 +7,12 @@ Registers all default commands with the CommandRouter.
 import logging
 
 from kabot.core.command_router import CommandContext, CommandRouter
+from kabot.core.command_surfaces import (
+    build_command_surface_specs,
+    format_command_surface_help_text,
+    is_basic_slash_command_name,
+    normalize_slash_command_name,
+)
 from kabot.core.doctor import DoctorService
 from kabot.core.status import BenchmarkService, StatusService
 from kabot.core.update import SystemControl, UpdateService
@@ -26,6 +32,17 @@ def register_builtin_commands(
 
     # ─── /help ───
     async def cmd_help(ctx: CommandContext) -> str:
+        agent_loop = getattr(ctx, "agent_loop", None)
+        workspace = getattr(agent_loop, "workspace", None)
+        specs = build_command_surface_specs(
+            static_commands=[],
+            router=router,
+            workspace=workspace,
+            normalize_name=normalize_slash_command_name,
+            is_valid_name=is_basic_slash_command_name,
+        )
+        if specs:
+            return format_command_surface_help_text(specs)
         return router.get_help_text()
 
     router.register("/help", cmd_help, "Show available commands")

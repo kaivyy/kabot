@@ -1,4 +1,9 @@
-"""Stock analysis tool for AI-powered investment analysis."""
+"""Legacy built-in stock-analysis fallback.
+
+External finance skills should be preferred when available, but this tool stays
+in place as a compatibility fallback for older Kabot flows that still expect a
+built-in analysis path.
+"""
 
 from datetime import datetime
 from typing import Any
@@ -9,10 +14,12 @@ from kabot.agent.tools.base import Tool
 
 
 class StockAnalysisTool(Tool):
-    """Fetch stock data for AI analysis and recommendations."""
+    """Legacy built-in fallback for stock analysis data."""
 
     name = "stock_analysis"
-    description = """Fetch detailed stock market data for AI-powered analysis and investment recommendations.
+    description = """Legacy built-in fallback for detailed stock market data used in AI analysis and investment recommendations.
+
+Prefer an external/workspace finance skill when one is available.
 
 This tool provides comprehensive stock data including current price, historical trends, volume, and technical levels.
 YOU (the AI) should analyze this data using your financial knowledge and provide investment recommendations.

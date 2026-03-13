@@ -80,6 +80,17 @@ def build_skill_status(loader: Any, name: str, skill_file: Path, source: str) ->
     meta = get_skill_metadata_from_file(loader, skill_file)
     effective_meta = dict(meta) if isinstance(meta, dict) else {}
     skill_meta = loader._parse_kabot_metadata(meta.get("metadata", "")) if isinstance(meta, dict) else {}
+    invocation_policy = (
+        loader._resolve_skill_invocation_policy(meta)
+        if hasattr(loader, "_resolve_skill_invocation_policy")
+        else {
+            "user_invocable": True,
+            "disable_model_invocation": False,
+            "command_dispatch": "",
+            "command_tool": "",
+            "command_arg_mode": "raw",
+        }
+    )
     if isinstance(skill_meta, dict):
         effective_meta.update(skill_meta)
 
@@ -122,6 +133,11 @@ def build_skill_status(loader: Any, name: str, skill_file: Path, source: str) ->
         "blocked_by_allowlist": blocked_by_allowlist,
         "missing": {"bins": missing_bins, "env": missing_env, "os": missing_os},
         "install": install_specs,
+        "user_invocable": bool(invocation_policy.get("user_invocable", True)),
+        "disable_model_invocation": bool(invocation_policy.get("disable_model_invocation", False)),
+        "command_dispatch": str(invocation_policy.get("command_dispatch") or "").strip(),
+        "command_tool": str(invocation_policy.get("command_tool") or "").strip(),
+        "command_arg_mode": str(invocation_policy.get("command_arg_mode") or "raw").strip() or "raw",
     }
 
 
@@ -185,6 +201,8 @@ def match_explicit_skill_fast_path(loader: Any, *, message: str, message_lower: 
     validated = []
     for skill_name in selected:
         status = get_skill_status(loader, skill_name)
+        if status and bool(status.get("disable_model_invocation")):
+            continue
         if status and status.get("eligible"):
             validated.append(skill_name)
         else:

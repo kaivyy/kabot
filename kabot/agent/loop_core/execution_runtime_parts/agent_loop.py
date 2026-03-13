@@ -38,6 +38,9 @@ from kabot.agent.loop_core.execution_runtime_parts.helpers import (
     _update_followup_context_from_tool_execution,
     _verify_completion_artifact_path,
 )
+from kabot.agent.loop_core.execution_runtime_parts.intent import (
+    _should_defer_live_research_latch_to_skill,
+)
 from kabot.agent.loop_core.execution_runtime_parts.llm import (
     call_llm_with_fallback,
     format_tool_result,
@@ -92,6 +95,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     question_word_count = len([part for part in question_text.split() if part])
     route_profile = str(message_metadata.get("route_profile", "")).strip().upper()
     continuity_source = str(message_metadata.get("continuity_source") or "").strip().lower()
+    external_skill_lane = bool(message_metadata.get("external_skill_lane", False))
     runtime_locale = str(message_metadata.get("runtime_locale") or "").strip() or None
     toolbacked_continuity_sources = {"action_request", "committed_action"}
     coding_execution_continuity_sources = {"coding_request", "committed_coding_action"}
@@ -99,6 +103,9 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     enforce_real_execution = continuity_source in (
         toolbacked_continuity_sources | coding_execution_continuity_sources
     )
+    if external_skill_lane and not required_tool:
+        enforce_toolbacked_action = False
+        enforce_real_execution = False
     coding_execution_context = bool(
         route_profile == "CODING" or continuity_source in coding_execution_continuity_sources
     )
@@ -108,6 +115,10 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     tools_registry = getattr(loop, "tools", None)
     has_tool = getattr(tools_registry, "has", None)
     resolved_required_tool = str(message_metadata.get("required_tool") or "").strip()
+    skill_command_dispatch = str(message_metadata.get("skill_command_dispatch") or "").strip().lower()
+    skill_command_tool = str(message_metadata.get("skill_command_tool") or "").strip()
+    skill_command_name = str(message_metadata.get("skill_command_name") or "").strip()
+    skill_command_arg_mode = str(message_metadata.get("skill_command_arg_mode") or "raw").strip().lower() or "raw"
     if resolved_required_tool:
         if callable(has_tool):
             try:
@@ -119,6 +130,45 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             required_tool = resolved_required_tool
     elif suppress_required_tool_inference:
         required_tool = None
+    if skill_command_dispatch == "tool" and skill_command_tool:
+        tool_available = True
+        if callable(has_tool):
+            try:
+                tool_available = bool(has_tool(skill_command_tool))
+            except Exception:
+                tool_available = True
+        if not tool_available:
+            command_label = f"/{skill_command_name}" if skill_command_name else skill_command_tool
+            return (
+                f"Skill command {command_label} requires unavailable tool "
+                f"'{skill_command_tool}'."
+            )
+        raw_dispatch_args = str(message_metadata.get("required_tool_query") or question_text or "").strip()
+        dispatch_payload = {
+            "command": raw_dispatch_args,
+            "commandName": skill_command_name or skill_command_tool,
+            "skillName": str(message_metadata.get("skill_name") or "").strip(),
+        }
+        execute_tool = getattr(loop, "_execute_tool", None)
+        if callable(execute_tool):
+            result = await execute_tool(skill_command_tool, dispatch_payload, session_key=msg.session_key)
+        else:
+            result = await loop.tools.execute(skill_command_tool, dispatch_payload)
+        if isinstance(result, str):
+            result_text = result
+        else:
+            try:
+                result_text = json.dumps(result, ensure_ascii=False)
+            except Exception:
+                result_text = str(result)
+        _update_followup_context_from_tool_execution(
+            session,
+            tool_name=skill_command_tool,
+            tool_args=dispatch_payload,
+            fallback_source=raw_dispatch_args or raw_user_text,
+            tool_result=result_text,
+        )
+        return result_text
     has_web_search_tool = False
     if callable(has_tool):
         try:
@@ -143,6 +193,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         and not required_tool
         and has_web_search_tool
         and _looks_like_live_research_query(raw_user_text)
+        and not _should_defer_live_research_latch_to_skill(loop, raw_user_text, profile=route_profile or "GENERAL")
     ):
         required_tool = "web_search"
         logger.info("Live-research safety latch: forcing required_tool=web_search")
@@ -153,6 +204,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         and route_profile == "RESEARCH"
         and has_web_search_tool
         and _looks_like_live_research_query(question_text)
+        and not _should_defer_live_research_latch_to_skill(loop, question_text, profile=route_profile or "RESEARCH")
     ):
         required_tool = "web_search"
         logger.info("Research route safety latch: forcing required_tool=web_search")
@@ -274,6 +326,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         "archive_path",
         "list_dir",
         "message",
+        "save_memory",
         "get_process_memory",
         "get_system_info",
         "cleanup_system",
@@ -968,6 +1021,42 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
 
         if response.has_tool_calls:
             messages = await loop._process_tool_calls(msg, messages, response, session)
+            passthrough_payload = None
+            if isinstance(message_metadata, dict):
+                passthrough_payload = message_metadata.pop("tool_result_passthrough", None)
+            if passthrough_payload is None:
+                session_metadata = getattr(session, "metadata", None)
+                if isinstance(session_metadata, dict):
+                    passthrough_payload = session_metadata.pop("tool_result_passthrough", None)
+            if isinstance(passthrough_payload, dict):
+                passthrough_execute_tool = str(
+                    passthrough_payload.get("execute_tool") or ""
+                ).strip()
+                if passthrough_execute_tool:
+                    passthrough_args = passthrough_payload.get("arguments") or {}
+                    logger.info(
+                        "Executing passthrough fallback tool after tool execution: "
+                        f"tool={passthrough_execute_tool} reason={passthrough_payload.get('reason') or 'unknown'}"
+                    )
+                    fallback_result = await loop.tools.execute(
+                        passthrough_execute_tool,
+                        passthrough_args,
+                    )
+                    return await progress_runtime.return_with_phase(
+                        str(fallback_result or "").strip(),
+                        phase=str(passthrough_payload.get("phase") or "tool").strip() or "tool",
+                    )
+                passthrough_content = str(passthrough_payload.get("content") or "").strip()
+                passthrough_phase = str(passthrough_payload.get("phase") or "done").strip() or "done"
+                if passthrough_content:
+                    logger.info(
+                        "Returning tool result passthrough after tool execution: "
+                        f"tool={passthrough_payload.get('tool') or 'unknown'} phase={passthrough_phase}"
+                    )
+                    return await progress_runtime.return_with_phase(
+                        passthrough_content,
+                        phase=passthrough_phase,
+                    )
             messages = await progress_runtime.inject_pending_interrupts(messages)
         else:
             return await progress_runtime.return_with_phase(response.content)

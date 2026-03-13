@@ -252,6 +252,24 @@ def _looks_like_contextual_followup_request(text: str) -> bool:
     return any(phrase in normalized for phrase in _CONTEXTUAL_FOLLOWUP_PHRASES)
 
 
+def _looks_like_web_search_demotion_followup(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if raw.startswith("/"):
+        return False
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if _PATHLIKE_TEXT_RE.search(raw):
+        return False
+    if len(normalized) > 120:
+        return False
+    if normalized in {"english", "use english", "in english", "explain", "just explain"}:
+        return True
+    return any(marker in normalized for marker in _WEB_SEARCH_DEMOTION_FOLLOWUP_MARKERS)
+
+
 _ASSISTANT_FOLLOWUP_OFFER_LEAD_MARKERS = (
     "if you want",
     "if you'd like",
@@ -318,6 +336,32 @@ _ASSISTANT_FOLLOWUP_OFFER_CAPABILITY_MARKERS = (
     "お伝えできます",
     "ช่วยได้",
     "ช่วยคุณได้",
+)
+
+_WEB_SEARCH_DEMOTION_FOLLOWUP_MARKERS = (
+    "just explain",
+    "explain",
+    "jelaskan",
+    "jelasin",
+    "terangkan",
+    "langsung jelasin",
+    "just answer",
+    "answer directly",
+    "tanpa web search",
+    "jangan pakai web search",
+    "jangan pake web search",
+    "ga usah web search",
+    "gak usah web search",
+    "nggak usah web search",
+    "dont use web search",
+    "don't use web search",
+    "no web search",
+    "without web search",
+    "use english",
+    "in english",
+    "pakai bahasa inggris",
+    "pake bahasa inggris",
+    "english please",
 )
 
 _ASSISTANT_FOLLOWUP_OFFER_PROMISE_MARKERS = (

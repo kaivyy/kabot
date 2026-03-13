@@ -121,6 +121,17 @@ _NEWS_QUERY_LIVE_MARKERS = (
     "update",
     "sekarang",
 )
+_RSS_FALLBACK_NEWS_MARKERS = (
+    "latest",
+    "breaking",
+    "headline",
+    "headlines",
+    "news",
+    "berita",
+    "terbaru",
+    "terkini",
+    "update",
+)
 
 
 class WebSearchTool(Tool):
@@ -217,6 +228,31 @@ class WebSearchTool(Tool):
 
         return [name for name in candidates if name != exclude]
 
+    def _has_any_search_provider_key(self) -> bool:
+        return bool(
+            self.brave_api_key
+            or self.perplexity_api_key
+            or self.xai_api_key
+            or self.kimi_api_key
+        )
+
+    def _should_allow_rss_fallback(self, query: str) -> bool:
+        lowered = str(query or "").lower()
+        if any(marker in lowered for marker in _RSS_FALLBACK_NEWS_MARKERS):
+            return True
+
+        terms = set(self._extract_relevance_terms(query))
+        if terms.intersection(_NEWS_PRIORITY_TERMS):
+            return True
+        if terms.intersection(_NEWS_ENTITY_TERMS):
+            return True
+        if terms.intersection(_NEWS_EVENT_TERMS):
+            return True
+        return False
+
+    def _missing_provider_setup_hint(self, query: str) -> str:
+        return i18n_t("web_search.provider_missing", query, provider=self.provider)
+
     async def _run_provider(self, provider: str, query: str, count: int) -> str:
         if provider == "perplexity":
             return await self._search_perplexity(query)
@@ -235,6 +271,13 @@ class WebSearchTool(Tool):
         cached = _SEARCH_CACHE.get(cache_key)
         if cached:
             return f"[cached] {cached}"
+
+        if self.provider != "google_news_rss" and not self._has_any_search_provider_key():
+            if self._should_allow_rss_fallback(query):
+                result = await self._search_google_news_rss(query, n)
+                _SEARCH_CACHE.set(cache_key, result, self.cache_ttl)
+                return result
+            return self._missing_provider_setup_hint(query)
 
         try:
             result = await self._run_provider(self.provider, query, n)

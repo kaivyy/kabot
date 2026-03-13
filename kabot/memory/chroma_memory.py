@@ -477,6 +477,27 @@ class HybridMemoryManager(MemoryBackend):
 
         return selected[:limit]
 
+    def _prepare_reranker_items(self, candidates: list[dict]) -> list[dict]:
+        """Copy candidate items and attach normalized scores for reranking."""
+        if not candidates:
+            return []
+
+        raw_scores = [float(candidate.get("score", 0.0)) for candidate in candidates]
+        normalized_scores = self._normalize_scores(raw_scores)
+
+        items: list[dict] = []
+        for idx, candidate in enumerate(candidates):
+            item = dict(candidate.get("item") or {})
+            item["score"] = normalized_scores[idx]
+            item["fusion_score"] = raw_scores[idx]
+
+            if "temporal_multiplier" in candidate:
+                item["temporal_multiplier"] = candidate["temporal_multiplier"]
+
+            items.append(item)
+
+        return items
+
     async def search_memory(self, query: str, session_id: str | None = None,
                            limit: int = 5) -> list[dict]:
         """
@@ -631,9 +652,9 @@ class HybridMemoryManager(MemoryBackend):
                     query_embedding=query_embedding,
                     limit=limit,
                 )
-                return self.reranker.rank(query, [x['item'] for x in selected])
+                return self.reranker.rank(query, self._prepare_reranker_items(selected))
 
-            return self.reranker.rank(query, [x['item'] for x in ranked[:limit]])
+            return self.reranker.rank(query, self._prepare_reranker_items(ranked[:limit]))
 
         except Exception as e:
             logger.error(f"Error searching memory: {e}")

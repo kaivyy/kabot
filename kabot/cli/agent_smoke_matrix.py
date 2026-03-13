@@ -284,6 +284,35 @@ def build_workflow_smoke_cases() -> list[SmokeCase]:
             expected_any_contains=("ping-pong", "ping pong", "upgrade"),
             forbidden_contains=("File not found", "/↓", "/↑"),
         ),
+        SmokeCase(
+            label="workflow-status-server-followup",
+            prompt="status server gimana",
+            followup_prompts=("ya cek status server sekarang",),
+            category="workflow",
+            expected_any_contains=("server resource monitor", "cpu", "ram", "uptime"),
+            forbidden_contains=(
+                "Results for:",
+                "I couldn't verify completion because no tool or skill execution happened",
+            ),
+        ),
+        SmokeCase(
+            label="workflow-weather-forecast-followup",
+            prompt="oke untuk cuaca cilacap sekarang berapa",
+            followup_prompts=(
+                "maksudnya suhunya lumayan panas untuk keluar rumah",
+                "prediksi 3-6 jam kedepan",
+                "prediksi",
+            ),
+            category="workflow",
+            expected_any_contains=("cilacap forecast", "source: open-meteo (hourly forecast)"),
+            expected_continuity_source="weather_context",
+            expected_turn_category="action",
+            forbidden_contains=(
+                "Created job",
+                "Reminder scheduled for later",
+                "I couldn't fetch weather for Prediksi",
+            ),
+        ),
     ]
 
 
@@ -390,6 +419,52 @@ def _create_mcp_local_echo_continuity_case(
         expected_turn_category="chat",
         env=dict(base_case.env),
     )
+
+
+def _create_web_search_no_key_smoke_cases(config_dir: Path) -> list[SmokeCase]:
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "kabot-web-search-no-key.json"
+    config = load_config().model_copy(deep=True)
+    config.tools.web.search.api_key = ""
+    config.tools.web.search.perplexity_api_key = ""
+    config.tools.web.search.xai_api_key = ""
+    config.tools.web.search.kimi_api_key = ""
+    config.tools.web.search.provider = "brave"
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    no_key_env = _with_repo_pythonpath(
+        {
+            "KABOT_CONFIG": str(config_path),
+            "PYTHONIOENCODING": "utf-8",
+            "BRAVE_API_KEY": "",
+            "PERPLEXITY_API_KEY": "",
+            "XAI_API_KEY": "",
+            "KIMI_API_KEY": "",
+            "MOONSHOT_API_KEY": "",
+        }
+    )
+    return [
+        SmokeCase(
+            label="web-search-no-key-news",
+            prompt="carikan berita terbaru iran israel sekarang pakai web search dan tampilkan hasilnya.",
+            category="web",
+            expected_any_contains=("Results for:",),
+            forbidden_contains=("search api key", "provider_missing"),
+            expected_turn_category="action",
+            env=dict(no_key_env),
+        ),
+        SmokeCase(
+            label="web-search-no-key-general",
+            prompt="search the web for who is the ceo of microsoft. use web_search.",
+            category="web",
+            expected_any_contains=("web_search needs a search API key",),
+            forbidden_contains=("Results for:",),
+            expected_turn_category="action",
+            env=dict(no_key_env),
+        ),
+    ]
 
 
 def build_agent_command(
@@ -710,6 +785,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Add multi-turn workflow regression cases (for example create -> continue -> upgrade).",
     )
+    parser.add_argument(
+        "--web-search-cases",
+        action="store_true",
+        help="Add no-key web-search smoke cases (news fallback vs general setup hint).",
+    )
     parser.add_argument("--skill", action="append", default=[], help="Add explicit-skill smoke case(s).")
     parser.add_argument("--all-skills", action="store_true", help="Discover all skills and add explicit-skill smoke cases.")
     parser.add_argument("--mcp-local-echo", action="store_true", help="Add a local Python MCP echo smoke case.")
@@ -745,6 +825,8 @@ def main(argv: list[str] | None = None) -> int:
             cases.extend(build_memory_smoke_cases())
         if args.workflow_cases:
             cases.extend(build_workflow_smoke_cases())
+        if args.web_search_cases:
+            cases.extend(_create_web_search_no_key_smoke_cases(Path(temp_dir_name)))
 
         skill_names: list[str] = [str(item).strip() for item in args.skill if str(item).strip()]
         if args.all_skills:

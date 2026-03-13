@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 def test_skills_install_updates_config_and_targets_managed_dir(monkeypatch, tmp_path):
     from kabot.cli.commands import app
     from kabot.cli.skill_repo_installer import InstalledSkill
-    from kabot.config.schema import Config
+    from kabot.config.schema import Config, SkillsConfig
 
     runner = CliRunner()
     cfg = Config()
@@ -44,6 +44,7 @@ def test_skills_install_updates_config_and_targets_managed_dir(monkeypatch, tmp_
     assert "Installed skill" in result.output
     assert captured["target_dir"] == tmp_path / "managed-skills"
     assert saved["config"].skills["entries"]["clawra-selfie"]["enabled"] is True
+    assert isinstance(saved["config"].skills, SkillsConfig)
 
 
 def test_skills_install_workspace_target(monkeypatch, tmp_path):
@@ -81,6 +82,109 @@ def test_skills_install_workspace_target(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     assert captured["target_dir"] == cfg.workspace_path / "skills"
+
+
+def test_skills_install_from_local_path_updates_config(monkeypatch, tmp_path):
+    from kabot.cli.commands import app
+    from kabot.cli.skill_repo_installer import InstalledSkill
+    from kabot.config.schema import Config
+
+    runner = CliRunner()
+    cfg = Config()
+    cfg.agents.defaults.workspace = str(tmp_path / "workspace")
+    cfg.skills = {"load": {"managed_dir": str(tmp_path / "managed-skills")}}
+
+    saved = {}
+
+    def _fake_save(updated, config_path=None):  # noqa: ANN001
+        saved["config"] = updated
+        saved["path"] = config_path
+
+    captured = {}
+
+    def _fake_install(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        installed = Path(kwargs["target_dir"]) / "manus-stock-analysis"
+        installed.mkdir(parents=True, exist_ok=True)
+        (installed / "SKILL.md").write_text("---\nname: manus-stock-analysis\n---\n", encoding="utf-8")
+        return InstalledSkill(
+            repo_url=str(kwargs["source_path"]),
+            selected_dir=Path("."),
+            installed_dir=installed,
+            skill_name="manus-stock-analysis",
+            skill_key="manus-stock-analysis",
+        )
+
+    monkeypatch.setattr("kabot.config.loader.load_config", lambda: cfg)
+    monkeypatch.setattr("kabot.config.loader.save_config", _fake_save)
+    monkeypatch.setattr("kabot.cli.skill_repo_installer.install_skill_from_path", _fake_install)
+
+    result = runner.invoke(
+        app,
+        [
+            "skills",
+            "install",
+            "--path",
+            str(tmp_path / "manus-stock-analysis-1.0.0"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Installed skill" in result.output
+    assert captured["target_dir"] == tmp_path / "managed-skills"
+    assert saved["config"].skills["entries"]["manus-stock-analysis"]["enabled"] is True
+
+
+def test_skills_install_from_remote_url_updates_config(monkeypatch, tmp_path):
+    from kabot.cli.commands import app
+    from kabot.cli.skill_repo_installer import InstalledSkill
+    from kabot.config.schema import Config
+
+    runner = CliRunner()
+    cfg = Config()
+    cfg.agents.defaults.workspace = str(tmp_path / "workspace")
+    cfg.skills = {"load": {"managed_dir": str(tmp_path / "managed-skills")}}
+
+    saved = {}
+
+    def _fake_save(updated, config_path=None):  # noqa: ANN001
+        saved["config"] = updated
+        saved["path"] = config_path
+
+    captured = {}
+
+    def _fake_install(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        installed = Path(kwargs["target_dir"]) / "binance-pro"
+        installed.mkdir(parents=True, exist_ok=True)
+        (installed / "SKILL.md").write_text("---\nname: binance-pro\n---\n", encoding="utf-8")
+        return InstalledSkill(
+            repo_url=str(kwargs["source_url"]),
+            selected_dir=Path("."),
+            installed_dir=installed,
+            skill_name="binance-pro",
+            skill_key="binance-pro",
+        )
+
+    monkeypatch.setattr("kabot.config.loader.load_config", lambda: cfg)
+    monkeypatch.setattr("kabot.config.loader.save_config", _fake_save)
+    monkeypatch.setattr("kabot.cli.skill_repo_installer.install_skill_from_url", _fake_install)
+
+    result = runner.invoke(
+        app,
+        [
+            "skills",
+            "install",
+            "--url",
+            "https://skills.example.invalid/binance-pro.skill",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Installed skill" in result.output
+    assert captured["source_url"] == "https://skills.example.invalid/binance-pro.skill"
+    assert captured["target_dir"] == tmp_path / "managed-skills"
+    assert saved["config"].skills["entries"]["binance-pro"]["enabled"] is True
 
 
 def test_skills_install_blocks_when_trust_mode_rejects_signer(monkeypatch, tmp_path):

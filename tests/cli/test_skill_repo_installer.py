@@ -3,7 +3,9 @@ from pathlib import Path
 import pytest
 
 from kabot.cli.skill_repo_installer import (
+    install_skill_from_path,
     install_skill_from_git,
+    install_skill_from_url,
     list_skill_candidate_details_from_git,
     list_skill_candidates_from_git,
     resolve_skill_source_dir,
@@ -76,6 +78,90 @@ def test_install_skill_from_git_copies_selected_skill_tree(tmp_path, monkeypatch
     assert result.installed_dir == target_dir / "clawra-selfie"
     assert (result.installed_dir / "SKILL.md").exists()
     assert (result.installed_dir / "scripts" / "run.sh").exists()
+
+
+def test_install_skill_from_path_copies_selected_skill_tree_from_directory(tmp_path):
+    source_root = tmp_path / "manus-stock-analysis-1.0.0"
+    _write_skill(source_root, "manus-stock-analysis", body="stock crypto market analysis")
+    (source_root / "references").mkdir(parents=True, exist_ok=True)
+    (source_root / "references" / "yahoo-api.md").write_text("# Yahoo API\n", encoding="utf-8")
+
+    target_dir = tmp_path / "managed-skills"
+    result = install_skill_from_path(
+        source_path=source_root,
+        target_dir=target_dir,
+        subdir=None,
+        skill_name=None,
+        overwrite=False,
+    )
+
+    assert result.skill_name == "manus-stock-analysis"
+    assert result.installed_dir == target_dir / "manus-stock-analysis"
+    assert (result.installed_dir / "SKILL.md").exists()
+    assert (result.installed_dir / "references" / "yahoo-api.md").exists()
+
+
+def test_install_skill_from_path_extracts_skill_bundle_archive(tmp_path):
+    skill_root = tmp_path / "meta-threads-official"
+    _write_skill(skill_root, "meta-threads-official", body="threads official api integration")
+    archive_path = tmp_path / "meta-threads-official.skill"
+    import zipfile
+
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as bundle:
+        bundle.write(skill_root / "SKILL.md", "meta-threads-official/SKILL.md")
+
+    target_dir = tmp_path / "managed-skills"
+    result = install_skill_from_path(
+        source_path=archive_path,
+        target_dir=target_dir,
+        subdir=None,
+        skill_name=None,
+        overwrite=False,
+    )
+
+    assert result.skill_name == "meta-threads-official"
+    assert result.installed_dir == target_dir / "meta-threads-official"
+    assert (result.installed_dir / "SKILL.md").exists()
+
+
+def test_install_skill_from_url_downloads_and_extracts_bundle(tmp_path, monkeypatch):
+    skill_root = tmp_path / "binance-pro"
+    _write_skill(skill_root, "binance-pro", body="binance crypto market skill")
+    archive_path = tmp_path / "binance-pro.skill"
+    import zipfile
+
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as bundle:
+        bundle.write(skill_root / "SKILL.md", "binance-pro/SKILL.md")
+
+    archive_bytes = archive_path.read_bytes()
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return archive_bytes
+
+    monkeypatch.setattr(
+        "kabot.cli.skill_repo_installer.urllib.request.urlopen",
+        lambda *args, **kwargs: _FakeResponse(),
+    )
+
+    target_dir = tmp_path / "managed-skills"
+    result = install_skill_from_url(
+        source_url="https://skills.example.invalid/binance-pro.skill",
+        target_dir=target_dir,
+        subdir=None,
+        skill_name=None,
+        overwrite=False,
+    )
+
+    assert result.skill_name == "binance-pro"
+    assert result.installed_dir == target_dir / "binance-pro"
+    assert (result.installed_dir / "SKILL.md").exists()
 
 
 def test_validate_skill_trust_accepts_allowed_signer(tmp_path):

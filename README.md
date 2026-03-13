@@ -26,16 +26,16 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
-## What's New In v0.6.3
+## What's New In v0.6.4
 
-- **Python-native MCP runtime** with session-scoped server attachment, tool/resource/prompt support, and `kabot mcp` CLI commands.
-- **Continuity hardening** so short follow-ups like `yes continue`, `lanjut`, and referential replies stay grounded to the real prior answer or tool result.
-- **Evidence-first delivery/runtime behavior** so Kabot is much less likely to claim a file, screenshot, or generated artifact was sent unless the runtime can verify it.
-- **Smoke coverage for real workflows** including continuity, memory recall, MCP echo flows, and multi-turn `create -> continue -> upgrade` regressions.
+- **Skill-first routing** that reduces parser-heavy drift and gives external/workspace skills priority over legacy finance tools.
+- **Direct page fetch fallback** so page-oriented requests prefer `web_fetch`, and stale `web_search` setup hints can demote back into a real page fetch.
+- **External skill lifecycle** with install/search/info/list/update/pack/publish/sync flows for local folders, bundles, git repos, URLs, and JSON catalogs.
+- **Workspace persona parity** so `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, and `BOOTSTRAP.md` behave more like living workspace truth than passive notes.
 
-If you are upgrading from `0.6.2`, the two most important new surfaces are:
-- `kabot mcp status`
-- the improved AI-driven runtime that is more deliberate about when it should answer directly versus when it should call tools or skills.
+If you are upgrading from `0.6.3`, the two most important changes are:
+- Kabot is much more likely to choose a skill lane first and only fall back to legacy tools when no better skill exists.
+- Direct page-reading requests now stay grounded through `web_fetch` instead of getting stuck behind an unavailable search provider.
 
 ---
 
@@ -73,7 +73,7 @@ If you are new, follow this exact flow:
 
 No need to clone repo for normal usage.
 
-Recommended optional step for `v0.6.3`:
+Recommended optional step for `v0.6.4`:
 
 5. **Inspect MCP availability** (`kabot mcp status`)
 
@@ -150,7 +150,7 @@ kabot mcp status   # inspect configured MCP servers
 
 ### Python-Native MCP Quickstart
 
-Kabot `0.6.3` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
+Kabot `0.6.4` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
 
 Useful commands:
 

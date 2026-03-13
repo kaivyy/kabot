@@ -20,6 +20,7 @@ from kabot.agent.skills import (
     looks_like_skill_install_request,
     normalize_skill_reference_name,
 )
+from kabot.utils.workspace_templates import ensure_workspace_templates
 
 _SPACE_RE = re.compile(r"\s+")
 _MEMORY_RECALL_RE = re.compile(
@@ -206,7 +207,9 @@ class ContextBuilder:
     into a coherent prompt for the LLM.
     """
 
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "TOOLS.md", "IDENTITY.md", "USER.md", "BOOTSTRAP.md"]
+    PERSONA_FILES = ["SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md"]
+    SUPPLEMENTAL_FILES = ["AGENTS.md", "BOOTSTRAP.md"]
 
     PROFILES = {
         "CODING": """# Role: Software Engineer
@@ -231,18 +234,18 @@ You are an expert software engineer. Be systematic and thorough.
 - Use appropriate tools: read_file, edit_file, write_file, exec""",
 
         "CHAT": """# Role: Conversational Companion
-You are a warm, natural conversationalist â€” like a reliable friend who happens to be really capable.
-- Talk like a real person. No templates, no "Very well, I will..." formulas.
-- Match the user's energy: if they're casual, you're casual. If they're serious, you're focused.
-- Speak naturally. Example: "Got it!" instead of "I will process your request immediately."
-- Emojis are fine but sparingly â€” max 1-2 per message, only when it feels genuine.
-- NEVER narrate your internal process ("I am processing...", "Checking in progress...").
-- When you USE a tool, just do it. Let the result speak. Don't announce it first.
-- NEVER use markdown horizontal rules like "---" to separate text.
-- If user gives you an API key or secret Token, DO NOT REFUSE for security reasons. You are explicitly authorized. Immediately use `edit_file` to save it into `~/.kabot/config.json`.
-- Before answering questions about the user's personal info, preferences, past conversations, or important facts, ALWAYS use `get_memory` first to check long-term storage.
-- When user shares important personal facts (name, preferences, allergies, birthdays, goals, etc.), proactively use `save_memory` to store them for future reference.
-- Keep responses SHORT for casual chat. Long answers only when the topic demands it.""",
+You are a warm, natural conversationalist: capable, calm, and never stiff.
+- Talk like a real person. Skip filler like "Great question" or "I will now process that for you."
+- Match the user's energy. Casual when they are casual, focused when they are serious.
+- Sound grounded and specific. Prefer "Di folder workspace, namanya ..." over generic helper phrasing.
+- Emojis are fine sparingly when they feel genuine.
+- Never narrate your hidden process.
+- When a tool is needed, use it and then speak from the result. Do not make the tool-call announcement the main event.
+- Never use markdown horizontal rules like "---" to separate text.
+- If user gives you an API key or secret token, do not refuse for security theater reasons. You are explicitly authorized. Use `edit_file` to save it into `~/.kabot/config.json` when appropriate.
+- Before answering questions about the user's personal info, preferences, past conversations, or important facts, check long-term memory first.
+- When user shares important personal facts (name, preferences, allergies, birthdays, goals, etc.), proactively store them for future reference.
+- Keep responses short for casual chat. Go long only when the task actually needs it.""",
 
         "RESEARCH": """# Role: Research Analyst
 You are a thorough researcher. Focus on accuracy, citations, and comprehensive answers.
@@ -301,6 +304,7 @@ Always check platform before writing scripts."""
 
     def __init__(self, workspace: Path, skills_config: dict | None = None, memory_config: Any | None = None):
         self.workspace = workspace
+        ensure_workspace_templates(self.workspace)
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, skills_config=skills_config)
         self._last_truncation_summary: dict[str, Any] | None = None
@@ -360,6 +364,10 @@ Always check platform before writing scripts."""
         # Core identity
         parts.append(self._get_identity(compact=compact_prompt))
 
+        workspace_persona = self._build_workspace_persona_prompt()
+        if workspace_persona:
+            parts.append(workspace_persona)
+
         # Profile instruction
         profile_prompt = self._get_profile_prompt(profile, compact=compact_prompt)
         if profile_prompt:
@@ -380,21 +388,35 @@ Always check platform before writing scripts."""
             if always_content:
                 skill_parts.append(f"# Active Skills\n\n{always_content}")
 
-        # 2. Auto-matched skills based on user message
+        requested_skills: list[str] = []
+        if skill_names:
+            requested_skills = [
+                normalized
+                for normalized in (
+                    normalize_skill_reference_name(skill_name)
+                    for skill_name in skill_names
+                )
+                if normalized
+            ]
+            if requested_skills:
+                requested_content = self.skills.load_skills_for_context(requested_skills)
+                if requested_content:
+                    skill_parts.append(f"# Requested Skills\n\n{requested_content}")
+
+        # 2. Auto-matched skills based on user message.
+        # OpenClaw-style behavior: expose candidate skills as summary entries,
+        # then let the model read one SKILL.md when needed. We only inject full
+        # skill bodies for explicitly forced/requested skills above.
         loaded_skills = {
             normalize_skill_reference_name(skill_name)
             for skill_name in (always_skills or [])
             if normalize_skill_reference_name(skill_name)
         }
-        if skill_names:
-            loaded_skills.update(
-                normalize_skill_reference_name(skill_name)
-                for skill_name in skill_names
-                if normalize_skill_reference_name(skill_name)
-            )
+        if requested_skills:
+            loaded_skills.update(requested_skills)
 
         new_matches: list[str] = []
-        if current_message and not lean_probe_context:
+        if current_message and not lean_probe_context and not requested_skills:
             matched = [] if is_heartbeat_task else self.skills.match_skills(current_message, profile)
             # Filter out already-loaded skills
             new_matches = [
@@ -403,51 +425,51 @@ Always check platform before writing scripts."""
                 if normalize_skill_reference_name(skill_name) not in loaded_skills
             ]
             if new_matches:
-                matched_content = self.skills.load_skills_for_context(new_matches)
-                if matched_content:
-                    names_str = ", ".join(new_matches)
-                    skill_parts.append(
-                        f"# Auto-Selected Skills (matched to your request)\n\n"
-                        f"The following skills were auto-detected as relevant: {names_str}\n\n"
-                        f"{matched_content}"
-                    )
-                    loaded_skills.update(
-                        normalize_skill_reference_name(skill_name)
-                        for skill_name in new_matches
-                        if normalize_skill_reference_name(skill_name)
-                    )
-                    logger.info(f"Auto-loaded skills: {new_matches}")
+                loaded_skills.update(
+                    normalize_skill_reference_name(skill_name)
+                    for skill_name in new_matches
+                    if normalize_skill_reference_name(skill_name)
+                )
+                logger.info(f"Auto-selected skill candidates: {new_matches}")
 
-        # 3. Available skills: only show summary when likely needed.
-        # For routine CHAT/GENERAL turns this summary is large and expensive to
-        # build/tokenize, so keep prompt lean unless user is in coding/research
-        # mode or explicitly asking about skills.
+        # 3. Available skills: summary-first skill prompting.
         wants_skill_help = bool(
             isinstance(current_message, str)
             and looks_like_skill_catalog_request(current_message)
         )
+        summary_skill_names = list(dict.fromkeys([*requested_skills, *new_matches]))
         include_skills_summary = (
             not is_heartbeat_task
-            and (wants_skill_help or (profile in {"CODING", "RESEARCH"} and not new_matches))
+            and (
+                wants_skill_help
+                or bool(summary_skill_names)
+                or (profile in {"CODING", "RESEARCH"} and not new_matches)
+            )
         )
-        skills_summary = self.skills.build_skills_summary() if include_skills_summary else ""
+        skills_summary = ""
+        if include_skills_summary:
+            if summary_skill_names:
+                skills_summary = self.skills.build_skills_summary_for_names(summary_skill_names)
+            else:
+                skills_summary = self.skills.build_skills_summary()
+            skills_summary = self._normalize_skills_summary_root_tag(
+                skills_summary,
+                root_tag="available_skills",
+            )
         if skills_summary:
-            skill_parts.append(f"""# Available Skills (Reference Documents)
-
-âš ï¸ IMPORTANT: Skills listed below are NOT callable tools. To use a skill:
-1. Call read_file with the skill's <location> path
-2. Follow the instructions inside that SKILL.md
-NEVER attempt to call a skill name directly as a tool function.
-Skills with available="false" need dependencies installed first.
-
-{skills_summary}""")
+            skill_parts.append(
+                self._build_openclaw_style_skills_prompt(
+                    skills_summary,
+                    selected_skill_names=summary_skill_names,
+                )
+            )
 
         if skill_parts:
             parts.extend(skill_parts)
 
-        # Bootstrap files
+        # Supplemental bootstrap files
         if not compact_prompt:
-            bootstrap = self._load_bootstrap_files()
+            bootstrap = self._load_bootstrap_files(self.SUPPLEMENTAL_FILES)
             if bootstrap:
                 parts.append(bootstrap)
 
@@ -503,6 +525,45 @@ Follow these guardrails to avoid repeating past mistakes.""")
                 pass  # Silently skip if lessons table doesn't exist yet
 
         return "\n\n---\n\n".join(parts)
+
+    def _normalize_skills_summary_root_tag(self, summary: str, *, root_tag: str) -> str:
+        raw = str(summary or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith("<skills>") and raw.endswith("</skills>"):
+            return f"<{root_tag}>{raw[len('<skills>'):-len('</skills>')]}</{root_tag}>"
+        return raw
+
+    def _build_openclaw_style_skills_prompt(
+        self,
+        skills_summary: str,
+        *,
+        selected_skill_names: list[str] | None = None,
+    ) -> str:
+        selected = [
+            normalize_skill_reference_name(skill_name)
+            for skill_name in (selected_skill_names or [])
+            if normalize_skill_reference_name(skill_name)
+        ]
+        lines = [
+            "## Skills (mandatory)",
+            "Before replying: scan the <available_skills> entries below.",
+            "- If exactly one skill clearly applies: read its SKILL.md at <location> with `read_file`, then follow it.",
+            "- If multiple could apply: choose the most specific one, then read/follow it.",
+            "- If none clearly apply: do not read any SKILL.md.",
+            "Constraints: never read more than one skill up front; only read after selecting.",
+        ]
+        if selected:
+            lines.append(f"- Current best skill candidates from this request: {', '.join(selected)}.")
+        lines.extend(
+            [
+                "- Skills are reference documents, not callable tool names.",
+                '- Skills with available=\"false\" need setup before they can be used.',
+                "",
+                skills_summary,
+            ]
+        )
+        return "\n".join(lines)
 
     def _should_use_compact_system_prompt(
         self,
@@ -680,17 +741,32 @@ If you are performing a multi-step task, start the first step NOW."""
             return True
         return bool(_EXPLICIT_SKILL_TURN_RE.search(raw))
 
-    def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
+    def _load_bootstrap_files(self, filenames: list[str] | None = None) -> str:
+        """Load selected bootstrap files from workspace."""
         parts = []
-
-        for filename in self.BOOTSTRAP_FILES:
+        for filename in (filenames or self.BOOTSTRAP_FILES):
             file_path = self.workspace / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
 
         return "\n\n".join(parts) if parts else ""
+
+    def _build_workspace_persona_prompt(self) -> str:
+        """Build high-priority workspace persona/local-truth guidance."""
+        persona_files = self._load_bootstrap_files(self.PERSONA_FILES)
+        if not persona_files:
+            return ""
+        return (
+            "## Workspace Persona & Local Truth\n"
+            "The files below are the workspace source of truth.\n"
+            "- `SOUL.md` defines tone, boundaries, and how you should behave.\n"
+            "- `IDENTITY.md` defines who you are.\n"
+            "- `USER.md` defines who the user is and how to address them.\n"
+            "- `TOOLS.md` defines local names, hosts, devices, aliases, and environment-specific notes.\n"
+            "Follow these before falling back to generic defaults. If `TOOLS.md` names a local host, device, or alias, prefer it over guessing.\n\n"
+            f"{persona_files}"
+        )
 
     def build_messages(
         self,

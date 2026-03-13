@@ -6,6 +6,7 @@ from kabot.cli.agent_smoke_matrix import (
     SmokeResult,
     _create_mcp_local_echo_case,
     _create_mcp_local_echo_continuity_case,
+    _create_web_search_no_key_smoke_cases,
     _localized_weekday_expectations,
     _stdout_matches_expectations,
     apply_thresholds,
@@ -299,12 +300,42 @@ def test_build_workflow_smoke_cases_include_ping_pong_upgrade_transcript():
     cases = build_workflow_smoke_cases()
 
     ping_pong_case = next(case for case in cases if case.label == "workflow-pingpong-upgrade")
+    status_case = next(case for case in cases if case.label == "workflow-status-server-followup")
+    weather_case = next(case for case in cases if case.label == "workflow-weather-forecast-followup")
 
     assert ping_pong_case.category == "workflow"
     assert ping_pong_case.prompt == "create a ping pong game web based"
     assert ping_pong_case.followup_prompts == ("yes continue", "yes continue to upgrade")
     assert ping_pong_case.expected_any_contains == ("ping-pong", "ping pong", "upgrade")
     assert ping_pong_case.forbidden_contains == ("File not found", "/↓", "/↑")
+
+    assert status_case.category == "workflow"
+    assert status_case.prompt == "status server gimana"
+    assert status_case.followup_prompts == ("ya cek status server sekarang",)
+    assert status_case.expected_any_contains == ("server resource monitor", "cpu", "ram", "uptime")
+    assert status_case.forbidden_contains == (
+        "Results for:",
+        "I couldn't verify completion because no tool or skill execution happened",
+    )
+
+    assert weather_case.category == "workflow"
+    assert weather_case.prompt == "oke untuk cuaca cilacap sekarang berapa"
+    assert weather_case.followup_prompts == (
+        "maksudnya suhunya lumayan panas untuk keluar rumah",
+        "prediksi 3-6 jam kedepan",
+        "prediksi",
+    )
+    assert weather_case.expected_any_contains == (
+        "cilacap forecast",
+        "source: open-meteo (hourly forecast)",
+    )
+    assert weather_case.expected_continuity_source == "weather_context"
+    assert weather_case.expected_turn_category == "action"
+    assert weather_case.forbidden_contains == (
+        "Created job",
+        "Reminder scheduled for later",
+        "I couldn't fetch weather for Prediksi",
+    )
 
 
 def test_create_mcp_local_echo_continuity_case_writes_temp_config(tmp_path):
@@ -319,6 +350,31 @@ def test_create_mcp_local_echo_continuity_case_writes_temp_config(tmp_path):
     assert case.expected_any_contains == ("halo-mcp-konteks",)
     assert case.forbidden_contains == ("\u305d\u308c\u3063\u3066\u3069\u3046\u3044\u3046\u610f\u5473",)
     assert config_path.exists()
+
+
+def test_create_web_search_no_key_smoke_cases_write_temp_config_and_blank_envs(tmp_path):
+    cases = _create_web_search_no_key_smoke_cases(tmp_path)
+
+    news_case = next(case for case in cases if case.label == "web-search-no-key-news")
+    general_case = next(case for case in cases if case.label == "web-search-no-key-general")
+    config_path = Path(news_case.env["KABOT_CONFIG"])
+
+    assert config_path.exists()
+    assert news_case.category == "web"
+    assert general_case.category == "web"
+    assert news_case.expected_turn_category == "action"
+    assert general_case.expected_turn_category == "action"
+    assert news_case.expected_any_contains == ("Results for:",)
+    assert "search api key" in general_case.expected_any_contains[0].lower()
+    for env_key in (
+        "BRAVE_API_KEY",
+        "PERPLEXITY_API_KEY",
+        "XAI_API_KEY",
+        "KIMI_API_KEY",
+        "MOONSHOT_API_KEY",
+    ):
+        assert news_case.env[env_key] == ""
+        assert general_case.env[env_key] == ""
 
 
 def test_run_case_reuses_same_session_for_followup_turns_and_tracks_continuity(monkeypatch):

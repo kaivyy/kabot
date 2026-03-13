@@ -146,6 +146,133 @@ async def test_telegram_draft_update_edits_existing_progress_message():
 
 
 @pytest.mark.asyncio
+async def test_telegram_final_message_materializes_existing_preview_message():
+    channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
+    channel._app = SimpleNamespace(
+        bot=SimpleNamespace(
+            send_message=AsyncMock(return_value=SimpleNamespace(message_id=888)),
+            edit_message_text=AsyncMock(),
+            delete_message=AsyncMock(),
+        )
+    )
+    channel._stop_typing = MagicMock()
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="Jawaban awal",
+            metadata={"type": "draft_update", "phase": "thinking"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="Jawaban final yang rapi",
+        )
+    )
+
+    assert channel._app.bot.send_message.await_count == 1
+    channel._app.bot.edit_message_text.assert_awaited_once_with(
+        chat_id=123456,
+        message_id=888,
+        text="Jawaban final yang rapi",
+        parse_mode="HTML",
+        reply_markup=None,
+    )
+    channel._app.bot.delete_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_telegram_final_message_deletes_status_but_preserves_preview_materialization():
+    send_calls = [
+        SimpleNamespace(message_id=700),  # status bubble
+        SimpleNamespace(message_id=888),  # preview bubble
+    ]
+    channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
+    channel._app = SimpleNamespace(
+        bot=SimpleNamespace(
+            send_message=AsyncMock(side_effect=send_calls),
+            edit_message_text=AsyncMock(),
+            delete_message=AsyncMock(),
+        )
+    )
+    channel._stop_typing = MagicMock()
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="Queued...",
+            metadata={"type": "status_update", "phase": "queued"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="Jawaban awal",
+            metadata={"type": "draft_update", "phase": "thinking"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="Jawaban final yang rapi",
+        )
+    )
+
+    channel._app.bot.delete_message.assert_awaited_once_with(chat_id=123456, message_id=700)
+    assert channel._app.bot.send_message.await_count == 2
+    channel._app.bot.edit_message_text.assert_awaited_once_with(
+        chat_id=123456,
+        message_id=888,
+        text="Jawaban final yang rapi",
+        parse_mode="HTML",
+        reply_markup=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_media_reply_cleans_stale_preview_before_document_send(tmp_path):
+    attachment = tmp_path / "report.txt"
+    attachment.write_text("hello", encoding="utf-8")
+
+    channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
+    channel._app = SimpleNamespace(
+        bot=SimpleNamespace(
+            send_message=AsyncMock(return_value=SimpleNamespace(message_id=555)),
+            send_document=AsyncMock(),
+            edit_message_text=AsyncMock(),
+            delete_message=AsyncMock(),
+        )
+    )
+    channel._stop_typing = MagicMock()
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="Preview awal",
+            metadata={"type": "draft_update", "phase": "thinking"},
+        )
+    )
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123456",
+            content="",
+            media=[str(attachment)],
+        )
+    )
+
+    channel._app.bot.delete_message.assert_awaited_once_with(chat_id=123456, message_id=555)
+    channel._app.bot.send_document.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_telegram_regular_message_clears_status_message():
     channel = TelegramChannel(TelegramConfig(token="test-token", enabled=True), MessageBus())
     channel._app = SimpleNamespace(

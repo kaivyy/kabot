@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from kabot.agent.skills import SkillsLoader, looks_like_skill_catalog_request
@@ -130,6 +131,39 @@ def test_match_skills_explicit_skill_turn_skips_full_index(tmp_path, monkeypatch
 
     assert matches
     assert matches[0].startswith("weather")
+
+
+def test_match_skills_skips_disable_model_invocation_skill_for_natural_language_request(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    hidden_skill_dir = workspace / "skills" / "internal-ledger"
+    hidden_skill_dir.mkdir(parents=True, exist_ok=True)
+    (hidden_skill_dir / "SKILL.md").write_text(
+        (
+            "---\n"
+            "name: internal-ledger\n"
+            "description: Internal ledger control skill\n"
+            "disable-model-invocation: true\n"
+            "---\n\n"
+            "# Skill\n"
+        ),
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    matches = loader.match_skills(
+        "please use the internal-ledger skill for this request",
+        profile="GENERAL",
+    )
+
+    assert not matches
 
 
 def test_match_skills_non_explicit_turn_still_uses_full_index(tmp_path, monkeypatch):
@@ -315,6 +349,44 @@ def test_match_skills_understands_multilingual_skill_creation_intent(tmp_path, m
         assert matches[0].startswith("skill-creator")
 
 
+def test_match_skills_does_not_confuse_meta_threads_with_discord(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(
+        workspace / "skills",
+        "skill-creator",
+        "guide for creating a new skill workflow and SKILL.md structure",
+    )
+    _write_skill(
+        workspace / "skills",
+        "discord",
+        "discord thread server guild channel message moderation reply bot",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    create_matches = loader.match_skills(
+        "bisakah bikin skills untuk koneksi ke meta threads",
+        profile="GENERAL",
+    )
+    general_matches = loader.match_skills(
+        "konek ke meta threads bisa?",
+        profile="GENERAL",
+    )
+
+    assert create_matches
+    assert create_matches[0].startswith("skill-creator")
+    assert not any(match.startswith("discord") for match in create_matches)
+    assert not any(match.startswith("discord") for match in general_matches)
+
+
 def test_match_skills_understands_multilingual_skill_update_intent(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir(parents=True, exist_ok=True)
@@ -386,3 +458,111 @@ def test_list_skills_uses_snapshot_cache(tmp_path, monkeypatch):
     assert first
     assert second
     assert calls["count"] == 1
+
+
+def test_list_skills_invalidates_cache_when_runtime_env_changes(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    skill_dir = workspace / "skills" / "binance-pro"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: binance-pro",
+                "description: crypto execution skill",
+                'metadata: {"openclaw":{"requires":{"bins":["jq"]}}}',
+                "---",
+                "",
+                "Use this for crypto account workflows.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PATH", str(empty_bin))
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    first = loader.list_skills(filter_unavailable=False)
+    assert first and first[0]["eligible"] is False
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (bin_dir / "jq.cmd").write_text("@echo off\necho {}\n", encoding="ascii")
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{empty_bin}")
+
+    second = loader.list_skills(filter_unavailable=False)
+    assert second and second[0]["eligible"] is True
+
+
+def test_openclaw_metadata_is_accepted_for_always_skill(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    skill_dir = workspace / "skills" / "binance-pro"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: binance-pro",
+                "description: crypto execution skill",
+                'metadata: {"openclaw":{"always":true}}',
+                "---",
+                "",
+                "Use this for crypto account workflows.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    assert "binance-pro" in loader.get_always_skills()
+
+
+def test_external_finance_skill_is_still_preferred_even_when_requirements_missing(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    skill_dir = workspace / "skills" / "binance-pro"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: binance-pro",
+                "description: crypto trading and binance market operations",
+                'metadata: {"openclaw":{"requires":{"bins":["jq"]}}}',
+                "---",
+                "",
+                "Use for crypto trading tasks.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    assert loader.should_prefer_external_finance_skill("cek harga btc sekarang", profile="GENERAL") is True

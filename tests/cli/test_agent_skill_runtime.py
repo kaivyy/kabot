@@ -116,7 +116,8 @@ def test_agent_cli_explicit_skill_prompts_stay_ai_driven_and_skip_catalog_summar
     for messages in final_agent_calls:
         assert [message["role"] for message in messages[:2]] == ["system", "user"]
         system_prompt = str(messages[0]["content"])
-        assert "Auto-Selected Skills" in system_prompt
+        assert "## Skills (mandatory)" in system_prompt
+        assert "<available_skills>" in system_prompt
         assert "Available Skills (Reference Documents)" not in system_prompt
 
 
@@ -177,7 +178,7 @@ def test_agent_cli_probe_mode_uses_compact_system_prompt(monkeypatch, tmp_path):
 
     assert len(final_agent_calls) == 1
     system_prompt = str(final_agent_calls[0][0]["content"])
-    assert "Auto-Selected Skills" in system_prompt
+    assert "## Skills (mandatory)" in system_prompt
     assert "## AGENTS.md" not in system_prompt
 
 

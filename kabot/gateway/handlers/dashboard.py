@@ -466,6 +466,21 @@ class DashboardMixin:
             return unauthorized
         return web.Response(text=self._render_dashboard_panel(request, panel_id="panel-skills", path="/dashboard/partials/skills", trigger="load", body=self._render_skills_fragment(request)), content_type="text/html")
 
+    async def handle_dashboard_commands(self, request: web.Request) -> web.Response:
+        unauthorized = self._authorize_route(request)
+        if unauthorized is not None:
+            return unauthorized
+        return web.Response(
+            text=self._render_dashboard_panel(
+                request,
+                panel_id="panel-commands",
+                path="/dashboard/partials/commands",
+                trigger="load",
+                body=self._render_commands_fragment(),
+            ),
+            content_type="text/html",
+        )
+
     async def handle_dashboard_skills_action(self, request: web.Request) -> web.Response:
         unauthorized = self._authorize_route(request)
         if unauthorized is not None:
@@ -604,6 +619,43 @@ class DashboardMixin:
         if callable(self.control_handler) and not write_access:
             access_note = self._read_only_notice_html("Skill actions")
         return "<h2>Skills</h2><div class='muted'>Installed skill status, environment readiness, and quick toggles.</div><div style='display:flex;flex-direction:column;gap:8px;margin-top:12px;'>" + "".join(rows) + "</div>" + access_note + self._result_message_html(action_result, action_status_code, "skills-result")
+
+    def _render_commands_fragment(self) -> str:
+        status = self._read_dashboard_status()
+        commands = status.get("command_surface", [])
+        if not isinstance(commands, list):
+            commands = []
+        rows = []
+        for item in commands[:60]:
+            if not isinstance(item, dict):
+                continue
+            source_raw = str(item.get("source", "unknown") or "unknown").strip().lower()
+            badge_cls = "ok" if source_raw == "skill" else ("warn" if source_raw == "router" else "")
+            admin_only = bool(item.get("admin_only", False))
+            skill_name = str(item.get("skill_name", "") or "").strip()
+            meta_bits = [html.escape(source_raw)]
+            if skill_name:
+                meta_bits.append("skill: " + html.escape(skill_name))
+            if admin_only:
+                meta_bits.append("admin only")
+            meta_html = f"<div class='muted' style='margin-top:4px;font-size:10px;'>{' | '.join(meta_bits)}</div>"
+            rows.append(
+                "<div style='padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);'>"
+                "<div style='display:flex;align-items:flex-start;justify-content:space-between;gap:12px;'>"
+                f"<div><div class='mono' style='font-size:12px;font-weight:600;'>/{html.escape(str(item.get('name', '-') or '-'))}</div>"
+                f"<div style='margin-top:4px;font-size:12px;'>{html.escape(str(item.get('description', '') or ''))}</div>{meta_html}</div>"
+                f"<div><span class='kb-badge {badge_cls}'>{html.escape(source_raw)}</span></div>"
+                "</div></div>"
+            )
+        if not rows:
+            rows.append("<div style='text-align:center;padding:24px;color:var(--muted);font-size:12px;'>No command surface available yet.</div>")
+        return (
+            "<h2>Commands</h2>"
+            "<div class='muted'>Merged slash-command surface from static commands, router commands, and workspace skills.</div>"
+            "<div style='display:flex;flex-direction:column;gap:8px;margin-top:12px;'>"
+            + "".join(rows)
+            + "</div>"
+        )
 
     def _render_subagents_fragment(self) -> str:
         status = self._read_dashboard_status()

@@ -70,6 +70,9 @@ def _finalize_turn_metadata(state: Any) -> None:
             state.msg.metadata["forced_skill_names"] = list(state.forced_skill_names)
         else:
             state.msg.metadata.pop("forced_skill_names", None)
+        state.msg.metadata["external_skill_lane"] = bool(
+            getattr(state, "external_skill_lane", False)
+        )
         if state.last_tool_context:
             state.msg.metadata["last_tool_context"] = state.last_tool_context
         else:
@@ -102,6 +105,7 @@ def _finalize_turn_metadata(state: Any) -> None:
             or state.meta_skill_reference_turn
             or state.skill_creation_intent
             or state.skill_install_intent
+            or bool(state.forced_skill_names)
             or bool(state.mcp_context_note)
             or state.continuity_source in {"committed_action", "action_request"}
         )

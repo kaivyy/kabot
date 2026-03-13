@@ -5,6 +5,7 @@ import pytest
 from kabot.agent.context import ContextBuilder, TokenBudget
 from kabot.agent.loop_core.message_runtime_parts.helpers import _build_temporal_context_note
 from kabot.memory.graph_memory import GraphMemory
+from kabot.utils.workspace_templates import ensure_workspace_templates
 
 
 def _write_skill(skill_root: Path, skill_name: str, body: str, *, description: str = "test skill") -> None:
@@ -151,7 +152,7 @@ def test_context_builder_budget_overrides_support_token_mode_hemat(tmp_path: Pat
     assert overrides["current"] > 0.10
 
 
-def test_context_builder_loads_auto_selected_skill_content_for_decorated_unavailable_names(tmp_path: Path):
+def test_context_builder_exposes_summary_first_skill_guidance_for_auto_selected_matches(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     _write_skill(
@@ -169,33 +170,52 @@ def test_context_builder_loads_auto_selected_skill_content_for_decorated_unavail
         current_message="please use the 1password skill for this vault task",
     )
 
-    assert "Auto-Selected Skills" in prompt
-    assert "1password [NEEDS: ENV: OP_SESSION]" in prompt
-    assert "Use 1Password vaults to fetch and manage credentials." in prompt
+    assert "## Skills (mandatory)" in prompt
+    assert "<available_skills>" in prompt
+    assert "1password" in prompt
+    assert "Use 1Password vaults to fetch and manage credentials." not in prompt
 
 
-def test_context_builder_skips_skills_summary_for_explicit_skill_usage_prompt(tmp_path: Path):
+def test_context_builder_uses_summary_first_block_for_explicit_skill_usage_prompt(tmp_path: Path):
     builder = ContextBuilder(tmp_path)
     builder.skills.match_skills = lambda _msg, _profile: ["weather"]  # type: ignore[assignment]
     builder.skills.load_skills_for_context = lambda _skills: "Bring weather context into the reply."  # type: ignore[assignment]
 
     calls = {"summary": 0}
 
-    def _summary() -> str:
+    def _summary(_skills: list[str]) -> str:
         calls["summary"] += 1
-        return "<skills><skill /></skills>"
+        return "<skills><skill><name>weather</name></skill></skills>"
 
-    builder.skills.build_skills_summary = _summary  # type: ignore[assignment]
+    builder.skills.build_skills_summary_for_names = _summary  # type: ignore[assignment]
 
     prompt = builder.build_system_prompt(
         profile="GENERAL",
         current_message="Please use the weather skill for this request.",
     )
 
-    assert "Auto-Selected Skills" in prompt
-    assert "Bring weather context into the reply." in prompt
-    assert "Available Skills (Reference Documents)" not in prompt
-    assert calls["summary"] == 0
+    assert "## Skills (mandatory)" in prompt
+    assert "<available_skills>" in prompt
+    assert "Bring weather context into the reply." not in prompt
+    assert calls["summary"] == 1
+
+
+def test_context_builder_loads_forced_skill_names_even_without_auto_match(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    builder.skills.match_skills = lambda _msg, _profile: []  # type: ignore[assignment]
+    builder.skills.load_skills_for_context = lambda skills: (
+        "Forced weather skill context loaded." if skills == ["weather"] else ""
+    )  # type: ignore[assignment]
+
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="prediksi 3-6 jam ke depan",
+        skill_names=["weather"],
+    )
+
+    assert "Forced weather skill context loaded." in prompt
+    assert "### Skill: weather" not in prompt
+    assert "# Requested Skills" in prompt
 
 
 def test_context_builder_includes_skills_summary_for_catalog_question(tmp_path: Path):
@@ -215,36 +235,41 @@ def test_context_builder_includes_skills_summary_for_catalog_question(tmp_path: 
         current_message="Skill apa yang tersedia di workspace ini?",
     )
 
-    assert "Available Skills (Reference Documents)" in prompt
-    assert "<skills><skill><name>weather</name></skill></skills>" in prompt
+    assert "## Skills (mandatory)" in prompt
+    assert "<available_skills>" in prompt
+    assert "<skill><name>weather</name></skill>" in prompt
     assert calls["summary"] == 1
 
 
 def test_context_builder_probe_mode_uses_compact_general_prompt_without_bootstrap_bloat(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "AGENTS.md").write_text("A" * 5000, encoding="utf-8")
+    ensure_workspace_templates(workspace)
+    (workspace / "AGENTS.md").write_text("A" * 600, encoding="utf-8")
 
     builder = ContextBuilder(workspace)
     builder.skills.match_skills = lambda _msg, _profile: ["weather"]  # type: ignore[assignment]
     builder.skills.load_skills_for_context = lambda _skills: "Use live weather tools."  # type: ignore[assignment]
 
-    normal_prompt = builder.build_messages(
-        history=[],
-        current_message="Please use the weather skill for this request.",
+    normal_prompt = builder.build_system_prompt(
         profile="GENERAL",
-    )[0]["content"]
-    compact_prompt = builder.build_messages(
-        history=[],
         current_message="Please use the weather skill for this request.",
+    )
+    compact_prompt = builder.build_system_prompt(
         profile="GENERAL",
+        current_message="Please use the weather skill for this request.",
         budget_hints={"probe_mode": True},
-    )[0]["content"]
+    )
 
     assert "## AGENTS.md" in normal_prompt
     assert "## AGENTS.md" not in compact_prompt
-    assert "Auto-Selected Skills" in compact_prompt
-    assert "Use live weather tools." in compact_prompt
+    assert "## BOOTSTRAP.md" in normal_prompt
+    assert "## BOOTSTRAP.md" not in compact_prompt
+    assert "## SOUL.md" in compact_prompt
+    assert "## TOOLS.md" in compact_prompt
+    assert "## Workspace Persona & Local Truth" in compact_prompt
+    assert "## Skills (mandatory)" in compact_prompt
+    assert "Use live weather tools." not in compact_prompt
     assert len(compact_prompt) < len(normal_prompt)
 
 
@@ -256,6 +281,57 @@ def test_context_builder_identity_includes_explicit_timezone_label(tmp_path: Pat
     assert "## Current Time" in prompt
     assert "Timezone:" in prompt
     assert "UTC" in prompt
+
+
+def test_context_builder_loads_bootstrap_md_when_present(tmp_path: Path):
+    (tmp_path / "BOOTSTRAP.md").write_text(
+        "# Bootstrap\n\nAsk onboarding questions before regular conversation.",
+        encoding="utf-8",
+    )
+    builder = ContextBuilder(tmp_path)
+
+    prompt = builder.build_system_prompt(profile="GENERAL", current_message="/start")
+
+    assert "## BOOTSTRAP.md" in prompt
+    assert "Ask onboarding questions before regular conversation." in prompt
+
+
+def test_context_builder_loads_tools_md_when_present(tmp_path: Path):
+    (tmp_path / "TOOLS.md").write_text(
+        "# Tools\n\n- home-server -> 192.168.1.10",
+        encoding="utf-8",
+    )
+    builder = ContextBuilder(tmp_path)
+
+    prompt = builder.build_system_prompt(profile="GENERAL", current_message="cek status server")
+
+    assert "## TOOLS.md" in prompt
+    assert "home-server -> 192.168.1.10" in prompt
+
+
+def test_context_builder_backfills_missing_identity_for_legacy_workspace(tmp_path: Path):
+    (tmp_path / "AGENTS.md").write_text("# Agent Instructions\n", encoding="utf-8")
+    (tmp_path / "SOUL.md").write_text("# SOUL.md - Who You Are\n", encoding="utf-8")
+    (tmp_path / "TOOLS.md").write_text("# TOOLS.md - Local Notes\n", encoding="utf-8")
+    (tmp_path / "USER.md").write_text("# USER.md - About Your Human\n", encoding="utf-8")
+
+    assert not (tmp_path / "IDENTITY.md").exists()
+
+    ContextBuilder(tmp_path)
+
+    assert (tmp_path / "IDENTITY.md").exists()
+
+
+def test_context_builder_prioritizes_workspace_persona_before_generic_profile(tmp_path: Path):
+    ensure_workspace_templates(tmp_path)
+    builder = ContextBuilder(tmp_path)
+
+    prompt = builder.build_system_prompt(profile="GENERAL", current_message="halo")
+
+    assert "## Workspace Persona & Local Truth" in prompt
+    assert "## SOUL.md" in prompt
+    assert "# Role: General Assistant" in prompt
+    assert prompt.index("## SOUL.md") < prompt.index("# Role: General Assistant")
 
 
 def test_context_builder_probe_mode_skips_auto_skill_match_for_light_general_turn(tmp_path: Path):
@@ -296,6 +372,9 @@ def test_context_builder_probe_mode_still_loads_explicit_skill_context(tmp_path:
     builder = ContextBuilder(tmp_path)
     builder.skills.match_skills = lambda _msg, _profile: ["weather"]  # type: ignore[assignment]
     builder.skills.load_skills_for_context = lambda _skills: "Use live weather tools."  # type: ignore[assignment]
+    builder.skills.build_skills_summary_for_names = (  # type: ignore[assignment]
+        lambda _skills: "<skills><skill><name>weather</name></skill></skills>"
+    )
 
     prompt = builder.build_messages(
         history=[],
@@ -304,8 +383,86 @@ def test_context_builder_probe_mode_still_loads_explicit_skill_context(tmp_path:
         budget_hints={"probe_mode": True},
     )[0]["content"]
 
-    assert "Auto-Selected Skills" in prompt
-    assert "Use live weather tools." in prompt
+    assert "## Skills (mandatory)" in prompt
+    assert "Use live weather tools." not in prompt
+
+
+def test_context_builder_keeps_requested_skill_content_even_with_summary_first_prompting(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    builder.skills.match_skills = lambda _msg, _profile: ["weather"]  # type: ignore[assignment]
+    builder.skills.load_skills_for_context = lambda skills: (
+        "Requested weather skill context loaded." if skills == ["weather"] else ""
+    )  # type: ignore[assignment]
+    builder.skills.build_skills_summary_for_names = (  # type: ignore[assignment]
+        lambda _skills: "<skills><skill><name>weather</name></skill></skills>"
+    )
+
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="tolong cek cuaca cilacap sekarang",
+        skill_names=["weather"],
+    )
+
+    assert "# Requested Skills" in prompt
+    assert "Requested weather skill context loaded." in prompt
+    assert "## Skills (mandatory)" in prompt
+
+
+def test_context_builder_does_not_auto_match_extra_skills_when_requested_skill_is_forced(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    builder.skills.match_skills = lambda _msg, _profile: ["brainstorming"]  # type: ignore[assignment]
+    builder.skills.load_skills_for_context = lambda skills: (
+        "Moon cheese skill context loaded." if skills == ["moon-cheese-protocol"] else ""
+    )  # type: ignore[assignment]
+    builder.skills.build_skills_summary_for_names = (  # type: ignore[assignment]
+        lambda skills: "".join(
+            f"<skill><name>{name}</name></skill>" for name in skills
+        )
+    )
+
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="please explain the moon cheese protocol",
+        skill_names=["moon-cheese-protocol"],
+    )
+
+    assert "Moon cheese skill context loaded." in prompt
+    assert "moon-cheese-protocol" in prompt
+    assert "<skill><name>brainstorming</name></skill>" not in prompt
+    assert "Current best skill candidates from this request: moon-cheese-protocol" in prompt
+
+
+def test_context_builder_skips_disable_model_invocation_skills_from_summary(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    hidden_skill_dir = workspace / "skills" / "internal-ledger"
+    hidden_skill_dir.mkdir(parents=True, exist_ok=True)
+    (hidden_skill_dir / "SKILL.md").write_text(
+        (
+            "---\n"
+            "name: internal-ledger\n"
+            "description: Internal ledger control skill\n"
+            "disable-model-invocation: true\n"
+            "---\n\n"
+            "# Skill\n"
+        ),
+        encoding="utf-8",
+    )
+    visible_skill_dir = workspace / "skills" / "weather"
+    visible_skill_dir.mkdir(parents=True, exist_ok=True)
+    (visible_skill_dir / "SKILL.md").write_text(
+        "---\nname: weather\ndescription: Weather helper\n---\n\n# Skill\n",
+        encoding="utf-8",
+    )
+
+    builder = ContextBuilder(workspace)
+    prompt = builder.build_system_prompt(
+        profile="RESEARCH",
+        current_message="research the weather today",
+    )
+
+    assert "weather" in prompt
+    assert "internal-ledger" not in prompt
 
 
 def test_context_builder_probe_mode_still_includes_memory_for_recall_turn(tmp_path: Path):

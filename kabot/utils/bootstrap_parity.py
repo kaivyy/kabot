@@ -11,6 +11,8 @@ DEFAULT_REQUIRED_BOOTSTRAP_FILES = [
     "AGENTS.md",
     "SOUL.md",
     "USER.md",
+    "IDENTITY.md",
+    "BOOTSTRAP.md",
 ]
 
 

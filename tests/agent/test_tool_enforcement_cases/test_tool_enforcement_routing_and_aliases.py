@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from kabot.agent.cron_fallback_nlp import required_tool_for_query as cron_required_tool_for_query
 from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.loop import AgentLoop
 from kabot.agent.loop_core import tool_enforcement as tool_enforcement_module
@@ -149,29 +150,77 @@ def test_required_tool_for_query_prefers_cleanup_when_cleanup_intent_and_disk_te
     assert agent_loop._required_tool_for_query("ya bersihkan cache agar free space lebih banyak") == "cleanup_system"
     assert agent_loop._required_tool_for_query("bersihkan space") == "cleanup_system"
 
+def test_agent_loop_registers_server_monitor_and_routes_runtime_status_followups(agent_loop):
+    assert agent_loop.tools.has("server_monitor") is True
+    assert agent_loop._required_tool_for_query("status server gimana") == "server_monitor"
+    assert agent_loop._required_tool_for_query("ya cek status server sekarang") == "server_monitor"
+
 def test_required_tool_for_query_detects_stock_from_explicit_tickers_without_stock_keyword(agent_loop):
-    assert agent_loop._required_tool_for_query("bbri bbca bmri sekarang berapa") == "stock"
-    assert agent_loop._required_tool_for_query("bbca.jk now") == "stock"
-    assert agent_loop._required_tool_for_query("bank mandiri berapa sekarang") == "stock"
-    assert agent_loop._required_tool_for_query("bank rakyat indonesia dan bank central asia") == "stock"
-    assert agent_loop._required_tool_for_query("toyota sekarang berapa") == "stock"
-    assert agent_loop._required_tool_for_query("トヨタ 株価 いくら") == "stock"
+    assert agent_loop._required_tool_for_query("bbri bbca bmri sekarang berapa") is None
+    assert agent_loop._required_tool_for_query("bbca.jk now") is None
+    assert agent_loop._required_tool_for_query("bank mandiri berapa sekarang") is None
+    assert agent_loop._required_tool_for_query("bank rakyat indonesia dan bank central asia") is None
+    assert agent_loop._required_tool_for_query("toyota sekarang berapa") is None
+    assert agent_loop._required_tool_for_query("トヨタ 株価 いくら") is None
     assert agent_loop._required_tool_for_query("iya kamu bener") is None
     assert agent_loop._required_tool_for_query("umur kamu berapa sekarang") is None
 
 def test_required_tool_for_query_detects_stock_tracking_and_fx_queries(agent_loop):
-    assert agent_loop._required_tool_for_query("dalam 1 bulan terakhir gimana pergerakan saham bri nya") == "stock_analysis"
-    assert agent_loop._required_tool_for_query("track apple stock movement 3 months") == "stock_analysis"
-    assert agent_loop._required_tool_for_query("1 usd berapa rupiah sekarang") == "stock"
-    assert agent_loop._required_tool_for_query("kurs usd ke idr hari ini") == "stock"
+    assert agent_loop._required_tool_for_query("dalam 1 bulan terakhir gimana pergerakan saham bri nya") is None
+    assert agent_loop._required_tool_for_query("track apple stock movement 3 months") is None
+    assert agent_loop._required_tool_for_query("1 usd berapa rupiah sekarang") is None
+    assert agent_loop._required_tool_for_query("kurs usd ke idr hari ini") is None
     assert agent_loop._required_tool_for_query("kalau dirupiahkan dengan harga sekarang berapa") is None
     assert (
         agent_loop._required_tool_for_query(
             "If Apple is around 260 dollars, roughly how much is that in Indonesian rupiah today?"
         )
-        == "stock"
+        is None
     )
     assert agent_loop._required_tool_for_query("cenderung turun atau naik?") is None
+
+
+def test_required_tool_for_query_prefers_matching_external_finance_skill_over_builtin_stock_crypto(agent_loop):
+    skills_root = agent_loop.workspace / "skills" / "manus-stock-analysis"
+    skills_root.mkdir(parents=True, exist_ok=True)
+    (skills_root / "SKILL.md").write_text(
+        "---\n"
+        "name: manus-stock-analysis\n"
+        'description: "Analyze stocks, crypto, market quotes, tickers, trends, and finance watchlists."\n'
+        "---\n\n"
+        "# Manus Stock Analysis\n",
+        encoding="utf-8",
+    )
+
+    matches = agent_loop.context.skills.match_skills(
+        "bbca bbri bmri adaro berapa sekarang",
+        profile="GENERAL",
+    )
+    assert matches
+    assert matches[0].startswith("manus-stock-analysis")
+
+    assert agent_loop._required_tool_for_query("bbca bbri bmri adaro berapa sekarang") is None
+    assert agent_loop._required_tool_for_query("harga btc terbaru") is None
+
+
+def test_required_tool_for_query_suppresses_legacy_market_tools_when_external_finance_skill_exists(agent_loop):
+    skills_root = agent_loop.workspace / "skills" / "stock-analysis"
+    skills_root.mkdir(parents=True, exist_ok=True)
+    (skills_root / "SKILL.md").write_text(
+        "---\n"
+        "name: stock-analysis\n"
+        'description: "Analyze stocks, crypto, market trends, company research, and watchlists."\n'
+        "---\n\n"
+        "# Stock Analysis\n",
+        encoding="utf-8",
+    )
+
+    assert agent_loop.context.skills.has_preferred_external_skill_match(
+        "cek harga saham bca bri mandiri adaro",
+        profile="GENERAL",
+    )
+    assert agent_loop._required_tool_for_query("cek harga saham bca bri mandiri adaro") is None
+    assert agent_loop._required_tool_for_query("bandingkan saham bca bri mandiri adaro") is None
 
 def test_required_tool_for_query_chat_mix_matrix(agent_loop):
     # End-to-end style routing expectations for common real-chat prompts.
@@ -181,8 +230,8 @@ def test_required_tool_for_query_chat_mix_matrix(agent_loop):
             "web_search",
         ),
         ("cek suhu purwokerto jawa tengah sekarang", "weather"),
-        ("cek harga saham bbri bbca bmri adaro", "stock"),
-        ("harga btc terbaru", "crypto"),
+        ("cek harga saham bbri bbca bmri adaro", None),
+        ("harga btc terbaru", None),
         # Image/TTS should not be forced into deterministic stock/weather/cron paths.
         ("buatkan gambar mobil di hutan", None),
         ("tolong bacakan teks ini jadi suara", None),
@@ -218,7 +267,18 @@ def test_required_tool_for_query_does_not_misclassify_file_or_stop_messages_as_s
     assert agent_loop._required_tool_for_query("stop bahas cuaca") is None
     assert agent_loop._required_tool_for_query("jangan bahas crypto") is None
     assert agent_loop._required_tool_for_query("bukan tentang berita") is None
-    assert agent_loop._required_tool_for_query("market cap bbca sekarang") == "stock"
+    assert agent_loop._required_tool_for_query("market cap bbca sekarang") is None
+
+
+def test_required_tool_for_query_prefers_web_fetch_for_direct_page_requests(agent_loop):
+    assert (
+        agent_loop._required_tool_for_query("fetch https://example.com and summarize the page")
+        == "web_fetch"
+    )
+    assert (
+        agent_loop._required_tool_for_query("ambil isi website example.com lalu ringkas")
+        == "web_fetch"
+    )
 
 
 def test_required_tool_for_query_does_not_route_general_knowledge_questions_to_stock(agent_loop):
@@ -228,6 +288,8 @@ def test_required_tool_for_query_does_not_route_general_knowledge_questions_to_s
     assert agent_loop._required_tool_for_query("iq manusia berapa") is None
     assert agent_loop._required_tool_for_query("IQ MANUSIA RATA RATA BERAPA") is None
     assert agent_loop._required_tool_for_query("KALAU EQ MANUSIA BERAPA") is None
+    assert agent_loop._required_tool_for_query("koneksi ke meta threads bisa?") is None
+    assert agent_loop._required_tool_for_query("saya mau koneksi api meta threads") is None
 
 
 def test_required_tool_for_query_does_not_route_personal_hr_zone_or_quoted_health_context_to_web_or_weather(agent_loop):
@@ -471,8 +533,8 @@ def test_infer_required_tool_from_history_prefers_recent_substantive_user_intent
 
     tool, source = agent_loop._infer_required_tool_from_history("lanjut", history)
 
-    assert tool == "stock"
-    assert source == "bbri bbca bmri sekarang berapa"
+    assert tool == "web_search"
+    assert source == "berita terbaru 2026 sekarang"
 
 def test_infer_required_tool_from_history_skips_low_information_user_turns(agent_loop):
     history = [
@@ -510,13 +572,13 @@ def test_required_tool_for_query_prefers_stock_analysis_for_trade_plan_requests(
         agent_loop._required_tool_for_query(
             "Buatkan 3 skenario trading AAPL: breakout, pullback, invalidation"
         )
-        == "stock_analysis"
+        is None
     )
     assert (
         agent_loop._required_tool_for_query(
             "buatkan rencana entry exit aapl dengan support resistance dan stop loss"
         )
-        == "stock_analysis"
+        is None
     )
 
 def test_required_tool_for_query_keeps_sysinfo_for_non_cleanup_disk_query(agent_loop):
@@ -530,6 +592,67 @@ def test_required_tool_for_query_supports_multilingual_cleanup_intent(agent_loop
 def test_required_tool_for_query_keeps_multilingual_sysinfo_without_cleanup_action(agent_loop):
     assert agent_loop._required_tool_for_query("พื้นที่ดิสก์คงเหลือเท่าไหร่") == "get_system_info"
     assert agent_loop._required_tool_for_query("磁盘空间剩余多少") == "get_system_info"
+
+
+def test_required_tool_for_query_prefers_server_monitor_for_runtime_status_prompts():
+    for prompt in (
+        "status server gimana",
+        "ya cek status server sekarang",
+        "status server vps kabot",
+        "bukan web, tapi status server yang dipake kamu",
+    ):
+        assert (
+            cron_required_tool_for_query(
+                prompt,
+                has_weather_tool=True,
+                has_cron_tool=True,
+                has_system_info_tool=True,
+                has_server_monitor_tool=True,
+                has_web_search_tool=True,
+            )
+            == "server_monitor"
+        )
+
+
+def test_required_tool_for_query_detects_natural_process_inspection_prompts():
+    for text in (
+        "cek langsung proses yang paling makan CPU/RAM di perangkat ini",
+        "proses yang paling makan cpu ram",
+        "cek proses teratas yang makan resource",
+    ):
+        assert (
+            cron_required_tool_for_query(
+                text,
+                has_weather_tool=False,
+                has_cron_tool=False,
+                has_process_memory_tool=True,
+                has_server_monitor_tool=True,
+            )
+            == "get_process_memory"
+        )
+
+
+def test_required_tool_for_query_routes_memory_commit_to_save_memory_not_process_memory():
+    assert (
+        cron_required_tool_for_query(
+            "udah di bilang, panggil aku Maha Raja, tolong simpan di memori",
+            has_weather_tool=False,
+            has_cron_tool=False,
+            has_process_memory_tool=True,
+            has_save_memory_tool=True,
+        )
+        == "save_memory"
+    )
+    assert (
+        cron_required_tool_for_query(
+            "tolong simpan di memori",
+            has_weather_tool=False,
+            has_cron_tool=False,
+            has_process_memory_tool=True,
+            has_save_memory_tool=True,
+        )
+        == "save_memory"
+    )
 
 @pytest.mark.asyncio
 async def test_execute_required_tool_fallback_weather_calls_weather_tool(agent_loop):
@@ -889,6 +1012,37 @@ async def test_execute_required_tool_fallback_weather_explicit_new_location_beat
     execute_mock.assert_awaited_once_with(
         "weather",
         {"location": "Purwokerto", "context_text": "suhu di purwokerto sekarang berapa"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_weather_forecast_followup_uses_last_location_and_hour_window(
+    agent_loop,
+):
+    execute_mock = AsyncMock(return_value="Cilacap forecast")
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="prediksi 3-6 jam ke depan",
+        metadata={"last_tool_context": {"tool": "weather", "location": "Cilacap"}},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("weather", msg)
+
+    assert result == "Cilacap forecast"
+    execute_mock.assert_awaited_once_with(
+        "weather",
+        {
+            "location": "Cilacap",
+            "context_text": "prediksi 3-6 jam ke depan",
+            "mode": "hourly",
+            "hours_ahead_start": 3,
+            "hours_ahead_end": 6,
+        },
     )
 
 @pytest.mark.asyncio

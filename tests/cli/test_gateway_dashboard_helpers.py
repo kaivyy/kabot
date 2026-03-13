@@ -530,6 +530,110 @@ def test_build_dashboard_status_payload_includes_recent_turn_continuity_metadata
     assert payload["recent_turn"]["completion_evidence"]["executed_tools"] == ["weather"]
 
 
+def test_build_dashboard_status_payload_includes_command_surface(monkeypatch, tmp_path):
+    from kabot.cli import commands
+    from kabot.config.schema import Config
+    from kabot.core.command_router import CommandRouter
+
+    cfg = Config()
+    cfg.agents.defaults.workspace = str(tmp_path)
+
+    router = CommandRouter()
+
+    async def _status_handler(ctx):
+        return "ok"
+
+    router.register("/status", _status_handler, "Show status")
+    router.register("/update", _status_handler, "Update bot", admin_only=True)
+
+    class _Loader:
+        def __init__(self, workspace, skills_config=None):
+            pass
+
+        def list_skills(self, filter_unavailable=False):
+            return [
+                {
+                    "name": "meta-threads-official",
+                    "skill_key": "meta-threads-official",
+                    "eligible": True,
+                    "disabled": False,
+                    "description": "Connect to Meta Threads",
+                    "primaryEnv": "",
+                    "missing": {"env": [], "bins": [], "os": []},
+                }
+            ]
+
+    monkeypatch.setattr("kabot.agent.skills.SkillsLoader", _Loader)
+    monkeypatch.setattr("kabot.core.command_surfaces.SkillsLoader", _Loader)
+
+    payload = commands._build_dashboard_status_payload(
+        gateway_started_at=1709800000,
+        runtime_model="gpt-4o-mini",
+        runtime_fallbacks=[],
+        runtime_host="127.0.0.1",
+        runtime_port=18790,
+        tailscale_mode="off",
+        session_manager=SimpleNamespace(sessions_dir=tmp_path, list_sessions=lambda: []),
+        channels=SimpleNamespace(enabled_channels=["telegram"], get_status=lambda: {}),
+        cron=SimpleNamespace(
+            status=lambda: {"enabled": True, "jobs": 0},
+            list_jobs=lambda include_disabled=False: [],
+            get_run_history=lambda job_id: [],
+        ),
+        config=cfg,
+        agent=SimpleNamespace(
+            workspace=tmp_path,
+            command_router=router,
+            subagents=SimpleNamespace(registry=SimpleNamespace(list_all=lambda: [])),
+        ),
+    )
+
+    assert payload["command_surface"] == [
+        {
+            "name": "start",
+            "description": "Start or resume the conversation",
+            "source": "static",
+            "skill_name": "",
+            "admin_only": False,
+        },
+        {
+            "name": "reset",
+            "description": "Clear conversation context",
+            "source": "static",
+            "skill_name": "",
+            "admin_only": False,
+        },
+        {
+            "name": "help",
+            "description": "Show available commands",
+            "source": "static",
+            "skill_name": "",
+            "admin_only": False,
+        },
+        {
+            "name": "status",
+            "description": "Show status",
+            "source": "router",
+            "skill_name": "",
+            "admin_only": False,
+        },
+        {
+            "name": "update",
+            "description": "Update bot",
+            "source": "router",
+            "skill_name": "",
+            "admin_only": True,
+        },
+        {
+            "name": "meta_threads_official",
+            "description": "Connect to Meta Threads",
+            "source": "skill",
+            "skill_name": "meta-threads-official",
+            "admin_only": False,
+        },
+    ]
+
+
 @pytest.mark.asyncio
 async def test_gateway_dashboard_control_action_cron_disable_updates_job_state():
     from kabot.cli import commands

@@ -18,6 +18,7 @@ from kabot import __logo__, __version__
 from kabot.cli import agents, mode
 from kabot.cli.dashboard_payloads import (
     _build_dashboard_channel_rows,
+    _build_dashboard_command_surface,
     _build_dashboard_config_summary,
     _build_dashboard_cost_payload,
     _build_dashboard_cron_snapshot,
@@ -335,9 +336,16 @@ from kabot.cli.commands_setup import (  # noqa: E402,I001
     google_auth,
     onboard,
     setup,
-    skills_install,
-    train,
-)
+     skills_info,
+     skills_install,
+     skills_list,
+     skills_pack,
+     skills_publish,
+     skills_search,
+     skills_sync,
+     skills_update,
+     train,
+  )
 from kabot.cli.commands_system import (  # noqa: E402,I001
     _remote_health_snapshot,
     _resolve_remote_service,
@@ -468,9 +476,16 @@ __all__ = [
     "remote_bootstrap",
     "security_audit",
     "setup",
-    "skills_app",
-    "skills_install",
-    "status",
+     "skills_app",
+     "skills_info",
+     "skills_install",
+     "skills_list",
+     "skills_pack",
+     "skills_publish",
+     "skills_search",
+     "skills_sync",
+     "skills_update",
+     "status",
     "subprocess",
     "train",
     "version_callback",
@@ -509,7 +524,14 @@ app.command("google-auth")(google_auth)
 app.command("train")(train)
 app.command()(setup)
 app.command()(config)
+skills_app.command("search")(skills_search)
+skills_app.command("info")(skills_info)
 skills_app.command("install")(skills_install)
+skills_app.command("list")(skills_list)
+skills_app.command("pack")(skills_pack)
+skills_app.command("publish")(skills_publish)
+skills_app.command("sync")(skills_sync)
+skills_app.command("update")(skills_update)
 app.command()(gateway)
 app.command()(agent)
 models_app.command("list")(models_list)

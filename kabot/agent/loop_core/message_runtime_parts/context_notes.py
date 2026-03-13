@@ -11,6 +11,7 @@ from typing import Any
 
 from loguru import logger
 
+from kabot.agent.skills_matching import normalize_skill_reference_name
 from kabot.agent.loop_core.message_runtime_parts.followup import (
     _FILELIKE_EXTENSION_RE,
     _FILESYSTEM_LOCATION_QUERY_PATTERNS,
@@ -23,6 +24,7 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _extract_read_file_path_proxy,
     _is_short_context_followup,
     _looks_like_live_research_query,
+    _looks_like_side_effect_request,
     _looks_like_short_confirmation,
     _normalize_text,
 )
@@ -31,6 +33,37 @@ from kabot.agent.loop_core.message_runtime_parts.reference_resolution import (
     _looks_like_contextual_followup_request,
 )
 from kabot.bus.events import InboundMessage
+
+
+_RECENT_CREATED_SKILL_PATH_RE = re.compile(
+    r"(?:^|[\\/])skills[\\/]+([^\\/]+)[\\/]SKILL\.md$",
+    re.IGNORECASE,
+)
+_EXISTING_SKILL_USE_MARKERS = (
+    "pakai skill",
+    "gunakan skill",
+    "use skill",
+    "use the skill",
+    "use that skill",
+    "run the skill",
+    "run that skill",
+    "jalankan skill",
+    "lanjut pakai skill",
+    "lanjutkan pakai skill",
+    "pakai skillnya",
+    "gunakan skillnya",
+    "jalankan skillnya",
+)
+_ASSISTANT_EXISTING_SKILL_OFFER_MARKERS = (
+    "pakai skill ini",
+    "gunakan skill ini",
+    "use this skill",
+    "use that skill",
+    "run this skill",
+    "run that skill",
+)
+
+
 def _looks_like_filesystem_location_query(text: str) -> bool:
     raw = str(text or "").strip()
     normalized = _normalize_text(raw)
@@ -170,6 +203,12 @@ def _looks_like_explicit_new_request(text: str) -> bool:
     if _looks_like_contextual_followup_request(raw):
         return False
 
+    if len(tokens) >= 4 and (
+        _looks_like_live_research_query(normalized)
+        or _looks_like_side_effect_request(raw)
+    ):
+        return True
+
     if len(tokens) >= 4 and any(
         marker in normalized
         for marker in (
@@ -208,6 +247,38 @@ def _infer_recent_file_path_from_history(history: list[dict[str, Any]]) -> str:
         if path:
             return path
     return ""
+
+
+def _infer_recent_created_skill_name_from_path(path: str) -> str:
+    raw = str(path or "").strip()
+    if not raw:
+        return ""
+    normalized = raw.replace("\\", "/")
+    match = _RECENT_CREATED_SKILL_PATH_RE.search(normalized)
+    if not match:
+        return ""
+    return normalize_skill_reference_name(match.group(1))
+
+
+def _looks_like_existing_skill_use_followup(
+    text: str,
+    *,
+    assistant_offer_text: str = "",
+) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    if any(marker in normalized for marker in _EXISTING_SKILL_USE_MARKERS):
+        return True
+    if not (_looks_like_short_confirmation(raw) or _looks_like_contextual_followup_request(raw)):
+        return False
+    offer_normalized = _normalize_text(assistant_offer_text)
+    if not offer_normalized:
+        return False
+    return any(marker in offer_normalized for marker in _ASSISTANT_EXISTING_SKILL_OFFER_MARKERS)
 
 
 def _infer_recent_assistant_option_prompt_from_history(history: list[dict[str, Any]]) -> str:
@@ -308,6 +379,50 @@ def _looks_like_skill_creation_approval(text: str) -> bool:
     if _looks_like_short_confirmation(raw):
         return True
     return any(marker in normalized for marker in _SKILL_CREATION_APPROVAL_MARKERS)
+
+
+def _looks_like_skill_workflow_followup_detail(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    if _looks_like_short_confirmation(raw):
+        return False
+    if _looks_like_contextual_followup_request(raw):
+        return True
+    if re.search(
+        r"(?i)\b("
+        r"struktur|structure|alur|flow|template|format|layout|anatomy|"
+        r"references?|scripts?|assets?|skill\.?md|workflow"
+        r")\b",
+        normalized,
+    ) and re.search(
+        r"(?i)\b(skill|skills|skillnya|skillsnya)\b|skill\.?md|references?/|scripts?/|assets?/",
+        normalized,
+    ):
+        return True
+
+    numbered_lines = 0
+    bullet_lines = 0
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r"^\d+[.)]\s*\S", stripped):
+            numbered_lines += 1
+            continue
+        if stripped.startswith(("- ", "* ", "• ")):
+            bullet_lines += 1
+    if numbered_lines >= 2 or bullet_lines >= 2:
+        return True
+
+    tokens = [part for part in normalized.split(" ") if part]
+    if len(tokens) >= 6 and not any(mark in raw for mark in ("?", "？", "¿")):
+        if any(mark in raw for mark in ("\n", ",", ";", ":")):
+            return True
+    return False
 
 
 def _assistant_response_looks_like_skill_plan(text: str) -> bool:

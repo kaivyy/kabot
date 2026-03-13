@@ -26,10 +26,19 @@ class ChannelManager:
     - Route outbound messages
     """
 
-    def __init__(self, config: Config, bus: MessageBus, session_manager: "SessionManager | None" = None):
+    def __init__(
+        self,
+        config: Config,
+        bus: MessageBus,
+        session_manager: "SessionManager | None" = None,
+        command_router: Any | None = None,
+        agent_loop: Any | None = None,
+    ):
         self.config = config
         self.bus = bus
         self.session_manager = session_manager
+        self.command_router = command_router
+        self.agent_loop = agent_loop
         feature_flags = getattr(self.config.channels, "adapters", {}) or {}
         self.adapter_registry = AdapterRegistry(feature_flags=dict(feature_flags))
         self.channels: dict[str, BaseChannel] = {}
@@ -52,10 +61,12 @@ class ChannelManager:
                 config=self.config,
                 bus=self.bus,
                 session_manager=self.session_manager,
+                command_router=self.command_router,
             )
             if not channel:
                 continue
             self._decorate_channel_security(channel)
+            self._decorate_channel_runtime(channel)
             self._decorate_instance_channel(channel, channel_key, instance.type, instance.id, instance.agent_binding)
             self.channels[channel_key] = channel
             logger.info(f"{instance.type} instance '{instance.id}' enabled")
@@ -69,10 +80,12 @@ class ChannelManager:
                 config=self.config,
                 bus=self.bus,
                 session_manager=self.session_manager,
+                command_router=self.command_router,
             )
             if not channel:
                 continue
             self._decorate_channel_security(channel)
+            self._decorate_channel_runtime(channel)
             self.channels[status.key] = channel
             logger.info(f"{status.key} channel enabled")
 
@@ -80,6 +93,13 @@ class ChannelManager:
         """Attach global security preset so channels can enforce strict access policy."""
         preset = str(getattr(self.config.tools.exec, "policy_preset", "balanced") or "balanced").strip().lower()
         setattr(channel, "_security_policy_preset", preset)
+
+    def _decorate_channel_runtime(self, channel: BaseChannel) -> None:
+        """Attach runtime objects channels may need for command or tool flows."""
+        if self.command_router is not None:
+            setattr(channel, "command_router", self.command_router)
+        if self.agent_loop is not None:
+            setattr(channel, "agent_loop", self.agent_loop)
 
     async def _start_channel(self, name: str, channel: BaseChannel) -> None:
         """Start a channel and log any exceptions."""

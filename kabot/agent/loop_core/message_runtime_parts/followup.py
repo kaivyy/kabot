@@ -219,6 +219,14 @@ _SKILL_CREATION_APPROVAL_MARKERS = (
     "โอเค",
 )
 _WEATHER_CONTEXT_FOLLOWUP_MARKERS = (
+    "prediksi",
+    "prakiraan",
+    "ramalan",
+    "forecast",
+    "hourly",
+    "per jam",
+    "3-6 jam",
+    "jam ke depan",
     "angin",
     "berangin",
     "wind",

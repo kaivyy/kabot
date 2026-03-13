@@ -7,6 +7,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-03-13
+
+### Changed
+- External skill follow-ups now behave more like a real skill setup lane instead of falling back to generic runtime enforcement:
+  - when a committed/contextual action is already on an external skill lane, Kabot no longer forces a tool call before allowing a concrete next-step reply,
+  - follow-ups like `jq sudah` can now continue naturally with the next blocker or credential request instead of tripping `I couldn't verify completion because no tool or skill execution happened.`,
+  - the runtime now marks these turns with `external_skill_lane`, so external-skill setup/execution stays differentiated from generic tool-backed action flow.
+- Skill availability cache now refreshes when the runtime environment changes:
+  - `SkillsLoader.list_skills(...)` invalidates its snapshot cache when `PATH` or other environment variables change in-process,
+  - this closes a real replay bug where installing a missing CLI dependency like `jq` still left an external skill stuck in the old `unavailable` state for the next turn.
+- OpenClaw-style skill invocation policy is now wired into real Kabot behavior instead of staying as inert frontmatter:
+  - skills now expose `user-invocable`, `disable-model-invocation`, `command-dispatch`, `command-tool`, and `command-arg-mode` through Kabot's skill status/runtime metadata,
+  - slash-command surfaces now hide skills marked `user-invocable: false`,
+  - Telegram native skill commands now honor `command-dispatch: tool` + `command-tool` by seeding a direct tool-execution lane instead of always rephrasing the request back through the model,
+  - the execution runtime now has a fast path for these skill-command tool dispatches, so eligible slash-invoked skills can bypass model generation and execute the target tool directly,
+  - skills marked `disable-model-invocation: true` are now excluded from auto skill summaries, auto matching, and normal model prompt exposure while remaining available through explicit user invocation flows.
+- External skills now become a more reliable execution lane instead of just passive prompt candidates:
+  - when exactly one eligible non-builtin external skill clearly matches the turn, Kabot now promotes it into `forced_skill_names`, routes the turn through the agent loop, and injects an explicit execution note to follow that skill first,
+  - when a skill is already explicitly forced/requested, the context builder now skips auto-matching extra skills on top of it, keeping the prompt closer to a single-skill OpenClaw-style execution contract.
+- External-skill setup continuity is now more honest and more actionable:
+  - when exactly one non-builtin external skill is the clear best match but it is not yet executable, Kabot now still locks onto that skill as the active lane instead of silently dropping back to generic behavior,
+  - the runtime now injects a dedicated setup note with concrete blockers like missing CLI tools or env vars, so replies can tell the user the next real prerequisite to fix,
+  - this makes public skills that are installed but not fully ready behave more like a guided setup lane rather than a failed match.
+- Substantive new requests now break stale assistant-offer continuity more reliably:
+  - turns like `cek saldo futures binance sekarang` and `cek harga btc sekarang` are now treated as fresh requests instead of accidentally inheriting an older assistant offer,
+  - this closes a real replay bug where an installed external finance skill session could still drift into unrelated `find_files` follow-up logic from a previous turn.
+- Public skill-catalog flow is now closer to a registry-style experience:
+  - Kabot now supports `kabot skills search <query>`, `kabot skills info <slug>`, and `kabot skills install <slug>` with `--catalog-source` pointing to the builtin starter catalog, a local JSON file, or a JSON URL,
+  - catalog entries can resolve to `git`, local `path`, or remote bundle `url` install specs, so public-skill installs no longer have to start from raw `--git` / `--path` arguments,
+  - `kabot skills install` also now accepts `--url` directly for `.skill` / `.zip` archives from any host,
+  - Kabot now records installs in lockfiles and supports `kabot skills list` plus `kabot skills update <slug>|--all`, making external/public skills behave more like a reusable registry install instead of a one-shot copy,
+  - Kabot now also supports `kabot skills pack`, `kabot skills publish`, and `kabot skills sync` for a generic local JSON-catalog workflow, so skills can be bundled, shared, and re-indexed without depending on a specific website domain,
+  - `skills publish` emits versioned `.skill` bundles plus catalog entries, while `skills sync` scans local roots and skips invalid skill folders instead of aborting the entire batch,
+  - workspace installs are tracked in `<workspace>/.kabot/skills-lock.json` while managed installs are tracked in `~/.kabot/skills-lock.json`,
+  - this keeps Kabot aligned with a source-agnostic public skill flow while keeping local `.skill` / `.zip` bundles and unpacked folders fully supported.
+- Built-in finance tools are now explicitly archived as legacy fallbacks:
+  - `stock`, `crypto`, and `stock_analysis` are now documented and described as legacy built-in fallbacks rather than the preferred first stop,
+  - Kabot's public docs now steer users toward workspace/managed finance skills first, with the built-ins preserved for exact identifier lookups and compatibility.
+- OpenClaw-style external skill intake is broader now:
+  - `kabot skills install` now accepts `--path` for local skill folders and packaged `.skill` / `.zip` bundles, not just `--git`,
+  - local installs reuse the same copy + validation flow as git installs, so shared skills can come from downloads or external catalogs without manual copying,
+  - external skills that declare metadata under `metadata.openclaw` are now accepted by Kabot's skill loader alongside `metadata.kabot`.
+- Skill-first finance routing is stronger:
+  - when an eligible non-builtin external skill clearly matches a finance request, built-in `stock`, `stock_analysis`, and `crypto` tools are now treated as fallback instead of being forced immediately,
+  - finance-oriented external skills now match better without relying on explicit ticker-parser wins first, which keeps the runtime closer to a skill-first external pack model.
+- Telegram now has a first-step preview lifecycle closer to a draft-driven chat flow:
+  - `draft_update` and `reasoning_update` no longer reuse the same mutable bubble as `status_update`,
+  - Telegram keeps a dedicated preview message for partial answer text, separate from the queued/thinking status bubble,
+  - when the final reply is a simple text response, Kabot now edits that existing preview into the final message instead of always deleting interim state and sending a brand-new message,
+  - when preview materialization is not possible (for example media-only delivery), stale preview bubbles are cleaned up before the final result is sent.
+- Knowledge-first and tool-demotion routing are now more grounded:
+  - educational prompts like `explain Earth` or `tell me everything you know about Earth` no longer get mistaken for live web research just because words like `know` accidentally contain a live-search marker such as `now`,
+  - after a search tool returns a setup-hint, follow-ups like `just explain`, `use English`, and `don't use web search` now explicitly break out of the stale `web_search` latch and route back to a normal model answer,
+  - skill-creation continuity is now more semantic, so follow-ups like `struktur skillsnya gimana`, `flow skillnya gimana`, and `template skillnya dong` stay attached to the active skill-creation workflow instead of drifting into generic chat.
+- The built-in `skill-creator` scaffolding is now closer to a full skill package lifecycle:
+  - new skills created via `scripts/init_skill.py` now scaffold `assets/` alongside `SKILL.md`, `references/`, and `scripts/`,
+  - scaffolded `SKILL.md` files now include top-level `name` and `description` frontmatter plus explicit sections for references, scripts, and assets,
+  - the skill now ships `scripts/quick_validate.py` for lightweight structure/frontmatter validation and `scripts/package_skill.py` for bundling portable `.skill` archives,
+  - skill-creator guidance now explicitly teaches when to use `assets/`, how to validate a skill, and how to package it for sharing.
+- Hybrid memory retrieval is now properly end-to-end instead of silently dropping valid facts during reranking:
+  - remembered facts written through the Chroma + SQLite + BM25 stack now keep their fused retrieval score all the way into the reranker,
+  - fused candidate scores are normalized before reranking, so the reranker threshold no longer wipes out legitimate matches just because raw reciprocal-rank-fusion scores are numerically tiny,
+  - this fixes cases where memory subprocesses, embeddings, and BM25 indexing were all working, but `search_memory(...)` still returned no results for facts that had just been remembered.
+- Personal-memory recall is now more grounded and less echo-prone:
+  - explicit recall turns like `what do you remember about me` / `apa yang kamu ingat tentang saya` now prioritize stable conversational profile facts before generic hybrid-search matches,
+  - user-profile facts such as preferred form of address are injected into memory-recall context in a structured way,
+  - recall no longer surfaces the user's own memory-recall prompt as if that were the remembered fact.
+- Conversational identity/profile memory is now much more grounded:
+  - turns like `call me ...` / `panggil aku ...` now persist a lightweight user profile into session metadata and `USER.md` instead of getting lost in generic chat flow,
+  - self-identity follow-ups like `who am I?` / `siapa aku?` can now reply directly from that stored profile,
+  - explicit memory-save turns no longer collide with `get_process_memory`, so prompts like `tolong simpan di memori` route to `save_memory` while process/RAM inspection prompts still go to `get_process_memory`,
+  - bootstrap onboarding now respects persisted user profile fields too, so `USER.md` is no longer overwritten back to blank values after a successful conversational preference update.
+- Deterministic memory writes stay grounded but now answer more naturally:
+  - `save_memory` still executes through the deterministic direct-tool path,
+  - but its user-facing response is now summarized by the model instead of exposing raw tool text like `[OK] preference saved ...`,
+  - this keeps the runtime evidence-backed while making chat flow feel closer to a natural assistant.
+- Telegram command parity is now much closer to a skill-first workspace model:
+  - command-surface merging for Telegram now flows through a shared command-surface builder instead of duplicating static/router/skill merge logic inside the channel itself,
+  - Telegram channels now receive the live `CommandRouter` and active `AgentLoop` from gateway runtime instead of only static channel config,
+  - slash command handling no longer stops at `/start`, `/reset`, and `/help`; registered router commands now execute through a generic Telegram command handler,
+  - workspace skills now surface as Telegram slash commands too, so commands like `/cek_runtime_vps` can appear in the bot menu and route into the agent as skill-first requests,
+  - `/help` now lists workspace skill commands without hiding them behind the full merged command menu,
+  - Telegram command registration now normalizes router command names into Telegram-safe slash commands, keeps menu ordering stable, and can still include workspace skills even when no router commands are present,
+  - Telegram command sync now caches the last successful command-menu hash and skips redundant `set_my_commands` calls on restart,
+  - when Telegram rejects a command payload with `BOT_COMMANDS_TOO_MUCH`, Kabot now retries with a smaller capped menu instead of failing hard on the first attempt.
+- Built-in `/help` is now more registry-driven too:
+  - when command help runs with an active agent/workspace, it now formats a merged command surface from router commands plus workspace skill commands instead of showing router commands alone,
+  - help output now keeps admin-only command hints visible and separates skill commands into their own section,
+  - this makes non-Telegram help output closer to the same command surface Telegram sees.
+- Dashboard/gateway status payloads now expose the same merged command surface too:
+  - dashboard status now includes a serializable `command_surface` snapshot built from static commands, router commands, and workspace skill commands,
+  - this keeps dashboard UI consumers aligned with the same command registry shape used by Telegram menus and built-in `/help`,
+  - command-surface dashboard helpers are now re-exported through `kabot.cli.commands` like the other dashboard helper seams,
+  - the gateway dashboard now renders a dedicated `Commands` panel from that merged surface, so the operator UI can inspect the same slash-command registry seen by Telegram and `/help`.
+- Follow-up continuity is less sticky around stale update flows:
+  - parser-resolved tool requests like `periksa status server sekarang` now replace stale pending update follow-up state instead of inheriting the older `check_update` context,
+  - assistant-offer follow-ups can now infer concrete runtime checks such as process inspection from the promised offer context when a concrete request was captured,
+  - generic chat offers no longer over-escalate into action/tool flows just because the assistant sentence contains vague verbs like `kasih` or time phrases such as `60 seconds`,
+  - natural Indonesian process-inspection prompts such as `cek langsung proses yang paling makan CPU/RAM` and `cek proses teratas yang makan resource` now resolve to `get_process_memory` instead of falling through to generic chat or manual command suggestions.
+- Skill prompting is now more OpenClaw-style and less parser-heavy:
+  - ordinary auto-matched skills are no longer injected into the prompt as full `SKILL.md` bodies,
+  - Kabot now exposes an English summary-first `## Skills (mandatory)` block with `<available_skills>` entries and asks the model to read one `SKILL.md` only when it clearly applies,
+  - explicitly forced/requested skills still load their full body so grounded workflows like weather and skill-creation follow-ups stay stable,
+  - this reduces prompt bloat and shifts more skill selection toward the model instead of hard-coded parser paths.
+- Bootstrap onboarding now behaves much more like a workspace-driven first-run ritual instead of a static reminder:
+  - fresh workspace templates now use more persona-driven `SOUL.md`, `IDENTITY.md`, `USER.md`, and `BOOTSTRAP.md` text inspired by a more natural onboarding flow,
+  - fresh workspaces now also seed `TOOLS.md`, so local environment-specific notes are first-class workspace memory instead of an optional manual file,
+  - fresh workspaces now derive a stable per-workspace `starter spark`, so different installs/workspaces begin with slightly different default personality hints instead of every new bot sounding identical,
+  - that starter spark is deterministic for the same workspace path, so reinstalling or reseeding the same workspace does not randomly rewrite the bot's initial character,
+  - legacy workspaces now backfill missing bootstrap files like `IDENTITY.md` the moment `ContextBuilder` opens the workspace, so older installs no longer stay stuck on pre-parity file layouts,
+  - `SOUL.md`, `IDENTITY.md`, `USER.md`, and `TOOLS.md` now load as a high-priority `Workspace Persona & Local Truth` block before generic profile guidance,
+  - that high-priority workspace block now survives even compact/probe prompts, while bulky supplemental files like `AGENTS.md` and `BOOTSTRAP.md` stay out of compact mode,
+  - this makes workspace-defined tone, user identity, and local aliases influence the assistant more directly instead of competing with generic defaults later in the prompt,
+  - first-run onboarding answers can now be captured across multiple chat turns and persisted into `IDENTITY.md` and `USER.md`,
+  - permissive onboarding parsing now accepts numbered answers and labeled free text such as `Nama saya: ...` or `Timezone: WIB`,
+  - once minimum onboarding details are complete, `BOOTSTRAP.md` is automatically removed so the workspace stops behaving like a fresh agent on later turns,
+  - bootstrap persistence stores partial progress in session metadata, so identity questions and later user-profile questions can complete across multiple replies instead of needing a single rigid form.
+- Conversation tone and skill-authoring guidance are less stiff:
+  - the default CHAT profile now pushes harder toward grounded, specific, human-sounding replies instead of template-heavy helper phrasing,
+  - the built-in `skill-creator` skill now favors natural discovery and concise planning language instead of exposing rigid internal phase labels to the user.
+- Fresh workspaces now support bootstrap-style onboarding context:
+  - workspace template generation now seeds `IDENTITY.md` and `BOOTSTRAP.md` alongside the existing bootstrap files,
+  - bootstrap parity defaults/schema now treat those files as first-class workspace state,
+  - context building now injects `BOOTSTRAP.md`, so onboarding guidance can actually steer `/start` and other first-run turns.
+- Telegram startup and delivery are now more grounded:
+  - when a workspace still has `BOOTSTRAP.md`, Telegram `/start` is forwarded into the normal agent lane instead of being swallowed by a static welcome, allowing workspace bootstrap instructions to drive first-run setup,
+  - Telegram final text replies and document sends now honor `OutboundMessage.reply_to` through `reply_to_message_id`, so replies can attach to the exact triggering message instead of floating as generic chat posts.
+- Web-search capability availability is now more explicit and grounded:
+  - `web_search` no longer silently falls back to Google News RSS for broad non-news queries when all search-provider API keys are missing,
+  - no-key fallback is now limited to clear news/live-news style searches, preserving useful RSS behavior for headlines while avoiding fake "general web search" coverage,
+  - broader searches without Brave/Perplexity/Grok/Kimi credentials now return a concrete setup hint that points users to search API key configuration and suggests `web_fetch` for direct page retrieval,
+  - when `web_search` is invoked through the normal LLM tool-call loop and returns a provider/setup hint, runtime now passes that hint straight back to the user instead of letting the model improvise an unsupported answer from memory.
+- Chat-level exec approvals no longer depend on legacy slash approval turns:
+  - pending shell approvals now prompt users to confirm naturally in conversation, such as `ya jalankan sekarang` or `jangan jalankan`,
+  - message runtime now resolves pending exec approvals from the current session's chat turn instead of requiring a slash command handshake,
+  - the legacy pending approval queue and firewall stay in place for safety/audit, but the conversational UX no longer loops on slash-command approval retries.
+- Weather follow-up continuity is more robust for forecast-style turns:
+  - short follow-ups like `prediksi 3-6 jam ke depan` now stay attached to the last clean weather location instead of degrading into a location-less chat reply,
+  - weather follow-ups grounded to an existing weather context now override competing parser latches such as `cron`, so phrases like `prediksi 3-6 jam kedepan` no longer create reminder jobs by mistake,
+  - Open-Meteo-backed hourly forecast execution is now available for near-term requests, and short repeats like `prediksi` reuse the grounded weather context instead of falling back to current-weather-only output,
+  - weather location extraction now rejects forecast-only phrasing such as `prediksi 3-6 jam ke depan` as a fake place name,
+  - weather turns now force-load the `weather` skill into context and bypass the skill-skipping fast path so grounded location/forecast rules actually reach the model.
+- The built-in `weather` skill is now aligned around Open-Meteo as the primary source:
+  - the skill guide now follows a richer operational structure with explicit when-to-use, not-to-use, location-grounding, primary/fallback provider guidance, and quick response rules,
+  - the skill guide now also includes response templates for current weather, rain/next-hours, daily forecast, and missing-location prompts so weather answers stay compact and grounded,
+  - Open-Meteo is now documented as the default source for current conditions and forecasts, while `wttr.in` is framed as a fallback / quick-readable output path,
+  - the weather tool description shown to the model/runtime now also states that Open-Meteo is the primary source with `wttr.in` fallback.
+- Stock routing now avoids Meta Threads/API false positives:
+  - queries about `Meta Threads` integration/API setup no longer collapse into the `META` stock ticker path unless the user is clearly asking about the market symbol.
+- Skill/runtime continuity is more explicit:
+  - `forced_skill_names` are now loaded into prompts as requested skill content instead of only being recorded in turn metadata,
+  - server runtime prompts like `status server gimana` and `status server vps kabot` now stay pinned to `server_monitor` when that tool is available,
+  - the default `AgentLoop` tool registry now actually includes `server_monitor`, so real agent runs no longer lose runtime-status prompts to live-research `web_search` fallback just because the tool was absent from the registry,
+  - short confirmations after an assistant-committed server-status action now reuse the committed request text to infer `server_monitor` instead of falling back to generic chat,
+  - active skill-creation workflows now stay latched on substantive discovery answers such as numbered scope replies, so the agent can move on to planning instead of restarting discovery from the top,
+  - once a skill workflow is already in `approved`, later short follow-ups like `lanjut` keep that approved state instead of falling back to a pre-approval planning note,
+  - after a skill has already been created and the assistant offers to use it, follow-ups like `lanjut pakai skillnya`, `lanjut`, or even short shorthand like `lanj` now pivot out of `skill-creator`, force-load the just-created skill from the recent `skills/.../SKILL.md` path, and clear the stale creation latch for that turn,
+  - ultra-short referential follow-ups like `apa itu` now resolve against the latest assistant answer when recent context is available, instead of dropping into a generic literal-definition turn.
+- Real workflow smoke coverage now also guards server-status follow-ups:
+  - the smoke matrix includes a multi-turn `status server gimana -> ya cek status server sekarang` transcript,
+  - this catches regressions where server-status prompts accidentally fall back to `Results for:` web search output or generic `I couldn't verify completion...` non-execution responses.
+- Real workflow smoke coverage now also guards weather forecast follow-ups:
+  - the smoke matrix includes a multi-turn `cuaca cilacap -> interpret suhu -> prediksi 3-6 jam -> prediksi` transcript,
+  - this catches regressions where forecast follow-ups degrade into answer-reference chat text, current-weather fallbacks, or accidental cron job creation.
+
 ## [0.6.3] - 2026-03-12
 
 ### Added
@@ -94,8 +259,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - real CLI smoke now confirms `create -> send`, `find -> send`, and honest `generate -> send` blocker paths through the new `--delivery-cases` matrix instead of relying only on unit tests.
 - Command approval flow is now durable across CLI/agent process restarts:
   - pending `exec` approvals are now persisted on disk instead of living only in one in-memory `ExecTool` instance,
-  - `/approve <id>` and `/deny <id>` can now resolve the queued command from a fresh agent process, which fixes loops where users already sent the approval command but Kabot responded with `No matching pending command approval found.`,
-  - real CLI verification now succeeds end-to-end for a persisted approval followed by a fresh `/approve <id>` turn.
+  - persisted approval IDs can now resolve the queued command from a fresh agent process, which fixes loops where users had already sent the approval turn but Kabot responded with `No matching pending command approval found.`,
+  - real CLI verification now succeeds end-to-end for a persisted approval followed by a fresh approval turn in a new agent process.
 - Follow-up continuity is now more AI-first across generic tools, not only parser-known domains:
   - short follow-ups can reuse the most recent real tool execution context (`last_tool_execution`) as a continuation source,
   - MCP tool follow-ups can continue even before the tool name is re-derived from keyword parsers or eagerly present in the base tool registry,
@@ -2462,9 +2627,7 @@ Kabot idle (91 MB) Ã¢â€ â€™ User sends message Ã¢â€ â€™ mo
 - Added explicit approval workflow for firewall `ASK` mode:
   - Interactive CLI prompt (`once` / `always` / `deny`) for `exec` when TTY is available.
   - Pending approval queue with explicit command IDs for non-interactive channels.
-  - New approval commands in chat/gateway sessions:
-    - `/approve <id>`
-    - `/deny <id>`
+  - New approval turns in chat/gateway sessions using approval IDs carried by the runtime queue.
 - Added persistent "allow always" behavior per command in runtime approval callback path.
 - Added strict ASK enforcement (commands are blocked unless elevated/approved).
 - Added runtime wiring so elevated directives correctly toggle `ExecTool.auto_approve`.

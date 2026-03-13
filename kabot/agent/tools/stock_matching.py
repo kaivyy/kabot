@@ -541,6 +541,29 @@ def _is_non_latin_compact_query(text: str) -> bool:
     return True
 
 
+def _looks_like_meta_threads_platform_query(text: str) -> bool:
+    normalized = " ".join(str(text or "").strip().lower().split())
+    if not normalized:
+        return False
+    if "meta" not in normalized or "threads" not in normalized:
+        return False
+    integration_markers = (
+        "api",
+        "graph",
+        "koneksi",
+        "connect",
+        "connection",
+        "integrasi",
+        "integration",
+        "oauth",
+        "webhook",
+        "setup",
+        "config",
+        "sdk",
+    )
+    return any(marker in normalized for marker in integration_markers)
+
+
 def _is_title_cased_company_token(token: str) -> bool:
     value = str(token or "").strip()
     if not value:
@@ -560,6 +583,8 @@ def extract_stock_name_candidates(raw: str) -> list[str]:
     text = str(raw or "").strip()
     if not text:
         return []
+    if _looks_like_meta_threads_platform_query(text):
+        return []
     if _looks_like_personal_small_talk(text):
         return []
     # If explicit symbols already exist, don't trigger name-based fallback.
@@ -570,6 +595,7 @@ def extract_stock_name_candidates(raw: str) -> list[str]:
     chunks = [part.strip() for part in _COMPANY_SPLIT_RE.split(cleaned) if part.strip()]
     has_market_hint = bool(_MARKET_CONTEXT_MARKERS_RE.search(text))
     has_value_hint = bool(_VALUE_QUERY_HINT_RE.search(text))
+    has_locale_market_hint = bool(_preferred_market_suffixes(text))
     raw_token_count = len([token for token in re.split(r"\s+", cleaned.strip()) if token])
 
     candidates: list[str] = []
@@ -622,6 +648,7 @@ def extract_stock_name_candidates(raw: str) -> list[str]:
             has_non_latin = bool(_NON_ASCII_RE.search(phrase))
             if not (
                 has_market_hint
+                or has_locale_market_hint
                 or has_company_hint
                 or has_title_like
                 or has_non_latin
@@ -711,6 +738,8 @@ def _extract_alias_symbols_in_order(normalized_text: str, alias_map: dict[str, s
 def extract_stock_symbols(raw: str) -> list[str]:
     text = (raw or "").strip()
     if not text:
+        return []
+    if _looks_like_meta_threads_platform_query(text):
         return []
 
     free_text = _looks_like_free_text(text)

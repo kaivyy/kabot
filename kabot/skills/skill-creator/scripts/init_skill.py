@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Initialize a new skill directory with standard structure.
+Initialize a new skill directory with a standard Kabot structure.
 
 Usage:
-    python init_skill.py <skill_name>                          # Auto-detect workspace/skills/
-    python init_skill.py <skill_name> --target /custom/path    # Custom target dir
+    python init_skill.py <skill_name>
+    python init_skill.py <skill_name> --target /custom/path
 """
+
+from __future__ import annotations
 
 import argparse
 import os
@@ -57,7 +59,6 @@ def find_skills_dir() -> Path | None:
     if (current / "kabot" / "skills").exists():
         return current / "kabot" / "skills"
 
-    # Fallback to script location for repo-oriented/manual usage.
     script_dir = Path(__file__).resolve().parent
     for parent in [script_dir] + list(script_dir.parents):
         candidate = parent / "kabot" / "skills"
@@ -65,63 +66,56 @@ def find_skills_dir() -> Path | None:
             return candidate
         if parent.name == "kabot" and (parent / "skills").exists():
             return parent / "skills"
-
     return None
 
 
-def init_skill(name: str, target_dir: Path):
-    """Create a new skill directory with standard structure."""
-    skill_dir = target_dir / name
-
-    if skill_dir.exists():
-        print(f"Error: Skill '{name}' already exists at {skill_dir}")
-        sys.exit(1)
-
-    print(f"Creating skill '{name}' at {skill_dir}...")
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "references").mkdir(exist_ok=True)
-    (skill_dir / "scripts").mkdir(exist_ok=True)
-
+def _build_skill_markdown(name: str) -> str:
     title = name.replace("-", " ").replace("_", " ").title()
-    skill_md = skill_dir / "SKILL.md"
-    skill_md.write_text(
-        f"""---
+    description = f"Describe when to use {name} and what it does."
+    return f"""---
+name: {name}
+description: "{description}"
 metadata:
   kabot:
-    emoji: 🧩
-    description: \"Description for {name}\"
+    emoji: "🧩"
+    description: "{description}"
     created_with: skill-creator
 ---
 
 # {title}
 
 ## Overview
-Brief description of what this skill does.
+Explain the outcome this skill owns and the problem it solves.
 
-## Persona
-Define the agent role for this skill.
+## When to Use
+- Trigger when the user clearly asks for this capability.
+- Trigger when the workflow strongly matches this skill's responsibility.
 
-## Capabilities
-- Capability 1
-- Capability 2
+## When Not to Use
+- Do not use this skill for unrelated tasks.
+- Prefer a more specific skill when one already exists.
 
 ## Instructions
-1. **Step 1**: Description
-2. **Step 2**: Description
+1. Clarify the goal only when key details are still missing.
+2. Prefer built-in Kabot tools before inventing manual workarounds.
+3. Read files from `references/` only when they are relevant.
+4. Run scripts from `scripts/` when deterministic execution is useful.
+5. Be explicit about required credentials, binaries, or setup.
 
-## Usage
-Explain how to use this skill.
-""",
-        encoding="utf-8",
-    )
+## References
+- `references/README.md` for docs, examples, API notes, and domain rules.
 
-    (skill_dir / "references" / "README.md").write_text(
-        "# References\n\nAdd API documentation, examples, and guides here.\n",
-        encoding="utf-8",
-    )
+## Scripts
+- `scripts/main.py` for deterministic helper logic when needed.
 
-    (skill_dir / "scripts" / "main.py").write_text(
-        f'''#!/usr/bin/env python3
+## Assets
+- `assets/README.md` for templates, payload samples, icons, or boilerplate output files.
+"""
+
+
+def _build_script_template(name: str) -> str:
+    title = name.replace("-", " ").replace("_", " ").title()
+    return f'''#!/usr/bin/env python3
 """Main script for {name} skill."""
 import argparse
 import json
@@ -137,26 +131,57 @@ def main():
     try:
         result = {{"status": "success", "action": args.action}}
         print(json.dumps(result, indent=2))
-    except Exception as e:
-        print(json.dumps({{"status": "error", "message": str(e)}}), file=sys.stderr)
+    except Exception as exc:
+        print(json.dumps({{"status": "error", "message": str(exc)}}), file=sys.stderr)
         sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
-''',
+'''
+
+
+def init_skill(name: str, target_dir: Path):
+    """Create a new skill directory with standard structure."""
+    skill_dir = target_dir / name
+
+    if skill_dir.exists():
+        print(f"Error: Skill '{name}' already exists at {skill_dir}")
+        sys.exit(1)
+
+    print(f"Creating skill '{name}' at {skill_dir}...")
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "assets").mkdir(exist_ok=True)
+    (skill_dir / "references").mkdir(exist_ok=True)
+    (skill_dir / "scripts").mkdir(exist_ok=True)
+
+    skill_md = skill_dir / "SKILL.md"
+    skill_md.write_text(_build_skill_markdown(name), encoding="utf-8")
+
+    (skill_dir / "assets" / "README.md").write_text(
+        "# Assets\n\nAdd templates, payload samples, icons, or output files here.\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "references" / "README.md").write_text(
+        "# References\n\nAdd API documentation, examples, and guides here.\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "scripts" / "main.py").write_text(
+        _build_script_template(name),
         encoding="utf-8",
     )
 
     print("[ok] Skill initialized successfully!")
     print(f"   [file] {skill_md}")
+    print(f"   [dir]  {skill_dir / 'assets/'}")
     print(f"   [dir]  {skill_dir / 'references/'}")
     print(f"   [dir]  {skill_dir / 'scripts/'}")
     print("")
     print("Next steps:")
-    print("   1. Edit SKILL.md with your skill instructions")
-    print("   2. Implement logic in scripts/main.py (if needed)")
-    print("   3. Add API docs to references/ (if needed)")
+    print("   1. Edit SKILL.md with the real workflow and trigger guidance")
+    print("   2. Add docs or examples to references/ (if needed)")
+    print("   3. Add templates or payload samples to assets/ (if needed)")
+    print("   4. Implement logic in scripts/main.py (if needed)")
 
 
 if __name__ == "__main__":

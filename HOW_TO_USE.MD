@@ -87,6 +87,7 @@ Before we go section by section, this is the important mental model:
 *   **What it does:** Gives physical superpowers to your agent. Without tools, Kabot is just a chatbot. With tools, Kabot becomes a proactive assistant.
 *   **How to use it:** Here, you toggle access to Kabot's abilities. You can grant it permission to type Terminal commands, read files on your hard drive, or use web search and fetch tools. Docker sandboxing can be enabled for safer command execution.
 *   **Web search providers:** `web_search` supports Brave, Perplexity, Grok, and Kimi. In setup wizard tools menu, you can input each API key and choose default search provider automatically.
+*   **No-key behavior:** `web_fetch` still works without an API key. `web_search` now only falls back without keys for clear news/live-news style queries via Google News RSS; broader web search requests return an explicit setup hint instead of silently pretending search is available.
 *   **Security preset (recommended):** In **Tools & Sandbox -> Execution Policy**, choose `strict`, `balanced`, or `compat`:
     *   `strict` (default): safest baseline for new installs.
     *   `balanced`: ask-oriented behavior for common local usage.
@@ -282,12 +283,14 @@ Kabot now includes sophisticated backend systems that prevent common AI agent fa
 - **Auto-Compaction**: Summarizes old messages when context overflows (keeps recent 10 exchanges)
 - **Result Truncation**: Caps tool results at 30% of context window to prevent bloat
 
-### Runtime Continuity And Anti-Hallucination Upgrades (v0.6.3)
+### Runtime Continuity And Anti-Hallucination Upgrades (v0.6.4)
 
 - **Committed action continuity:** if Kabot says it will create, send, or upgrade something, replies like `ya`, `yes continue`, and `lanjut` are much more likely to continue that exact task.
 - **Answer-reference continuity:** follow-ups like `yang kedua`, `lebih singkat`, or `maksudnya apa` can stay attached to the latest real answer.
 - **Evidence-based completion:** Kabot is more strict about claiming a file/image/video was sent only when runtime evidence exists.
 - **Workflow regression smoke:** multi-turn regressions like `create -> continue -> upgrade` are now locked in smoke coverage, not left to chance.
+- **Skill-first routing:** external and workspace skills can now beat parser-heavy finance/web routing, keeping Kabot closer to a natural skill-driven execution flow.
+- **Direct page fetch fallback:** if a request is really asking for one page and `web_search` is unavailable or empty, Kabot now prefers `web_fetch` instead of getting stuck on a search setup hint.
 
 ---
 
@@ -955,6 +958,7 @@ Kabot includes 36 built-in tools that give AI powerful capabilities. Here's the 
   - Example: "Fetch the content from https://example.com/docs"
 - **browser** - Advanced web automation (Playwright)
   - Example: "Navigate to GitHub and screenshot the trending page"
+  - Important: `browser` is an independent capability. If `web_search` is unavailable or not the best fit, the model may still choose `browser` or `web_fetch` directly instead of pretending search worked.
 
 ### **Google Suite Integration**
 - **gmail** - Send and read emails
@@ -967,12 +971,13 @@ Kabot includes 36 built-in tools that give AI powerful capabilities. Here's the 
   - Example: "Upload report.pdf to my Drive"
 
 ### **Financial & Market Data**
-- **stock** - Real-time stock prices (Yahoo Finance)
+- **OpenClaw-style note:** Kabot now prefers workspace/managed finance skills first. The built-in tools below are kept as **legacy fallback** paths for exact identifiers and older workflows.
+- **stock** - Legacy fallback for real-time stock prices (Yahoo Finance)
   - Example: "What's the current price of AAPL?"
   - Supports: Multiple tickers, real-time data
-- **crypto** - Cryptocurrency prices (CoinGecko)
+- **crypto** - Legacy fallback for cryptocurrency prices (CoinGecko)
   - Example: "Check Bitcoin and Ethereum prices"
-- **stock_analysis** - Advanced stock analysis with charts
+- **stock_analysis** - Legacy fallback for advanced stock analysis with charts
   - Example: "Analyze TSLA stock performance over the last month"
 
 ### **System Monitoring**
@@ -1184,6 +1189,19 @@ Kabot now supports direct install from external git repo:
 kabot skills install --git https://github.com/<owner>/<repo>.git
 ```
 
+You can also install from a local unpacked skill folder or a packaged `.skill` bundle:
+
+```bash
+kabot skills install --path C:\path\to\manus-stock-analysis-1.0.0
+kabot skills install --path C:\path\to\meta-threads-official.skill
+```
+
+You can also install a packaged skill directly from any remote URL:
+
+```bash
+kabot skills install --url https://example.com/skills/binance-pro.skill
+```
+
 Useful options:
 - `--ref <tag|branch|commit>`: pin version
 - `--subdir <path>`: choose skill folder when repo has multiple `SKILL.md`
@@ -1200,6 +1218,100 @@ kabot skills install --git https://github.com/SumeLabs/clawra.git --subdir skill
 After install:
 1. Run `kabot config` -> **Skills** to configure env keys and dependency plan.
 2. Run `kabot doctor` to verify runtime requirements.
+
+### **Public Skill Catalog (Registry-style flow)**
+Kabot now supports a public-skill-catalog style flow, so you do not need to rely only on `--git`, `--path`, or a specific website/domain.
+
+Search a catalog:
+
+```bash
+kabot skills search "stock analysis"
+```
+
+Inspect one catalog entry:
+
+```bash
+kabot skills info stock-analysis
+```
+
+Install by slug:
+
+```bash
+kabot skills install stock-analysis
+```
+
+Package a local skill into a portable `.skill` bundle:
+
+```bash
+kabot skills pack C:\path\to\my-skill --output-dir C:\path\to\dist
+```
+
+Publish a local skill into a generic JSON catalog plus bundle directory:
+
+```bash
+kabot skills publish C:\path\to\my-skill ^
+  --catalog-source C:\path\to\catalog.json ^
+  --bundle-dir C:\path\to\bundles ^
+  --version 1.0.0
+```
+
+Sync local skill roots into a catalog:
+
+```bash
+kabot skills sync ^
+  --catalog-source C:\path\to\catalog.json ^
+  --bundle-dir C:\path\to\bundles ^
+  --root C:\path\to\workspace ^
+  --all
+```
+
+List recorded installs:
+
+```bash
+kabot skills list
+kabot skills list --target workspace
+```
+
+Update one or all recorded installs:
+
+```bash
+kabot skills update stock-analysis
+kabot skills update --all --target workspace
+```
+
+Use a custom catalog source:
+
+```bash
+kabot skills search "threads" --catalog-source https://example.com/skills.json
+kabot skills install meta-threads-official --catalog-source C:\path\to\catalog.json
+```
+
+Catalog sources supported:
+- `builtin` - bundled starter catalog
+- local JSON file path
+- JSON URL
+
+Catalog publishing behavior:
+- `kabot skills publish` writes/updates a local JSON catalog entry and generates a versioned `.skill` bundle.
+- `kabot skills sync` scans local skill roots, publishes valid skills, and skips invalid skill folders without aborting the whole batch.
+- If you pass `--bundle-url-base`, Kabot emits `install.url`; otherwise it emits `install.path`.
+- This makes the flow source-agnostic and registry-like without depending on any one website domain.
+
+Install resolution behavior:
+- if the catalog entry points to `git`, Kabot installs from git
+- if the catalog entry points to `path`, Kabot installs from that local source
+- if the catalog entry points to `url`, Kabot downloads the `.skill` / `.zip` bundle and installs it
+- workspace/managed skill precedence still follows Kabot's skill layering rules
+
+This keeps the install UX closer to a public skill hub model, while still letting you use local skill folders, packaged `.skill` bundles, or remote archives from any host users choose to publish from.
+
+Install memory / lock behavior:
+- Kabot now records installed skills in a lockfile so they can be listed and updated later.
+- Workspace installs are recorded in `<workspace>/.kabot/skills-lock.json`.
+- Managed installs are recorded in `~/.kabot/skills-lock.json`.
+- This is source-agnostic:
+  - no clawhub/clawhub.ai domain parser is required,
+  - any JSON catalog URL, git repo, local folder, `.skill`, or `.zip` source can be the install/update source.
 
 ### **Skill Trust Mode (optional hardening)**
 If you want signer-based trust policy for external skills, enable:
@@ -1221,7 +1333,12 @@ Behavior:
 - If signer is missing/not trusted, install is blocked with clear message.
 
 ### **Installer Metadata (`metadata.kabot.install`)**
-Skill installer metadata supports both legacy and canonical formats:
+Skill installer metadata supports both Kabot-native and compatible public-skill formats:
+
+- `metadata.kabot`
+- `metadata.openclaw`
+
+That means public skills authored in the same style as many existing external packs can be loaded by Kabot without rewriting their metadata first.
 
 Legacy single command:
 ```json
@@ -1291,7 +1408,7 @@ denylist:
 When policy is "ask", Kabot will prompt:
 ```
 Command requires approval: git commit -m "fix bug"
-Reply with /approve <id> to run once, or /deny <id> to reject.
+Reply naturally to approve, for example "ya jalankan sekarang", or say "jangan jalankan" to reject.
 ```
 
 **Config Example (`tools.exec.policyPreset`):**

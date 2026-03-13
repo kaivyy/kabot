@@ -67,7 +67,8 @@ async def test_ask_mode_stores_pending_approval_for_session():
 
         result = await tool.execute("echo hello", _session_key="cli:direct")
         assert "approval id" in result.lower()
-        assert "/approve" in result
+        assert "reply naturally to approve" in result.lower()
+        assert "ya" in result.lower() or "jalankan" in result.lower()
 
         pending = tool.get_pending_approval("cli:direct")
         assert pending is not None

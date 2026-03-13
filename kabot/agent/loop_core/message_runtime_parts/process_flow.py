@@ -38,6 +38,7 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _get_pending_followup_intent,
     _get_pending_followup_tool,
     _get_skill_creation_flow,
+    _infer_recent_created_skill_name_from_path,
     _infer_recent_assistant_answer_from_history,
     _infer_recent_assistant_option_prompt_from_history,
     _infer_recent_file_path_from_history,
@@ -52,6 +53,7 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _looks_like_contextual_followup_request,
     _looks_like_explicit_new_request,
     _looks_like_explicit_tool_use_request,
+    _looks_like_existing_skill_use_followup,
     _looks_like_file_context_followup,
     _looks_like_filesystem_location_query,
     _looks_like_live_research_query,
@@ -62,7 +64,9 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _looks_like_short_confirmation,
     _looks_like_short_greeting_smalltalk,
     _looks_like_skill_creation_approval,
+    _looks_like_skill_workflow_followup_detail,
     _looks_like_temporal_context_query,
+    _looks_like_web_search_demotion_followup,
     _looks_like_weather_context_followup,
     _message_needs_full_skill_context,
     _normalize_text,
@@ -105,6 +109,12 @@ from kabot.agent.loop_core.message_runtime_parts.turn_helpers import (
     _resolve_turn_category,
     _select_answer_reference_target,
 )
+from kabot.agent.loop_core.message_runtime_parts.user_profile import (
+    persist_user_profile,
+)
+from kabot.agent.loop_core.execution_runtime_parts.intent import (
+    _should_defer_live_research_latch_to_skill,
+)
 from kabot.agent.loop_core.tool_enforcement import (
     _extract_list_dir_path,
     _extract_read_file_path,
@@ -116,6 +126,7 @@ from kabot.agent.semantic_intent import arbitrate_semantic_intent
 from kabot.agent.skills import (
     looks_like_skill_creation_request,
     looks_like_skill_install_request,
+    normalize_skill_reference_name,
 )
 from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.core.command_router import CommandContext
@@ -167,15 +178,26 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         except Exception as exc:
             logger.debug(f"Pending memory drain skipped: {exc}")
 
-    approval_action = loop._parse_approval_command(msg.content)
-    if approval_action:
-        action, approval_id = approval_action
-        return await process_pending_exec_approval(
-            loop,
-            msg,
-            action=action,
-            approval_id=approval_id,
-        )
+    tools_obj = getattr(loop, "tools", None)
+    tool_get = getattr(tools_obj, "get", None)
+    exec_tool = tool_get("exec") if callable(tool_get) else None
+    pending_exec = None
+    if exec_tool and hasattr(exec_tool, "get_pending_approval"):
+        try:
+            pending_exec = exec_tool.get_pending_approval(msg.session_key)
+        except Exception:
+            pending_exec = None
+    if pending_exec:
+        parse_exec_approval_turn = getattr(loop, "_parse_exec_approval_turn", None)
+        resolved_action = parse_exec_approval_turn(msg.content) if callable(parse_exec_approval_turn) else None
+        if resolved_action in {"approve", "deny"}:
+            approval_id = pending_exec.get("id") if isinstance(pending_exec, dict) else None
+            return await process_pending_exec_approval(
+                loop,
+                msg,
+                action=resolved_action,
+                approval_id=approval_id if isinstance(approval_id, str) else None,
+            )
 
     # OpenClaw-style abort shortcut: standalone stop/cancel intent should
     # immediately halt follow-up continuation and clear pending intent state.
@@ -220,6 +242,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     clean_body, directives = loop.directive_parser.parse(msg.content)
     effective_content = clean_body or msg.content
     intent_source_for_followup = effective_content
+    persist_user_profile(loop, session, effective_content, now_ts=time.time())
 
     # Store directives in session metadata
     if directives.raw_directives:
@@ -256,10 +279,21 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             effective_content += hint
             logger.info(f"Document hint injected: {len(document_paths)} files")
 
-    required_tool = loop._required_tool_for_query(effective_content)
-    required_tool_query = effective_content
-    parser_required_tool = required_tool
-    continuity_source = "parser" if parser_required_tool else None
+    incoming_metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    preseeded_required_tool = str(incoming_metadata.get("required_tool") or "").strip()
+    preseeded_required_tool_query = str(
+        incoming_metadata.get("required_tool_query") or effective_content
+    ).strip()
+    if preseeded_required_tool:
+        required_tool = preseeded_required_tool
+        required_tool_query = preseeded_required_tool_query
+        parser_required_tool = preseeded_required_tool
+        continuity_source = str(incoming_metadata.get("continuity_source") or "action_request").strip() or "action_request"
+    else:
+        required_tool = loop._required_tool_for_query(effective_content)
+        required_tool_query = effective_content
+        parser_required_tool = required_tool
+        continuity_source = "parser" if parser_required_tool else None
     explicit_mcp_prompt_ref = _extract_explicit_mcp_prompt_reference(effective_content)
     explicit_mcp_resource_ref = _extract_explicit_mcp_resource_reference(effective_content)
     now_ts = time.time()
@@ -277,6 +311,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         "read_file",
         "list_dir",
         "message",
+        "save_memory",
         "get_process_memory",
         "get_system_info",
         "cleanup_system",
@@ -295,6 +330,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         "read_file",
         "list_dir",
         "message",
+        "save_memory",
         "get_process_memory",
         "get_system_info",
         "cleanup_system",
@@ -446,8 +482,14 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     raw_is_explicit_new_request = _looks_like_explicit_new_request(effective_content)
     is_side_effect_request = _looks_like_side_effect_request(effective_content)
     is_weather_context_followup = bool(
-        pending_followup_tool == "weather"
-        and _looks_like_weather_context_followup(effective_content)
+        _looks_like_weather_context_followup(effective_content)
+        and (
+            pending_followup_tool == "weather"
+            or (
+                isinstance(last_tool_context, dict)
+                and str(last_tool_context.get("tool") or "").strip() == "weather"
+            )
+        )
     )
     is_file_context_followup = bool(
         (
@@ -478,7 +520,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             )
         )
     )
-    is_contextual_followup_request = bool(not required_tool and raw_is_contextual_followup_request)
+    is_contextual_followup_request = bool(
+        not required_tool and raw_is_contextual_followup_request and not is_weather_context_followup
+    )
     if (
         not pending_followup_intent_text
         and recent_assistant_option_prompt
@@ -513,10 +557,33 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         required_tool = None
         required_tool_query = effective_content
         continuity_source = None
+    if (
+        is_weather_context_followup
+        and _tool_registry_has(loop, "weather")
+        and required_tool != "weather"
+    ):
+        grounded_weather_location = ""
+        if isinstance(last_tool_context, dict):
+            grounded_weather_location = str(last_tool_context.get("location") or "").strip()
+        if not grounded_weather_location and pending_followup_source:
+            grounded_weather_location = extract_weather_location(pending_followup_source) or ""
+        required_tool = "weather"
+        required_tool_query = (
+            f"{grounded_weather_location} {effective_content}".strip()
+            if grounded_weather_location
+            else effective_content
+        )
+        continuity_source = "weather_context"
+        semantic_tool_override = True
+        logger.info(
+            "Weather context follow-up overrode parser tool "
+            f"for '{_normalize_text(effective_content)[:120]}'"
+        )
     is_non_action_feedback = bool(is_non_action_feedback or semantic_hint.kind == "meta_feedback")
     if (
         is_side_effect_request
         and required_tool
+        and required_tool != "save_memory"
         and required_tool == parser_required_tool
         and not semantic_tool_override
         and not explicit_mcp_tool_routing
@@ -556,12 +623,30 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             if pending_has_payload and not raw_has_payload:
                 required_tool_query = f"{pending_followup_source} {effective_content}".strip()
 
+    clear_stale_followup_for_new_tool_request = bool(
+        required_tool
+        and required_tool == parser_required_tool
+        and not semantic_tool_override
+        and not explicit_mcp_tool_routing
+        and pending_followup_tool
+        and required_tool != pending_followup_tool
+        and not is_short_confirmation
+        and not raw_is_short_confirmation
+        and not raw_is_contextual_followup_request
+        and not is_assistant_offer_context_followup
+        and not is_assistant_committed_action_followup
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+    )
+
     if is_closing_ack or is_short_greeting or is_non_action_feedback or semantic_hint.clear_pending:
         _clear_pending_followup_tool(session)
         _clear_pending_followup_intent(session)
-    elif is_explicit_new_request and not required_tool:
+    elif is_explicit_new_request or clear_stale_followup_for_new_tool_request:
         # Fresh explicit asks (file/config/path/URL/command-like payload) should
-        # not inherit stale pending follow-up state from previous turns.
+        # not inherit stale pending follow-up state from previous turns, even
+        # when the new turn already resolved to a concrete tool.
         _clear_pending_followup_tool(session)
         _clear_pending_followup_intent(session)
         pending_followup_tool = None
@@ -601,6 +686,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         if (
             raw_is_answer_reference_followup
             and recent_assistant_answer
+            and not is_weather_context_followup
             and (not required_tool or (parser_required_tool_active and not parser_required_tool_has_payload))
         ):
             if required_tool:
@@ -720,6 +806,11 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and str(decision.profile).upper() == "RESEARCH"
         and _tool_registry_has(loop, "web_search")
         and _looks_like_live_research_query(effective_content)
+        and not _should_defer_live_research_latch_to_skill(
+            loop,
+            effective_content,
+            profile=str(decision.profile).upper() or "RESEARCH",
+        )
         and not is_non_action_feedback
     ):
         required_tool = "web_search"
@@ -732,6 +823,44 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             perf_cfg
             and bool(getattr(perf_cfg, "fast_first_response", True))
             and required_tool in direct_tools
+        )
+
+    web_search_demotion_followup = bool(
+        pending_followup_tool == "web_search"
+        and _looks_like_web_search_demotion_followup(effective_content)
+        and not is_assistant_offer_context_followup
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not is_explicit_new_request
+    )
+    if web_search_demotion_followup:
+        grounded_search_source = str(
+            pending_followup_source
+            or (last_tool_context.get("source") if isinstance(last_tool_context, dict) else "")
+            or effective_content
+        ).strip()
+        required_tool = None
+        required_tool_query = ""
+        if grounded_search_source:
+            effective_content = (
+                f"{effective_content}\n\n"
+                "[Follow-up Context]\n"
+                f"{grounded_search_source}\n\n"
+                "[Knowledge-First Note]\n"
+                "The earlier web search path was unavailable or unnecessary for this request. "
+                "Answer directly from existing knowledge in the user's requested language or style. "
+                "Do not call web search again unless the user explicitly asks for live, latest, or verified external information."
+            ).strip()
+        continuity_source = "knowledge_followup"
+        decision.is_complex = True
+        fast_direct_context = False
+        _clear_pending_followup_tool(session)
+        pending_followup_tool = None
+        pending_followup_source = ""
+        logger.info(
+            "Web-search follow-up demotion: "
+            f"'{_normalize_text(effective_content)[:120]}' -> complex knowledge route"
         )
 
     if (
@@ -762,6 +891,15 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             and bool(getattr(perf_cfg, "fast_first_response", True))
             and required_tool in direct_tools
         )
+
+    if (
+        required_tool == "weather"
+        and is_weather_context_followup
+        and isinstance(last_tool_context, dict)
+    ):
+        grounded_weather_location = str(last_tool_context.get("location") or "").strip()
+        if grounded_weather_location and not extract_weather_location(str(required_tool_query or "")):
+            required_tool_query = f"{grounded_weather_location} {effective_content}".strip()
 
     # Infer required tool for short follow-ups before context building, so
     # confirmations like "gas"/"ambil sekarang" can take the direct fast path.
@@ -863,12 +1001,37 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
 
     current_skill_flow = _get_skill_creation_flow(session, now_ts)
     current_skill_flow_kind = str((current_skill_flow or {}).get("kind") or "create").strip().lower() or "create"
+    recent_created_skill_name = _infer_recent_created_skill_name_from_path(
+        recent_history_file_path
+    )
+    existing_created_skill_followup = bool(
+        current_skill_flow
+        and str((current_skill_flow or {}).get("stage") or "").strip().lower() == "approved"
+        and recent_created_skill_name
+        and _looks_like_existing_skill_use_followup(
+            msg.content,
+            assistant_offer_text=pending_followup_intent_text,
+        )
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not is_explicit_new_request
+    )
+    skill_workflow_detail_followup = bool(
+        current_skill_flow
+        and _looks_like_skill_workflow_followup_detail(msg.content)
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not is_explicit_new_request
+    )
     skill_creation_followup = bool(
         current_skill_flow
         and current_skill_flow_kind != "install"
         and (
             is_short_confirmation
             or _looks_like_skill_creation_approval(msg.content)
+            or skill_workflow_detail_followup
         )
         and not is_closing_ack
         and not is_short_greeting
@@ -881,6 +1044,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and (
             is_short_confirmation
             or _looks_like_skill_creation_approval(msg.content)
+            or skill_workflow_detail_followup
         )
         and not is_closing_ack
         and not is_short_greeting
@@ -896,6 +1060,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     if skill_install_intent:
         skill_creation_intent = False
     forced_skill_names: list[str] | None = None
+    external_skill_lane = False
     llm_current_message = effective_content
     if is_non_action_feedback:
         llm_current_message = (
@@ -914,7 +1079,49 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     skill_creation_stage = str((current_skill_flow or {}).get("stage") or "discovery").strip().lower() or "discovery"
     skill_workflow_kind = "install" if skill_install_intent else current_skill_flow_kind
     skill_creation_request_text = str((current_skill_flow or {}).get("request_text") or effective_content).strip()
-    skill_creation_approved = False
+    skill_creation_approved = skill_creation_stage == "approved"
+    if existing_created_skill_followup:
+        existing_skill_required_tool_query = (
+            str(pending_followup_intent_text or "").strip()
+            or str(pending_followup_intent_request_text or "").strip()
+            or str(effective_content or "").strip()
+        )
+        inferred_existing_skill_tool = None
+        if existing_skill_required_tool_query:
+            try:
+                inferred_existing_skill_tool = loop._required_tool_for_query(
+                    existing_skill_required_tool_query
+                )
+            except Exception:
+                inferred_existing_skill_tool = None
+        required_tool = None
+        required_tool_query = ""
+        skill_creation_intent = False
+        skill_install_intent = False
+        forced_skill_names = [recent_created_skill_name]
+        if inferred_existing_skill_tool:
+            required_tool = str(inferred_existing_skill_tool).strip() or None
+            required_tool_query = existing_skill_required_tool_query
+        if existing_skill_required_tool_query:
+            intent_source_for_followup = existing_skill_required_tool_query
+            pending_followup_intent_request_text = existing_skill_required_tool_query
+            committed_action_request_text = existing_skill_required_tool_query
+        continuity_source = "existing_skill_followup"
+        llm_current_message = (
+            f"{effective_content}\n\n"
+            "[Existing Skill Note]\n"
+            f"- The skill `{recent_created_skill_name}` was already created earlier in this conversation.\n"
+            "- Do not restart the skill-creator workflow.\n"
+            "- Load and follow that existing skill now.\n"
+            "- Use that existing skill now for the user's current request and recent follow-up context."
+        ).strip()
+        if not decision.is_complex:
+            decision.is_complex = True
+            logger.info(
+                "Existing skill follow-up latch: "
+                f"'{_normalize_text(effective_content)[:120]}' -> complex route via skill={recent_created_skill_name}"
+            )
+        _clear_skill_creation_flow(session)
     if skill_creation_intent or skill_install_intent:
         # Skill workflows must outrank deterministic tool routing; otherwise
         # ordinary domain words like "weather" or repo-like text can hijack
@@ -950,6 +1157,165 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         )
     elif current_skill_flow and is_explicit_new_request:
         _clear_skill_creation_flow(session)
+
+    if (
+        not forced_skill_names
+        and not skill_creation_intent
+        and not skill_install_intent
+        and not meta_skill_reference_turn
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+    ):
+        context_builder = getattr(loop, "context", None)
+        resolve_context = getattr(loop, "_resolve_context_for_message", None)
+        if callable(resolve_context):
+            try:
+                resolved_context = resolve_context(msg)
+                if resolved_context is not None:
+                    context_builder = resolved_context
+            except Exception as exc:
+                logger.debug(f"Failed resolving context builder for skill execution latch: {exc}")
+        skills_loader = getattr(context_builder, "skills", None)
+        match_skill_details = getattr(skills_loader, "match_skill_details", None)
+        matched_skill_details: list[dict[str, Any]] = []
+        if callable(match_skill_details):
+            try:
+                matched_skill_details = list(
+                    match_skill_details(
+                        effective_content,
+                        profile=str(decision.profile or "GENERAL"),
+                        max_results=3,
+                        filter_unavailable=False,
+                    )
+                    or []
+                )
+            except TypeError:
+                try:
+                    matched_skill_details = list(
+                        match_skill_details(effective_content) or []
+                    )
+                except Exception as exc:
+                    logger.debug(f"External skill execution latch failed: {exc}")
+            except Exception as exc:
+                logger.debug(f"External skill execution latch failed: {exc}")
+
+        format_skill_unavailability = getattr(skills_loader, "_format_skill_unavailability", None)
+        eligible_external_matches: list[dict[str, str]] = []
+        unavailable_external_matches: list[dict[str, str]] = []
+        for detail in matched_skill_details:
+            if not isinstance(detail, dict):
+                continue
+            skill_name = normalize_skill_reference_name(str(detail.get("name") or ""))
+            source = str(detail.get("source") or "").strip().lower()
+            if not skill_name or not source or source == "builtin":
+                continue
+            if bool(detail.get("eligible")):
+                eligible_external_matches.append(
+                    {
+                        "name": skill_name,
+                        "source": source,
+                        "description": str(detail.get("description") or "").strip(),
+                    }
+                )
+                continue
+
+            missing_reason = ""
+            if callable(format_skill_unavailability):
+                try:
+                    missing_reason = str(format_skill_unavailability(detail) or "").strip()
+                except Exception:
+                    missing_reason = ""
+            if not missing_reason:
+                missing_reason = "requirements not met"
+            install_hint = ""
+            install_options = detail.get("install", [])
+            if isinstance(install_options, list) and install_options:
+                first_option = install_options[0] if isinstance(install_options[0], dict) else {}
+                install_hint = (
+                    str(first_option.get("label", "")).strip()
+                    or str(first_option.get("cmd", "")).strip()
+                )
+            unavailable_external_matches.append(
+                {
+                    "name": skill_name,
+                    "source": source,
+                    "description": str(detail.get("description") or "").strip(),
+                    "missing_reason": missing_reason,
+                    "install_hint": install_hint,
+                }
+            )
+
+        if len(eligible_external_matches) == 1:
+            primary_skill = eligible_external_matches[0]
+            forced_skill_names = [primary_skill["name"]]
+            external_skill_lane = True
+            llm_current_message = (
+                f"{llm_current_message}\n\n"
+                "[External Skill Note]\n"
+                f"- The installed external skill `{primary_skill['name']}` is the best match for this request.\n"
+                "- Load and follow that skill first.\n"
+                "- Prefer the skill workflow over generic fallback behavior.\n"
+                "- If the skill still needs credentials or setup, explain that briefly and ask only for the missing requirement."
+            ).strip()
+            if not decision.is_complex:
+                decision.is_complex = True
+            logger.info(
+                "External skill execution latch: "
+                f"'{_normalize_text(effective_content)[:120]}' -> skill={primary_skill['name']}"
+            )
+        elif len(unavailable_external_matches) == 1:
+            primary_skill = unavailable_external_matches[0]
+            forced_skill_names = [primary_skill["name"]]
+            external_skill_lane = True
+            setup_note_lines = [
+                "[External Skill Setup Note]",
+                f"- The installed external skill `{primary_skill['name']}` is the best match for this request, but it is not executable yet.",
+                f"- Missing requirements: {primary_skill['missing_reason']}.",
+                "- Stay on this skill lane first instead of silently falling back to generic legacy behavior.",
+                "- Explain the missing setup briefly and ask only for the next concrete requirement the user can provide or fix now.",
+            ]
+            if primary_skill["install_hint"]:
+                setup_note_lines.append(f"- Helpful install/setup hint: {primary_skill['install_hint']}")
+            llm_current_message = f"{llm_current_message}\n\n" + "\n".join(setup_note_lines)
+            llm_current_message = llm_current_message.strip()
+            if not decision.is_complex:
+                decision.is_complex = True
+            continuity_source = continuity_source or "external_skill_setup"
+            logger.info(
+                "External skill setup latch: "
+                f"'{_normalize_text(effective_content)[:120]}' -> skill={primary_skill['name']} "
+                f"missing={primary_skill['missing_reason']}"
+            )
+
+    if (
+        required_tool == "weather"
+        and not skill_creation_intent
+        and not skill_install_intent
+        and _tool_registry_has(loop, "weather")
+    ):
+        forced_skill_names = list(dict.fromkeys([*(forced_skill_names or []), "weather"]))
+        grounded_weather_text = str(
+            required_tool_query
+            or pending_followup_source
+            or pending_followup_intent_text
+            or effective_content
+        ).strip()
+        grounded_weather_location = (
+            extract_weather_location(grounded_weather_text)
+            or extract_weather_location(pending_followup_source)
+            or extract_weather_location(effective_content)
+        )
+        weather_skill_note = (
+            "[Weather Skill Note]\n"
+            "- Treat this turn as a grounded weather or forecast request.\n"
+            "- Reuse the last grounded weather location when the user follow-up omits it.\n"
+            "- Never invent a new city or region. If no location can be grounded, ask briefly for one."
+        )
+        if grounded_weather_location:
+            weather_skill_note += f"\n- Grounded weather location: {grounded_weather_location}"
+        if "[Weather Skill Note]" not in llm_current_message:
+            llm_current_message = f"{llm_current_message}\n\n{weather_skill_note}".strip()
 
     if (
         is_side_effect_request
@@ -1043,6 +1409,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
 
     relevant_memory_facts = await _resolve_relevant_memory_facts(
         loop,
+        session=session,
         session_key=msg.session_key,
         text=effective_content,
         limit=3,
@@ -1184,6 +1551,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         effective_content=effective_content,
         committed_action_request_text=committed_action_request_text,
         forced_skill_names=forced_skill_names,
+        external_skill_lane=external_skill_lane,
         last_tool_context=last_tool_context,
         explicit_file_analysis_note=explicit_file_analysis_note,
         file_analysis_path=file_analysis_path,

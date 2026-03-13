@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from kabot.agent.cron_fallback_nlp import required_tool_for_query
 from kabot.agent.cron_fallback_nlp import build_group_id as nlp_build_group_id
@@ -36,6 +37,45 @@ _CONTEXTUAL_FOLLOWUP_EXACT = {
     "naik ya",
     "turun ya",
 }
+_DIRECT_FETCH_VERB_RE = re.compile(
+    r"(?i)\b(fetch|open|visit|read|scrape|crawl|ambil|buka|baca|ringkas|summari[sz]e|isi website|isi halaman|konten website|konten halaman)\b"
+)
+_DIRECT_FETCH_URL_RE = re.compile(r"(?i)\bhttps?://[^\s]+")
+_DIRECT_FETCH_DOMAIN_RE = re.compile(
+    r"(?i)\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/[^\s]*)?\b"
+)
+
+
+def _extract_direct_fetch_url_candidate(text: str) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    url_match = _DIRECT_FETCH_URL_RE.search(raw)
+    if url_match:
+        return url_match.group(0).rstrip(").,!?")
+    if _PATHLIKE_QUERY_RE.search(raw) or re.search(
+        r"\b[\w\-]+\.(json|ya?ml|toml|ini|cfg|conf|env|md|txt|csv|log|pdf|docx?|xlsx?|py|js|ts|tsx|jsx|html|css|xml)\b",
+        raw,
+        re.IGNORECASE,
+    ):
+        return None
+    domain_match = _DIRECT_FETCH_DOMAIN_RE.search(raw)
+    if not domain_match:
+        return None
+    candidate = domain_match.group(0).rstrip(").,!?")
+    parsed = urlparse(f"https://{candidate}")
+    if not parsed.netloc:
+        return None
+    return f"https://{candidate}"
+
+
+def _looks_like_direct_page_fetch_request(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if not _extract_direct_fetch_url_candidate(raw):
+        return False
+    return bool(_DIRECT_FETCH_VERB_RE.search(raw))
 
 def existing_schedule_titles(loop: Any) -> list[str]:
     """Collect existing grouped schedule titles from cron service."""
@@ -54,7 +94,10 @@ def existing_schedule_titles(loop: Any) -> list[str]:
 
 def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
     """Resolve required tool for immediate-action query types."""
-    return required_tool_for_query(
+    if loop.tools.has("web_fetch") and _looks_like_direct_page_fetch_request(question):
+        return "web_fetch"
+
+    resolved_tool = required_tool_for_query(
         question=question,
         has_weather_tool=loop.tools.has("weather"),
         has_cron_tool=loop.tools.has("cron"),
@@ -62,6 +105,7 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_cleanup_tool=loop.tools.has("cleanup_system"),
         has_speedtest_tool=loop.tools.has("speedtest"),
         has_process_memory_tool=loop.tools.has("get_process_memory"),
+        has_save_memory_tool=loop.tools.has("save_memory"),
         has_stock_tool=loop.tools.has("stock"),
         has_stock_analysis_tool=loop.tools.has("stock_analysis"),
         has_crypto_tool=loop.tools.has("crypto"),
@@ -72,6 +116,11 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_check_update_tool=loop.tools.has("check_update"),
         has_system_update_tool=loop.tools.has("system_update"),
     )
+    if resolved_tool in {"stock", "stock_analysis", "crypto"}:
+        # Keep legacy finance tools available for the model as fallback, but stop
+        # forcing them through deterministic parser routing.
+        return None
+    return resolved_tool
 
 
 def infer_required_tool_from_history_for_loop(

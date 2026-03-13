@@ -1,4 +1,4 @@
-from kabot.agent.cron_fallback_nlp import extract_weather_location
+from kabot.agent.cron_fallback_nlp import extract_weather_location, required_tool_for_query
 
 
 def test_extract_weather_location_handles_mixed_datetime_query():
@@ -65,6 +65,10 @@ dari sini hitung hr zona saya umur 25 tahun"""
     assert extract_weather_location(query) is None
 
 
+def test_extract_weather_location_rejects_forecast_keyword_without_real_location():
+    assert extract_weather_location("prediksi 3-6 jam ke depan") is None
+
+
 def test_extract_weather_location_handles_japanese_compact_weather_question():
     query = "東京の天気どう？"
     assert extract_weather_location(query) == "東京"
@@ -78,3 +82,24 @@ def test_extract_weather_location_handles_chinese_compact_weather_question():
 def test_extract_weather_location_handles_thai_compact_weather_question():
     query = "อากาศกรุงเทพวันนี้เป็นยังไง"
     assert extract_weather_location(query) == "กรุงเทพ"
+
+def test_required_tool_for_query_handles_runtime_server_phrase():
+    tool = required_tool_for_query(
+        question="cek runtime server saat ini",
+        has_weather_tool=False,
+        has_cron_tool=False,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=True,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=False,
+        has_system_update_tool=False,
+    )
+    assert tool == "server_monitor"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from kabot.agent.cron_fallback_nlp import REMINDER_KEYWORDS, WEATHER_KEYWORDS
@@ -15,7 +14,48 @@ from kabot.agent.loop_core import session_flow as loop_session_flow
 from kabot.agent.loop_core import tool_enforcement as loop_tool_enforcement
 from kabot.bus.events import InboundMessage, OutboundMessage
 
-_APPROVAL_CMD_RE = re.compile(r"^\s*/(approve|deny)(?:\s+([A-Za-z0-9_-]+))?\s*$", re.IGNORECASE)
+_EXEC_APPROVAL_CONFIRM_WORDS = {
+    "ya",
+    "iya",
+    "yes",
+    "yup",
+    "ok",
+    "oke",
+    "okay",
+    "sip",
+    "siap",
+    "gas",
+    "lanjut",
+    "lanjutkan",
+    "proceed",
+    "continue",
+    "approve",
+}
+_EXEC_APPROVAL_EXECUTION_WORDS = {
+    "jalankan",
+    "jalanin",
+    "eksekusi",
+    "execute",
+    "run",
+    "lanjut",
+    "lanjutkan",
+    "proceed",
+    "continue",
+    "trigger",
+}
+_EXEC_APPROVAL_DENY_WORDS = {
+    "jangan",
+    "batal",
+    "batalkan",
+    "stop",
+    "deny",
+    "reject",
+    "ga usah",
+    "gak usah",
+    "nggak usah",
+    "tidak usah",
+    "jangan jadi",
+}
 
 
 class AgentLoopDelegatesMixin:
@@ -23,16 +63,30 @@ class AgentLoopDelegatesMixin:
         return await loop_message_runtime.process_message(self, msg)
 
     @staticmethod
-    def _parse_approval_command(content: str) -> tuple[str, str | None] | None:
-        """Parse /approve or /deny command from user message."""
-        if not content:
+    def _parse_exec_approval_turn(content: str) -> str | None:
+        """Parse natural-language approval/denial for a pending exec action."""
+        raw = str(content or "").strip()
+        if not raw:
             return None
-        match = _APPROVAL_CMD_RE.match(content.strip())
-        if not match:
+        if raw.startswith("/"):
             return None
-        action = match.group(1).lower()
-        approval_id = match.group(2)
-        return action, approval_id
+        if "?" in raw:
+            return None
+        normalized = " ".join(raw.lower().split())
+        if not normalized:
+            return None
+
+        if any(marker in normalized for marker in _EXEC_APPROVAL_DENY_WORDS):
+            return "deny"
+
+        tokens = [token for token in normalized.split(" ") if token]
+        if not tokens:
+            return None
+        if len(tokens) <= 3 and any(token in _EXEC_APPROVAL_CONFIRM_WORDS for token in tokens):
+            return "approve"
+        if any(token in _EXEC_APPROVAL_EXECUTION_WORDS for token in tokens):
+            return "approve"
+        return None
 
     async def _process_pending_exec_approval(
         self,

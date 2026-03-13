@@ -1,0 +1,16 @@
+{
+  "catalog_name": "builtin-public",
+  "skills": [
+    {
+      "slug": "clawra-selfie",
+      "name": "Clawra Selfie",
+      "description": "Generate selfie-style portraits from prompts or reference images.",
+      "homepage": "https://clawhub.com",
+      "tags": ["image", "portrait", "creative"],
+      "install": {
+        "git": "https://github.com/SumeLabs/clawra.git",
+        "subdir": "skill"
+      }
+    }
+  ]
+}

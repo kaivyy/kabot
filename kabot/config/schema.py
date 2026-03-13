@@ -691,6 +691,8 @@ class BootstrapParityConfig(BaseModel):
             "AGENTS.md",
             "SOUL.md",
             "USER.md",
+            "IDENTITY.md",
+            "BOOTSTRAP.md",
         ]
     )
     baseline_dir: str = ""  # Optional path to canonical bootstrap templates

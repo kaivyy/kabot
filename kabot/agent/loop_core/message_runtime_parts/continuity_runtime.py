@@ -27,6 +27,14 @@ def _apply_continuity_runtime(state: Any) -> None:
     """Mutate the provided turn state with answer-reference and follow-up context."""
 
     normalized_content = _normalize_text(state.effective_content)
+    minimal_answer_reference_override = normalized_content in {
+        "apa itu",
+        "what is that",
+        "what is this",
+        "itu apa",
+        "artinya apa",
+        "meaning?",
+    }
     contextual_answer_reference_override = bool(
         state.recent_assistant_answer
         and state.raw_is_contextual_followup_request
@@ -39,6 +47,8 @@ def _apply_continuity_runtime(state: Any) -> None:
     recent_answer_context_candidate = bool(
         state.recent_assistant_answer
         and (
+            minimal_answer_reference_override
+            or
             state.raw_is_answer_reference_followup
             or (
                 state.raw_is_contextual_followup_request
@@ -249,6 +259,21 @@ def _apply_continuity_runtime(state: Any) -> None:
                 state.decision.profile = "CODING"
             elif intent_profile:
                 state.decision.profile = intent_profile
+            if committed_task_text and not state.required_tool:
+                required_tool_for_query = getattr(state.loop, "_required_tool_for_query", None)
+                inferred_committed_tool = (
+                    required_tool_for_query(committed_task_text)
+                    if callable(required_tool_for_query)
+                    else None
+                )
+                if inferred_committed_tool:
+                    state.required_tool = inferred_committed_tool
+                    state.required_tool_query = committed_task_text
+                    state.fast_direct_context = bool(
+                        state.perf_cfg
+                        and bool(getattr(state.perf_cfg, "fast_first_response", True))
+                        and state.required_tool in state.direct_tools
+                    )
             logger.info(
                 f"Committed action continued: '{_normalize_text(state.effective_content)[:120]}' profile={state.decision.profile} complex={state.decision.is_complex}"
             )
@@ -278,6 +303,7 @@ def _apply_continuity_runtime(state: Any) -> None:
                 offer_request_text = intent_request_text
                 offer_request_is_coding = False
                 offer_request_is_side_effect = False
+                offer_action_context_text = ""
                 if offer_request_text:
                     state.effective_content = (
                         f"{state.effective_content}\n\n"
@@ -317,6 +343,63 @@ def _apply_continuity_runtime(state: Any) -> None:
                     elif offer_request_is_side_effect:
                         state.continuity_source = state.continuity_source or "action_request"
                         state.decision.is_complex = True
+                    offer_action_context_text = offer_request_text
+                if intent_text:
+                    merged_offer_action_context = "\n".join(
+                        part
+                        for part in [offer_action_context_text, intent_text]
+                        if part and part.strip()
+                    ).strip()
+                    if (
+                        merged_offer_action_context
+                        and not state.required_tool
+                    ):
+                        required_tool_for_query = getattr(state.loop, "_required_tool_for_query", None)
+                        offer_intent_action_tool = (
+                            required_tool_for_query(merged_offer_action_context)
+                            if offer_request_text and callable(required_tool_for_query)
+                            else None
+                        )
+                        offer_intent_action_query = (
+                            merged_offer_action_context if offer_intent_action_tool else None
+                        )
+                        if not offer_intent_action_tool:
+                            (
+                                offer_intent_action_tool,
+                                offer_intent_action_query,
+                            ) = infer_action_required_tool_for_loop(
+                                state.loop,
+                                merged_offer_action_context,
+                            )
+                        if offer_intent_action_tool:
+                            state.required_tool = offer_intent_action_tool
+                            state.required_tool_query = str(
+                                offer_intent_action_query or merged_offer_action_context
+                            ).strip()
+                            state.continuity_source = "action_request"
+                            state.decision.is_complex = True
+                        elif (
+                            offer_request_text
+                            and (
+                            not offer_request_is_coding
+                            and _looks_like_coding_build_request(
+                                merged_offer_action_context,
+                                route_profile=intent_profile,
+                            )
+                            )
+                        ):
+                            state.continuity_source = state.continuity_source or "coding_request"
+                            state.decision.profile = "CODING"
+                            state.decision.is_complex = True
+                        elif (
+                            offer_request_text
+                            and (
+                            not offer_request_is_side_effect
+                            and _looks_like_side_effect_request(merged_offer_action_context)
+                            )
+                        ):
+                            state.continuity_source = state.continuity_source or "action_request"
+                            state.decision.is_complex = True
                 state.effective_content = (
                     f"{state.effective_content}\n\n"
                     "[Offer Acceptance Note]\n"

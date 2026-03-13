@@ -49,6 +49,7 @@ class WebhookServer(
         ("POST", "/dashboard/partials/control", "operator.write"),
         ("POST", "/dashboard/partials/cron", "operator.write"),
         ("POST", "/dashboard/partials/skills", "operator.write"),
+        ("GET", "/dashboard/partials/commands", "operator.read"),
         ("POST", "/dashboard/api/control", "operator.write"),
         ("POST", "/webhooks/trigger", "ingress.write"),
         ("POST", "/webhooks/meta", "ingress.write"),
@@ -133,6 +134,7 @@ class WebhookServer(
         self.app.router.add_get("/dashboard/partials/cron", self.handle_dashboard_cron)
         self.app.router.add_get("/dashboard/partials/models", self.handle_dashboard_models)
         self.app.router.add_get("/dashboard/partials/skills", self.handle_dashboard_skills)
+        self.app.router.add_get("/dashboard/partials/commands", self.handle_dashboard_commands)
         self.app.router.add_get("/dashboard/partials/subagents", self.handle_dashboard_subagents)
         self.app.router.add_get("/dashboard/partials/git", self.handle_dashboard_git)
         # ── API endpoints ───────────────────────────────────────────

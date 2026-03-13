@@ -78,6 +78,9 @@ from kabot.agent.loop_core.message_runtime_parts.followup import (  # noqa: E402
     _set_pending_followup_intent,
     _set_pending_followup_tool,
 )
+from kabot.agent.loop_core.message_runtime_parts.user_profile import (  # noqa: E402,I001
+    build_user_profile_memory_facts,
+)
 
 __all__ = [
     "_KEEPALIVE_INITIAL_DELAY_SECONDS",
@@ -92,6 +95,7 @@ __all__ = [
     "_extract_referenced_answer_item",
     "_infer_recent_assistant_option_prompt_from_history",
     "_infer_recent_assistant_answer_from_history",
+    "_infer_recent_created_skill_name_from_path",
     "_extract_user_supplied_option_prompt_text",
     "_get_last_tool_execution",
     "_get_last_tool_context",
@@ -101,6 +105,9 @@ __all__ = [
     "_looks_like_assistant_offer_context_followup",
     "_looks_like_coding_build_request",
     "_looks_like_contextual_followup_request",
+    "_looks_like_existing_skill_use_followup",
+    "_looks_like_skill_workflow_followup_detail",
+    "_looks_like_web_search_demotion_followup",
     "_looks_like_memory_recall_turn",
     "_resolve_relevant_memory_facts",
     "_looks_like_message_delivery_request",
@@ -415,21 +422,21 @@ def _looks_like_live_research_query(text: str) -> bool:
         return False
 
     # Time-sensitive or "latest" wording should always force live search.
-    live_markers = (
-        "latest",
-        "today",
-        "now",
-        "current",
-        "breaking",
-        "headline",
-        "headlines",
-        "news",
-        "berita",
-        "terbaru",
-        "terkini",
-        "sekarang",
+    live_marker_patterns = (
+        r"\blatest\b",
+        r"\btoday\b",
+        r"\bnow\b",
+        r"\bcurrent\b",
+        r"\bbreaking\b",
+        r"\bheadline\b",
+        r"\bheadlines\b",
+        r"\bnews\b",
+        r"\bberita\b",
+        r"\bterbaru\b",
+        r"\bterkini\b",
+        r"\bsekarang\b",
     )
-    if any(marker in normalized for marker in live_markers):
+    if any(re.search(pattern, normalized) for pattern in live_marker_patterns):
         return True
 
     if re.search(r"\b(news|berita)\s+update(s)?\b", normalized):
@@ -542,6 +549,7 @@ _MEMORY_RECALL_RE = re.compile(
     r"what is my preference code|what was my preference code|my preference code|"
     r"apa yang kamu simpan|apa yang kamu ingat|apa preferensiku|"
     r"kode preferensiku apa|apa kode preferensiku|kode yang tadi kamu ingat|"
+    r"who am i|siapa aku|jadi siapa aku|aku siapa|"
     r"remembered code|saved code|memory code"
     r")\b"
 )
@@ -573,6 +581,7 @@ def _looks_like_memory_recall_turn(text: str) -> bool:
 async def _resolve_relevant_memory_facts(
     loop: Any,
     *,
+    session: Any | None = None,
     session_key: str,
     text: str,
     limit: int = 3,
@@ -581,10 +590,31 @@ async def _resolve_relevant_memory_facts(
     if not _looks_like_memory_recall_turn(text):
         return []
 
+    max_items = max(1, int(limit or 3))
+    facts: list[str] = []
+    seen: set[str] = set()
+    normalized_query = _normalize_text(text)
+
+    def _add_fact(value: str) -> None:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return
+        normalized = _normalize_text(cleaned)
+        if not normalized or normalized == normalized_query or normalized in seen:
+            return
+        facts.append(cleaned)
+        seen.add(normalized)
+
+    if session is not None:
+        for fact in build_user_profile_memory_facts(session, limit=max_items):
+            _add_fact(fact)
+            if len(facts) >= max_items:
+                return facts
+
     memory_obj = getattr(loop, "memory", None)
     search_memory = getattr(memory_obj, "search_memory", None)
     if not callable(search_memory):
-        return []
+        return facts
 
     try:
         result = search_memory(query=str(text or ""), session_id=session_key, limit=limit)
@@ -603,20 +633,22 @@ async def _resolve_relevant_memory_facts(
             result = await result
         except Exception as exc:
             logger.debug(f"memory recall search await skipped: {exc}")
-            return []
+            return facts
 
     if not isinstance(result, list):
-        return []
+        return facts
 
-    facts: list[str] = []
     for item in result:
         if not isinstance(item, dict):
             continue
         content = str(item.get("content") or item.get("value") or "").strip()
-        if not content or content in facts:
+        if not content:
             continue
-        facts.append(content)
-        if len(facts) >= max(1, int(limit or 3)):
+        role = str(item.get("role") or "").strip().lower()
+        if role == "user" and _looks_like_memory_recall_turn(content):
+            continue
+        _add_fact(content)
+        if len(facts) >= max_items:
             break
     return facts
 
@@ -778,6 +810,7 @@ from kabot.agent.loop_core.message_runtime_parts.reference_resolution import (
     _looks_like_non_action_meta_feedback,
     _looks_like_side_effect_request,
     _looks_like_short_greeting_smalltalk,
+    _looks_like_web_search_demotion_followup,
     _looks_like_weather_context_followup,
 )
 from kabot.agent.loop_core.message_runtime_parts.context_notes import (
@@ -791,10 +824,13 @@ from kabot.agent.loop_core.message_runtime_parts.context_notes import (
     _get_skill_creation_flow,
     _infer_recent_assistant_answer_from_history,
     _infer_recent_assistant_option_prompt_from_history,
+    _infer_recent_created_skill_name_from_path,
     _infer_recent_file_path_from_history,
     _looks_like_explicit_new_request,
+    _looks_like_existing_skill_use_followup,
     _looks_like_filesystem_location_query,
     _looks_like_skill_creation_approval,
+    _looks_like_skill_workflow_followup_detail,
     _message_needs_full_skill_context,
     _resolve_token_mode,
     _schedule_context_truncation_memory_fact,

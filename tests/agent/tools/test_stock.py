@@ -106,6 +106,7 @@ async def test_stock_tool_description_mentions_web_search():
 
     # Description should mention web_search
     assert "web_search" in tool.description.lower()
+    assert "legacy" in tool.description.lower()
 
 @pytest.mark.asyncio
 async def test_crypto_tool_description_mentions_coingecko_id():
@@ -115,6 +116,13 @@ async def test_crypto_tool_description_mentions_coingecko_id():
     # Description should mention CoinGecko ID requirement
     assert "coingecko" in tool.description.lower()
     assert "id" in tool.description.lower()
+    assert "legacy" in tool.description.lower()
+
+
+def test_stock_analysis_description_mentions_legacy_fallback():
+    tool = StockAnalysisTool()
+    assert "legacy" in tool.description.lower()
+    assert "prefer an external/workspace finance skill" in tool.description.lower()
 
 
 @pytest.mark.asyncio

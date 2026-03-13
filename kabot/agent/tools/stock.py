@@ -1,4 +1,9 @@
-"""Stock tool for fetching stock market information."""
+"""Legacy built-in finance fallback tools.
+
+These tools stay available for exact ticker / exact coin-id flows, but Kabot now
+prefers eligible external finance skills first when they exist. This keeps the
+runtime closer to a skill-first model without breaking older installs.
+"""
 
 import asyncio
 import time
@@ -43,10 +48,10 @@ __all__ = [
 ]
 
 class StockTool(Tool):
-    """Get current stock price and market information."""
+    """Legacy built-in fallback for exact stock / FX quote lookups."""
 
     name = "stock"
-    description = "Get CURRENT STOCK PRICE only using Yahoo Finance API. Supports equity tickers (e.g., AAPL, BBCA.JK, 7203.T, SAP.DE) and FX symbols (e.g., USDIDR=X). If you don't know the ticker, use web_search first to find it. For ANALYSIS and RECOMMENDATIONS, use stock_analysis tool instead."
+    description = "Legacy built-in fallback for CURRENT STOCK PRICE using Yahoo Finance API. Prefer an external/workspace finance skill when one is available. Supports exact equity tickers (e.g., AAPL, BBCA.JK, 7203.T, SAP.DE) and FX symbols (e.g., USDIDR=X). If you don't know the ticker, use web_search first to find it. For ANALYSIS and RECOMMENDATIONS, use stock_analysis tool instead."
     parameters = {
         "type": "object",
         "properties": {
@@ -521,10 +526,10 @@ class StockTool(Tool):
 
 
 class CryptoTool(Tool):
-    """Get cryptocurrency price information."""
+    """Legacy built-in fallback for exact cryptocurrency price lookups."""
 
     name = "crypto"
-    description = "Get current cryptocurrency prices using CoinGecko API. Supports one or multiple exact CoinGecko IDs (e.g., 'bitcoin' or 'bitcoin,ethereum'). If unsure of IDs, use web_search tool first."
+    description = "Legacy built-in fallback for current cryptocurrency prices using CoinGecko API. Prefer an external/workspace finance skill when one is available. Supports one or multiple exact CoinGecko IDs (e.g., 'bitcoin' or 'bitcoin,ethereum'). If unsure of IDs, use web_search tool first."
     parameters = {
         "type": "object",
         "properties": {

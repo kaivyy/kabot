@@ -29,6 +29,11 @@
         </div>
     </div>
 
+    <div id="panel-commands" class="config-section-card" hx-get="/dashboard/partials/commands__TOKEN_SUFFIX__"
+        hx-trigger="load" hx-swap="outerHTML">
+        <div style="padding:18px; color:var(--muted); font-size:12px;">Loading commands...</div>
+    </div>
+
     <div id="panel-git" class="config-section-card" hx-get="/dashboard/partials/git__TOKEN_SUFFIX__"
         hx-trigger="load" hx-swap="outerHTML">
         <div style="padding:18px; color:var(--muted); font-size:12px;">Loading recent commits...</div>

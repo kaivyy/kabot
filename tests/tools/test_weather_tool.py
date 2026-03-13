@@ -136,6 +136,40 @@ async def test_weather_tool_strips_city_suffix_before_openmeteo(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_weather_tool_uses_openmeteo_hourly_forecast_for_hour_window_requests(monkeypatch):
+    wttr_mock = AsyncMock(return_value=None)
+    openmeteo_mock = AsyncMock(return_value=None)
+    forecast_mock = AsyncMock(
+        return_value=(
+            "Cilacap forecast (next 3-6 hours):\n"
+            "- +3h: [Cloudy] 27.0C | Rain: 20%\n"
+            "- +4h: [Rainy] 26.0C | Rain: 55%"
+        )
+    )
+
+    monkeypatch.setattr(weather_module, "fetch_wttr", wttr_mock)
+    monkeypatch.setattr(weather_module, "fetch_openmeteo", openmeteo_mock)
+    monkeypatch.setattr(weather_module, "fetch_openmeteo_forecast", forecast_mock)
+
+    tool = WeatherTool()
+    result = await tool.execute(
+        location="prediksi 3-6 jam ke depan di cilacap",
+        context_text="prediksi 3-6 jam ke depan di cilacap",
+    )
+
+    assert "Cilacap forecast" in result
+    assert "Source: Open-Meteo (hourly forecast)" in result
+    forecast_mock.assert_awaited_once_with(
+        "Cilacap",
+        mode="hourly",
+        hours_ahead_start=3,
+        hours_ahead_end=6,
+    )
+    openmeteo_mock.assert_not_awaited()
+    wttr_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_weather_tool_normalizes_degree_phrasing(monkeypatch):
     wttr_mock = AsyncMock(return_value=None)
     openmeteo_mock = AsyncMock(return_value="Purwokerto: [Cloudy] +27C")

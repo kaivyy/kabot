@@ -278,6 +278,212 @@ async def test_process_message_weather_tool_detected_from_raw_followup_still_enr
     assert "bandung" in str(msg.metadata.get("required_tool_query", "")).lower()
     assert "berangin" in str(msg.metadata.get("required_tool_query", "")).lower()
 
+
+@pytest.mark.asyncio
+async def test_process_message_weather_forecast_followup_reuses_recent_weather_location():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "prediksi 3-6 jam ke depan"}]
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_tool": {
+                "tool": "weather",
+                "source": "cuaca cilacap sekarang",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            },
+            "last_tool_context": {
+                "tool": "weather",
+                "location": "Cilacap",
+                "source": "cuaca cilacap sekarang",
+                "updated_at": time.time(),
+            },
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["weather"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="prediksi 3-6 jam ke depan",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "weather"
+    assert "cilacap" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "prediksi" in str(msg.metadata.get("required_tool_query", "")).lower()
+
+
+@pytest.mark.asyncio
+async def test_process_message_weather_forecast_followup_survives_recent_answer_reference_when_last_tool_context_is_weather():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "prediksi 3-6 jam ke depan"}]
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "weather",
+                "location": "Cilacap",
+                "source": "cuaca cilacap sekarang",
+                "updated_at": time.time(),
+            },
+        }
+    )
+
+    conversation_history = [
+        {"role": "assistant", "content": "Iya, 27.6C di Cilacap itu termasuk lumayan panas buat aktivitas luar rumah."}
+    ]
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: conversation_history),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["weather"]),
+        _required_tool_for_query=lambda text: "weather" if "prediksi" in str(text or "").lower() else None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="prediksi 3-6 jam ke depan",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "weather"
+    assert "cilacap" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "prediksi" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert msg.metadata.get("continuity_source") != "answer_reference"
+
+
+@pytest.mark.asyncio
+async def test_process_message_weather_forecast_followup_beats_cron_parser_when_weather_context_is_grounded():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "prediksi 3-6 jam ke depan"}]
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "weather",
+                "location": "Cilacap",
+                "source": "cuaca cilacap sekarang",
+                "updated_at": time.time(),
+            },
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["weather"]),
+        _required_tool_for_query=lambda text: "cron" if "prediksi" in str(text or "").lower() else None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="prediksi 3-6 jam ke depan",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "weather"
+    assert "cilacap" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "prediksi" in str(msg.metadata.get("required_tool_query", "")).lower()
+
 @pytest.mark.asyncio
 async def test_process_message_stock_tool_detected_from_raw_followup_still_enriches_pending_symbol_context():
     context_builder = MagicMock()
@@ -1610,6 +1816,72 @@ async def test_process_message_answer_reference_beats_last_tool_execution_contex
 
 
 @pytest.mark.asyncio
+async def test_process_message_plain_apa_itu_reuses_recent_assistant_answer_context():
+    captured_messages = {}
+
+    def _build_messages(**kwargs):
+        captured_messages["current_message"] = str(kwargs.get("current_message") or "")
+        return [{"role": "user", "content": "ctx"}]
+
+    context_builder = MagicMock()
+    context_builder.build_messages.side_effect = _build_messages
+    context_builder.consume_last_truncation_summary.return_value = None
+    assistant_text = (
+        "Skill ini akan cek uptime, load, RAM, disk, network, dan service penting di VPS Linux."
+    )
+    session = SimpleNamespace(metadata={})
+    history = [{"role": "assistant", "content": assistant_text}]
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: history),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="simple")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="apa itu")
+    await process_message(loop, msg)
+
+    loop._run_simple_response.assert_awaited_once()
+    loop._run_agent_loop.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("continuity_source") == "answer_reference"
+    current_message = captured_messages.get("current_message") or str(msg.metadata.get("effective_content") or "")
+    assert current_message.startswith("apa itu\n\n[Answer Reference Target]\n")
+    assert "[Answer Reference Context]\n" in current_message
+    assert assistant_text in current_message
+
+
+@pytest.mark.asyncio
 async def test_process_message_last_tool_execution_beats_recent_user_intent_for_short_followup():
     context_builder = MagicMock()
     context_builder.build_messages.return_value = [{"role": "user", "content": "cek lagi dong"}]
@@ -1680,8 +1952,14 @@ async def test_process_message_last_tool_execution_beats_recent_user_intent_for_
 
 @pytest.mark.asyncio
 async def test_process_message_recent_user_intent_beats_weak_parser_guess_on_low_information_followup():
+    captured = {}
+
+    def _build_messages(**kwargs):
+        captured["skill_names"] = kwargs.get("skill_names")
+        return [{"role": "user", "content": "update dong"}]
+
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "update dong"}]
+    context_builder.build_messages.side_effect = _build_messages
     session = SimpleNamespace(metadata={})
     history = [{"role": "user", "content": "cek suhu cilacap sekarang"}]
 
@@ -1737,12 +2015,21 @@ async def test_process_message_recent_user_intent_beats_weak_parser_guess_on_low
     assert msg.metadata.get("required_tool") == "weather"
     assert msg.metadata.get("required_tool_query") == "cek suhu cilacap sekarang"
     assert msg.metadata.get("continuity_source") == "user_intent"
+    assert msg.metadata.get("forced_skill_names") == ["weather"]
+    assert msg.metadata.get("suppress_required_tool_inference") is True
+    assert captured.get("skill_names") == ["weather"]
 
 
 @pytest.mark.asyncio
 async def test_process_message_explicit_weather_query_marks_parser_continuity_source():
+    captured = {}
+
+    def _build_messages(**kwargs):
+        captured["skill_names"] = kwargs.get("skill_names")
+        return [{"role": "user", "content": "cek suhu cilacap sekarang"}]
+
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "cek suhu cilacap sekarang"}]
+    context_builder.build_messages.side_effect = _build_messages
     session = SimpleNamespace(metadata={})
 
     def _required_tool(text: str) -> str | None:
@@ -1799,6 +2086,9 @@ async def test_process_message_explicit_weather_query_marks_parser_continuity_so
     loop._run_simple_response.assert_not_called()
     assert msg.metadata.get("required_tool") == "weather"
     assert msg.metadata.get("continuity_source") == "parser"
+    assert msg.metadata.get("forced_skill_names") == ["weather"]
+    assert msg.metadata.get("suppress_required_tool_inference") is True
+    assert captured.get("skill_names") == ["weather"]
 
 
 @pytest.mark.asyncio
@@ -2339,6 +2629,91 @@ async def test_process_message_memory_recall_uses_relevant_memory_facts_over_sta
     assert "[Relevant Memory Facts]\n" in current_message
     assert "MEM-42" in current_message
     assert "[Memory Recall Note]\n" in current_message
+
+
+@pytest.mark.asyncio
+async def test_process_message_memory_recall_prioritizes_user_profile_and_skips_query_echo():
+    captured_messages = {}
+
+    def _build_messages(**kwargs):
+        captured_messages["current_message"] = str(kwargs.get("current_message") or "")
+        return [{"role": "user", "content": "ctx"}]
+
+    async def _search_memory(*, query: str, session_id: str | None = None, limit: int = 5):
+        return [
+            {
+                "role": "user",
+                "content": "apa yang kamu ingat tentang saya",
+            },
+            {
+                "role": "system",
+                "content": "[preference] If the user asks \"who am I?\", answer: Maha Raja.",
+            },
+        ]
+
+    context_builder = MagicMock()
+    context_builder.build_messages.side_effect = _build_messages
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(
+        metadata={
+            "user_profile": {
+                "address": "Maha Raja",
+                "self_identity_answer": "Maha Raja",
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=False),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(
+            get_conversation_context=lambda _key, max_messages=30: [],
+            search_memory=_search_memory,
+        ),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False, turn_category="chat"))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="Maha Raja"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="Maha Raja")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="apa yang kamu ingat tentang saya",
+    )
+    await process_message(loop, msg)
+
+    current_message = captured_messages["current_message"]
+    assert "User prefers to be addressed as: Maha Raja" in current_message
+    assert "[preference] If the user asks \"who am I?\", answer: Maha Raja." in current_message
+    assert "\n- apa yang kamu ingat tentang saya\n" not in current_message
 
 
 @pytest.mark.asyncio

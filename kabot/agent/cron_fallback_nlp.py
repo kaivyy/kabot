@@ -16,6 +16,7 @@ from kabot.agent.cron_fallback_parts.intent_scoring import (
     _INTENT_STRONG_SCORE,
     _RAM_CAPACITY_MARKERS,
     _RAM_USAGE_MARKERS,
+    _PERSONAL_HR_CALC_RE,
     _STOCK_TRACKING_MARKERS,
     _WEATHER_WIND_MARKERS,
     CRON_MANAGEMENT_OPS,
@@ -48,6 +49,15 @@ __all__ = [
     "extract_weather_location",
 ]
 
+_SAVE_MEMORY_EXPLICIT_RE = re.compile(
+    r"(?i)\b("
+    r"save to memory|simpan di memori|simpan ke memori|simpan di memory|simpan ke memory|"
+    r"save this memory|commit to memory|masukkan ke memori|masukkan ke memory|"
+    r"call me|panggil aku|panggil saya|"
+    r"kalau aku tanya siapa aku|jika aku tanya siapa aku|if i ask who am i"
+    r")\b"
+)
+
 
 def required_tool_for_query(
     question: str,
@@ -57,6 +67,7 @@ def required_tool_for_query(
     has_cleanup_tool: bool = False,
     has_speedtest_tool: bool = False,
     has_process_memory_tool: bool = False,
+    has_save_memory_tool: bool = False,
     has_stock_tool: bool = False,
     has_stock_analysis_tool: bool = False,
     has_crypto_tool: bool = False,
@@ -71,6 +82,12 @@ def required_tool_for_query(
     q_lower = _normalize_query(question)
     if _looks_like_meta_skill_or_workflow_prompt(question):
         return None
+    if (
+        has_save_memory_tool
+        and _SAVE_MEMORY_EXPLICIT_RE.search(question)
+        and not _PERSONAL_HR_CALC_RE.search(q_lower)
+    ):
+        return "save_memory"
     if (
         has_system_info_tool
         and _contains_any(q_lower, _RAM_CAPACITY_MARKERS)
@@ -203,6 +220,12 @@ def extract_weather_location(question: str) -> str | None:
         )
         for marker in multilingual_fillers:
             cleaned = cleaned.replace(marker, " ")
+        cleaned = re.sub(
+            r"(?i)\b\d+(?:[-–]\d+)?\s*(?:jam|hours?|hari|days?|minggu|weeks?)\b(?:\s+(?:ke|depan|ahead))?",
+            " ",
+            cleaned,
+        )
+        cleaned = re.sub(r"(?i)\b(?:ke depan|ahead|per jam|hourly)\b", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,!?:;")
         cleaned = re.sub(
             r"(?i)\b(?:kota|city|kabupaten|regency|district|county|municipality|province|provinsi)\b$",
@@ -227,12 +250,43 @@ def extract_weather_location(question: str) -> str | None:
             "situ",
             "sana",
         }
+        forecast_non_locations = {
+            "prediksi",
+            "forecast",
+            "prakiraan",
+            "ramalan",
+            "jam",
+            "hour",
+            "hours",
+            "hari",
+            "day",
+            "days",
+            "minggu",
+            "week",
+            "weeks",
+            "ke",
+            "depan",
+            "ahead",
+            "per",
+            "besok",
+            "tomorrow",
+            "lusa",
+            "nanti",
+        }
         tokens = [tok for tok in cleaned.split() if tok]
         while tokens and tokens[0].lower() in edge_fillers:
             tokens.pop(0)
         while tokens and tokens[-1].lower() in edge_fillers:
             tokens.pop()
         if tokens and tokens[0].lower() in relational_non_locations:
+            return ""
+        if tokens and tokens[0].lower() in {"prediksi", "forecast", "prakiraan", "ramalan"}:
+            return ""
+        if tokens and all(
+            token.lower() in forecast_non_locations
+            or bool(re.fullmatch(r"\d+(?:[-–]\d+)?", token))
+            for token in tokens
+        ):
             return ""
         if len(tokens) > 8:
             return ""
@@ -256,7 +310,7 @@ def extract_weather_location(question: str) -> str | None:
 
     patterns = (
         r"(?i)\b(?:di|in)\s+([^\W\d_][\w\s\-,'\.]{1,120})",
-        r"(?i)\b(?:cuaca|weather|suhu|temperature|forecast|prakiraan|ramalan|derajat|degree|degrees|celsius|fahrenheit)\b(?:\s+(?:di|in))?\s+([^\W\d_][\w\s\-,'\.]{1,120})",
+        r"(?i)\b(?:cuaca|weather|suhu|temperature|forecast|prakiraan|ramalan|prediksi|derajat|degree|degrees|celsius|fahrenheit)\b(?:\s+(?:di|in))?\s+([^\W\d_][\w\s\-,'\.]{1,120})",
     )
 
     for pattern in patterns:
@@ -268,7 +322,7 @@ def extract_weather_location(question: str) -> str | None:
             return _format_location(candidate)
 
     candidate = re.sub(
-        r"(?i)\b(tolong|please|cek|check|semak|cuaca|weather|suhu|temperature|forecast|prakiraan|ramalan|derajat|degree|degrees|celsius|fahrenheit|hari ini|today|right now|sekarang|now|dong|ya|esok|berapa|how much|what is|what's|saat ini|right|gimana|bagaimana|kenapa|kok|kalau|kalo|coba|can|could|why|bisa|bisakah)\b",
+        r"(?i)\b(tolong|please|cek|check|semak|cuaca|weather|suhu|temperature|forecast|prakiraan|ramalan|prediksi|derajat|degree|degrees|celsius|fahrenheit|hari ini|today|right now|sekarang|now|dong|ya|esok|berapa|how much|what is|what's|saat ini|right|gimana|bagaimana|kenapa|kok|kalau|kalo|coba|can|could|why|bisa|bisakah)\b",
         " ",
         text,
     )

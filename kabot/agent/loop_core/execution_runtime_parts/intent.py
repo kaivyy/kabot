@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from kabot.agent.cron_fallback_nlp import required_tool_for_query
 from kabot.agent.tools.stock import (
@@ -118,21 +119,21 @@ def _looks_like_live_research_query(text: str) -> bool:
     if _MEMORY_COMMIT_INTENT_RE.search(normalized):
         return False
 
-    live_markers = (
-        "latest",
-        "today",
-        "now",
-        "current",
-        "breaking",
-        "headline",
-        "headlines",
-        "news",
-        "berita",
-        "terbaru",
-        "terkini",
-        "sekarang",
+    live_marker_patterns = (
+        r"\blatest\b",
+        r"\btoday\b",
+        r"\bnow\b",
+        r"\bcurrent\b",
+        r"\bbreaking\b",
+        r"\bheadline\b",
+        r"\bheadlines\b",
+        r"\bnews\b",
+        r"\bberita\b",
+        r"\bterbaru\b",
+        r"\bterkini\b",
+        r"\bsekarang\b",
     )
-    if any(marker in normalized for marker in live_markers):
+    if any(re.search(pattern, normalized) for pattern in live_marker_patterns):
         return True
     if re.search(r"\b(news|berita)\s+update(s)?\b", normalized):
         return True
@@ -154,10 +155,36 @@ def _looks_like_live_research_query(text: str) -> bool:
     return False
 
 
+def _should_defer_live_research_latch_to_skill(
+    loop: Any,
+    text: str,
+    *,
+    profile: str = "GENERAL",
+) -> bool:
+    """Return True when a matched external skill should outrank web-search forcing."""
+    context_builder = getattr(loop, "context", None)
+    skills_loader = getattr(context_builder, "skills", None)
+    matcher = getattr(skills_loader, "should_prefer_external_finance_skill", None)
+    if callable(matcher):
+        try:
+            if bool(matcher(text, profile=profile)):
+                return True
+        except Exception:
+            pass
+    external_match = getattr(skills_loader, "has_preferred_external_skill_match", None)
+    if callable(external_match):
+        try:
+            return bool(external_match(text, profile=profile))
+        except Exception:
+            return False
+    return False
+
+
 _GUARDED_TOOL_CALLS = {
     "find_files",
     "message",
     "read_file",
+    "save_memory",
     "web_search",
     "stock",
     "crypto",
@@ -203,6 +230,13 @@ _IMAGE_MARKER_RE = re.compile(
 _TTS_MARKER_RE = re.compile(
     r"(?i)\b(tts|text\s*to\s*speech|voice|suara|audio|narrat(?:e|ion)|bacakan|read\s+aloud|speak|ucapkan)\b"
 )
+_DIRECT_FETCH_VERB_RE = re.compile(
+    r"(?i)\b(fetch|open|visit|read|scrape|crawl|ambil|buka|baca|ringkas|summari[sz]e|isi website|isi halaman|konten website|konten halaman)\b"
+)
+_DIRECT_FETCH_URL_RE = re.compile(r"(?i)\bhttps?://[^\s]+")
+_DIRECT_FETCH_DOMAIN_RE = re.compile(
+    r"(?i)\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/[^\s]*)?\b"
+)
 _NON_ACTION_MARKER_RE = re.compile(
     r"(?i)\b(stop|hentikan|berhenti|jangan|bukan|dont|don't|do not|cancel|batalkan|ga usah|gak usah|nggak usah|tidak usah|no need)\b"
 )
@@ -210,6 +244,34 @@ _NON_ACTION_STOCK_TOPIC_RE = re.compile(
     r"(?i)\b(stock|saham|ticker|market|harga|price|idx|ihsg)\b"
 )
 _SKILL_CREATION_GUARDED_TOOLS = {"write_file", "edit_file", "exec"}
+
+
+def _extract_direct_fetch_url_candidate(text: str) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    url_match = _DIRECT_FETCH_URL_RE.search(raw)
+    if url_match:
+        return url_match.group(0).rstrip(").,!?")
+    if _FILELIKE_QUERY_RE.search(raw):
+        return None
+    domain_match = _DIRECT_FETCH_DOMAIN_RE.search(raw)
+    if not domain_match:
+        return None
+    candidate = domain_match.group(0).rstrip(").,!?")
+    parsed = urlparse(f"https://{candidate}")
+    if not parsed.netloc:
+        return None
+    return f"https://{candidate}"
+
+
+def _looks_like_direct_page_fetch_request(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if not _extract_direct_fetch_url_candidate(raw):
+        return False
+    return bool(_DIRECT_FETCH_VERB_RE.search(raw))
 
 
 def _tools_has(loop: Any, tool_name: str, *, default: bool = True) -> bool:
@@ -275,6 +337,9 @@ def _resolve_expected_tool_for_query(loop: Any, msg: InboundMessage) -> str | No
     query_text = _resolve_query_text_from_message(msg)
     if not query_text:
         return None
+    if _tools_has(loop, "web_fetch") and _looks_like_direct_page_fetch_request(query_text):
+        metadata["_expected_tool_for_guard"] = "web_fetch"
+        return "web_fetch"
 
     try:
         from kabot.agent.loop_core.tool_enforcement import infer_action_required_tool_for_loop
@@ -294,6 +359,7 @@ def _resolve_expected_tool_for_query(loop: Any, msg: InboundMessage) -> str | No
         has_cleanup_tool=_tools_has(loop, "cleanup_system"),
         has_speedtest_tool=_tools_has(loop, "speedtest"),
         has_process_memory_tool=_tools_has(loop, "get_process_memory"),
+        has_save_memory_tool=_tools_has(loop, "save_memory"),
         has_stock_tool=_tools_has(loop, "stock"),
         has_stock_analysis_tool=_tools_has(loop, "stock_analysis"),
         has_crypto_tool=_tools_has(loop, "crypto"),
@@ -303,6 +369,8 @@ def _resolve_expected_tool_for_query(loop: Any, msg: InboundMessage) -> str | No
         has_check_update_tool=_tools_has(loop, "check_update"),
         has_system_update_tool=_tools_has(loop, "system_update"),
     )
+    if expected in {"stock", "stock_analysis", "crypto"}:
+        return None
     if expected:
         metadata["_expected_tool_for_guard"] = expected
     return expected
@@ -381,6 +449,8 @@ def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> boo
         return bool(_REMINDER_STRUCTURE_RE.search(text))
     if normalized_tool == "weather":
         return bool(_WEATHER_MARKER_RE.search(text))
+    if normalized_tool == "web_fetch":
+        return bool(_looks_like_direct_page_fetch_request(text))
     if normalized_tool == "read_file":
         return bool(_FILELIKE_QUERY_RE.search(text) or _PATHLIKE_QUERY_RE.search(text))
     if normalized_tool == "find_files":
@@ -442,6 +512,9 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
     query_text = _resolve_query_text_from_message(msg)
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
 
+    if normalized_tool == "web_search" and _looks_like_direct_page_fetch_request(query_text):
+        return None
+
     allowed_workflow_tools: set[str] = set()
     if query_text:
         normalized_query = _normalize_text(query_text)
@@ -477,6 +550,18 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
             allowed_workflow_tools.add(str(action_tool).strip().lower())
     if normalized_tool in allowed_workflow_tools:
         return None
+
+    if normalized_tool in {"stock", "stock_analysis", "crypto"}:
+        context_builder = getattr(loop, "context", None)
+        skills_loader = getattr(context_builder, "skills", None)
+        external_finance = getattr(skills_loader, "has_external_finance_skill_available", None)
+        try:
+            if callable(external_finance) and external_finance():
+                return "prefer external finance skill over legacy finance tool"
+        except Exception:
+            pass
+        if _should_defer_live_research_latch_to_skill(loop, query_text, profile="GENERAL"):
+            return "prefer matched external skill over legacy finance tool"
 
     expected_tool = _resolve_expected_tool_for_query(loop, msg)
 

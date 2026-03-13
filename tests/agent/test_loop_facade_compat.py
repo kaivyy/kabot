@@ -257,7 +257,7 @@ async def test_process_pending_exec_approval_wrapper_delegates_to_message_runtim
         channel="cli",
         chat_id="direct",
         sender_id="user",
-        content="/approve cmd-123",
+        content="ya jalankan sekarang",
     )
     expected = OutboundMessage(channel="cli", chat_id="direct", content="approved")
 
