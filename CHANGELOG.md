@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - finalized session state now copies `last_navigated_path` from inbound metadata into persisted session metadata, ensuring one-shot agent invocations still remember the last opened folder on the next turn,
   - session initialization now hydrates `last_navigated_path` back into inbound turn metadata (and seeds `last_tool_context` when missing), so follow-up file actions can reuse prior folder context without re-asking path,
   - follow-up send commands without explicit target (for example `kirim langsung`) now reuse persisted `last_delivery_path` from session context when available,
+  - session state now persists and hydrates `last_delivery_path` across turns, so one-shot chat commands can still reuse the last successfully delivered file,
   - if a bare-filename send still resolves to an internal temp path outside the active navigated folder, Kabot now returns not-found instead of sending stale temp artifacts.
 - Find-files fallback now respects active navigation context:
   - `find_files` root resolution now checks `last_navigated_path` before falling back to older `last_tool_context.path`, preventing context drift during search→send workflows,

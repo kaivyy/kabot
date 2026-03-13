@@ -1048,6 +1048,72 @@ async def test_execute_required_tool_fallback_message_rejects_internal_temp_file
 
 
 @pytest.mark.asyncio
+async def test_execute_required_tool_fallback_multiturn_send_reuses_navigation_then_last_delivery(agent_loop):
+    payloads: list[tuple[str, dict[str, object]]] = []
+
+    async def _exec(name: str, payload: dict[str, object]):
+        payloads.append((name, payload))
+        if name == "list_dir":
+            return "📄 tes.md"
+        if name == "message":
+            return "Message sent to telegram:chat-1"
+        return "ok"
+
+    agent_loop.tools.execute = AsyncMock(side_effect=_exec)
+
+    nav_dir = agent_loop.workspace / "desktop" / "bot"
+    nav_dir.mkdir(parents=True, exist_ok=True)
+    target_file = nav_dir / "tes.md"
+    target_file.write_text("demo", encoding="utf-8")
+
+    session_key = "telegram:chat-1"
+
+    msg1 = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key=session_key,
+        content=f"buka {nav_dir}",
+        metadata={},
+        timestamp=datetime.now(),
+    )
+    await agent_loop._execute_required_tool_fallback("list_dir", msg1)
+
+    session = agent_loop.sessions.get_or_create(session_key)
+    assert session.metadata.get("last_navigated_path") == str(nav_dir.resolve())
+
+    msg2 = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key=session_key,
+        content="kirim file tes.md ke sini",
+        metadata={},
+        timestamp=datetime.now(),
+    )
+    result2 = await agent_loop._execute_required_tool_fallback("message", msg2)
+    assert result2 == "Message sent to telegram:chat-1"
+    assert session.metadata.get("last_delivery_path") == str(target_file.resolve())
+
+    msg3 = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key=session_key,
+        content="kirim langsung",
+        metadata={},
+        timestamp=datetime.now(),
+    )
+    result3 = await agent_loop._execute_required_tool_fallback("message", msg3)
+    assert result3 == "Message sent to telegram:chat-1"
+
+    message_payloads = [p for name, p in payloads if name == "message"]
+    assert len(message_payloads) == 2
+    assert message_payloads[0]["files"] == [str(target_file.resolve())]
+    assert message_payloads[1]["files"] == [str(target_file.resolve())]
+
+
+@pytest.mark.asyncio
 async def test_execute_required_tool_fallback_message_send_without_target_uses_session_last_delivery_path(agent_loop):
     execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
     agent_loop.tools.execute = execute_mock
