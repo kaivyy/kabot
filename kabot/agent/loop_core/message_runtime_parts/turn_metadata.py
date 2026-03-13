@@ -77,6 +77,12 @@ def _finalize_turn_metadata(state: Any) -> None:
             state.msg.metadata["last_tool_context"] = state.last_tool_context
         else:
             state.msg.metadata.pop("last_tool_context", None)
+        if isinstance(session_metadata, dict):
+            last_navigated_path = str(session_metadata.get("last_navigated_path") or "").strip()
+            if last_navigated_path:
+                state.msg.metadata["last_navigated_path"] = last_navigated_path
+            else:
+                state.msg.metadata.pop("last_navigated_path", None)
         if state.last_tool_execution:
             state.msg.metadata["last_tool_execution"] = state.last_tool_execution
         else:

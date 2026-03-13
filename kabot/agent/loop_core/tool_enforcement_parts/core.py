@@ -293,6 +293,15 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         resolved_path = _resolve_delivery_path(loop, path)
         if not resolved_path.exists():
             navigation_hint = str(metadata.get("last_navigated_path") or "").strip()
+            if not navigation_hint:
+                try:
+                    session = loop.sessions.get_or_create(msg.session_key)
+                except Exception:
+                    session = None
+                session_meta = getattr(session, "metadata", None)
+                if isinstance(session_meta, dict):
+                    navigation_hint = str(session_meta.get("last_navigated_path") or "").strip()
+
             is_bare_file_request = bool(
                 requested_file
                 and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", requested_file)

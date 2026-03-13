@@ -990,6 +990,38 @@ async def test_execute_required_tool_fallback_message_resolves_bare_filename_ins
 
 
 @pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_prefers_session_last_navigated_path_when_message_metadata_missing(agent_loop):
+    execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
+    agent_loop.tools.execute = execute_mock
+    report_dir = agent_loop.workspace / "desktop" / "bot"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "tes.md"
+    report_path.write_text("demo", encoding="utf-8")
+
+    session_key = "telegram:chat-1"
+    session = agent_loop.sessions.get_or_create(session_key)
+    session.metadata["last_navigated_path"] = str(report_dir.resolve())
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key=session_key,
+        content="kirim file tes.md ke sini",
+        metadata={"last_tool_context": {"tool": "list_dir", "path": str((agent_loop.workspace / ".basetemp").resolve())}},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    assert result == "Message sent to telegram:chat-1"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "message"
+    assert params["files"] == [str(report_path.resolve())]
+
+
+@pytest.mark.asyncio
 async def test_execute_required_tool_fallback_message_prefers_last_navigated_path_when_last_tool_path_is_stale(agent_loop):
     execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
     agent_loop.tools.execute = execute_mock

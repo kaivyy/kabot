@@ -590,3 +590,11 @@ def _update_followup_context_from_tool_execution(
                 "path": extracted_path,
                 "updated_at": ts,
             }
+
+        if normalized_tool in {"list_dir", "read_file"}:
+            try:
+                candidate_path = Path(str(extracted_path)).expanduser().resolve()
+            except Exception:
+                candidate_path = None
+            if candidate_path is not None and candidate_path.exists() and candidate_path.is_dir():
+                metadata["last_navigated_path"] = str(candidate_path)
