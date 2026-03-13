@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Find-files fallback now respects active navigation context:
   - `find_files` root resolution now checks `last_navigated_path` before falling back to older `last_tool_context.path`, preventing context drift during search→send workflows,
   - this behavior is now aligned in both filesystem and action-request resolver paths used by the tool-enforcement facade.
+- List-directory follow-up fallback no longer hijacks explicit send-file requests:
+  - when action-intent inference resolves a conflicting file/send tool (for example `message`), the `list_dir` follow-up latch is skipped,
+  - this prevents `kirim file tes.md kesini` from being downgraded into `list_dir` and returning false `File not found` errors.
 - Read-file fallback no longer hard-fails on directory context for broad project-inspection turns:
   - when `read_file` is requested but the resolved context path is a directory, Kabot now falls back to `list_dir` (when available) instead of returning `Not a file` immediately.
 - Low-information follow-ups now ignore stale assistant helper prompts more reliably:

@@ -795,7 +795,14 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             effective_content,
             last_tool_context=last_tool_context,
         )
-        if list_dir_followup_path:
+        action_tool_hint, _ = infer_action_required_tool_for_loop(loop, effective_content)
+        action_tool_conflict = str(action_tool_hint or "").strip() in {
+            "message",
+            "read_file",
+            "write_file",
+            "find_files",
+        }
+        if list_dir_followup_path and not action_tool_conflict:
             required_tool = "list_dir"
             required_tool_query = effective_content
             decision.is_complex = True
