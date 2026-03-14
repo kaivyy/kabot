@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ from kabot.agent.loop_core.execution_runtime_parts.intent import (
     _should_defer_live_research_latch_to_skill,
 )
 from kabot.agent.loop_core.execution_runtime_parts.llm import (
+    _active_llm_request_overrides,
     call_llm_with_fallback,
     format_tool_result,
     run_simple_response,
@@ -56,6 +58,10 @@ from kabot.agent.loop_core.tool_enforcement import (
     _looks_like_write_file_request,
     _resolve_delivery_path,
     infer_action_required_tool_for_loop,
+)
+from kabot.agent.loop_core.tool_enforcement_parts.core import (
+    _get_last_navigated_path,
+    _get_working_directory,
 )
 from kabot.bus.events import InboundMessage, OutboundMessage
 
@@ -130,6 +136,24 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             required_tool = resolved_required_tool
     elif suppress_required_tool_inference:
         required_tool = None
+    if (
+        not required_tool
+        and delivery_required
+        and not suppress_required_tool_inference
+        and _query_has_explicit_payload_for_tool("message", question_text)
+        and not _query_has_explicit_payload_for_tool("find_files", question_text)
+    ):
+        message_tool_available = True
+        if callable(has_tool):
+            try:
+                message_tool_available = bool(has_tool("message"))
+            except Exception:
+                message_tool_available = True
+        if message_tool_available:
+            required_tool = "message"
+            if isinstance(message_metadata, dict):
+                message_metadata.setdefault("required_tool", "message")
+                message_metadata.setdefault("required_tool_query", question_text)
     if skill_command_dispatch == "tool" and skill_command_tool:
         tool_available = True
         if callable(has_tool):
@@ -263,14 +287,98 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
 
     def _resolve_delivery_candidate_path() -> str:
         last_tool_context = _message_last_tool_context() or _session_last_tool_context()
+        if not isinstance(last_tool_context, dict):
+            last_tool_context = {}
+        working_directory = _get_working_directory(loop, msg, message_metadata)
+        last_navigated_path = _get_last_navigated_path(loop, msg, message_metadata)
+
+        context_path = str(last_tool_context.get("path") or "").strip()
+        context_path_exists = False
+        if context_path:
+            try:
+                context_path_exists = Path(context_path).expanduser().resolve().exists()
+            except Exception:
+                context_path_exists = False
+        fallback_directory = working_directory or last_navigated_path
+        if not context_path_exists and fallback_directory:
+            last_tool_context = {
+                **last_tool_context,
+                "tool": str(last_tool_context.get("tool") or "list_dir").strip() or "list_dir",
+                "path": fallback_directory,
+            }
         candidate = _extract_message_delivery_path(
             question_text,
             last_tool_context=last_tool_context,
         )
+        requested_file = str(_extract_read_file_path(question_text) or "").strip()
+        if candidate and requested_file:
+            try:
+                candidate_obj = Path(str(candidate)).expanduser().resolve()
+            except Exception:
+                candidate_obj = None
+            if (
+                candidate_obj is not None
+                and (
+                    (candidate_obj.exists() and candidate_obj.is_dir())
+                    or not candidate_obj.suffix
+                )
+                and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", requested_file)
+                and "/" not in requested_file
+                and "\\" not in requested_file
+            ):
+                file_candidate = (candidate_obj / requested_file).resolve()
+                if file_candidate.exists() and file_candidate.is_file():
+                    return str(file_candidate)
+        if requested_file and fallback_directory:
+            try:
+                nav_base = Path(fallback_directory).expanduser().resolve()
+            except Exception:
+                nav_base = None
+            if (
+                nav_base is not None
+                and nav_base.exists()
+                and nav_base.is_dir()
+                and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", requested_file)
+                and "/" not in requested_file
+                and "\\" not in requested_file
+            ):
+                candidate_path = (nav_base / requested_file).resolve()
+                if candidate_path.exists() and candidate_path.is_file():
+                    return str(candidate_path)
         if not candidate:
             return ""
         return str(_resolve_delivery_path(loop, candidate))
-    # OpenClaw-like responsiveness: skip expensive critic retries for short/chat/required-tool turns.
+
+    def _should_summarize_raw_direct_result(tool_name: str, result_text: str) -> bool:
+        if not result_text:
+            return False
+        normalized = str(result_text or "").strip().lower()
+        if not normalized:
+            return False
+        if tool_name in {"list_dir", "read_file", "find_files", "message"}:
+            humanized_error_prefixes = (
+                "i couldn't find that file yet:",
+                "i couldn't find that folder yet:",
+                "aku belum menemukan file ini:",
+                "aku belum menemukan folder ini:",
+                "saya belum menjumpai fail ini:",
+                "saya belum menjumpai folder ini:",
+                "not a file:",
+                "not a directory:",
+                "path ini bukan file:",
+                "path ini bukan folder:",
+                "laluan ini bukan fail:",
+                "laluan ini bukan folder:",
+                "permission denied:",
+                "akses ditolak:",
+                "failed to read file:",
+                "gagal membaca file:",
+                "gagal memaparkan kandungan folder:",
+                "gagal menampilkan isi folder:",
+            )
+            return normalized.startswith(humanized_error_prefixes)
+        return False
+    # Fast-turn responsiveness: skip expensive critic retries for short/chat/required-tool turns.
     skip_critic_for_speed = (
         bool(message_metadata.get("skip_critic_for_speed", False))
         or
@@ -557,6 +665,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 delivery_paths=[verified_artifact_path] if direct_delivery_verified else None,
                 delivery_verified=direct_delivery_verified if required_tool == "message" else None,
             )
+            if direct_delivery_verified and required_tool == "message":
+                session_metadata = getattr(session, "metadata", None)
+                if isinstance(session_metadata, dict):
+                    session_metadata.pop("pending_followup_intent", None)
+                    session_metadata.pop("pending_followup_tool", None)
             if (
                 artifact_verification_required
                 and verified_artifact_path
@@ -680,7 +793,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 and isinstance(metadata, dict)
                 and metadata.get("file_analysis_mode")
             )
-            if required_tool in raw_direct_tools and not summarize_file_analysis:
+            if (
+                required_tool in raw_direct_tools
+                and not summarize_file_analysis
+                and not _should_summarize_raw_direct_result(required_tool, str(direct_result or ""))
+            ):
                 return await progress_runtime.return_with_phase(direct_result)
             # Read-only direct tools still get an LLM-formatted summary.
             summary_messages = messages + [
@@ -689,16 +806,18 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                     "content": (
                         f"[TOOL RESULT: {required_tool}]\n{direct_result}\n\n"
                         "Use this tool result to answer the user's actual request in a clear, friendly "
-                        "response in the same language the user used. Do not ask the user to resend a "
+                        "response in the user's language unless they explicitly ask for a different language. Do not ask the user to resend a "
                         "path or repeat the same file reference. Be concise and highlight the most "
                         "important information."
                     ),
                 }
             ]
             try:
+                request_overrides, _disable_tools = _active_llm_request_overrides(loop)
                 summary_response = await loop.provider.chat(
                     messages=summary_messages,
                     model=model,
+                    **request_overrides,
                 )
                 if summary_response and summary_response.content:
                     return await progress_runtime.return_with_phase(summary_response.content)

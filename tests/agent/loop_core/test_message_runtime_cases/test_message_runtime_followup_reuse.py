@@ -2748,7 +2748,7 @@ async def test_process_message_memory_recall_uses_relevant_memory_facts_over_sta
     async def _search_memory(*, query: str, session_id: str | None = None, limit: int = 5):
         return [
             {
-                "content": "[preference] Kode preferensiku yang kamu simpan adalah MEM-42.",
+                "content": "[preference] The saved preference code is MEM-42.",
                 "metadata": {"category": "preference"},
             }
         ]
@@ -2797,7 +2797,7 @@ async def test_process_message_memory_recall_uses_relevant_memory_facts_over_sta
         _resolve_context_for_message=lambda _msg: context_builder,
         context=context_builder,
         tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
-        _required_tool_for_query=lambda text: "stock" if "kode" in str(text or "").lower() else None,
+        _required_tool_for_query=lambda text: "stock" if "code" in str(text or "").lower() else None,
         _run_simple_response=AsyncMock(return_value="MEM-42"),
         _run_agent_loop=AsyncMock(return_value="agent"),
         _finalize_session=AsyncMock(
@@ -2811,7 +2811,7 @@ async def test_process_message_memory_recall_uses_relevant_memory_facts_over_sta
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="kode preferensiku apa?",
+        content="what is my preference code?",
     )
     await process_message(loop, msg)
 
@@ -2837,7 +2837,7 @@ async def test_process_message_memory_recall_prioritizes_user_profile_and_skips_
         return [
             {
                 "role": "user",
-                "content": "apa yang kamu ingat tentang saya",
+                "content": "what do you remember about me",
             },
             {
                 "role": "system",
@@ -2900,14 +2900,14 @@ async def test_process_message_memory_recall_prioritizes_user_profile_and_skips_
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="apa yang kamu ingat tentang saya",
+        content="what do you remember about me",
     )
     await process_message(loop, msg)
 
     current_message = captured_messages["current_message"]
     assert "User prefers to be addressed as: Maha Raja" in current_message
     assert "[preference] If the user asks \"who am I?\", answer: Maha Raja." in current_message
-    assert "\n- apa yang kamu ingat tentang saya\n" not in current_message
+    assert "\n- what do you remember about me\n" not in current_message
 
 
 @pytest.mark.asyncio
@@ -3043,6 +3043,68 @@ async def test_process_message_explicit_send_file_request_keeps_message_tool_ove
     )
 
     msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="kirim file tes.md kesini")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "message"
+
+
+@pytest.mark.asyncio
+async def test_process_message_bare_send_file_request_keeps_message_tool_over_list_dir_followup_context():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "kirim file tes.md"}]
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "list_dir",
+                "path": r"C:\\Users\\Arvy Kairi\\Desktop\\bot",
+                "source": r"C:\\Users\\Arvy Kairi\\Desktop\\bot",
+                "updated_at": time.time(),
+            },
+            "last_navigated_path": r"C:\\Users\\Arvy Kairi\\Desktop\\bot",
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=True))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["message", "list_dir"],
+            has=lambda name: name in {"message", "list_dir"},
+        ),
+        _required_tool_for_query=lambda _text: "message",
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="kirim file tes.md")
     await process_message(loop, msg)
 
     loop._run_agent_loop.assert_awaited_once()

@@ -16,4 +16,3 @@ def detect_language(text: str | None) -> str:
 def t(key: str, text: str | None = None, **kwargs: Any) -> str:
     """Backward-compatible translation entrypoint."""
     return _tr(key, text=text, **kwargs)
-

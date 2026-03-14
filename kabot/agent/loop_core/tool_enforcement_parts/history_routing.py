@@ -17,7 +17,11 @@ from kabot.agent.loop_core.tool_enforcement_parts.common import (
     _is_low_information_followup,
     _normalize_text,
 )
-from kabot.agent.loop_core.tool_enforcement_parts.filesystem_paths import _PATHLIKE_QUERY_RE
+from kabot.agent.loop_core.tool_enforcement_parts.filesystem_paths import (
+    _PATHLIKE_QUERY_RE,
+    _extract_list_dir_path,
+    _extract_read_file_path,
+)
 
 _CONTEXTUAL_FOLLOWUP_PHRASES = (
     "ya lanjut",
@@ -99,6 +103,12 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
     """Resolve required tool for immediate-action query types."""
     if loop.tools.has("web_fetch") and _looks_like_direct_page_fetch_request(question):
         return "web_fetch"
+    if (
+        loop.tools.has("list_dir")
+        and not _extract_read_file_path(question)
+        and _extract_list_dir_path(question)
+    ):
+        return "list_dir"
 
     resolved_tool = required_tool_for_query(
         question=question,

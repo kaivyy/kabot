@@ -95,7 +95,7 @@ def _build_filesystem_location_context_note(loop: Any, session: Any, last_tool_c
     if last_path:
         lines.append(f"Last navigated filesystem path: {last_path}")
     lines.append(
-        "Answer naturally in the user's language. If they ask where you are now, use the concrete path context above."
+        "Understand the user's language and answer in that language unless they explicitly ask for a different language. If they ask where you are now, use the concrete path context above."
     )
     return "\n".join(lines)
 
@@ -121,7 +121,7 @@ def _build_temporal_context_note(*, now_local: datetime | None = None) -> str:
     lines.append(f"Yesterday local weekday: {yesterday.strftime('%A')}")
     lines.append(f"Tomorrow local weekday: {tomorrow.strftime('%A')}")
     lines.append(f"Seven days from today weekday: {next_week.strftime('%A')}")
-    lines.append("Use these exact local-time facts for day/date/time follow-up questions, then answer naturally in the user's language.")
+    lines.append("Use these exact local-time facts for day/date/time follow-up questions, then answer in the user's language unless they explicitly ask for a different language.")
     return "\n".join(lines)
 
 
@@ -135,7 +135,7 @@ def _build_explicit_file_analysis_note(path: str) -> str:
             f"- The user referenced this concrete file path: {normalized_path}",
             "- If the user is asking about the file's contents, structure, styling, config, or attributes, call read_file on that path before answering.",
             "- Do not ask the user to resend the file path when it is already present.",
-            "- After reading, answer the real question naturally in the user's language instead of dumping the file unless they explicitly ask for the raw content.",
+            "- After reading, answer the real question in the user's language unless they explicitly ask for a different language, instead of dumping the file unless they explicitly ask for the raw content.",
         )
     )
 

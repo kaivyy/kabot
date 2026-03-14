@@ -18,6 +18,29 @@ from kabot.agent.loop_core.execution_runtime_parts.helpers import (
 from kabot.bus.events import InboundMessage
 
 
+def _active_message_metadata(loop: Any) -> dict[str, Any]:
+    metadata = getattr(loop, "_active_message_metadata", None)
+    if isinstance(metadata, dict):
+        return metadata
+    return {}
+
+
+def _active_llm_request_overrides(loop: Any) -> tuple[dict[str, Any], bool]:
+    metadata = _active_message_metadata(loop)
+    overrides: dict[str, Any] = {}
+
+    temperature = metadata.get("directive_temperature")
+    if isinstance(temperature, (int, float)):
+        overrides["temperature"] = float(temperature)
+
+    max_tokens = metadata.get("directive_max_tokens")
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        overrides["max_tokens"] = max_tokens
+
+    disable_tools = bool(metadata.get("directive_no_tools"))
+    return overrides, disable_tools
+
+
 async def run_simple_response(loop: Any, msg: InboundMessage, messages: list) -> str | None:
     """Direct single-shot response for simple queries (no loop, no tools)."""
     try:
@@ -96,11 +119,13 @@ async def call_llm_with_fallback(
             restore_fallbacks = list(current_fallbacks)
             provider.fallbacks = []
         try:
+            request_overrides, disable_tools = _active_llm_request_overrides(loop)
             kwargs: dict[str, Any] = {
                 "messages": messages,
                 "model": model_name,
             }
-            if include_tools:
+            kwargs.update(request_overrides)
+            if include_tools and not disable_tools:
                 kwargs["tools"] = loop.tools.get_definitions()
             return await provider.chat(**kwargs)
         finally:

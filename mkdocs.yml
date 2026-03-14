@@ -89,3 +89,4 @@ nav:
       - Configuration: reference/configuration.md
       - Authentication: reference/authentication.md
       - Dashboard Routes: reference/dashboard-routes.md
+      - Releases: reference/releases.md

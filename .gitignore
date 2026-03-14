@@ -7,6 +7,8 @@ build/
 docs/*
 !docs/logs/
 !docs/plans/
+!docs/reference/
+!docs/reference/*.md
 !docs/multi-agent.md
 !docs/collaborative-orchestration.md
 !docs/AI-AS-DEVELOPER-GAP-ANALYSIS.md
@@ -39,3 +41,6 @@ memory_db/
 .backup/
 MagicMock/
 test_out.txt*
+workspace/BOOTSTRAP.md
+workspace/IDENTITY.md
+~/

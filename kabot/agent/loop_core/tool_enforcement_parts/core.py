@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,6 @@ from kabot.agent.loop_core.tool_enforcement_parts.common import (
     _normalize_text,
 )
 from kabot.agent.loop_core.tool_enforcement_parts.fallback_support import (
-    _GENERIC_STOCK_NAME_NOISE_WORDS,
     _compact_web_search_query,
     _extract_explicit_mcp_tool_arguments,
     _extract_stock_analysis_days,
@@ -80,6 +80,102 @@ from kabot.agent.tools.stock import (
 from kabot.agent.tools.weather import infer_weather_request_profile
 from kabot.bus.events import InboundMessage
 
+
+_NON_MARKET_DOTTED_SUFFIXES = {
+    "MD",
+    "TXT",
+    "JSON",
+    "YAML",
+    "YML",
+    "TOML",
+    "CSV",
+    "LOG",
+    "PDF",
+    "DOC",
+    "DOCX",
+    "XLS",
+    "XLSX",
+    "PY",
+    "JS",
+    "TS",
+    "TSX",
+    "JSX",
+    "HTML",
+    "CSS",
+    "XML",
+    "INI",
+    "CFG",
+    "CONF",
+    "ENV",
+}
+
+
+def _extract_structural_stock_symbols(raw: str) -> list[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+    tokens = [token for token in re.split(r"[\s,]+", text) if token]
+    for token_raw in tokens:
+        token = token_raw.strip().strip("()[]{}\"'`")
+        token = token.strip(".,;:!?")
+        if not token:
+            continue
+        upper = token.upper()
+        if upper.endswith("=X") and re.fullmatch(r"[A-Z]{3,10}=X", upper):
+            if upper not in seen:
+                seen.add(upper)
+                result.append(upper)
+            continue
+        if upper.startswith("^") and re.fullmatch(r"\^[A-Z]{2,8}", upper):
+            if upper not in seen:
+                seen.add(upper)
+                result.append(upper)
+            continue
+        if "." in upper and re.fullmatch(r"[A-Z0-9]{1,10}\.[A-Z]{1,5}", upper):
+            _left, right = upper.split(".", 1)
+            if right in _NON_MARKET_DOTTED_SUFFIXES:
+                continue
+            if upper not in seen:
+                seen.add(upper)
+                result.append(upper)
+            continue
+        if token == token.upper() and re.fullmatch(r"[A-Z]{2,8}", upper):
+            if upper not in seen:
+                seen.add(upper)
+                result.append(upper)
+    return result
+
+
+def _has_explicit_stock_symbol_payload(raw: str) -> bool:
+    text = str(raw or "").strip()
+    if not text:
+        return False
+
+    explicit_tokens: set[str] = set()
+    for token_raw in re.split(r"[\s,]+", text):
+        token = token_raw.strip().strip("()[]{}\"'`")
+        token = token.strip(".,;:!?")
+        if not token:
+            continue
+        explicit_tokens.add(token.upper())
+
+    for symbol in extract_stock_symbols(text):
+        normalized = str(symbol or "").strip().upper()
+        if not normalized:
+            continue
+        if normalized in explicit_tokens:
+            return True
+        root = normalized.split(".", 1)[0]
+        if root.endswith("=X"):
+            root = root[:-2]
+        if root and root in explicit_tokens:
+            return True
+    return False
+
+
 def _query_has_tool_payload(tool_name: str, text: str) -> bool:
     """Check whether raw user text carries explicit payload for a required tool."""
     raw = str(text or "").strip()
@@ -87,21 +183,7 @@ def _query_has_tool_payload(tool_name: str, text: str) -> bool:
         return False
     tool = str(tool_name or "").strip().lower()
     if tool in {"stock", "stock_analysis"}:
-        symbols = extract_stock_symbols(raw)
-        if symbols:
-            return True
-        if _FILELIKE_QUERY_RE.search(raw) or _PATHLIKE_QUERY_RE.search(raw):
-            return False
-        names = extract_stock_name_candidates(raw)
-        if not names:
-            return False
-        for candidate in names:
-            tokens = [token for token in _normalize_text(candidate).split(" ") if token]
-            if not tokens:
-                continue
-            if any(token not in _GENERIC_STOCK_NAME_NOISE_WORDS for token in tokens):
-                return True
-        return False
+        return bool(_extract_structural_stock_symbols(raw)) or _has_explicit_stock_symbol_payload(raw)
     if tool == "crypto":
         return bool(extract_crypto_ids(raw))
     if tool == "weather":
@@ -133,6 +215,51 @@ def _get_session_metadata(loop: Any, msg: InboundMessage) -> dict[str, Any] | No
     return session_meta
 
 
+def _normalize_working_directory_path(path_value: str) -> str | None:
+    raw = str(path_value or "").strip()
+    if not raw:
+        return None
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except Exception:
+        return None
+    if not resolved.exists():
+        return None
+    if resolved.is_file():
+        resolved = resolved.parent
+    if not resolved.is_dir():
+        return None
+    return str(resolved)
+
+
+def _set_working_directory(
+    loop: Any,
+    msg: InboundMessage,
+    metadata: dict[str, Any],
+    path_value: str,
+) -> str | None:
+    normalized = _normalize_working_directory_path(path_value)
+    if not normalized:
+        return None
+    metadata["working_directory"] = normalized
+    session_meta = _get_session_metadata(loop, msg)
+    if isinstance(session_meta, dict):
+        session_meta["working_directory"] = normalized
+    return normalized
+
+
+def _get_working_directory(loop: Any, msg: InboundMessage, metadata: dict[str, Any]) -> str:
+    session_meta = _get_session_metadata(loop, msg)
+    if isinstance(session_meta, dict):
+        session_working_directory = str(session_meta.get("working_directory") or "").strip()
+        if session_working_directory:
+            return session_working_directory
+    direct = str(metadata.get("working_directory") or "").strip()
+    if direct:
+        return direct
+    return ""
+
+
 def _set_last_navigated_path(loop: Any, msg: InboundMessage, metadata: dict[str, Any], path_value: str) -> str | None:
     raw = str(path_value or "").strip()
     if not raw:
@@ -144,20 +271,29 @@ def _set_last_navigated_path(loop: Any, msg: InboundMessage, metadata: dict[str,
     if not resolved.exists() or not resolved.is_dir():
         return None
     normalized = str(resolved)
-    metadata["last_navigated_path"] = normalized
+    metadata.pop("last_navigated_path", None)
     session_meta = _get_session_metadata(loop, msg)
     if isinstance(session_meta, dict):
-        session_meta["last_navigated_path"] = normalized
+        session_meta.pop("last_navigated_path", None)
+    _set_working_directory(loop, msg, metadata, normalized)
     return normalized
 
 
 def _get_last_navigated_path(loop: Any, msg: InboundMessage, metadata: dict[str, Any]) -> str:
+    working_directory = _get_working_directory(loop, msg, metadata)
+    if working_directory:
+        return working_directory
+    session_meta = _get_session_metadata(loop, msg)
+    if isinstance(session_meta, dict):
+        session_working_directory = str(session_meta.get("working_directory") or "").strip()
+        if session_working_directory:
+            return session_working_directory
+        session_last_nav = str(session_meta.get("last_navigated_path") or "").strip()
+        if session_last_nav:
+            return session_last_nav
     direct = str(metadata.get("last_navigated_path") or "").strip()
     if direct:
         return direct
-    session_meta = _get_session_metadata(loop, msg)
-    if isinstance(session_meta, dict):
-        return str(session_meta.get("last_navigated_path") or "").strip()
     return ""
 
 
@@ -177,12 +313,14 @@ def _looks_like_internal_temp_path(candidate: Path) -> bool:
 
 
 def _get_last_delivery_path(loop: Any, msg: InboundMessage, metadata: dict[str, Any]) -> str:
+    session_meta = _get_session_metadata(loop, msg)
+    if isinstance(session_meta, dict):
+        session_delivery = str(session_meta.get("last_delivery_path") or "").strip()
+        if session_delivery:
+            return session_delivery
     direct = str(metadata.get("last_delivery_path") or "").strip()
     if direct:
         return direct
-    session_meta = _get_session_metadata(loop, msg)
-    if isinstance(session_meta, dict):
-        return str(session_meta.get("last_delivery_path") or "").strip()
     return ""
 
 
@@ -197,10 +335,11 @@ def _set_last_delivery_path(loop: Any, msg: InboundMessage, metadata: dict[str, 
     if not resolved.exists() or not resolved.is_file():
         return None
     normalized = str(resolved)
-    metadata["last_delivery_path"] = normalized
+    metadata.pop("last_delivery_path", None)
     session_meta = _get_session_metadata(loop, msg)
     if isinstance(session_meta, dict):
         session_meta["last_delivery_path"] = normalized
+    _set_working_directory(loop, msg, metadata, str(resolved.parent))
     return normalized
 
 
@@ -217,6 +356,29 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         if callable(execute_tool):
             return await execute_tool(name, payload, session_key=msg.session_key)
         return await loop.tools.execute(name, payload)
+
+    def _seed_pending_send_file_followup(intent_text: str) -> None:
+        normalized_intent = str(intent_text or "").strip()
+        if not normalized_intent:
+            return
+        try:
+            session = loop.sessions.get_or_create(msg.session_key)
+        except Exception:
+            return
+        try:
+            from kabot.agent.loop_core.message_runtime_parts.followup import (
+                _set_pending_followup_intent,
+            )
+        except Exception:
+            return
+        _set_pending_followup_intent(
+            session,
+            normalized_intent,
+            "GENERAL",
+            time.time(),
+            kind="assistant_committed_action",
+            request_text=normalized_intent,
+        )
 
     # Prefer fresh raw user intent when it clearly maps to the same required tool.
     # This protects against stale carried metadata when users switch tasks quickly.
@@ -369,6 +531,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             if isinstance(metadata.get("last_tool_context"), dict)
             else {}
         )
+        requested_file = _extract_read_file_path(source_text)
         path = _extract_message_delivery_path(
             source_text,
             last_tool_context=last_tool_context,
@@ -384,13 +547,34 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             path = last_delivery_path
 
         if not path:
+            if _looks_like_message_send_file_request(
+                source_text,
+                explicit_path=requested_file,
+            ):
+                _seed_pending_send_file_followup(source_text)
             return i18n_t("filesystem.need_path", source_text)
-
-        requested_file = _extract_read_file_path(source_text)
         if not requested_file and send_without_target and last_delivery_path:
             requested_file = Path(last_delivery_path).name
 
         resolved_path = _resolve_delivery_path(loop, path)
+        if requested_file:
+            try:
+                resolved_candidate = resolved_path.expanduser().resolve()
+            except Exception:
+                resolved_candidate = resolved_path
+            if (
+                (
+                    (resolved_candidate.exists() and resolved_candidate.is_dir())
+                    or not resolved_candidate.suffix
+                )
+                and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", requested_file)
+                and "/" not in requested_file
+                and "\\" not in requested_file
+            ):
+                candidate = (resolved_candidate / str(requested_file)).resolve()
+                if candidate.exists() and candidate.is_file():
+                    resolved_path = candidate
+                    path = str(candidate)
 
         is_bare_file_request = bool(
             requested_file
@@ -398,7 +582,8 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             and "/" not in requested_file
             and "\\" not in requested_file
         )
-        navigation_hint = _get_last_navigated_path(loop, msg, metadata)
+        working_directory = _get_working_directory(loop, msg, metadata)
+        navigation_hint = working_directory or _get_last_navigated_path(loop, msg, metadata)
         nav_base: Path | None = None
         if navigation_hint and is_bare_file_request:
             try:

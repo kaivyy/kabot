@@ -243,6 +243,51 @@ async def test_dashboard_status_api_uses_runtime_status_provider(aiohttp_client)
     assert data["channels_enabled"] == ["telegram"]
     assert data["cron_jobs"] == 2
 
+
+@pytest.mark.asyncio
+async def test_dashboard_runtime_partial_renders_route_decision_snapshot(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: {
+            "status": "running",
+            "recent_turn": {
+                "session_key": "telegram:123",
+                "continuity_source": "answer_reference",
+                "route_profile": "CHAT",
+                "required_tool": "weather",
+                "route_decision_snapshot": {
+                    "route_profile": "CHAT",
+                    "route_complex": False,
+                    "turn_category": "chat",
+                    "continuity_source": "answer_reference",
+                    "required_tool": "weather",
+                    "required_tool_query": "cek suhu cilacap sekarang",
+                    "external_skill_lane": False,
+                    "forced_skill_names": ["weather"],
+                },
+            },
+        },
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard/partials/runtime",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "Latest continuity/routing snapshot" in body
+    assert "Route Snapshot" in body
+    assert "CHAT/chat" in body
+    assert "weather" in body
+    assert "answer_reference" in body
+
 @pytest.mark.asyncio
 async def test_dashboard_shell_includes_subagent_and_git_panels(aiohttp_client):
     from kabot.gateway.webhook_server import WebhookServer

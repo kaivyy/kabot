@@ -36,30 +36,34 @@ _IDENTITY_STAGE_MARKERS = (
     "who am i",
     "what kind of creature",
     "pick my signature",
-    "kamu mau panggil aku apa",
-    "aku ini makhluk apa",
-    "vibe-ku",
     "emoji signature",
-    "signature-ku",
 )
 _USER_STAGE_MARKERS = (
-    "aku panggil kamu siapa",
     "what should i call you",
     "what do i call you",
     "what to call them",
-    "timezone kamu",
-    "timezone you",
-    "timezone tetap",
+    "your timezone",
 )
 _COMPLETE_STAGE_MARKERS = (
-    "aku simpan ke profil",
-    "simpan ke profilku",
     "saved to profile",
-    "next chat aku langsung nyambung",
-    "langsung nyambung",
-    "mau aku bantu apa dulu",
+    "next chat will pick it up",
     "what can i help with",
     "how can i help",
+)
+_BOOTSTRAP_ACTION_VERB_RE = re.compile(
+    r"(?i)\b("
+    r"buka|open|masuk|enter|cd|goto|go\s+to|lihat|list|tampilkan|show|display|"
+    r"kirim|send|share|attach|lampirkan|upload|"
+    r"cari|find|search|locate|"
+    r"buat|create|generate|write|tulis|save|simpan|"
+    r"cek|check|periksa|inspect|read|baca"
+    r")\b"
+)
+_BOOTSTRAP_ACTION_HINT_RE = re.compile(
+    r"(?i)\b("
+    r"file|folder|directory|dir|path|desktop|downloads?|documents?|docs|"
+    r"workspace|chat|channel|screenshot|gambar|image|report|pdf|xlsx|csv"
+    r")\b"
 )
 
 
@@ -170,20 +174,20 @@ def _apply_labeled_answers(state: dict[str, Any], labeled: dict[str, str]) -> No
     for label, value in labeled.items():
         if not value:
             continue
-        if any(key in label for key in ("nama saya", "my name", "what to call", "panggil saya")):
+        if any(key in label for key in ("my name", "what to call", "call me")):
             user["name"] = value
             user.setdefault("address", value)
-        elif "timezone" in label or "zona waktu" in label or label == "wib":
+        elif "timezone" in label:
             user["timezone"] = _normalize_timezone(value or label)
-        elif any(key in label for key in ("creature", "role", "peran", "makhluk")):
+        elif any(key in label for key in ("creature", "role")):
             assistant["creature"] = value
-        elif "vibe" in label or "gaya" in label or "tone" in label or "style" in label:
+        elif "vibe" in label or "tone" in label or "style" in label:
             assistant["vibe"] = value
         elif "emoji" in label or "signature" in label:
             assistant["emoji"] = value
-        elif any(key in label for key in ("nama assistant", "assistant name", "panggil aku", "call me")):
+        elif any(key in label for key in ("assistant name", "call me")):
             assistant["name"] = value
-        elif label == "name" or label == "nama":
+        elif label == "name":
             if state.get("stage") == "user":
                 user["name"] = value
                 user.setdefault("address", value)
@@ -272,6 +276,27 @@ def _is_bootstrap_complete(state: dict[str, Any]) -> bool:
     )
 
 
+def _looks_like_non_bootstrap_action_turn(msg: InboundMessage) -> bool:
+    metadata = getattr(msg, "metadata", None)
+    if isinstance(metadata, dict):
+        required_tool = str(metadata.get("required_tool") or "").strip()
+        if required_tool:
+            return True
+        turn_category = str(metadata.get("turn_category") or "").strip().lower()
+        if turn_category in {"action", "coding"}:
+            return True
+
+    raw_content = str(getattr(msg, "content", "") or "").strip()
+    if not raw_content:
+        return False
+    if raw_content.startswith("/"):
+        return True
+    return bool(
+        _BOOTSTRAP_ACTION_VERB_RE.search(raw_content)
+        and _BOOTSTRAP_ACTION_HINT_RE.search(raw_content)
+    )
+
+
 def update_bootstrap_onboarding_state(
     loop: Any,
     session: Any,
@@ -294,6 +319,8 @@ def update_bootstrap_onboarding_state(
     state = _bootstrap_state(session)
     bootstrap_active = bootstrap_path.exists() or str(state.get("stage") or "") != "complete"
     if not bootstrap_active:
+        return
+    if _looks_like_non_bootstrap_action_turn(msg):
         return
 
     raw_content = str(getattr(msg, "content", "") or "").strip()

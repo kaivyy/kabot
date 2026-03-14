@@ -38,6 +38,7 @@ def test_resolve_runtime_locale_uses_session_cached_locale_for_short_followup():
     resolved = message_runtime_module._resolve_runtime_locale(session, msg, "ya")
 
     assert resolved == "id"
+    assert session.metadata.get("runtime_locale") == "id"
 
 def test_resolve_runtime_locale_persists_detected_non_english_locale():
     session = SimpleNamespace(metadata={})
@@ -52,6 +53,24 @@ def test_resolve_runtime_locale_persists_detected_non_english_locale():
 
     assert resolved == "id"
     assert session.metadata.get("runtime_locale") == "id"
+    assert session.metadata.get("input_locale") == "id"
+
+
+def test_resolve_runtime_locale_honors_explicit_runtime_locale_override():
+    session = SimpleNamespace(metadata={})
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="tolong cek cuaca sekarang",
+        metadata={"runtime_locale": "id"},
+    )
+
+    resolved = message_runtime_module._resolve_runtime_locale(session, msg, msg.content)
+
+    assert resolved == "id"
+    assert session.metadata.get("runtime_locale") == "id"
+    assert session.metadata.get("input_locale") == "id"
 
 def test_short_context_followup_does_not_misclassify_substantive_cjk_query():
     assert message_runtime_module._is_short_context_followup("\u5929\u6c14\u5317\u4eac\u73b0\u5728\u600e\u4e48\u6837") is False
@@ -637,15 +656,15 @@ async def test_process_message_memory_commit_followup_bypasses_fast_simple_conte
     routed_context = MagicMock()
     routed_context.build_messages.return_value = [
         {"role": "system", "content": "# Memory\n## Long-term Memory\nUse WIB (UTC+7)."},
-        {"role": "assistant", "content": "Bilang 'simpan' dan aku akan commit ke memory."},
-        {"role": "user", "content": "simpan"},
+        {"role": "assistant", "content": "Say 'save it' and I'll commit it to memory."},
+        {"role": "user", "content": "save it"},
     ]
     routed_context.skills = SimpleNamespace(
         match_skills=lambda _msg, _profile: [],
     )
 
     history = [
-        {"role": "assistant", "content": "Bilang 'simpan' dan aku akan commit ke memory."},
+        {"role": "assistant", "content": "Say 'save it' and I'll commit it to memory."},
     ]
 
     loop = SimpleNamespace(
@@ -675,16 +694,16 @@ async def test_process_message_memory_commit_followup_bypasses_fast_simple_conte
         context=MagicMock(),
         tools=SimpleNamespace(tool_names=["save_memory"]),
         _required_tool_for_query=lambda _text: None,
-        _run_simple_response=AsyncMock(return_value="Siap, saya simpan."),
-        _run_agent_loop=AsyncMock(return_value="ok"),
-        _finalize_session=AsyncMock(
-            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="Siap, saya simpan.")
+    _run_simple_response=AsyncMock(return_value="Done, I saved it."),
+    _run_agent_loop=AsyncMock(return_value="ok"),
+    _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="Done, I saved it.")
         ),
         sessions=SimpleNamespace(save=lambda _session: None),
         runtime_observability=None,
     )
 
-    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="simpan")
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="save it")
     response = await process_message(loop, msg)
 
     assert response is not None

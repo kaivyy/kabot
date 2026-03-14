@@ -208,12 +208,16 @@ def install_launchd_service(
     if workdir is None:
         workdir = os.getcwd()
 
+    workdir_path = Path(workdir)
+    logs_dir = workdir_path / "logs"
+
     # Generate plist file
-    plist_content = generate_launchagent_plist(label, workdir)
+    plist_content = generate_launchagent_plist(label, str(workdir_path))
 
     # User LaunchAgents directory
     launch_dir = Path.home() / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
     plist_file = launch_dir / f"{label}.plist"
 

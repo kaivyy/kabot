@@ -283,7 +283,7 @@ Kabot now includes sophisticated backend systems that prevent common AI agent fa
 - **Auto-Compaction**: Summarizes old messages when context overflows (keeps recent 10 exchanges)
 - **Result Truncation**: Caps tool results at 30% of context window to prevent bloat
 
-### Runtime Continuity And Anti-Hallucination Upgrades (v0.6.4)
+### Runtime Continuity And Anti-Hallucination Upgrades (v0.6.5)
 
 - **Committed action continuity:** if Kabot says it will create, send, or upgrade something, replies like `ya`, `yes continue`, and `lanjut` are much more likely to continue that exact task.
 - **Answer-reference continuity:** follow-ups like `yang kedua`, `lebih singkat`, or `maksudnya apa` can stay attached to the latest real answer.
@@ -971,7 +971,7 @@ Kabot includes 36 built-in tools that give AI powerful capabilities. Here's the 
   - Example: "Upload report.pdf to my Drive"
 
 ### **Financial & Market Data**
-- **OpenClaw-style note:** Kabot now prefers workspace/managed finance skills first. The built-in tools below are kept as **legacy fallback** paths for exact identifiers and older workflows.
+- **Skill-first note:** Kabot now prefers workspace/managed finance skills first. The built-in tools below are kept as **legacy fallback** paths for exact identifiers and older workflows.
 - **stock** - Legacy fallback for real-time stock prices (Yahoo Finance)
   - Example: "What's the current price of AAPL?"
   - Supports: Multiple tickers, real-time data
@@ -1333,12 +1333,12 @@ Behavior:
 - If signer is missing/not trusted, install is blocked with clear message.
 
 ### **Installer Metadata (`metadata.kabot.install`)**
-Skill installer metadata supports both Kabot-native and compatible public-skill formats:
+Skill installer metadata supports both Kabot-native and legacy public-skill formats:
 
 - `metadata.kabot`
-- `metadata.openclaw`
+- a legacy external metadata namespace used by some existing public skill packs
 
-That means public skills authored in the same style as many existing external packs can be loaded by Kabot without rewriting their metadata first.
+That means many existing public skill packs can still be loaded by Kabot without rewriting their installer metadata first.
 
 Legacy single command:
 ```json

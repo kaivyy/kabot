@@ -124,6 +124,7 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
         and not explicit_file_analysis_note
         and not mcp_context_note
         and not accuracy_context_required
+        and not _looks_like_memory_commit_turn(effective_content)
     )
     if forced_skill_names:
         fast_direct_context = False

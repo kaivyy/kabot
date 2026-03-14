@@ -6,6 +6,7 @@ from kabot.cli.agent_smoke_matrix import (
     SmokeResult,
     _create_mcp_local_echo_case,
     _create_mcp_local_echo_continuity_case,
+    _print_human_summary,
     _create_web_search_no_key_smoke_cases,
     _localized_weekday_expectations,
     _stdout_matches_expectations,
@@ -14,8 +15,10 @@ from kabot.cli.agent_smoke_matrix import (
     build_continuity_smoke_cases,
     build_memory_smoke_cases,
     build_delivery_smoke_cases,
+    build_regression_smoke_cases,
     build_workflow_smoke_cases,
     build_smoke_cases,
+    main,
     parse_run_metrics,
     run_case,
     serialize_results_json,
@@ -70,6 +73,7 @@ def test_parse_run_metrics_extracts_route_and_latency_values():
         (
             "2026-03-09 | INFO | Route: profile=GENERAL, complex=False",
             "2026-03-09 | INFO | turn_id=abc continuity_source=answer_reference turn_category=chat",
+            '2026-03-09 | INFO | runtime_event={"event":"route_decision","route_profile":"GENERAL","route_complex":false,"turn_category":"chat","continuity_source":"answer_reference","required_tool":"weather","required_tool_query":"cek suhu cilacap sekarang","external_skill_lane":false,"forced_skill_names":[]}',
             "2026-03-09 | INFO | pending_interrupt_count=2 session=cli:smoke:test",
             "2026-03-09 | INFO | completion_evidence artifact_verified=true delivery_verified=true executed_tools=write_file,message",
             "2026-03-09 | INFO | turn_id=abc context_build_ms=12",
@@ -87,6 +91,16 @@ def test_parse_run_metrics_extracts_route_and_latency_values():
     assert metrics["completion_delivery_verified"] is True
     assert metrics["context_build_ms"] == 12
     assert metrics["first_response_ms"] == 345
+    assert metrics["route_decision_snapshot"] == {
+        "route_profile": "GENERAL",
+        "route_complex": False,
+        "turn_category": "chat",
+        "continuity_source": "answer_reference",
+        "required_tool": "weather",
+        "required_tool_query": "cek suhu cilacap sekarang",
+        "external_skill_lane": False,
+        "forced_skill_names": [],
+    }
 
 
 def test_serialize_results_json_preserves_unicode():
@@ -106,6 +120,47 @@ def test_serialize_results_json_preserves_unicode():
 
     assert JA_PROMPT in payload
     assert JA_REPLY in payload
+
+
+def test_print_human_summary_includes_route_decision_snapshot(monkeypatch):
+    emitted = {}
+
+    def _capture(text: str) -> None:
+        emitted["text"] = text
+
+    monkeypatch.setattr("kabot.cli.agent_smoke_matrix._emit_text", _capture)
+
+    _print_human_summary(
+        [
+            SmokeResult(
+                label="weather-followup",
+                prompt="prediksi 3-6 jam kedepan",
+                session_id="cli:smoke:test",
+                returncode=0,
+                stdout="Cilacap forecast...",
+                stderr="",
+                route="Route: profile=GENERAL, complex=True",
+                continuity_source="weather_context",
+                turn_category="action",
+                route_decision_snapshot={
+                    "route_profile": "GENERAL",
+                    "route_complex": True,
+                    "turn_category": "action",
+                    "continuity_source": "weather_context",
+                    "required_tool": "weather",
+                    "required_tool_query": "cilacap prediksi 3-6 jam kedepan",
+                    "external_skill_lane": False,
+                    "forced_skill_names": ["weather"],
+                },
+                passed=True,
+            )
+        ]
+    )
+
+    text = emitted["text"]
+    assert "route_snapshot: GENERAL/action tool=weather" in text
+    assert "continuity=weather_context" in text
+    assert "forced_skills=weather" in text
 
 
 def test_apply_thresholds_marks_slow_first_response_as_failure():
@@ -336,6 +391,55 @@ def test_build_workflow_smoke_cases_include_ping_pong_upgrade_transcript():
         "Reminder scheduled for later",
         "I couldn't fetch weather for Prediksi",
     )
+
+
+def test_build_regression_smoke_cases_include_key_transcript_families():
+    cases = build_regression_smoke_cases(
+        cwd=Path(r"C:\Users\Arvy Kairi\Desktop\bot\kabot"),
+        os_profile="windows",
+    )
+
+    labels = {case.label for case in cases}
+
+    assert "continuity-fs-zh" in labels
+    assert "delivery-find-send" in labels
+    assert "memory-followup-id-en" in labels
+    assert "workflow-status-server-followup" in labels
+    assert "workflow-weather-forecast-followup" in labels
+
+
+def test_main_regression_cases_runs_regression_pack(monkeypatch, tmp_path):
+    seen_labels = []
+
+    def _fake_run_case(case, **_kwargs):
+        seen_labels.append(case.label)
+        return SmokeResult(
+            label=case.label,
+            prompt=case.prompt,
+            session_id=f"cli:smoke:{case.label}",
+            returncode=0,
+            stdout="ok",
+            stderr="",
+            passed=True,
+        )
+
+    monkeypatch.setattr("kabot.cli.agent_smoke_matrix.run_case", _fake_run_case)
+
+    exit_code = main(
+        [
+            "--cwd",
+            str(tmp_path),
+            "--no-default-cases",
+            "--regression-cases",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert "continuity-fs-zh" in seen_labels
+    assert "delivery-find-send" in seen_labels
+    assert "memory-followup-id-en" in seen_labels
+    assert "workflow-status-server-followup" in seen_labels
 
 
 def test_create_mcp_local_echo_continuity_case_writes_temp_config(tmp_path):

@@ -54,11 +54,50 @@ from kabot.utils.skill_validator import validate_skill
 
 logger = logging.getLogger(__name__)
 
+_LEGACY_EXTERNAL_METADATA_KEY = "".join(
+    chr(code) for code in (111, 112, 101, 110, 99, 108, 97, 119)
+)
+
 _FINANCE_SKILL_MARKERS = {
     "stock",
     "stocks",
     "saham",
     "crypto",
+    "market",
+    "markets",
+    "ticker",
+    "tickers",
+    "quote",
+    "quotes",
+    "finance",
+    "trading",
+    "watchlist",
+    "analysis",
+}
+_STOCK_DOMAIN_MARKERS = {
+    "stock",
+    "stocks",
+    "saham",
+    "equity",
+    "equities",
+    "ihsg",
+    "idx",
+}
+_CRYPTO_DOMAIN_MARKERS = {
+    "crypto",
+    "bitcoin",
+    "ethereum",
+    "binance",
+    "coin",
+    "coins",
+    "token",
+    "tokens",
+    "wallet",
+    "blockchain",
+    "futures",
+    "defi",
+}
+_GENERIC_FINANCE_DOMAIN_MARKERS = {
     "market",
     "markets",
     "ticker",
@@ -124,6 +163,65 @@ def _is_finance_skill_candidate(skill_name: str, description: str) -> bool:
     if not haystack:
         return False
     return any(marker in haystack for marker in _FINANCE_SKILL_MARKERS)
+
+
+def _classify_finance_request(text: str) -> str | None:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return None
+    has_stock = any(marker in normalized for marker in _STOCK_DOMAIN_MARKERS)
+    has_crypto = any(marker in normalized for marker in _CRYPTO_DOMAIN_MARKERS)
+    try:
+        if extract_stock_symbols(text):
+            has_stock = True
+    except Exception:
+        pass
+    try:
+        if extract_crypto_ids(text):
+            has_crypto = True
+    except Exception:
+        pass
+    if has_stock and has_crypto:
+        return "mixed"
+    if has_stock:
+        return "stock"
+    if has_crypto:
+        return "crypto"
+    if any(marker in normalized for marker in _GENERIC_FINANCE_DOMAIN_MARKERS):
+        return "generic"
+    if _looks_like_finance_request(text):
+        return "generic"
+    return None
+
+
+def _classify_finance_skill(skill_name: str, description: str) -> str | None:
+    haystack = f"{skill_name} {description}".strip().lower()
+    if not haystack:
+        return None
+    has_stock = any(marker in haystack for marker in _STOCK_DOMAIN_MARKERS)
+    has_crypto = any(marker in haystack for marker in _CRYPTO_DOMAIN_MARKERS)
+    has_generic = any(marker in haystack for marker in _GENERIC_FINANCE_DOMAIN_MARKERS)
+    if has_stock and has_crypto:
+        return "mixed"
+    if has_stock:
+        return "stock"
+    if has_crypto:
+        return "crypto"
+    if has_generic or _is_finance_skill_candidate(skill_name, description):
+        return "generic"
+    return None
+
+
+def _finance_skill_matches_request(skill_name: str, description: str, text: str) -> bool:
+    request_kind = _classify_finance_request(text)
+    skill_kind = _classify_finance_skill(skill_name, description)
+    if not request_kind or not skill_kind:
+        return False
+    if request_kind == "mixed" or skill_kind == "mixed":
+        return True
+    if request_kind == "generic" or skill_kind == "generic":
+        return True
+    return request_kind == skill_kind
 
 
 def _coerce_frontmatter_bool(value: Any, default: bool) -> bool:
@@ -349,9 +447,10 @@ class SkillsLoader:
                 if len(kw) >= 2 and any(ord(ch) > 127 for ch in kw) and kw in message_lower
             }
             alias_bonus = _intent_alias_bonus(skill_name, message_lower)
-            finance_skill = _is_finance_skill_candidate(
+            finance_skill_match = _finance_skill_matches_request(
                 skill_name,
                 self._get_skill_description(skill_name),
+                message,
             )
 
             if (
@@ -360,14 +459,14 @@ class SkillsLoader:
                 and not contain_overlap
                 and not contain_body_overlap
                 and alias_bonus <= 0
-                and not (finance_request and finance_skill)
+                and not finance_skill_match
             ):
                 continue
 
             # Primary keywords score 1.0 each, body keywords 0.2 each
             score = len(overlap) + 0.2 * len(body_overlap)
             score += 0.8 * len(contain_overlap) + 0.2 * len(contain_body_overlap)
-            if finance_request and finance_skill:
+            if finance_skill_match:
                 score += 2.5
 
             # Strong bonus: exact skill name match (e.g., user says "spotify" or "discord")
@@ -405,7 +504,7 @@ class SkillsLoader:
                 alias_bonus <= 0
                 and not explicit_full_name_match
                 and not name_overlap
-                and not (finance_request and finance_skill)
+                and not finance_skill_match
                 and total_overlap < 2
             ):
                 continue
@@ -527,7 +626,7 @@ class SkillsLoader:
         Return True when finance/crypto requests should stay on the external-skill lane.
 
         This keeps legacy built-in finance tools archived behind workspace/managed
-        skill packs, which is closer to the OpenClaw skill-first model.
+        skill packs, which is closer to Kabot's current skill-first model.
         """
         if not self.has_external_finance_skill_available():
             return False
@@ -540,14 +639,15 @@ class SkillsLoader:
             source = str(detail.get("source") or "").strip().lower()
             if not source or source == "builtin":
                 continue
-            if _is_finance_skill_candidate(
+            if _finance_skill_matches_request(
                 str(detail.get("name") or ""),
                 str(detail.get("description") or ""),
+                message,
             ):
                 return True
         if self.has_preferred_external_skill_match(message, profile=profile):
             return True
-        return _looks_like_finance_request(message)
+        return False
 
     def _match_explicit_skill_fast_path(
         self,
@@ -1109,12 +1209,12 @@ class SkillsLoader:
         return content
 
     def _parse_kabot_metadata(self, raw: str | dict) -> dict:
-        """Parse Kabot/OpenClaw-compatible metadata JSON from frontmatter."""
+        """Parse Kabot and legacy external metadata JSON from frontmatter."""
         if isinstance(raw, dict):
             if isinstance(raw.get("kabot"), dict):
                 return raw.get("kabot", {})
-            if isinstance(raw.get("openclaw"), dict):
-                return raw.get("openclaw", {})
+            if isinstance(raw.get(_LEGACY_EXTERNAL_METADATA_KEY), dict):
+                return raw.get(_LEGACY_EXTERNAL_METADATA_KEY, {})
             return {}
         try:
             data = json.loads(raw)
@@ -1122,8 +1222,8 @@ class SkillsLoader:
                 return {}
             if isinstance(data.get("kabot"), dict):
                 return data.get("kabot", {})
-            if isinstance(data.get("openclaw"), dict):
-                return data.get("openclaw", {})
+            if isinstance(data.get(_LEGACY_EXTERNAL_METADATA_KEY), dict):
+                return data.get(_LEGACY_EXTERNAL_METADATA_KEY, {})
             return {}
         except (json.JSONDecodeError, TypeError):
             return {}

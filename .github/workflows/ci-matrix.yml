@@ -1,0 +1,51 @@
+name: Cross-Platform CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-platform-regression:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12"]
+
+    env:
+      PYTHONUTF8: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run cross-platform regression slice
+        run: >
+          python -m pytest
+          tests/agent/tools/test_browser_cross_platform.py
+          tests/channels/test_discord_typing_status.py
+          tests/channels/test_discord_interaction.py
+          tests/agent/loop_core/test_execution_runtime_cases/test_execution_runtime_simple_and_guards.py
+          tests/agent/loop_core/test_execution_runtime_cases/test_execution_runtime_direct_paths_and_research.py
+          tests/agent/tools/test_system_cleanup_cross_platform.py
+          tests/core/test_daemon.py
+          -q

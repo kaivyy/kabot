@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from kabot.agent.loop_core.message_runtime_parts.bootstrap_onboarding import (
+    update_bootstrap_onboarding_state,
+)
 from kabot.agent.loop_core.message_runtime import process_message
 from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.utils.workspace_templates import ensure_workspace_templates
@@ -59,15 +62,15 @@ async def test_process_message_bootstrap_onboarding_persists_identity_then_user_
     session = SimpleNamespace(metadata={})
 
     first_response = (
-        "Sip, kebentuk.\n\n"
-        "Aku sekarang:\n"
-        "- Nama: Jarhed\n"
-        "- Peran: pembantu kamu\n"
-        "- Gaya: lucu, to the point\n"
+        "Locked in.\n\n"
+        "I am now:\n"
+        "- Name: Jarhed\n"
+        "- Creature: your helper\n"
+        "- Vibe: funny, to the point\n"
         "- Signature: ganas\n\n"
-        "Biar beres total, tinggal 2 hal:\n"
-        "1. Aku panggil kamu siapa?\n"
-        "2. Timezone kamu tetap Asia/Jakarta kan?"
+        "To finish setup, I just need two more things:\n"
+        "1. What should I call you?\n"
+        "2. Is your timezone still Asia/Jakarta?"
     )
     loop = _build_loop(
         workspace=tmp_path,
@@ -80,7 +83,7 @@ async def test_process_message_bootstrap_onboarding_persists_identity_then_user_
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="1. jarhed\n2. pembantu saya\n3. lucu, to the point\n4. ganas",
+        content="1. jarhed\n2. your helper\n3. funny, to the point\n4. ganas",
     )
     await process_message(loop, first_msg)
 
@@ -88,17 +91,17 @@ async def test_process_message_bootstrap_onboarding_persists_identity_then_user_
     user_text = (tmp_path / "USER.md").read_text(encoding="utf-8")
 
     assert "Jarhed" in identity_text
-    assert "Pembantu saya" in identity_text
-    assert "Lucu, to the point" in identity_text
+    assert "Your helper" in identity_text
+    assert "Funny, to the point" in identity_text
     assert "Ganas" in identity_text
     assert "Maha Raja" not in user_text
     assert (tmp_path / "BOOTSTRAP.md").exists()
     assert session.metadata.get("bootstrap_onboarding", {}).get("stage") == "user"
 
     second_response = (
-        "Siap, Maha Raja.\n"
+        "Locked in, Maha Raja.\n"
         "Timezone: Asia/Jakarta.\n\n"
-        "Udah aku simpan ke profil juga, jadi next chat aku langsung nyambung."
+        "I saved that to my profile too, so next chat will pick it up immediately."
     )
     loop._run_simple_response = AsyncMock(return_value=second_response)
     loop._run_agent_loop = AsyncMock(return_value=second_response)
@@ -110,7 +113,7 @@ async def test_process_message_bootstrap_onboarding_persists_identity_then_user_
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="1. maha raja\n2. ya jakarta",
+        content="1. maha raja\n2. asia/jakarta",
     )
     await process_message(loop, second_msg)
 
@@ -133,15 +136,15 @@ async def test_process_message_bootstrap_onboarding_accepts_labeled_free_text_an
                 "updated_at": time.time(),
                 "assistant": {
                     "name": "Jarhed",
-                    "creature": "Pembantu saya",
-                    "vibe": "Lucu, to the point",
+                    "creature": "Your helper",
+                    "vibe": "Funny, to the point",
                     "emoji": "Ganas",
                 },
             }
         }
     )
 
-    response = "Siap, aku simpan ke profil."
+    response = "Saved to profile."
     loop = _build_loop(
         workspace=tmp_path,
         session=session,
@@ -153,7 +156,7 @@ async def test_process_message_bootstrap_onboarding_accepts_labeled_free_text_an
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="Nama saya: Maha Raja\nTimezone: WIB",
+        content="My name: Maha Raja\nTimezone: Asia/Jakarta",
     )
     await process_message(loop, msg)
 
@@ -161,3 +164,30 @@ async def test_process_message_bootstrap_onboarding_accepts_labeled_free_text_an
     assert "Maha Raja" in user_text
     assert "Asia/Jakarta" in user_text
     assert session.metadata.get("bootstrap_onboarding", {}).get("stage") == "complete"
+
+
+def test_update_bootstrap_onboarding_state_ignores_action_turns(tmp_path: Path):
+    ensure_workspace_templates(tmp_path)
+    session = SimpleNamespace(metadata={})
+    loop = SimpleNamespace(workspace=tmp_path)
+
+    msg = InboundMessage(
+        channel="cli",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="ya pakai path desktop bot",
+        metadata={"required_tool": "list_dir", "turn_category": "action"},
+    )
+
+    update_bootstrap_onboarding_state(
+        loop,
+        session,
+        msg,
+        "📄 tes.md",
+        now_ts=time.time(),
+    )
+
+    identity_text = (tmp_path / "IDENTITY.md").read_text(encoding="utf-8")
+    assert "Pakai path desktop bot" not in identity_text
+    assert session.metadata.get("bootstrap_onboarding") is None
+    assert (tmp_path / "BOOTSTRAP.md").exists()

@@ -16,6 +16,21 @@ from kabot.agent.loop_core.message_runtime_parts.turn_helpers import (
 )
 
 
+def _build_route_decision_snapshot(state: Any) -> dict[str, Any]:
+    return {
+        "route_profile": str(getattr(state.decision, "profile", "") or "").strip(),
+        "route_complex": bool(getattr(state.decision, "is_complex", False)),
+        "turn_category": str(getattr(state, "observed_turn_category", "") or "").strip() or "none",
+        "continuity_source": str(getattr(state, "continuity_source", "") or "").strip() or "none",
+        "required_tool": str(getattr(state, "required_tool", "") or "").strip(),
+        "required_tool_query": str(
+            getattr(state, "required_tool_query", None) or getattr(state, "effective_content", "") or ""
+        ).strip(),
+        "external_skill_lane": bool(getattr(state, "external_skill_lane", False)),
+        "forced_skill_names": list(getattr(state, "forced_skill_names", None) or []),
+    }
+
+
 def _finalize_turn_metadata(state: Any) -> None:
     state.runtime_locale = _resolve_runtime_locale(
         state.session,
@@ -53,6 +68,7 @@ def _finalize_turn_metadata(state: Any) -> None:
 
     if isinstance(state.msg.metadata, dict):
         state.msg.metadata["route_profile"] = state.decision.profile
+        state.msg.metadata["route_complex"] = bool(getattr(state.decision, "is_complex", False))
         state.msg.metadata["turn_category"] = state.observed_turn_category
         session_metadata = getattr(state.session, "metadata", None)
         if isinstance(session_metadata, dict):
@@ -78,16 +94,18 @@ def _finalize_turn_metadata(state: Any) -> None:
         else:
             state.msg.metadata.pop("last_tool_context", None)
         if isinstance(session_metadata, dict):
-            last_navigated_path = str(session_metadata.get("last_navigated_path") or "").strip()
-            if last_navigated_path:
-                state.msg.metadata["last_navigated_path"] = last_navigated_path
+            working_directory = str(session_metadata.get("working_directory") or "").strip()
+            if working_directory:
+                state.msg.metadata["working_directory"] = working_directory
             else:
-                state.msg.metadata.pop("last_navigated_path", None)
-            last_delivery_path = str(session_metadata.get("last_delivery_path") or "").strip()
-            if last_delivery_path:
-                state.msg.metadata["last_delivery_path"] = last_delivery_path
+                state.msg.metadata.pop("working_directory", None)
+            delivery_route = session_metadata.get("delivery_route")
+            if isinstance(delivery_route, dict) and delivery_route:
+                state.msg.metadata["delivery_route"] = dict(delivery_route)
             else:
-                state.msg.metadata.pop("last_delivery_path", None)
+                state.msg.metadata.pop("delivery_route", None)
+            state.msg.metadata.pop("last_navigated_path", None)
+            state.msg.metadata.pop("last_delivery_path", None)
         if state.last_tool_execution:
             state.msg.metadata["last_tool_execution"] = state.last_tool_execution
         else:
@@ -148,5 +166,10 @@ def _finalize_turn_metadata(state: Any) -> None:
             }
         else:
             state.msg.metadata.pop("skill_creation_guard", None)
+
+        route_decision_snapshot = _build_route_decision_snapshot(state)
+        state.msg.metadata["route_decision_snapshot"] = route_decision_snapshot
+        if isinstance(session_metadata, dict):
+            session_metadata["last_route_decision_snapshot"] = dict(route_decision_snapshot)
 
     state.observed_continuity_source = state.continuity_source or "none"

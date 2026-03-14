@@ -57,6 +57,7 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _looks_like_file_context_followup,
     _looks_like_filesystem_location_query,
     _looks_like_live_research_query,
+    _looks_like_message_delivery_request,
     _looks_like_memory_commit_turn,
     _looks_like_memory_recall_turn,
     _looks_like_non_action_meta_feedback,
@@ -90,6 +91,12 @@ from kabot.agent.loop_core.message_runtime_parts.mcp_context import (
 from kabot.agent.loop_core.message_runtime_parts.continuity_runtime import (
     _apply_continuity_runtime,
 )
+from kabot.agent.loop_core.directive_pipeline import (
+    apply_directive_overrides,
+    format_active_directives,
+    parse_directives,
+    persist_directives,
+)
 from kabot.agent.loop_core.message_runtime_parts.response_runtime import (
     _run_turn_response,
 )
@@ -111,6 +118,7 @@ from kabot.agent.loop_core.message_runtime_parts.turn_helpers import (
 )
 from kabot.agent.loop_core.message_runtime_parts.user_profile import (
     persist_user_profile,
+    sync_user_profile_memory,
 )
 from kabot.agent.loop_core.execution_runtime_parts.intent import (
     _should_defer_live_research_latch_to_skill,
@@ -120,6 +128,9 @@ from kabot.agent.loop_core.tool_enforcement import (
     _extract_read_file_path,
     infer_action_required_tool_for_loop,
     _query_has_tool_payload,
+)
+from kabot.agent.loop_core.tool_enforcement_parts.action_requests import (
+    _looks_like_message_send_file_request,
 )
 from kabot.agent.loop_core.quality_runtime import get_learned_execution_hints
 from kabot.agent.semantic_intent import arbitrate_semantic_intent
@@ -199,7 +210,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 approval_id=approval_id if isinstance(approval_id, str) else None,
             )
 
-    # OpenClaw-style abort shortcut: standalone stop/cancel intent should
+    # Fast abort shortcut: standalone stop/cancel intent should
     # immediately halt follow-up continuation and clear pending intent state.
     if _is_abort_request_text(msg.content):
         session = await loop._init_session(msg)
@@ -227,6 +238,10 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             return await loop._finalize_session(msg, session, result)
 
     session = await loop._init_session(msg)
+    if isinstance(msg.metadata, dict):
+        setattr(loop, "_active_message_metadata", msg.metadata)
+    else:
+        setattr(loop, "_active_message_metadata", {})
     if not bool(getattr(loop, "_cold_start_reported", False)):
         boot_started = getattr(loop, "_boot_started_at", None)
         startup_ready = getattr(loop, "_startup_ready_at", None)
@@ -239,32 +254,25 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         loop._cold_start_reported = True
 
     # Phase 9: Parse directives from message body
-    clean_body, directives = loop.directive_parser.parse(msg.content)
+    clean_body, directives = parse_directives(loop, msg.content)
     effective_content = clean_body or msg.content
     intent_source_for_followup = effective_content
     persist_user_profile(loop, session, effective_content, now_ts=time.time())
+    try:
+        await sync_user_profile_memory(loop, session, session_key=msg.session_key)
+    except Exception as exc:
+        logger.debug(f"user profile memory sync skipped: {exc}")
 
     # Store directives in session metadata
     if directives.raw_directives:
-        active = loop.directive_parser.format_active_directives(directives)
+        active = format_active_directives(loop, directives)
         logger.info(f"Directives active: {active}")
-
-        session.metadata["directives"] = {
-            "think": directives.think,
-            "verbose": directives.verbose,
-            "elevated": directives.elevated,
-        }
-        # Ensure metadata persists
-        loop.sessions.save(session)
+        persist_directives(loop, session, directives)
 
     # Phase 9: Model override via directive
     if directives.model:
         logger.info(f"Directive override: model -> {directives.model}")
-        if isinstance(msg.metadata, dict):
-            override = str(directives.model).strip()
-            if override:
-                msg.metadata["model_override"] = override
-                msg.metadata["model_override_source"] = "directive"
+    apply_directive_overrides(msg, directives)
 
     # Phase 13: Detect document uploads and inject hint for KnowledgeLearnTool
     if hasattr(msg, "media") and msg.media:
@@ -646,11 +654,23 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not is_short_greeting
         and not is_non_action_feedback
     )
+    preserve_committed_action_path_hint = bool(
+        pending_followup_intent_kind == "assistant_committed_action"
+        and required_tool == parser_required_tool == "list_dir"
+        and is_explicit_new_request
+        and not semantic_tool_override
+    )
 
     if is_closing_ack or is_short_greeting or is_non_action_feedback or semantic_hint.clear_pending:
         _clear_pending_followup_tool(session)
         _clear_pending_followup_intent(session)
-    elif is_explicit_new_request or clear_stale_followup_for_new_tool_request:
+    elif (
+        (is_explicit_new_request and not preserve_committed_action_path_hint)
+        or (
+            clear_stale_followup_for_new_tool_request
+            and not preserve_committed_action_path_hint
+        )
+    ):
         # Fresh explicit asks (file/config/path/URL/command-like payload) should
         # not inherit stale pending follow-up state from previous turns, even
         # when the new turn already resolved to a concrete tool.
@@ -863,7 +883,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 f"{grounded_search_source}\n\n"
                 "[Knowledge-First Note]\n"
                 "The earlier web search path was unavailable or unnecessary for this request. "
-                "Answer directly from existing knowledge in the user's requested language or style. "
+                "Answer directly from existing knowledge in the user's language unless they explicitly ask for a different language or style. "
                 "Do not call web search again unless the user explicitly asks for live, latest, or verified external information."
             ).strip()
         continuity_source = "knowledge_followup"
@@ -1084,7 +1104,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             "The user appears frustrated with the previous answer. Acknowledge "
             "that briefly, do not joke or restart the conversation, and then "
             "clarify or restate the most recent answer more directly in the "
-            "user's language."
+            "same factual style, in the user's language unless they explicitly ask for a different language."
         )
     filesystem_location_context_note = ""
     explicit_file_analysis_note = ""
@@ -1368,7 +1388,6 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
 
     if (
         is_side_effect_request
-        and not required_tool
         and not skill_creation_intent
         and not skill_install_intent
         and not is_closing_ack
@@ -1380,15 +1399,48 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             effective_content,
         )
         if action_required_tool:
-            required_tool = action_required_tool
-            required_tool_query = str(action_required_tool_query or effective_content).strip()
-            continuity_source = continuity_source or "action_request"
-            if not decision.is_complex:
-                decision.is_complex = True
-            logger.info(
-                "Action-request tool inference: "
-                f"'{_normalize_text(effective_content)[:120]}' -> required_tool={required_tool}"
+            find_then_send_workflow = bool(
+                action_required_tool == "find_files"
+                and _tool_registry_has(loop, "find_files")
+                and _tool_registry_has(loop, "message")
+                and (
+                    _looks_like_message_delivery_request(effective_content)
+                    or _looks_like_message_delivery_request(intent_source_for_followup)
+                )
             )
+            weak_parser_action_override = bool(
+                required_tool
+                and required_tool == parser_required_tool
+                and action_required_tool != required_tool
+                and required_tool in {"read_file", "list_dir", "web_search"}
+                and not semantic_tool_override
+                and not explicit_mcp_tool_routing
+                and not meta_skill_reference_turn
+            )
+            if find_then_send_workflow:
+                continuity_source = continuity_source or "action_request"
+                if not decision.is_complex:
+                    decision.is_complex = True
+                logger.info(
+                    "Action-request workflow inference: "
+                    f"'{_normalize_text(effective_content)[:120]}' -> workflow=find_files->message"
+                )
+            elif not required_tool or weak_parser_action_override:
+                required_tool = action_required_tool
+                required_tool_query = str(action_required_tool_query or effective_content).strip()
+                continuity_source = "action_request" if weak_parser_action_override else (continuity_source or "action_request")
+                if not decision.is_complex:
+                    decision.is_complex = True
+                logger.info(
+                    "Action-request tool inference: "
+                    f"'{_normalize_text(effective_content)[:120]}' -> required_tool={required_tool}"
+                )
+            elif (
+                action_required_tool == required_tool
+                and required_tool == parser_required_tool
+                and continuity_source in {None, "parser"}
+            ):
+                continuity_source = "action_request"
 
     if (
         not required_tool
@@ -1573,7 +1625,44 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         decision_profile=str(decision.profile),
         decision_is_complex=bool(decision.is_complex),
     ):
-        _set_pending_followup_intent(session, intent_source_for_followup, str(decision.profile), now_ts)
+        existing_pending_intent = (
+            session.metadata.get("pending_followup_intent")
+            if isinstance(getattr(session, "metadata", None), dict)
+            else None
+        )
+        existing_pending_kind = (
+            str((existing_pending_intent or {}).get("kind") or "").strip().lower()
+        )
+        existing_pending_request_text = str(
+            (existing_pending_intent or {}).get("request_text") or ""
+        ).strip()
+        followup_intent_text = str(intent_source_for_followup or "").strip()
+        followup_request_hint = str(required_tool_query or followup_intent_text or effective_content).strip()
+        followup_explicit_path = _extract_read_file_path(followup_request_hint)
+        message_send_request_followup = bool(
+            required_tool == "message"
+            and _looks_like_message_send_file_request(
+                followup_request_hint,
+                explicit_path=followup_explicit_path,
+            )
+        )
+        preserved_pending_kind = (
+            existing_pending_kind if existing_pending_kind == "assistant_committed_action" else None
+        )
+        preserved_pending_request_text = (
+            existing_pending_request_text if preserved_pending_kind else None
+        )
+        if message_send_request_followup:
+            preserved_pending_kind = "assistant_committed_action"
+            preserved_pending_request_text = followup_request_hint
+        _set_pending_followup_intent(
+            session,
+            intent_source_for_followup,
+            str(decision.profile),
+            now_ts,
+            kind=preserved_pending_kind,
+            request_text=preserved_pending_request_text,
+        )
     elif not _looks_like_short_confirmation(intent_source_for_followup):
         _clear_pending_followup_intent(session)
 
@@ -1620,6 +1709,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     runtime_locale = metadata_state.runtime_locale
     observed_turn_category = metadata_state.observed_turn_category
     observed_continuity_source = metadata_state.observed_continuity_source
+    route_decision_snapshot = {}
+    if isinstance(msg.metadata, dict):
+        snapshot_candidate = msg.metadata.get("route_decision_snapshot")
+        if isinstance(snapshot_candidate, dict):
+            route_decision_snapshot = dict(snapshot_candidate)
+    if route_decision_snapshot:
+        _emit_runtime_event(loop, "route_decision", **route_decision_snapshot)
     logger.info(
         f"turn_id={turn_id} continuity_source={observed_continuity_source} "
         f"turn_category={observed_turn_category}"

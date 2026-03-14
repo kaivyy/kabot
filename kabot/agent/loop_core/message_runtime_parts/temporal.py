@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta
 
-from kabot.i18n.locale import detect_locale
-
 _LOCALE_ALIASES = {
     "id": "id",
     "ms": "id",
@@ -194,3 +192,4 @@ def build_temporal_fast_reply(
     if _TIMEZONE_QUERY_RE.search(raw) and ("?" in raw or "？" in raw or "berapa" in normalized or "what" in normalized):
         return _render_timezone_reply(resolved_locale, current)
     return None
+from kabot.i18n.locale import detect_locale

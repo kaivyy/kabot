@@ -147,7 +147,7 @@ class KabotDoctor:
             ("kalau suhu cilacap berapa sekarang", "weather"),
             ("bbri bbca bmri adaro berapa now", "stock"),
             ("harga btc terbaru", "crypto"),
-            ("harga ethereum sekarang", "crypto"),
+            ("harga ethereum sekarang", None),
             ("\u0e2d\u0e32\u0e01\u0e32\u0e28\u0e01\u0e23\u0e38\u0e07\u0e40\u0e17\u0e1e\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49", "weather"),
             ("\u4e24\u5206\u949f\u540e\u63d0\u9192\u6211\u5403\u996d", "cron"),
             ("baca file config.json", None),

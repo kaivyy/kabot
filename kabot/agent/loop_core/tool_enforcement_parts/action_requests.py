@@ -13,6 +13,7 @@ from kabot.agent.loop_core.tool_enforcement_parts.filesystem_paths import (
     _extract_read_file_path,
     _looks_like_explicit_filesystem_path,
     _looks_like_textual_write_target,
+    _resolve_special_directory_path,
 )
 
 _WRITE_FILE_ACTION_MARKERS = (
@@ -88,6 +89,22 @@ _SEND_FILE_DELIVERY_MARKERS = (
     "kesini",
     "channel ini",
     "channel here",
+)
+_LIST_DIR_ACTION_MARKERS = (
+    "buka",
+    "open",
+    "masuk",
+    "enter",
+    "lihat",
+    "lihatkan",
+    "tampilkan",
+    "show",
+    "display",
+    "list",
+    "cek",
+    "check",
+    "pakai path",
+    "use path",
 )
 _IMAGE_ACTION_MARKERS = (
     "gambar",
@@ -202,6 +219,16 @@ def _looks_like_find_files_request(text: str, *, explicit_path: str | None = Non
     return True
 
 
+def _looks_like_list_dir_request(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if not any(marker in normalized for marker in _LIST_DIR_ACTION_MARKERS):
+        return False
+    return bool(_extract_list_dir_path(raw))
+
+
 def _looks_like_message_send_file_request(text: str, *, explicit_path: str | None = None) -> bool:
     raw = str(text or "").strip()
     normalized = _normalize_text(raw)
@@ -295,6 +322,23 @@ def _resolve_find_files_root(
         return list_path
 
     if isinstance(metadata, dict):
+        working_directory = str(metadata.get("working_directory") or "").strip()
+        if working_directory:
+            try:
+                resolved_working_directory = Path(working_directory).expanduser().resolve()
+                if resolved_working_directory.exists() and resolved_working_directory.is_dir():
+                    return str(resolved_working_directory)
+            except Exception:
+                return working_directory
+        if isinstance(last_tool_context, dict):
+            last_path = str(last_tool_context.get("path") or "").strip()
+            if last_path:
+                try:
+                    resolved = Path(last_path).expanduser().resolve()
+                    if resolved.exists() and resolved.is_dir():
+                        return str(resolved)
+                except Exception:
+                    return last_path
         last_nav = str(metadata.get("last_navigated_path") or "").strip()
         if last_nav:
             try:
@@ -303,7 +347,6 @@ def _resolve_find_files_root(
                     return str(resolved_nav)
             except Exception:
                 return last_nav
-
     if isinstance(last_tool_context, dict):
         last_path = str(last_tool_context.get("path") or "").strip()
         if last_path:
@@ -493,6 +536,9 @@ def infer_action_required_tool_for_loop(loop: Any, text: str) -> tuple[str | Non
         explicit_path=explicit_path,
     ):
         return "find_files", raw
+
+    if _tool_name_available(loop, "list_dir") and _looks_like_list_dir_request(raw):
+        return "list_dir", raw
 
     if _looks_like_media_action_request(raw, kind="image"):
         image_tool = _select_best_action_tool(loop, raw, kind="image")

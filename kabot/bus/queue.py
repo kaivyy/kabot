@@ -35,7 +35,7 @@ class MessageBus:
         self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
         self._outbound_subscribers: dict[str, list[Callable[[OutboundMessage], Awaitable[None]]]] = {}
 
-        # Runtime inbound queue controls (OpenClaw-style debounce/cap/drop).
+        # Runtime inbound queue controls (debounce/cap/drop).
         self._queue_enabled = False
         self._queue_mode = "off"
         self._queue_debounce_window_ms = 0

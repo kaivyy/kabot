@@ -1,7 +1,7 @@
 """Pricing definitions for different AI models."""
 
 # Default costs per 1 million tokens (USD)
-# Source: Common market pricing or OpenClaw defaults
+# Source: Common market pricing or internal defaults
 # Format: { "model_prefix": { "input": USD_PER_1M, "output": USD_PER_1M } }
 MODEL_PRICING = {
     # OpenRouter / Common models

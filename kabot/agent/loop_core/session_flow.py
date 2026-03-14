@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 from loguru import logger
 
 from kabot.bus.events import InboundMessage, OutboundMessage
+from kabot.session.delivery_route import (
+    delivery_route_from_message,
+    merge_delivery_route,
+    normalize_delivery_route,
+)
 
 
 def _defer_memory_writes(loop: Any) -> bool:
@@ -109,23 +115,40 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
 
     inbound_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
     session_meta = getattr(session, "metadata", None)
+    current_delivery_route = delivery_route_from_message(msg)
     if isinstance(session_meta, dict):
         session_last_nav = str(session_meta.get("last_navigated_path") or "").strip()
         session_last_delivery = str(session_meta.get("last_delivery_path") or "").strip()
-        if session_last_nav or session_last_delivery:
+        session_working_directory = str(session_meta.get("working_directory") or "").strip()
+        session_delivery_route = normalize_delivery_route(session_meta.get("delivery_route"))
+        if session_last_nav or session_last_delivery or session_working_directory:
             if not isinstance(msg.metadata, dict):
                 msg.metadata = {}
                 inbound_meta = msg.metadata
-        if session_last_nav:
-            if not str(inbound_meta.get("last_navigated_path") or "").strip():
-                inbound_meta["last_navigated_path"] = session_last_nav
+        if session_delivery_route and not inbound_meta.get("delivery_route"):
+            inbound_meta["delivery_route"] = dict(session_delivery_route)
+        if session_working_directory:
+            if not str(inbound_meta.get("working_directory") or "").strip():
+                inbound_meta["working_directory"] = session_working_directory
+            if not isinstance(inbound_meta.get("last_tool_context"), dict):
+                inbound_meta["last_tool_context"] = {
+                    "tool": "list_dir",
+                    "path": session_working_directory,
+                }
+        if session_last_nav and not session_working_directory:
+            if not str(inbound_meta.get("working_directory") or "").strip():
+                inbound_meta["working_directory"] = session_last_nav
             if not isinstance(inbound_meta.get("last_tool_context"), dict):
                 inbound_meta["last_tool_context"] = {
                     "tool": "list_dir",
                     "path": session_last_nav,
                 }
-        if session_last_delivery and not str(inbound_meta.get("last_delivery_path") or "").strip():
-            inbound_meta["last_delivery_path"] = session_last_delivery
+    effective_delivery_route = merge_delivery_route(inbound_meta.get("delivery_route"), current_delivery_route)
+    if effective_delivery_route:
+        if not isinstance(msg.metadata, dict):
+            msg.metadata = {}
+            inbound_meta = msg.metadata
+        inbound_meta["delivery_route"] = dict(effective_delivery_route)
 
     persist_probe_history = _should_persist_probe_history(msg)
     if not _is_probe_mode_message(msg) or persist_probe_history:
@@ -143,7 +166,10 @@ async def init_session(loop: Any, msg: InboundMessage) -> Any:
         tool = loop.tools.get(tool_name)
         if hasattr(tool, "set_context"):
             logger.debug(f"Setting context for {tool_name}: {msg.channel}:{msg.chat_id}")
-            tool.set_context(msg.channel, msg.chat_id)
+            if tool_name == "message":
+                tool.set_context(msg.channel, msg.chat_id, delivery_route=effective_delivery_route)
+            else:
+                tool.set_context(msg.channel, msg.chat_id)
 
     for tool_name in ["save_memory", "get_memory", "graph_memory", "list_reminders"]:
         tool = loop.tools.get(tool_name)
@@ -190,6 +216,42 @@ def _append_daily_notes_summary(loop: Any, msg: InboundMessage, final_content: s
         logger.warning(f"Daily notes append failed for {msg.session_key}: {exc}")
 
 
+def _coerce_json_response(content: str | None) -> str:
+    raw = str(content or "")
+    stripped = raw.strip()
+    if not stripped:
+        return raw
+    try:
+        parsed = json.loads(stripped)
+    except Exception:
+        parsed = {"response": raw}
+    else:
+        if not isinstance(parsed, (dict, list)):
+            parsed = {"response": parsed}
+    return json.dumps(parsed, ensure_ascii=False, indent=2)
+
+
+def _apply_outbound_response_directives(
+    loop: Any,
+    msg: InboundMessage,
+    final_content: str | None,
+) -> tuple[str | None, dict[str, Any]]:
+    inbound_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
+    outbound_meta: dict[str, Any] = {}
+    content = final_content
+
+    if bool(inbound_meta.get("directive_json_output")) and content is not None:
+        content = _coerce_json_response(content)
+        outbound_meta["response_format"] = "json"
+
+    if bool(inbound_meta.get("directive_raw")):
+        outbound_meta["render_markdown"] = False
+        outbound_meta.setdefault("response_format", "raw")
+
+    setattr(loop, "_last_outbound_metadata", dict(outbound_meta))
+    return content, outbound_meta
+
+
 async def finalize_session(
     loop: Any,
     msg: InboundMessage,
@@ -197,6 +259,8 @@ async def finalize_session(
     final_content: str | None,
 ) -> OutboundMessage:
     """Persist final session state and produce outbound response."""
+    final_content, outbound_metadata = _apply_outbound_response_directives(loop, msg, final_content)
+
     if (
         final_content
         and not final_content.startswith("I've completed")
@@ -231,12 +295,23 @@ async def finalize_session(
         inbound_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
         session_meta = getattr(session, "metadata", None)
         if isinstance(session_meta, dict):
+            working_directory = str(inbound_meta.get("working_directory") or "").strip()
+            if working_directory:
+                session_meta["working_directory"] = working_directory
             last_navigated_path = str(inbound_meta.get("last_navigated_path") or "").strip()
-            if last_navigated_path:
+            if last_navigated_path and last_navigated_path != working_directory:
                 session_meta["last_navigated_path"] = last_navigated_path
+            elif working_directory:
+                session_meta.pop("last_navigated_path", None)
             last_delivery_path = str(inbound_meta.get("last_delivery_path") or "").strip()
             if last_delivery_path:
                 session_meta["last_delivery_path"] = last_delivery_path
+            delivery_route = merge_delivery_route(
+                inbound_meta.get("delivery_route"),
+                delivery_route_from_message(msg),
+            )
+            if delivery_route:
+                session_meta["delivery_route"] = dict(delivery_route)
 
         refresh_snapshot = getattr(session, "refresh_durable_history_snapshot", None)
         if callable(refresh_snapshot):
@@ -251,4 +326,9 @@ async def finalize_session(
 
     _append_daily_notes_summary(loop, msg, final_content)
 
-    return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=final_content or "")
+    return OutboundMessage(
+        channel=msg.channel,
+        chat_id=msg.chat_id,
+        content=final_content or "",
+        metadata=outbound_metadata,
+    )

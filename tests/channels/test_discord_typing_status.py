@@ -1,6 +1,7 @@
 """Tests for Discord typing keepalive behavior with status updates."""
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -287,3 +288,46 @@ async def test_discord_final_message_cleans_stale_status_bubbles_after_patch_fai
 
     deleted_ids = {str(call.args[0]).rsplit("/", 1)[-1] for call in channel._http.delete.await_args_list}
     assert deleted_ids == {"status-1", "status-2"}
+
+
+@pytest.mark.asyncio
+async def test_discord_attachment_download_sanitizes_windows_style_filename(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr("kabot.channels.discord.Path.home", lambda: fake_home)
+
+    response = SimpleNamespace(
+        raise_for_status=lambda: None,
+        content=b"hello",
+    )
+    channel = DiscordChannel(DiscordConfig(enabled=True, token="test-token"), MessageBus())
+    channel._http = SimpleNamespace(get=AsyncMock(return_value=response))
+    channel._start_typing = AsyncMock()
+    channel._handle_message = AsyncMock()
+
+    payload = {
+        "id": "message-1",
+        "channel_id": "123456",
+        "content": "",
+        "author": {"id": "555", "username": "tester"},
+        "attachments": [
+            {
+                "id": "att-1",
+                "filename": r"reports\\daily\\report.txt",
+                "url": "https://cdn.example.test/report.txt",
+                "size": 5,
+            }
+        ],
+    }
+
+    await channel._handle_message_create(payload)
+
+    channel._handle_message.assert_awaited_once()
+    kwargs = channel._handle_message.await_args.kwargs
+    assert kwargs["sender_id"] == "555"
+    assert kwargs["chat_id"] == "123456"
+    assert kwargs["media"]
+    saved_path = Path(kwargs["media"][0])
+    assert saved_path.exists()
+    assert saved_path.name == "att-1_report.txt"
+    assert "[attachment: " in kwargs["content"]
+    assert "download failed" not in kwargs["content"]

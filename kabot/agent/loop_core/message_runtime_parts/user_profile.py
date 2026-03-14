@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Any
@@ -12,27 +13,26 @@ _SPACE_RE = re.compile(r"\s+")
 _SELF_IDENTITY_QUERY_RE = re.compile(
     r"(?i)\b("
     r"who am i|who i am|"
-    r"siapa aku|jadi siapa aku|aku siapa"
+    r"what do you call me"
     r")\b"
 )
 _CALL_ME_RE = re.compile(
     r"(?i)\b("
-    r"call me|panggil aku|panggil saya|sebut aku|sebut saya|"
+    r"call me|"
     r"address me as|refer to me as"
     r")\b\s+(.+)"
 )
 _SELF_IDENTITY_ANSWER_RE = re.compile(
     r"(?i)\b("
     r"if i ask(?: you)? who am i[, ]*answer(?: me| with)?|"
-    r"kalau aku tanya siapa aku[, ]*jawab(?:nya)?|"
-    r"jika aku tanya siapa aku[, ]*jawab(?:nya)?"
+    r"if i ask who i am[, ]*answer(?: me| with)?"
     r")\b\s+(.+)"
 )
 _QUOTED_VALUE_RE = re.compile(r"[\"“”'`]+([^\"“”'`]{1,120})[\"“”'`]+")
 _VALUE_STOP_RE = re.compile(
     r"(?i)\s*(?:,|\.|!|\?|$|\b(?:"
-    r"tolong|please|ingat|remember|save|simpan|"
-    r"dan|and|ya|iya|ok|oke|dong|deh"
+    r"please|remember|save|"
+    r"and|yes|ok|okay"
     r")\b)"
 )
 
@@ -174,6 +174,7 @@ def persist_user_profile(loop: Any, session: Any, text: str, *, now_ts: float) -
 
     merged: dict[str, Any] = {**current_profile, **updates, "updated_at": now_ts}
     metadata["user_profile"] = merged
+    metadata["user_profile_memory_dirty"] = True
 
     workspace = getattr(loop, "workspace", None)
     if isinstance(workspace, Path):
@@ -202,3 +203,54 @@ def persist_user_profile(loop: Any, session: Any, text: str, *, now_ts: float) -
         except Exception:
             pass
     return merged
+
+
+async def sync_user_profile_memory(loop: Any, session: Any, *, session_key: str | None = None) -> None:
+    """Persist stable user-profile facts into long-term memory when available."""
+    metadata = getattr(session, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    if not bool(metadata.get("user_profile_memory_dirty")):
+        return
+
+    facts = build_user_profile_memory_facts(session, limit=4)
+    if not facts:
+        metadata["user_profile_memory_dirty"] = False
+        return
+
+    memory_obj = getattr(loop, "memory", None)
+    remember_fact = getattr(memory_obj, "remember_fact", None)
+    if not callable(remember_fact):
+        return
+
+    synced_facts = metadata.get("user_profile_memory_facts")
+    if not isinstance(synced_facts, list):
+        synced_facts = []
+    synced_set = {
+        _normalize_text(str(item))
+        for item in synced_facts
+        if str(item or "").strip()
+    }
+
+    async def _remember(fact: str) -> None:
+        result = remember_fact(
+            fact=fact,
+            category="user_profile",
+            session_id=session_key,
+            confidence=0.95,
+        )
+        if asyncio.iscoroutine(result):
+            await result
+
+    for fact in facts:
+        normalized_fact = _normalize_text(fact)
+        if not normalized_fact or normalized_fact in synced_set:
+            continue
+        try:
+            await _remember(fact)
+            synced_set.add(normalized_fact)
+        except Exception:
+            continue
+
+    metadata["user_profile_memory_facts"] = facts
+    metadata["user_profile_memory_dirty"] = False

@@ -1,5 +1,6 @@
 """Browser automation tool using Playwright."""
 
+from pathlib import Path
 from typing import Any, Optional
 
 from loguru import logger
@@ -79,9 +80,9 @@ class BrowserTool(Tool):
                 return f"Successfully navigated to {url}"
 
             elif action == "screenshot":
-                path = kwargs.get("path", "screenshot.png")
-                await self.page.screenshot(path=path, full_page=True)
-                return f"Screenshot saved to {path}"
+                output_path = self._resolve_output_path(kwargs.get("path", "screenshot.png"))
+                await self.page.screenshot(path=str(output_path), full_page=True)
+                return f"Screenshot saved to {output_path}"
 
             elif action == "get_content":
                 # Simple extraction of text
@@ -146,6 +147,16 @@ class BrowserTool(Tool):
             self.context = await self.browser.new_context()
             self.page = await self.context.new_page()
         return "Browser launched."
+
+    @staticmethod
+    def _resolve_output_path(value: str) -> Path:
+        raw = str(value or "screenshot.png").strip() or "screenshot.png"
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = (Path.cwd() / path)
+        path = path.resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     async def _cleanup(self):
         """Close browser resources."""

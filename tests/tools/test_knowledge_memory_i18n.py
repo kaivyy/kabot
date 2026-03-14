@@ -28,7 +28,7 @@ class _MetadataEmpty:
 class _MemorySearchEmpty:
     metadata = _MetadataEmpty()
 
-    async def search_memory(self, query: str, limit: int = 5):
+    async def search_memory(self, query: str, limit: int = 5, session_id=None):
         return []
 
 

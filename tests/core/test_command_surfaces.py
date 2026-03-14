@@ -92,7 +92,7 @@ def test_build_command_surface_specs_skips_skill_name_collisions(tmp_path, monke
     assert [spec.name for spec in specs] == ["start", "status"]
 
 
-def test_build_command_surface_specs_respects_openclaw_skill_invocation_policy(tmp_path, monkeypatch):
+def test_build_command_surface_specs_respects_skill_invocation_policy(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
 
     hidden_skill_dir = workspace / "skills" / "hidden-skill"

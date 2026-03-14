@@ -126,8 +126,12 @@ _RESULT_RELATIVE_PATH_RE = re.compile(
     rf"(?<![\w.:/\\-])((?:\.{{1,2}}[\\/]|[A-Za-z0-9_.-]+[\\/])(?:[^\s\"'`]+[\\/])*[^\s\"'`]+\.(?:{_RESULT_PATH_SUFFIX_PATTERN}))",
     re.IGNORECASE,
 )
+_RESULT_HOME_PATH_RE = re.compile(
+    rf"(?<![\w.:/\\~-])((?:~[\\/])[^\r\n\"']+\.(?:{_RESULT_PATH_SUFFIX_PATTERN}))",
+    re.IGNORECASE,
+)
 _RESULT_ABSOLUTE_PATH_RE = re.compile(
-    rf"(?<![\w.:/\\-])((?:[A-Za-z]:[\\/]|/)[^\r\n\"']+\.(?:{_RESULT_PATH_SUFFIX_PATTERN}))",
+    rf"(?<![\w.:/\\~-])((?:[A-Za-z]:[\\/]|/)[^\r\n\"']+\.(?:{_RESULT_PATH_SUFFIX_PATTERN}))",
     re.IGNORECASE,
 )
 _RESULT_BARE_FILENAME_RE = re.compile(
@@ -202,7 +206,7 @@ def _looks_like_local_result_path(candidate: str) -> bool:
     if not re.search(rf"\.(?:{_RESULT_PATH_SUFFIX_PATTERN})$", normalized, re.IGNORECASE):
         return False
     if (
-        normalized.startswith(("/", "./", "../"))
+        normalized.startswith(("/", "./", "../", "~/", "~\\"))
         or re.match(r"(?i)^[A-Z]:[\\/]", normalized)
         or "\\" in normalized
         or "/" in normalized
@@ -239,7 +243,12 @@ def _extract_path_candidates_from_string(value: str, *, key_hint: str = "") -> l
         if parsed is not None:
             candidates.extend(_extract_path_candidates_from_value(parsed))
 
-    for pattern in (_RESULT_RELATIVE_PATH_RE, _RESULT_ABSOLUTE_PATH_RE, _RESULT_BARE_FILENAME_RE):
+    for pattern in (
+        _RESULT_HOME_PATH_RE,
+        _RESULT_RELATIVE_PATH_RE,
+        _RESULT_ABSOLUTE_PATH_RE,
+        _RESULT_BARE_FILENAME_RE,
+    ):
         for match in pattern.finditer(raw):
             candidate = _normalize_result_path_candidate(match.group(1))
             if _looks_like_local_result_path(candidate):
@@ -556,6 +565,9 @@ def _update_followup_context_from_tool_execution(
         return
 
     ts = float(now_ts) if isinstance(now_ts, (int, float)) else time.time()
+    previous_last_tool_context = metadata.get("last_tool_context")
+    if not isinstance(previous_last_tool_context, dict):
+        previous_last_tool_context = None
     try:
         from kabot.agent.loop_core.message_runtime_parts.followup import (
             _set_last_tool_context,
@@ -580,29 +592,75 @@ def _update_followup_context_from_tool_execution(
     }
     extracted_path = _extract_single_result_path(normalized_tool, tool_args, tool_result)
     if extracted_path:
-        last_tool_context = metadata.get("last_tool_context")
-        if isinstance(last_tool_context, dict):
-            last_tool_context["path"] = extracted_path
-        else:
-            metadata["last_tool_context"] = {
-                "tool": normalized_tool,
-                "source": source_text,
-                "path": extracted_path,
-                "updated_at": ts,
-            }
+        chosen_path = str(extracted_path).strip()
+        original_path = chosen_path
+        preserve_relative_candidate = False
+        chosen_path_exists = False
+        try:
+            candidate_path = Path(chosen_path).expanduser()
+            preserve_relative_candidate = not candidate_path.is_absolute()
+            if not candidate_path.is_absolute():
+                working_hint = str(metadata.get("working_directory") or "").strip()
+                context_hint = ""
+                if isinstance(previous_last_tool_context, dict):
+                    context_hint = str(previous_last_tool_context.get("path") or "").strip()
+                delivery_hint = str(metadata.get("last_delivery_path") or "").strip()
+                nav_hint = str(metadata.get("last_navigated_path") or "").strip()
+                base_hint = working_hint or context_hint or delivery_hint or nav_hint
+                if base_hint:
+                    base_path = Path(base_hint).expanduser()
+                    if base_path.suffix:
+                        base_path = base_path.parent
+                    candidate_path = (base_path / candidate_path)
+                else:
+                    candidate_path = (Path.cwd().expanduser() / candidate_path)
+            candidate_path = candidate_path.resolve()
+            chosen_path = str(candidate_path)
+            chosen_path_exists = candidate_path.exists()
+        except Exception:
+            chosen_path_exists = False
 
-        if normalized_tool in {"list_dir", "read_file"}:
+        if normalized_tool in {"list_dir", "read_file", "write_file", "message", "archive_path"} and not chosen_path_exists:
+            chosen_path = ""
+        elif preserve_relative_candidate and not chosen_path_exists:
+            chosen_path = original_path
+        last_tool_context = metadata.get("last_tool_context")
+        if chosen_path:
+            if isinstance(last_tool_context, dict):
+                last_tool_context["path"] = chosen_path
+            else:
+                metadata["last_tool_context"] = {
+                    "tool": normalized_tool,
+                    "source": source_text,
+                    "path": chosen_path,
+                    "updated_at": ts,
+                }
+
+        if normalized_tool in {"list_dir", "read_file"} and chosen_path:
             try:
-                candidate_path = Path(str(extracted_path)).expanduser().resolve()
+                candidate_path = Path(str(chosen_path)).expanduser().resolve()
             except Exception:
                 candidate_path = None
             if candidate_path is not None and candidate_path.exists() and candidate_path.is_dir():
-                metadata["last_navigated_path"] = str(candidate_path)
+                metadata.pop("last_navigated_path", None)
+                metadata["working_directory"] = str(candidate_path)
 
-        if normalized_tool == "message":
+        if chosen_path:
             try:
-                delivered_path = Path(str(extracted_path)).expanduser().resolve()
+                candidate_path = Path(str(chosen_path)).expanduser().resolve()
+            except Exception:
+                candidate_path = None
+            if candidate_path is not None and candidate_path.exists():
+                if candidate_path.is_dir():
+                    metadata["working_directory"] = str(candidate_path)
+                elif candidate_path.is_file():
+                    metadata["working_directory"] = str(candidate_path.parent)
+
+        if normalized_tool == "message" and chosen_path:
+            try:
+                delivered_path = Path(str(chosen_path)).expanduser().resolve()
             except Exception:
                 delivered_path = None
             if delivered_path is not None and delivered_path.exists() and delivered_path.is_file():
                 metadata["last_delivery_path"] = str(delivered_path)
+                metadata["working_directory"] = str(delivered_path.parent)

@@ -574,6 +574,73 @@ async def test_call_llm_with_fallback_treats_provider_error_payload_as_failure()
     assert loop.last_model_used == "groq/meta-llama/llama-4-scout-17b-16e-instruct"
     assert loop.last_fallback_used is True
 
+
+@pytest.mark.asyncio
+async def test_call_llm_with_fallback_applies_active_directive_temperature_and_max_tokens():
+    provider = SimpleNamespace(
+        fallbacks=[],
+        chat=AsyncMock(return_value=LLMResponse(content="ok")),
+    )
+    loop = SimpleNamespace(
+        provider=provider,
+        tools=SimpleNamespace(get_definitions=lambda: [{"name": "message"}]),
+        auth_rotation=None,
+        resilience=SimpleNamespace(handle_error=AsyncMock(), on_success=lambda: None),
+        runtime_resilience=SimpleNamespace(max_model_attempts_per_turn=4, strict_error_classification=True),
+        last_model_used=None,
+        last_fallback_used=False,
+        last_model_chain=[],
+        _active_message_metadata={
+            "directive_temperature": 0.15,
+            "directive_max_tokens": 321,
+        },
+    )
+
+    response, error = await call_llm_with_fallback(
+        loop,
+        [{"role": "user", "content": "hello"}],
+        ["openai-codex/gpt-5.3-codex"],
+    )
+
+    assert error is None
+    assert response is not None
+    kwargs = provider.chat.await_args.kwargs
+    assert kwargs["temperature"] == 0.15
+    assert kwargs["max_tokens"] == 321
+    assert kwargs["tools"] == [{"name": "message"}]
+
+
+@pytest.mark.asyncio
+async def test_call_llm_with_fallback_omits_tools_when_no_tools_directive_is_active():
+    provider = SimpleNamespace(
+        fallbacks=[],
+        chat=AsyncMock(return_value=LLMResponse(content="ok")),
+    )
+    loop = SimpleNamespace(
+        provider=provider,
+        tools=SimpleNamespace(get_definitions=lambda: [{"name": "message"}]),
+        auth_rotation=None,
+        resilience=SimpleNamespace(handle_error=AsyncMock(), on_success=lambda: None),
+        runtime_resilience=SimpleNamespace(max_model_attempts_per_turn=4, strict_error_classification=True),
+        last_model_used=None,
+        last_fallback_used=False,
+        last_model_chain=[],
+        _active_message_metadata={
+            "directive_no_tools": True,
+        },
+    )
+
+    response, error = await call_llm_with_fallback(
+        loop,
+        [{"role": "user", "content": "hello"}],
+        ["openai-codex/gpt-5.3-codex"],
+    )
+
+    assert error is None
+    assert response is not None
+    kwargs = provider.chat.await_args.kwargs
+    assert "tools" not in kwargs
+
 @pytest.mark.asyncio
 async def test_run_agent_loop_heartbeat_does_not_force_cron_tool():
     loop = SimpleNamespace(

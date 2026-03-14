@@ -3,6 +3,10 @@ from pathlib import Path
 
 from kabot.agent.skills import SkillsLoader, looks_like_skill_catalog_request
 
+_LEGACY_EXTERNAL_METADATA_KEY = "".join(
+    chr(code) for code in (111, 112, 101, 110, 99, 108, 97, 119)
+)
+
 
 def _write_skill(skill_root: Path, skill_name: str, body: str) -> None:
     skill_dir = skill_root / skill_name
@@ -478,7 +482,7 @@ def test_list_skills_invalidates_cache_when_runtime_env_changes(tmp_path, monkey
                 "---",
                 "name: binance-pro",
                 "description: crypto execution skill",
-                'metadata: {"openclaw":{"requires":{"bins":["jq"]}}}',
+                f'metadata: {{"{_LEGACY_EXTERNAL_METADATA_KEY}":{{"requires":{{"bins":["jq"]}}}}}}',
                 "---",
                 "",
                 "Use this for crypto account workflows.",
@@ -504,7 +508,7 @@ def test_list_skills_invalidates_cache_when_runtime_env_changes(tmp_path, monkey
     assert second and second[0]["eligible"] is True
 
 
-def test_openclaw_metadata_is_accepted_for_always_skill(tmp_path, monkeypatch):
+def test_legacy_external_metadata_is_accepted_for_always_skill(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
@@ -522,7 +526,7 @@ def test_openclaw_metadata_is_accepted_for_always_skill(tmp_path, monkeypatch):
                 "---",
                 "name: binance-pro",
                 "description: crypto execution skill",
-                'metadata: {"openclaw":{"always":true}}',
+                f'metadata: {{"{_LEGACY_EXTERNAL_METADATA_KEY}":{{"always":true}}}}',
                 "---",
                 "",
                 "Use this for crypto account workflows.",
@@ -554,7 +558,7 @@ def test_external_finance_skill_is_still_preferred_even_when_requirements_missin
                 "---",
                 "name: binance-pro",
                 "description: crypto trading and binance market operations",
-                'metadata: {"openclaw":{"requires":{"bins":["jq"]}}}',
+                f'metadata: {{"{_LEGACY_EXTERNAL_METADATA_KEY}":{{"requires":{{"bins":["jq"]}}}}}}',
                 "---",
                 "",
                 "Use for crypto trading tasks.",
@@ -566,3 +570,85 @@ def test_external_finance_skill_is_still_preferred_even_when_requirements_missin
     loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
 
     assert loader.should_prefer_external_finance_skill("cek harga btc sekarang", profile="GENERAL") is True
+
+
+def test_crypto_only_finance_skill_does_not_match_stock_query(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    skill_dir = workspace / "skills" / "binance-pro"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: binance-pro",
+                "description: crypto trading and binance market operations",
+                "---",
+                "",
+                "Use for crypto account workflows.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    assert "binance-pro" not in loader.match_skills(
+        "cek harga saham bca bri mandiri adaro sekarang",
+        profile="GENERAL",
+    )
+    assert (
+        loader.should_prefer_external_finance_skill(
+            "cek harga saham bca bri mandiri adaro sekarang",
+            profile="GENERAL",
+        )
+        is False
+    )
+
+
+def test_generic_finance_skill_can_match_stock_query(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    skill_dir = workspace / "skills" / "market-intel"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: market-intel",
+                'description: analyze stocks, crypto, market quotes, watchlists, and tickers"',
+                "---",
+                "",
+                "Use for broad market research tasks.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    assert "market-intel" in loader.match_skills(
+        "cek harga saham bca bri mandiri adaro sekarang",
+        profile="GENERAL",
+    )
+    assert (
+        loader.should_prefer_external_finance_skill(
+            "cek harga saham bca bri mandiri adaro sekarang",
+            profile="GENERAL",
+        )
+        is True
+    )

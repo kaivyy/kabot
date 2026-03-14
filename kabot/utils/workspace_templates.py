@@ -5,6 +5,15 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+_BOOTSTRAP_FILENAMES = (
+    "AGENTS.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "USER.md",
+    "IDENTITY.md",
+    "BOOTSTRAP.md",
+)
+
 _ARCHETYPES = (
     "a calm operator with a dry sense of humor",
     "a sharp fixer who stays warm under pressure",
@@ -238,12 +247,23 @@ This file stores important information that should persist across sessions.
 """
 
 
+def _should_skip_root_bootstrap(workspace: Path) -> bool:
+    nested_workspace = workspace / "workspace"
+    if not nested_workspace.is_dir():
+        return False
+    if not ((workspace / ".git").exists() or (workspace / "pyproject.toml").exists()):
+        return False
+    return any((nested_workspace / filename).exists() for filename in _BOOTSTRAP_FILENAMES)
+
+
 def ensure_workspace_templates(workspace: Path) -> list[Path]:
     """Ensure baseline bootstrap files exist for a workspace.
 
     Returns list of files created in this call.
     """
     workspace.mkdir(parents=True, exist_ok=True)
+    if _should_skip_root_bootstrap(workspace):
+        return []
     created: list[Path] = []
 
     for filename, content in get_bootstrap_templates(workspace).items():

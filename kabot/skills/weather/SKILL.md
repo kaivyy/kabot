@@ -101,7 +101,7 @@ curl -s "wttr.in/London.png" -o weather.png
 
 ## Response Templates
 
-Use short, grounded answers in the user's language. Prefer concrete fields over vague wording.
+Use short, grounded answers in the user's language unless they explicitly ask for a different language. Prefer concrete fields over vague wording.
 
 ### Current Weather
 

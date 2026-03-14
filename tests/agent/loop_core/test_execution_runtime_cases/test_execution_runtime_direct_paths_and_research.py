@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.loop_core.execution_runtime import (
     call_llm_with_fallback,
     run_agent_loop,
@@ -62,7 +63,7 @@ async def test_run_agent_loop_direct_read_file_analysis_returns_summary_via_prov
 
 @pytest.mark.asyncio
 async def test_run_agent_loop_direct_list_dir_returns_raw_without_summary_chat():
-    raw_result = "📁 bot\n📁 openclaw\n📄 README.md"
+    raw_result = "📁 bot\n📁 reference-repo\n📄 README.md"
     loop = SimpleNamespace(
         max_iterations=1,
         _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
@@ -184,6 +185,238 @@ async def test_run_agent_loop_direct_message_resolves_bare_filename_from_last_fo
     evidence = msg.metadata.get("completion_evidence")
     assert evidence["artifact_verified"] is True
     assert str(report_path.resolve()) in evidence["artifact_paths"]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_bare_send_request_prefers_direct_message_over_find_then_send_workflow(tmp_path):
+    report_dir = tmp_path / "bot"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "tes.md"
+    report_path.write_text("demo", encoding="utf-8")
+    session = SimpleNamespace(
+        metadata={
+            "last_navigated_path": str(report_dir.resolve()),
+            "last_tool_context": {"tool": "list_dir", "path": str(report_dir.resolve())},
+        }
+    )
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value="Message sent to telegram:chat-1"),
+        workspace=tmp_path,
+        tools=SimpleNamespace(has=lambda name: name in {"find_files", "message"}),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        sessions=SimpleNamespace(get_or_create=lambda _key: session),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="kirim file tes.md",
+        metadata={
+            "requires_message_delivery": True,
+            "effective_content": "kirim file tes.md",
+            "last_navigated_path": str(report_dir.resolve()),
+            "last_tool_context": {"tool": "list_dir", "path": str(report_dir.resolve())},
+        },
+    )
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "Message sent to telegram:chat-1"
+    loop._execute_required_tool_fallback.assert_awaited_once_with("message", msg)
+    loop._plan_task.assert_not_awaited()
+    loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_bare_send_request_can_reuse_session_working_directory(tmp_path):
+    report_dir = tmp_path / "bot"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "tes.md"
+    report_path.write_text("demo", encoding="utf-8")
+    session = SimpleNamespace(
+        metadata={
+            "working_directory": str(report_dir.resolve()),
+        }
+    )
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value="Message sent to telegram:chat-1"),
+        workspace=tmp_path,
+        tools=SimpleNamespace(has=lambda name: name in {"find_files", "message"}),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        sessions=SimpleNamespace(get_or_create=lambda _key: session),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="kirim file tes.md",
+        metadata={
+            "requires_message_delivery": True,
+            "effective_content": "kirim file tes.md",
+        },
+    )
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "Message sent to telegram:chat-1"
+    loop._execute_required_tool_fallback.assert_awaited_once_with("message", msg)
+    loop._plan_task.assert_not_awaited()
+    loop.provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_bare_send_request_prefers_session_working_directory_over_stale_active_working_directory(
+    tmp_path,
+):
+    live_dir = tmp_path / "live"
+    stale_dir = tmp_path / "stale"
+    live_dir.mkdir(parents=True, exist_ok=True)
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    report_path = live_dir / "tes.md"
+    report_path.write_text("demo", encoding="utf-8")
+    session = SimpleNamespace(
+        metadata={
+            "working_directory": str(live_dir.resolve()),
+        }
+    )
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value="Message sent to telegram:chat-1"),
+        workspace=tmp_path,
+        tools=SimpleNamespace(has=lambda name: name in {"find_files", "message"}),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        sessions=SimpleNamespace(get_or_create=lambda _key: session),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="kirim file tes.md",
+        metadata={
+            "requires_message_delivery": True,
+            "effective_content": "kirim file tes.md",
+            "working_directory": str(stale_dir.resolve()),
+        },
+    )
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "Message sent to telegram:chat-1"
+    loop._execute_required_tool_fallback.assert_awaited_once_with("message", msg)
+    assert msg.metadata.get("message_delivery_verified") is True
+    evidence = msg.metadata.get("completion_evidence")
+    assert evidence["artifact_verified"] is True
+    assert str(report_path.resolve()) in evidence["artifact_paths"]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_bare_send_request_prefers_session_last_navigated_path_over_stale_active_breadcrumb(tmp_path):
+    live_dir = tmp_path / "live"
+    stale_dir = tmp_path / "stale"
+    live_dir.mkdir(parents=True, exist_ok=True)
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    report_path = live_dir / "tes.md"
+    report_path.write_text("demo", encoding="utf-8")
+    session = SimpleNamespace(
+        metadata={
+            "last_navigated_path": str(live_dir.resolve()),
+        }
+    )
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value="Message sent to telegram:chat-1"),
+        workspace=tmp_path,
+        tools=SimpleNamespace(has=lambda name: name in {"find_files", "message"}),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="should-not-be-used"))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        sessions=SimpleNamespace(get_or_create=lambda _key: session),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="kirim file tes.md",
+        metadata={
+            "requires_message_delivery": True,
+            "effective_content": "kirim file tes.md",
+            "last_navigated_path": str(stale_dir.resolve()),
+        },
+    )
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == "Message sent to telegram:chat-1"
+    loop._execute_required_tool_fallback.assert_awaited_once_with("message", msg)
+    assert msg.metadata.get("message_delivery_verified") is True
+    evidence = msg.metadata.get("completion_evidence")
+    assert evidence["artifact_verified"] is True
+    assert str(report_path.resolve()) in evidence["artifact_paths"]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_direct_list_dir_error_is_rephrased_by_model():
+    raw_result = i18n_t(
+        "filesystem.directory_not_found",
+        "buka folder pi-mono",
+        path=r"C:\Users\Arvy Kairi\Desktop\bot\pi-mono",
+    )
+    summarized = (
+        "Aku belum menemukan folder itu di lokasi yang kamu maksud: "
+        r"C:\Users\Arvy Kairi\Desktop\bot\pi-mono. Kalau mau, kita bisa cek folder induknya dulu."
+    )
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: "list_dir",
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value=None),
+        _apply_think_mode=lambda m, _s: m,
+        _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content=summarized))),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="buka folder pi-mono")
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == summarized
+    loop._execute_required_tool_fallback.assert_awaited_once_with("list_dir", msg)
+    loop.provider.chat.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1067,7 +1300,7 @@ async def test_run_agent_loop_forces_web_search_for_live_query_even_without_rese
         channel="telegram",
         chat_id="8086",
         sender_id="user",
-        content="berita terbaru 2026 sekarang",
+        content="latest news in 2026 right now",
         metadata={"route_profile": "GENERAL"},
     )
     session = SimpleNamespace(metadata={})

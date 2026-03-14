@@ -26,16 +26,16 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
-## What's New In v0.6.4
+## What's New In v0.6.5
 
-- **Skill-first routing** that reduces parser-heavy drift and gives external/workspace skills priority over legacy finance tools.
-- **Direct page fetch fallback** so page-oriented requests prefer `web_fetch`, and stale `web_search` setup hints can demote back into a real page fetch.
-- **External skill lifecycle** with install/search/info/list/update/pack/publish/sync flows for local folders, bundles, git repos, URLs, and JSON catalogs.
-- **Workspace persona parity** so `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, and `BOOTSTRAP.md` behave more like living workspace truth than passive notes.
+- **Session-first continuity** so file navigation, delivery reuse, and one-shot CLI follow-ups stay grounded in `working_directory`, `delivery_route`, and transcript state instead of stale breadcrumbs.
+- **Multilingual, user-language replies** with English internal guidance, lighter parser dependence, and stronger continuity for profile, memory, weather, and research turns.
+- **External skill lifecycle and registry flow** with install/search/info/list/update/pack/publish/sync support for folders, bundles, git repos, URLs, and JSON catalogs.
+- **Cross-platform runtime hardening** across browser screenshots, media ingress, cleanup, daemon/service setup, special directories, and system info on Windows, macOS, and Linux.
 
-If you are upgrading from `0.6.3`, the two most important changes are:
-- Kabot is much more likely to choose a skill lane first and only fall back to legacy tools when no better skill exists.
-- Direct page-reading requests now stay grounded through `web_fetch` instead of getting stuck behind an unavailable search provider.
+If you are upgrading from `0.6.4`, the two most important changes are:
+- Kabot now treats session/runtime state as the primary anchor for file work, so separate chat turns and one-shot CLI runs stay much more coherent.
+- Delivery, navigation, and artifact follow-ups are now more evidence-based and much less likely to drift into stale parser-era path reuse.
 
 ---
 
@@ -73,7 +73,7 @@ If you are new, follow this exact flow:
 
 No need to clone repo for normal usage.
 
-Recommended optional step for `v0.6.4`:
+Recommended optional step for `v0.6.5`:
 
 5. **Inspect MCP availability** (`kabot mcp status`)
 
@@ -150,7 +150,7 @@ kabot mcp status   # inspect configured MCP servers
 
 ### Python-Native MCP Quickstart
 
-Kabot `0.6.4` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
+Kabot `0.6.5` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
 
 Useful commands:
 

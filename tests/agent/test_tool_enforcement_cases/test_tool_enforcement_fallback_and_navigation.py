@@ -17,6 +17,7 @@ from kabot.bus.events import InboundMessage
 from kabot.bus.queue import MessageBus
 from kabot.cron.service import CronService
 from kabot.providers.base import LLMResponse, ToolCallRequest
+from kabot.session.manager import SessionManager
 from kabot.session.manager import Session
 
 
@@ -727,3 +728,423 @@ async def test_agent_loop_process_direct_keeps_multilingual_location_queries_ai_
     assert expected_last_path in thai
     location_calls = [call for call in provider.calls if "[System Note: Filesystem location context]" in call]
     assert len(location_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_process_direct_can_send_file_from_last_opened_folder_smoke(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_desktop = fake_home / "Desktop"
+    fake_bot = fake_desktop / "bot"
+    fake_bot.mkdir(parents=True)
+    (fake_bot / "tes.md").write_text("demo", encoding="utf-8")
+
+    provider = _RecordingLLMProvider()
+    workspace = tmp_path / "workspace"
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=workspace,
+        model="openai-codex/gpt-5.3-codex",
+        cron_service=CronService(tmp_path / "cron_jobs.json"),
+        session_manager=_InMemorySessionManager(),
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    loop.memory = SimpleNamespace(
+        create_session=lambda *args, **kwargs: None,
+        add_message=AsyncMock(return_value=None),
+        get_conversation_context=lambda *args, **kwargs: [],
+        metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+    )
+    loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+    loop._ensure_memory_warmup_task = lambda: None
+    loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+    loop.context.build_messages = MagicMock(
+        side_effect=lambda history, current_message, **kwargs: [
+            {"role": "system", "content": "ctx"},
+            {"role": "user", "content": current_message},
+        ]
+    )
+    loop._resolve_context_for_message = lambda _msg: loop.context
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: Path(fake_home))
+
+    first = await loop.process_direct(
+        f"masuk folder {fake_bot}",
+        session_key="cli:send-smoke",
+        chat_id="send-smoke",
+    )
+    second = await loop.process_direct(
+        "kirim file tes.md",
+        session_key="cli:send-smoke",
+        chat_id="send-smoke",
+    )
+
+    assert "tes.md" in first
+    assert second == "Message sent to cli:send-smoke"
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_process_direct_path_hint_opens_desktop_subfolder_without_bootstrap_hijack(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_desktop = fake_home / "Desktop"
+    fake_bot = fake_desktop / "bot"
+    fake_bot.mkdir(parents=True)
+    (fake_bot / "tes.md").write_text("demo", encoding="utf-8")
+
+    provider = _RecordingLLMProvider()
+    workspace = tmp_path / "workspace"
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=workspace,
+        model="openai-codex/gpt-5.3-codex",
+        cron_service=CronService(tmp_path / "cron_jobs.json"),
+        session_manager=_InMemorySessionManager(),
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    loop.memory = SimpleNamespace(
+        create_session=lambda *args, **kwargs: None,
+        add_message=AsyncMock(return_value=None),
+        get_conversation_context=lambda *args, **kwargs: [],
+        metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+    )
+    loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+    loop._ensure_memory_warmup_task = lambda: None
+    loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+    loop.context.build_messages = MagicMock(
+        side_effect=lambda history, current_message, **kwargs: [
+            {"role": "system", "content": "ctx"},
+            {"role": "user", "content": current_message},
+        ]
+    )
+    loop._resolve_context_for_message = lambda _msg: loop.context
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: Path(fake_home))
+
+    result = await loop.process_direct(
+        "ya pakai path desktop bot",
+        session_key="cli:path-hint",
+        chat_id="path-hint",
+    )
+    session = loop.sessions.get_or_create("cli:path-hint")
+
+    assert "tes.md" in result
+    assert provider.calls == []
+    assert session.metadata.get("working_directory") == str(fake_bot.resolve())
+    assert session.metadata.get("last_navigated_path") is None
+    bootstrap_state = session.metadata.get("bootstrap_onboarding", {})
+    assert str(bootstrap_state.get("assistant", {}).get("name") or "").strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_process_direct_path_hint_then_send_file_smoke(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_desktop = fake_home / "Desktop"
+    fake_bot = fake_desktop / "bot"
+    fake_bot.mkdir(parents=True)
+    (fake_bot / "tes.md").write_text("demo", encoding="utf-8")
+
+    provider = _RecordingLLMProvider()
+    workspace = tmp_path / "workspace"
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=workspace,
+        model="openai-codex/gpt-5.3-codex",
+        cron_service=CronService(tmp_path / "cron_jobs.json"),
+        session_manager=_InMemorySessionManager(),
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    loop.memory = SimpleNamespace(
+        create_session=lambda *args, **kwargs: None,
+        add_message=AsyncMock(return_value=None),
+        get_conversation_context=lambda *args, **kwargs: [],
+        metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+    )
+    loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+    loop._ensure_memory_warmup_task = lambda: None
+    loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+    loop.context.build_messages = MagicMock(
+        side_effect=lambda history, current_message, **kwargs: [
+            {"role": "system", "content": "ctx"},
+            {"role": "user", "content": current_message},
+        ]
+    )
+    loop._resolve_context_for_message = lambda _msg: loop.context
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: Path(fake_home))
+
+    first = await loop.process_direct(
+        "ya pakai path desktop bot",
+        session_key="cli:path-hint-send",
+        chat_id="path-hint-send",
+    )
+    second = await loop.process_direct(
+        "kirim file tes.md ke sini",
+        session_key="cli:path-hint-send",
+        chat_id="path-hint-send",
+    )
+
+    assert "tes.md" in first
+    assert second == "Message sent to cli:path-hint-send"
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_process_direct_delivery_transcript_recovers_after_reopening_same_folder(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_desktop = fake_home / "Desktop"
+    fake_bot = fake_desktop / "bot"
+    fake_bot.mkdir(parents=True)
+    (fake_bot / "tes.md").write_text("demo", encoding="utf-8")
+
+    provider = _RecordingLLMProvider()
+    workspace = tmp_path / "workspace"
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=workspace,
+        model="openai-codex/gpt-5.3-codex",
+        cron_service=CronService(tmp_path / "cron_jobs.json"),
+        session_manager=_InMemorySessionManager(),
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    loop.memory = SimpleNamespace(
+        create_session=lambda *args, **kwargs: None,
+        add_message=AsyncMock(return_value=None),
+        get_conversation_context=lambda *args, **kwargs: [],
+        metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+    )
+    loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+    loop._ensure_memory_warmup_task = lambda: None
+    loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+    loop.context.build_messages = MagicMock(
+        side_effect=lambda history, current_message, **kwargs: [
+            {"role": "system", "content": "ctx"},
+            {"role": "user", "content": current_message},
+        ]
+    )
+    loop._resolve_context_for_message = lambda _msg: loop.context
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: Path(fake_home))
+
+    first = await loop.process_direct(
+        "kirim file tes.md",
+        session_key="cli:delivery-transcript",
+        chat_id="delivery-transcript",
+    )
+    second = await loop.process_direct(
+        "ya pakai path desktop bot",
+        session_key="cli:delivery-transcript",
+        chat_id="delivery-transcript",
+    )
+    third = await loop.process_direct(
+        "buka folder bot",
+        session_key="cli:delivery-transcript",
+        chat_id="delivery-transcript",
+    )
+    fourth = await loop.process_direct(
+        "kirim file tes.md ke sini",
+        session_key="cli:delivery-transcript",
+        chat_id="delivery-transcript",
+    )
+    session = loop.sessions.get_or_create("cli:delivery-transcript")
+
+    assert "won't claim" in first.lower()
+    assert second == "Message sent to cli:delivery-transcript"
+    assert session.metadata.get("last_delivery_path") == str((fake_bot / "tes.md").resolve())
+    assert session.metadata.get("working_directory") == str(fake_bot.resolve())
+    assert session.metadata.get("last_navigated_path") is None
+    assert "Directory not found" not in third
+    assert "tes.md" in third
+    assert fourth == "Message sent to cli:delivery-transcript"
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_process_direct_opening_sibling_folder_after_delivery_uses_last_navigated_parent(
+    tmp_path, monkeypatch
+):
+    fake_home = tmp_path / "home"
+    fake_desktop = fake_home / "Desktop"
+    fake_bot = fake_desktop / "bot"
+    fake_pi_mono = fake_bot / "pi-mono"
+    fake_pi_mono.mkdir(parents=True)
+    (fake_bot / "tes.md").write_text("demo", encoding="utf-8")
+    (fake_pi_mono / "README.md").write_text("hello", encoding="utf-8")
+
+    provider = _RecordingLLMProvider()
+    workspace = tmp_path / "workspace"
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=workspace,
+        model="openai-codex/gpt-5.3-codex",
+        cron_service=CronService(tmp_path / "cron_jobs.json"),
+        session_manager=_InMemorySessionManager(),
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    loop.memory = SimpleNamespace(
+        create_session=lambda *args, **kwargs: None,
+        add_message=AsyncMock(return_value=None),
+        get_conversation_context=lambda *args, **kwargs: [],
+        metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+    )
+    loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+    loop._ensure_memory_warmup_task = lambda: None
+    loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+    loop.context.build_messages = MagicMock(
+        side_effect=lambda history, current_message, **kwargs: [
+            {"role": "system", "content": "ctx"},
+            {"role": "user", "content": current_message},
+        ]
+    )
+    loop._resolve_context_for_message = lambda _msg: loop.context
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: Path(fake_home))
+
+    first = await loop.process_direct(
+        "buka folder desktop",
+        session_key="cli:delivery-sibling-folder",
+        chat_id="delivery-sibling-folder",
+    )
+    second = await loop.process_direct(
+        "buka folder bot",
+        session_key="cli:delivery-sibling-folder",
+        chat_id="delivery-sibling-folder",
+    )
+    third = await loop.process_direct(
+        "kirim file tes.md ke telegram",
+        session_key="cli:delivery-sibling-folder",
+        chat_id="delivery-sibling-folder",
+    )
+    fourth = await loop.process_direct(
+        "buka folder pi-mono",
+        session_key="cli:delivery-sibling-folder",
+        chat_id="delivery-sibling-folder",
+    )
+    session = loop.sessions.get_or_create("cli:delivery-sibling-folder")
+
+    assert "bot" in first
+    assert "tes.md" in second
+    assert third == "Message sent to cli:delivery-sibling-folder"
+    assert "Directory not found" not in fourth
+    assert "README.md" in fourth
+    assert session.metadata.get("working_directory") == str(fake_pi_mono.resolve())
+    assert session.metadata.get("last_navigated_path") is None
+    assert session.metadata.get("last_delivery_path") == str((fake_bot / "tes.md").resolve())
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_process_direct_cross_instance_session_persistence_keeps_navigation_and_delivery_context(
+    tmp_path, monkeypatch
+):
+    fake_home = tmp_path / "home"
+    fake_desktop = fake_home / "Desktop"
+    fake_bot = fake_desktop / "bot"
+    fake_pi_mono = fake_bot / "pi-mono"
+    fake_pi_mono.mkdir(parents=True)
+    (fake_bot / "tes.md").write_text("demo", encoding="utf-8")
+    (fake_pi_mono / "README.md").write_text("hello", encoding="utf-8")
+
+    monkeypatch.setattr("kabot.session.manager.Path.home", lambda: fake_home)
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: Path(fake_home))
+
+    def _build_loop(provider, workspace):
+        loop = AgentLoop(
+            bus=MessageBus(),
+            provider=provider,
+            workspace=workspace,
+            model="openai-codex/gpt-5.3-codex",
+            cron_service=CronService(tmp_path / "cron_jobs.json"),
+            session_manager=SessionManager(workspace),
+        )
+        workspace.mkdir(parents=True, exist_ok=True)
+        loop.memory = SimpleNamespace(
+            create_session=lambda *args, **kwargs: None,
+            add_message=AsyncMock(return_value=None),
+            get_conversation_context=lambda *args, **kwargs: [],
+            metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+        )
+        loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+        loop._ensure_memory_warmup_task = lambda: None
+        loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+        loop.context.build_messages = MagicMock(
+            side_effect=lambda history, current_message, **kwargs: [
+                {"role": "system", "content": "ctx"},
+                {"role": "user", "content": current_message},
+            ]
+        )
+        loop._resolve_context_for_message = lambda _msg: loop.context
+        return loop
+
+    session_key = "agent:main:cli:direct:workspace-test"
+    workspace = tmp_path / "workspace"
+
+    provider1 = _RecordingLLMProvider()
+    loop1 = _build_loop(provider1, workspace)
+    first = await loop1.process_direct("buka folder desktop", session_key=session_key, chat_id="oneshot")
+    second = await loop1.process_direct("buka folder bot", session_key=session_key, chat_id="oneshot")
+    assert "bot" in first
+    assert "tes.md" in second
+    assert provider1.calls == []
+
+    provider2 = _RecordingLLMProvider()
+    loop2 = _build_loop(provider2, workspace)
+    third = await loop2.process_direct("kirim file tes.md ke sini", session_key=session_key, chat_id="oneshot")
+    fourth = await loop2.process_direct("buka folder pi-mono", session_key=session_key, chat_id="oneshot")
+
+    assert third == "Message sent to cli:oneshot"
+    assert "README.md" in fourth
+    assert "Directory not found" not in fourth
+    assert provider2.calls == []
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_process_direct_path_hint_can_complete_pending_send_file_request(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_desktop = fake_home / "Desktop"
+    fake_bot = fake_desktop / "bot"
+    fake_bot.mkdir(parents=True)
+    (fake_bot / "tes.md").write_text("demo", encoding="utf-8")
+
+    provider = _RecordingLLMProvider()
+    workspace = tmp_path / "workspace"
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=workspace,
+        model="openai-codex/gpt-5.3-codex",
+        cron_service=CronService(tmp_path / "cron_jobs.json"),
+        session_manager=_InMemorySessionManager(),
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    loop.memory = SimpleNamespace(
+        create_session=lambda *args, **kwargs: None,
+        add_message=AsyncMock(return_value=None),
+        get_conversation_context=lambda *args, **kwargs: [],
+        metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+    )
+    loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+    loop._ensure_memory_warmup_task = lambda: None
+    loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+    loop.context.build_messages = MagicMock(
+        side_effect=lambda history, current_message, **kwargs: [
+            {"role": "system", "content": "ctx"},
+            {"role": "user", "content": current_message},
+        ]
+    )
+    loop._resolve_context_for_message = lambda _msg: loop.context
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: Path(fake_home))
+
+    first = await loop.process_direct(
+        "kirim file tes.md",
+        session_key="cli:delivery-path-followup",
+        chat_id="delivery-path-followup",
+    )
+    second = await loop.process_direct(
+        "ya pakai path desktop bot",
+        session_key="cli:delivery-path-followup",
+        chat_id="delivery-path-followup",
+    )
+
+    assert "won't claim" in first.lower()
+    assert second == "Message sent to cli:delivery-path-followup"
+    assert provider.calls == []

@@ -13,6 +13,7 @@ from kabot.agent.cron_fallback_nlp import required_tool_for_query as cron_requir
 from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.loop import AgentLoop
 from kabot.agent.loop_core import tool_enforcement as tool_enforcement_module
+from kabot.agent.loop_core.tool_enforcement_parts import action_requests as action_requests_module
 from kabot.agent.loop_core.tool_enforcement import (
     _extract_list_dir_path,
     _extract_message_delivery_path,
@@ -20,6 +21,11 @@ from kabot.agent.loop_core.tool_enforcement import (
     _query_has_tool_payload,
     infer_action_required_tool_for_loop,
     execute_required_tool_fallback,
+)
+from kabot.agent.loop_core.tool_enforcement_parts.core import (
+    _get_last_delivery_path,
+    _get_last_navigated_path,
+    _set_last_delivery_path,
 )
 from kabot.bus.events import InboundMessage
 from kabot.bus.queue import MessageBus
@@ -447,6 +453,13 @@ def test_query_has_tool_payload_treats_multilingual_relative_folder_turns_as_new
     assert _query_has_tool_payload("list_dir", "表示 フォルダ bot") is True
     assert _query_has_tool_payload("list_dir", "เปิด โฟลเดอร์ bot") is True
 
+
+def test_query_has_tool_payload_requires_exact_symbols_for_legacy_stock_tools():
+    assert _query_has_tool_payload("stock", "cek harga saham bca bri mandiri adaro sekarang") is False
+    assert _query_has_tool_payload("stock_analysis", "bandingkan saham apple microsoft sekarang") is False
+    assert _query_has_tool_payload("stock", "BBCA.JK BBRI.JK BMRI.JK ADRO.JK") is True
+    assert _query_has_tool_payload("stock_analysis", "AAPL MSFT trend 3 months") is True
+
 def test_required_tool_for_query_tolerates_common_typos_for_core_intents(agent_loop):
     assert agent_loop._required_tool_for_query("ingatkn 2 menit lagi makan") == "cron"
     assert agent_loop._required_tool_for_query("temprature cilacap today") == "weather"
@@ -688,7 +701,7 @@ def test_required_tool_for_query_detects_natural_process_inspection_prompts():
 def test_required_tool_for_query_routes_memory_commit_to_save_memory_not_process_memory():
     assert (
         cron_required_tool_for_query(
-            "udah di bilang, panggil aku Maha Raja, tolong simpan di memori",
+            "I already told you to call me Maha Raja, please save this to memory",
             has_weather_tool=False,
             has_cron_tool=False,
             has_process_memory_tool=True,
@@ -698,7 +711,7 @@ def test_required_tool_for_query_routes_memory_commit_to_save_memory_not_process
     )
     assert (
         cron_required_tool_for_query(
-            "tolong simpan di memori",
+            "please save this to memory",
             has_weather_tool=False,
             has_cron_tool=False,
             has_process_memory_tool=True,
@@ -876,6 +889,165 @@ async def test_execute_required_tool_fallback_find_files_prefers_last_navigated_
     assert tool_name == "find_files"
     assert params["query"] == "tes.md"
     assert params["path"] == str(nav_dir.resolve())
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_find_files_prefers_working_directory_as_root(agent_loop):
+    execute_mock = AsyncMock(return_value="FILE C:/Users/Arvy Kairi/Desktop/bot/tes.md")
+    agent_loop.tools.execute = execute_mock
+    working_dir = agent_loop.workspace
+    working_dir.mkdir(parents=True, exist_ok=True)
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="cari file tes.md",
+        metadata={"working_directory": str(working_dir.resolve())},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("find_files", msg)
+
+    assert "tes.md" in result
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "find_files"
+    assert params["query"] == "tes.md"
+    assert params["path"] == str(working_dir.resolve())
+
+
+def test_resolve_find_files_root_prefers_last_tool_context_path_over_stale_last_navigated_path(agent_loop):
+    active_dir = agent_loop.workspace / "active"
+    stale_dir = agent_loop.workspace / "stale"
+    active_dir.mkdir(parents=True, exist_ok=True)
+    stale_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata = {
+        "last_tool_context": {"tool": "list_dir", "path": str(active_dir.resolve())},
+        "last_navigated_path": str(stale_dir.resolve()),
+    }
+
+    resolved = action_requests_module._resolve_find_files_root(
+        agent_loop,
+        "find report.pdf",
+        metadata=metadata,
+    )
+
+    assert resolved == str(active_dir.resolve())
+
+
+def test_filesystem_resolve_find_files_root_prefers_last_tool_context_path_over_stale_last_navigated_path(tmp_path):
+    from kabot.agent.loop_core.tool_enforcement_parts import filesystem_paths as filesystem_paths_module
+
+    active_dir = tmp_path / "active"
+    stale_dir = tmp_path / "stale"
+    active_dir.mkdir(parents=True, exist_ok=True)
+    stale_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata = {
+        "last_tool_context": {"tool": "list_dir", "path": str(active_dir.resolve())},
+        "last_navigated_path": str(stale_dir.resolve()),
+    }
+
+    resolved = filesystem_paths_module._resolve_find_files_root(
+        loop=SimpleNamespace(workspace=tmp_path),
+        text="find report.pdf",
+        metadata=metadata,
+    )
+
+    assert resolved == str(active_dir.resolve())
+
+
+def test_get_last_navigated_path_prefers_working_directory_over_stale_breadcrumb(agent_loop):
+    active_dir = agent_loop.workspace / "active"
+    stale_dir = agent_loop.workspace / "stale"
+    active_dir.mkdir(parents=True, exist_ok=True)
+    stale_dir.mkdir(parents=True, exist_ok=True)
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="send the file",
+        metadata={
+            "working_directory": str(active_dir.resolve()),
+            "last_navigated_path": str(stale_dir.resolve()),
+        },
+        timestamp=datetime.now(),
+    )
+
+    assert _get_last_navigated_path(agent_loop, msg, msg.metadata) == str(active_dir.resolve())
+
+
+def test_get_last_navigated_path_prefers_session_breadcrumb_over_active_turn_breadcrumb(agent_loop):
+    live_dir = agent_loop.workspace / "live-nav"
+    stale_dir = agent_loop.workspace / "stale-nav"
+    live_dir.mkdir(parents=True, exist_ok=True)
+    stale_dir.mkdir(parents=True, exist_ok=True)
+
+    session = agent_loop.sessions.get_or_create("telegram:chat-1")
+    session.metadata["last_navigated_path"] = str(live_dir.resolve())
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="open it",
+        metadata={"last_navigated_path": str(stale_dir.resolve())},
+        timestamp=datetime.now(),
+    )
+
+    assert _get_last_navigated_path(agent_loop, msg, msg.metadata) == str(live_dir.resolve())
+
+
+def test_get_last_delivery_path_prefers_session_delivery_over_active_turn_breadcrumb(agent_loop):
+    live_file = agent_loop.workspace / "live" / "report.pdf"
+    stale_file = agent_loop.workspace / "stale" / "report.pdf"
+    live_file.parent.mkdir(parents=True, exist_ok=True)
+    stale_file.parent.mkdir(parents=True, exist_ok=True)
+    live_file.write_text("live", encoding="utf-8")
+    stale_file.write_text("stale", encoding="utf-8")
+
+    session = agent_loop.sessions.get_or_create("telegram:chat-1")
+    session.metadata["last_delivery_path"] = str(live_file.resolve())
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="send it",
+        metadata={"last_delivery_path": str(stale_file.resolve())},
+        timestamp=datetime.now(),
+    )
+
+    assert _get_last_delivery_path(agent_loop, msg, msg.metadata) == str(live_file.resolve())
+
+
+def test_set_last_delivery_path_keeps_delivery_path_session_local_and_updates_cwd(agent_loop):
+    delivery_dir = agent_loop.workspace / "desktop" / "bot"
+    delivery_dir.mkdir(parents=True, exist_ok=True)
+    delivery_file = delivery_dir / "tes.md"
+    delivery_file.write_text("demo", encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="send it",
+        metadata={},
+    )
+
+    normalized = _set_last_delivery_path(agent_loop, msg, msg.metadata, str(delivery_file.resolve()))
+    session = agent_loop.sessions.get_or_create("telegram:chat-1")
+
+    assert normalized == str(delivery_file.resolve())
+    assert msg.metadata.get("working_directory") == str(delivery_dir.resolve())
+    assert msg.metadata.get("last_delivery_path") is None
+    assert session.metadata.get("last_delivery_path") == str(delivery_file.resolve())
 
 
 @pytest.mark.asyncio
@@ -1080,7 +1252,8 @@ async def test_execute_required_tool_fallback_multiturn_send_reuses_navigation_t
     await agent_loop._execute_required_tool_fallback("list_dir", msg1)
 
     session = agent_loop.sessions.get_or_create(session_key)
-    assert session.metadata.get("last_navigated_path") == str(nav_dir.resolve())
+    assert session.metadata.get("working_directory") == str(nav_dir.resolve())
+    assert session.metadata.get("last_navigated_path") is None
 
     msg2 = InboundMessage(
         channel="telegram",
@@ -1209,6 +1382,68 @@ async def test_execute_required_tool_fallback_message_prefers_last_navigated_pat
 
 
 @pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_prefers_last_navigated_path_for_bare_send_without_delivery_suffix(agent_loop):
+    execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
+    agent_loop.tools.execute = execute_mock
+    report_dir = agent_loop.workspace / "desktop" / "bot"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "tes.md"
+    report_path.write_text("demo", encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="kirim file tes.md",
+        metadata={
+            "last_tool_context": {"tool": "list_dir", "path": str((agent_loop.workspace / ".basetemp").resolve())},
+            "last_navigated_path": str(report_dir.resolve()),
+        },
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    assert result == "Message sent to telegram:chat-1"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "message"
+    assert params["files"] == [str(report_path.resolve())]
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_message_prefers_session_last_navigated_path_for_bare_send(agent_loop):
+    execute_mock = AsyncMock(return_value="Message sent to telegram:chat-1")
+    agent_loop.tools.execute = execute_mock
+    report_dir = agent_loop.workspace / "desktop" / "bot"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "tes.md"
+    report_path.write_text("demo", encoding="utf-8")
+
+    session_key = "telegram:chat-1"
+    session = agent_loop.sessions.get_or_create(session_key)
+    session.metadata["last_navigated_path"] = str(report_dir.resolve())
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key=session_key,
+        content="kirim file tes.md",
+        metadata={"last_tool_context": {"tool": "list_dir", "path": str((agent_loop.workspace / ".basetemp").resolve())}},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("message", msg)
+
+    assert result == "Message sent to telegram:chat-1"
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "message"
+    assert params["files"] == [str(report_path.resolve())]
+
+
+@pytest.mark.asyncio
 async def test_execute_required_tool_fallback_message_archives_directory_before_sending(agent_loop):
     execute_mock = AsyncMock()
     agent_loop.tools.execute = execute_mock
@@ -1245,7 +1480,7 @@ async def test_execute_required_tool_fallback_message_archives_directory_before_
 
 @pytest.mark.asyncio
 async def test_execute_required_tool_fallback_list_dir_uses_platform_aliases_and_followup_context(agent_loop, monkeypatch):
-    execute_mock = AsyncMock(return_value="📁 bot\n📁 openclaw")
+    execute_mock = AsyncMock(return_value="📁 bot\n📁 reference-repo")
     agent_loop.tools.execute = execute_mock
     monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
     expected_desktop = str(tool_enforcement_module.Path("/Users/Arvy Kairi") / "Desktop")
@@ -1276,8 +1511,37 @@ async def test_execute_required_tool_fallback_list_dir_uses_platform_aliases_and
     assert "bot" in followup_result
     execute_mock.assert_awaited_once_with("list_dir", {"path": expected_desktop})
 
+
 @pytest.mark.asyncio
-async def test_execute_required_tool_fallback_list_dir_updates_last_navigated_path(agent_loop):
+async def test_execute_required_tool_fallback_list_dir_prefers_xdg_special_directory_override(
+    agent_loop,
+    monkeypatch,
+    tmp_path,
+):
+    execute_mock = AsyncMock(return_value="notes.txt")
+    agent_loop.tools.execute = execute_mock
+    fake_home = tmp_path / "home"
+    user_dirs = fake_home / ".config" / "user-dirs.dirs"
+    user_dirs.parent.mkdir(parents=True, exist_ok=True)
+    user_dirs.write_text('XDG_DESKTOP_DIR="$HOME/Work/DesktopSpace"\n', encoding="utf-8")
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: fake_home)
+    monkeypatch.delenv("XDG_DESKTOP_DIR", raising=False)
+    expected_desktop = str(fake_home / "Work" / "DesktopSpace")
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="show desktop folder",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("list_dir", msg)
+    assert "notes.txt" in result
+    execute_mock.assert_awaited_once_with("list_dir", {"path": expected_desktop})
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_list_dir_updates_working_directory(agent_loop):
     execute_mock = AsyncMock(return_value="📄 README.md")
     agent_loop.tools.execute = execute_mock
     target_dir = agent_loop.workspace / "desktop" / "bot"
@@ -1295,7 +1559,36 @@ async def test_execute_required_tool_fallback_list_dir_updates_last_navigated_pa
     result = await agent_loop._execute_required_tool_fallback("list_dir", msg)
 
     assert "README" in result
-    assert msg.metadata.get("last_navigated_path") == str(target_dir.resolve())
+    assert msg.metadata.get("working_directory") == str(target_dir.resolve())
+    assert msg.metadata.get("last_navigated_path") is None
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_list_dir_keeps_working_directory_canonical_without_redundant_breadcrumb(
+    agent_loop,
+):
+    execute_mock = AsyncMock(return_value="📄 README.md")
+    agent_loop.tools.execute = execute_mock
+    target_dir = agent_loop.workspace / "desktop" / "bot"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct-canonical-cwd",
+        sender_id="user",
+        content=f"buka {target_dir}",
+        metadata={},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("list_dir", msg)
+    session = agent_loop.sessions.get_or_create("cli:direct-canonical-cwd")
+
+    assert "README" in result
+    assert msg.metadata.get("working_directory") == str(target_dir.resolve())
+    assert msg.metadata.get("last_navigated_path") is None
+    assert session.metadata.get("working_directory") == str(target_dir.resolve())
+    assert session.metadata.get("last_navigated_path") is None
 
 
 @pytest.mark.asyncio
@@ -1644,7 +1937,7 @@ async def test_execute_required_tool_fallback_stock_short_conversion_followup_co
     assert "idr" in params["symbol"].lower()
 
 @pytest.mark.asyncio
-async def test_execute_required_tool_fallback_stock_short_followup_with_new_symbol_prefers_raw_text(agent_loop):
+async def test_execute_required_tool_fallback_stock_short_followup_with_explicit_symbol_prefers_raw_text(agent_loop):
     execute_mock = AsyncMock(return_value="stock-ok")
     agent_loop.tools.execute = execute_mock
 
@@ -1652,7 +1945,7 @@ async def test_execute_required_tool_fallback_stock_short_followup_with_new_symb
         channel="telegram",
         chat_id="8086",
         sender_id="user",
-        content="adaro mana",
+        content="ADRO mana",
         metadata={"required_tool_query": "cek harga saham bbri bbca bmri"},
         timestamp=datetime.now(),
     )
@@ -1800,6 +2093,57 @@ def test_extract_list_dir_path_supports_nested_special_directory_plus_subfolder(
     ) == str(tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop/bot"))
 
 
+def test_extract_list_dir_path_supports_special_directory_path_hint_without_folder_keyword(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+
+    assert _extract_list_dir_path("ya pakai path desktop bot") == str(
+        tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop/bot")
+    )
+
+
+def test_extract_list_dir_path_prefers_xdg_desktop_dir_when_set(monkeypatch):
+    fake_home = tool_enforcement_module.Path("/home/arvy")
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: fake_home)
+    monkeypatch.setenv("XDG_DESKTOP_DIR", "$HOME/Work/DesktopSpace")
+
+    assert _extract_list_dir_path("open desktop folder") == str(
+        fake_home / "Work" / "DesktopSpace"
+    )
+
+
+def test_extract_list_dir_path_prefers_user_dirs_config_for_downloads(monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    user_dirs = fake_home / ".config" / "user-dirs.dirs"
+    user_dirs.parent.mkdir(parents=True, exist_ok=True)
+    user_dirs.write_text('XDG_DOWNLOAD_DIR="$HOME/files/DownloadsCustom"\n', encoding="utf-8")
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: fake_home)
+    monkeypatch.delenv("XDG_DOWNLOAD_DIR", raising=False)
+
+    assert _extract_list_dir_path("show downloads folder") == str(
+        fake_home / "files" / "DownloadsCustom"
+    )
+
+
+def test_extract_list_dir_path_path_hint_uses_xdg_desktop_dir(monkeypatch):
+    fake_home = tool_enforcement_module.Path("/home/arvy")
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: fake_home)
+    monkeypatch.setenv("XDG_DESKTOP_DIR", "$HOME/Work/DesktopSpace")
+
+    assert _extract_list_dir_path("use path desktop bot") == str(
+        fake_home / "Work" / "DesktopSpace" / "bot"
+    )
+
+
+def test_infer_action_required_tool_for_loop_prefers_list_dir_for_natural_path_hint(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+    loop = SimpleNamespace(tools=SimpleNamespace(tool_names=["list_dir"]))
+
+    assert infer_action_required_tool_for_loop(loop, "ya pakai path desktop bot") == (
+        "list_dir",
+        "ya pakai path desktop bot",
+    )
+
+
 def test_extract_message_delivery_path_uses_monkeypatched_special_directory_home(monkeypatch):
     monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
 
@@ -1840,7 +2184,7 @@ def test_extract_message_delivery_path_joins_relative_filename_with_folder_conte
 
 @pytest.mark.asyncio
 async def test_execute_required_tool_fallback_list_dir_passes_requested_limit(agent_loop, monkeypatch):
-    execute_mock = AsyncMock(return_value="📁 bot\n📁 openclaw")
+    execute_mock = AsyncMock(return_value="📁 bot\n📁 reference-repo")
     agent_loop.tools.execute = execute_mock
     monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
     expected_desktop = str(tool_enforcement_module.Path("/Users/Arvy Kairi") / "Desktop")

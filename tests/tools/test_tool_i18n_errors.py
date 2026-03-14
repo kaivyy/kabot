@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from kabot.agent.fallback_i18n import t as i18n_t
-from kabot.agent.tools.filesystem import ReadFileTool
+from kabot.agent.tools.filesystem import ListDirTool, ReadFileTool
 from kabot.agent.tools.message import MessageTool
 from kabot.agent.tools.speedtest import SpeedtestTool
 
@@ -17,6 +17,17 @@ async def test_read_file_tool_localizes_file_not_found(tmp_path: Path):
     result = await tool.execute(str(missing))
 
     assert result == i18n_t("filesystem.file_not_found", str(missing), path=str(missing))
+
+
+@pytest.mark.asyncio
+async def test_list_dir_tool_localizes_missing_directory_with_friendly_copy(tmp_path: Path):
+    tool = ListDirTool()
+    missing = tmp_path / "folder-yang-tidak-ada"
+
+    result = await tool.execute(str(missing))
+
+    assert result == i18n_t("filesystem.directory_not_found", str(missing), path=str(missing))
+    assert "belum" in result.lower() or "couldn't" in result.lower()
 
 
 @pytest.mark.asyncio
@@ -56,6 +67,40 @@ async def test_message_tool_can_send_file_to_current_chat_context():
     assert outbound.chat_id == "chat-99"
     assert outbound.content == "Ini file yang diminta."
     assert outbound.media == ["docs/report.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_message_tool_merges_delivery_route_metadata_into_outbound_message():
+    send_callback = AsyncMock(return_value=None)
+    tool = MessageTool(
+        send_callback=send_callback,
+        default_channel="slack",
+        default_chat_id="C123",
+    )
+    tool.set_context(
+        "slack",
+        "C123",
+        delivery_route={
+            "channel": "slack",
+            "chat_id": "C123",
+            "team_id": "T9",
+            "thread_id": "171717.0001",
+        },
+    )
+
+    result = await tool.execute("Sending the file now.", files=["docs/report.pdf"])
+
+    assert result == "Message sent to slack:C123"
+    outbound = send_callback.await_args.args[0]
+    assert outbound.metadata["delivery_route"] == {
+        "channel": "slack",
+        "chat_id": "C123",
+        "team_id": "T9",
+        "thread_id": "171717.0001",
+    }
+    assert outbound.metadata["team_id"] == "T9"
+    assert outbound.metadata["thread_id"] == "171717.0001"
+    assert outbound.metadata["thread_ts"] == "171717.0001"
 
 
 @pytest.mark.asyncio

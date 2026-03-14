@@ -19,11 +19,18 @@ class MessageTool(Tool):
         self._send_callback = send_callback
         self._default_channel = default_channel
         self._default_chat_id = default_chat_id
+        self._default_delivery_route: dict[str, Any] = {}
 
-    def set_context(self, channel: str, chat_id: str) -> None:
+    def set_context(
+        self,
+        channel: str,
+        chat_id: str,
+        delivery_route: dict[str, Any] | None = None,
+    ) -> None:
         """Set the current message context."""
         self._default_channel = channel
         self._default_chat_id = chat_id
+        self._default_delivery_route = dict(delivery_route or {})
 
     def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[None]]) -> None:
         """Set the callback for sending messages."""
@@ -88,6 +95,16 @@ class MessageTool(Tool):
 
         metadata = kwargs.get("metadata")
         outbound_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        if self._default_delivery_route:
+            delivery_route = dict(self._default_delivery_route)
+            delivery_route["channel"] = channel
+            delivery_route["chat_id"] = chat_id
+            outbound_metadata.setdefault("delivery_route", delivery_route)
+            for key in ("account_id", "peer_kind", "peer_id", "guild_id", "team_id", "thread_id"):
+                if key in delivery_route and key not in outbound_metadata:
+                    outbound_metadata[key] = delivery_route[key]
+            if channel == "slack" and delivery_route.get("thread_id") and "thread_ts" not in outbound_metadata:
+                outbound_metadata["thread_ts"] = delivery_route["thread_id"]
         phase = str(kwargs.get("phase") or "").strip()
         if phase and "phase" not in outbound_metadata:
             outbound_metadata["phase"] = phase

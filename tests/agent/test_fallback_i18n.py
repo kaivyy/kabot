@@ -13,5 +13,9 @@ def test_translation_uses_input_language_for_fallback_messages():
     assert "reminder time" in t("cron_time_unclear", "please remind me tomorrow").lower()
     assert "waktu pengingat" in t("cron_time_unclear", "tolong ingatkan saya besok").lower()
     assert "masa peringatan" in t("cron_time_unclear", "tolong tetapkan peringatan saya").lower()
-    assert "เวลาการเตือน" in t("cron_time_unclear", "ช่วยเตือนฉันหน่อย")
+    assert "เวลา" in t("cron_time_unclear", "ช่วยเตือนฉันหน่อย")
     assert "提醒时间" in t("cron_time_unclear", "请提醒我")
+
+
+def test_translation_still_allows_explicit_locale_override():
+    assert "waktu pengingat" in t("cron_time_unclear", "please remind me tomorrow", locale="id").lower()

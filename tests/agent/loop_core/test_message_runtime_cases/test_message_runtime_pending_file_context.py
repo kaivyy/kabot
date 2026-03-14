@@ -68,8 +68,8 @@ async def test_process_message_uses_pending_followup_tool_without_keyword_depend
     msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="terusin dong")
     await process_message(loop, msg)
 
-    loop._run_agent_loop.assert_awaited_once()
-    loop._run_simple_response.assert_not_called()
+    loop._run_simple_response.assert_awaited_once()
+    loop._run_agent_loop.assert_not_called()
     context_builder.build_messages.assert_not_called()
 
 @pytest.mark.asyncio
@@ -646,8 +646,8 @@ async def test_process_message_large_file_scan_request_clears_stale_cleanup_foll
     )
     await process_message(loop, msg)
 
-    loop._run_simple_response.assert_awaited_once()
-    loop._run_agent_loop.assert_not_called()
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
     assert msg.metadata.get("required_tool") is None
     assert msg.metadata.get("required_tool_query") is None
     assert "pending_followup_tool" not in session.metadata

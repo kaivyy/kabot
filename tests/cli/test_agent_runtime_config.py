@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from typer.testing import CliRunner
@@ -64,7 +65,7 @@ def test_agent_cli_passes_active_config_into_agent_loop(monkeypatch, tmp_path):
     assert captured["lazy_probe_memory"] is True
 
 
-def test_agent_cli_one_shot_without_explicit_session_uses_ephemeral_session(monkeypatch, tmp_path):
+def test_agent_cli_one_shot_without_explicit_session_uses_workspace_scoped_session(monkeypatch, tmp_path):
     from kabot.cli.commands import app
 
     runner = CliRunner()
@@ -80,8 +81,8 @@ def test_agent_cli_one_shot_without_explicit_session_uses_ephemeral_session(monk
     monkeypatch.setattr("kabot.core.logger.configure_logger", lambda config, store: None)
     monkeypatch.setattr("kabot.cli.commands._make_provider", lambda config: object())
     monkeypatch.setattr(
-        "kabot.cli.commands_agent_command._make_ephemeral_one_shot_session_id",
-        lambda message: "cli:oneshot:test",
+        "kabot.cli.commands_agent_command._make_workspace_scoped_one_shot_session_id",
+        lambda agent_id, workspace: "agent:main:cli:direct:workspace-test",
     )
 
     class _DummyAgentLoop:
@@ -117,7 +118,67 @@ def test_agent_cli_one_shot_without_explicit_session_uses_ephemeral_session(monk
 
     assert result.exit_code == 0
     assert "ok" in result.output
-    assert captured["session_key"] == "cli:oneshot:test"
+    assert captured["session_key"] == "agent:main:cli:direct:workspace-test"
+
+
+def test_agent_cli_one_shot_reuses_workspace_scoped_session_across_invocations(monkeypatch, tmp_path):
+    from kabot.cli.commands import app
+
+    runner = CliRunner()
+    cfg = Config()
+    cfg.logging.file_enabled = False
+    cfg.logging.db_enabled = False
+    cfg.agents.defaults.workspace = str(tmp_path / "workspace")
+
+    captured: list[str] = []
+
+    monkeypatch.setattr("kabot.config.loader.load_config", lambda: cfg)
+    monkeypatch.setattr("kabot.config.loader.get_data_dir", lambda: Path(tmp_path / "data"))
+    monkeypatch.setattr("kabot.core.logger.configure_logger", lambda config, store: None)
+    monkeypatch.setattr("kabot.cli.commands._make_provider", lambda config: object())
+    monkeypatch.setattr(
+        "kabot.cli.commands_agent_command._make_workspace_scoped_one_shot_session_id",
+        lambda agent_id, workspace: "agent:main:cli:direct:workspace-test",
+    )
+
+    class _DummyAgentLoop:
+        def __init__(self, **kwargs):
+            self.tools = type("_Tools", (), {"get": lambda self, name: None})()
+            self.heartbeat = type("_Heartbeat", (), {"inject_cron_result": lambda *args, **kwargs: None})()
+
+        def _required_tool_for_query(self, message):
+            return None
+
+        async def process_direct(
+            self,
+            message,
+            session_key,
+            suppress_post_response_warmup=False,
+            probe_mode=False,
+            persist_history=False,
+        ):
+            captured.append(session_key)
+            return "ok"
+
+    class _DummyCron:
+        def __init__(self, store_path):
+            self.on_job = None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr("kabot.agent.loop.AgentLoop", _DummyAgentLoop)
+    monkeypatch.setattr("kabot.cron.service.CronService", _DummyCron)
+
+    first = runner.invoke(app, ["agent", "-m", "buka folder desktop", "--no-markdown"])
+    second = runner.invoke(app, ["agent", "-m", "buka folder bot", "--no-markdown"])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert captured == [
+        "agent:main:cli:direct:workspace-test",
+        "agent:main:cli:direct:workspace-test",
+    ]
 
 
 def test_agent_cli_one_shot_closes_runtime_resources(monkeypatch, tmp_path):
@@ -255,8 +316,8 @@ def test_agent_cli_one_shot_respects_explicit_session(monkeypatch, tmp_path):
     monkeypatch.setattr("kabot.core.logger.configure_logger", lambda config, store: None)
     monkeypatch.setattr("kabot.cli.commands._make_provider", lambda config: object())
     monkeypatch.setattr(
-        "kabot.cli.commands_agent_command._make_ephemeral_one_shot_session_id",
-        lambda message: "cli:oneshot:test",
+        "kabot.cli.commands_agent_command._make_workspace_scoped_one_shot_session_id",
+        lambda agent_id, workspace: "agent:main:cli:direct:workspace-test",
     )
 
     class _DummyAgentLoop:
@@ -345,6 +406,133 @@ def test_agent_cli_tty_mode_does_not_crash_when_wiring_exec_approval(monkeypatch
 
     assert result.exit_code == 0
     assert "ok" in result.output
+
+
+def test_agent_cli_logs_print_route_snapshot_summary(monkeypatch, tmp_path):
+    from kabot.cli.commands import app
+
+    runner = CliRunner()
+    cfg = Config()
+    cfg.logging.file_enabled = False
+    cfg.logging.db_enabled = False
+    cfg.agents.defaults.workspace = str(tmp_path / "workspace")
+
+    monkeypatch.setattr("kabot.config.loader.load_config", lambda: cfg)
+    monkeypatch.setattr("kabot.config.loader.get_data_dir", lambda: Path(tmp_path / "data"))
+    monkeypatch.setattr("kabot.core.logger.configure_logger", lambda config, store: None)
+    monkeypatch.setattr("kabot.cli.commands._make_provider", lambda config: object())
+    monkeypatch.setattr("kabot.cli.commands_agent_command.logger.enable", lambda *_args, **_kwargs: None)
+
+    class _DummySessions:
+        def __init__(self):
+            self.session = SimpleNamespace(
+                metadata={
+                    "last_route_decision_snapshot": {
+                        "route_profile": "GENERAL",
+                        "route_complex": True,
+                        "turn_category": "action",
+                        "continuity_source": "parser",
+                        "required_tool": "weather",
+                        "required_tool_query": "cek suhu cilacap sekarang",
+                        "external_skill_lane": False,
+                        "forced_skill_names": ["weather"],
+                    }
+                }
+            )
+
+        def get_or_create(self, _key):
+            return self.session
+
+    class _DummyAgentLoop:
+        def __init__(self, **kwargs):
+            self.tools = type("_Tools", (), {"get": lambda self, name: None})()
+            self.heartbeat = type("_Heartbeat", (), {"inject_cron_result": lambda *args, **kwargs: None})()
+            self.sessions = _DummySessions()
+
+        def _required_tool_for_query(self, message):
+            return None
+
+        async def process_direct(
+            self,
+            message,
+            session_key,
+            suppress_post_response_warmup=False,
+            probe_mode=False,
+            persist_history=False,
+        ):
+            return "ok"
+
+    class _DummyCron:
+        def __init__(self, store_path):
+            self.on_job = None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr("kabot.agent.loop.AgentLoop", _DummyAgentLoop)
+    monkeypatch.setattr("kabot.cron.service.CronService", _DummyCron)
+
+    result = runner.invoke(app, ["agent", "-m", "halo", "--no-markdown", "--logs"])
+
+    assert result.exit_code == 0
+    assert "ok" in result.output
+    assert "route snapshot: GENERAL/action | tool=weather | continuity=parser | forced=weather" in result.output
+
+
+def test_agent_cli_one_shot_disables_markdown_when_runtime_requests_raw_output(monkeypatch, tmp_path):
+    from kabot.cli.commands import app
+
+    runner = CliRunner()
+    cfg = Config()
+    cfg.logging.file_enabled = False
+    cfg.logging.db_enabled = False
+    cfg.agents.defaults.workspace = str(tmp_path / "workspace")
+
+    printed: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr("kabot.config.loader.load_config", lambda: cfg)
+    monkeypatch.setattr("kabot.config.loader.get_data_dir", lambda: Path(tmp_path / "data"))
+    monkeypatch.setattr("kabot.core.logger.configure_logger", lambda config, store: None)
+    monkeypatch.setattr("kabot.cli.commands._make_provider", lambda config: object())
+    monkeypatch.setattr(
+        "kabot.cli.commands_agent_command._print_agent_response",
+        lambda response, render_markdown: printed.append((response, render_markdown)),
+    )
+
+    class _DummyAgentLoop:
+        def __init__(self, **kwargs):
+            self.tools = type("_Tools", (), {"get": lambda self, name: None})()
+            self.heartbeat = type("_Heartbeat", (), {"inject_cron_result": lambda *args, **kwargs: None})()
+            self._last_outbound_metadata = {}
+
+        def _required_tool_for_query(self, message):
+            return None
+
+        async def process_direct(
+            self,
+            message,
+            session_key,
+            suppress_post_response_warmup=False,
+            probe_mode=False,
+            persist_history=False,
+        ):
+            self._last_outbound_metadata = {"render_markdown": False}
+            return "**raw**"
+
+    class _DummyCron:
+        def __init__(self, store_path):
+            self.on_job = None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr("kabot.agent.loop.AgentLoop", _DummyAgentLoop)
+    monkeypatch.setattr("kabot.cron.service.CronService", _DummyCron)
+
+    result = runner.invoke(app, ["agent", "-m", "halo"])
+
+    assert result.exit_code == 0
+    assert printed == [("**raw**", False)]
 
 
 def test_agent_loop_uses_provided_config_without_reloading_global_config(monkeypatch, tmp_path):

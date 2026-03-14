@@ -50,6 +50,7 @@ class SmokeResult:
     pending_interrupt_count: int = 0
     completion_artifact_verified: bool | None = None
     completion_delivery_verified: bool | None = None
+    route_decision_snapshot: dict[str, Any] = field(default_factory=dict)
     context_build_ms: int | None = None
     first_response_ms: int | None = None
     passed: bool = False
@@ -316,6 +317,19 @@ def build_workflow_smoke_cases() -> list[SmokeCase]:
     ]
 
 
+def build_regression_smoke_cases(
+    *,
+    cwd: Path | None = None,
+    os_profile: str = "auto",
+) -> list[SmokeCase]:
+    cases: list[SmokeCase] = []
+    cases.extend(build_continuity_smoke_cases(cwd=cwd, os_profile=os_profile))
+    cases.extend(build_delivery_smoke_cases(cwd=cwd, os_profile=os_profile))
+    cases.extend(build_memory_smoke_cases())
+    cases.extend(build_workflow_smoke_cases())
+    return cases
+
+
 def discover_skill_names(
     *,
     workspace: Path | None = None,
@@ -496,11 +510,29 @@ def parse_run_metrics(stderr: str) -> dict[str, Any]:
     pending_interrupt_count = 0
     completion_artifact_verified = None
     completion_delivery_verified = None
+    route_decision_snapshot: dict[str, Any] = {}
     context_build_ms = None
     first_response_ms = None
     for line in str(stderr or "").splitlines():
         if "Route:" in line:
             route = f"Route: {line.split('Route:', 1)[1].strip()}"
+        if "runtime_event=" in line:
+            raw_payload = line.split("runtime_event=", 1)[1].strip()
+            try:
+                payload = json.loads(raw_payload)
+            except Exception:
+                payload = None
+            if isinstance(payload, dict) and str(payload.get("event") or "").strip() == "route_decision":
+                route_decision_snapshot = {
+                    "route_profile": str(payload.get("route_profile") or "").strip(),
+                    "route_complex": bool(payload.get("route_complex")),
+                    "turn_category": str(payload.get("turn_category") or "").strip(),
+                    "continuity_source": str(payload.get("continuity_source") or "").strip(),
+                    "required_tool": str(payload.get("required_tool") or "").strip(),
+                    "required_tool_query": str(payload.get("required_tool_query") or "").strip(),
+                    "external_skill_lane": bool(payload.get("external_skill_lane")),
+                    "forced_skill_names": list(payload.get("forced_skill_names") or []),
+                }
         continuity_match = re.search(r"\bcontinuity_source=([a-z_]+)\b", line)
         if continuity_match:
             continuity_source = str(continuity_match.group(1) or "").strip()
@@ -530,6 +562,7 @@ def parse_run_metrics(stderr: str) -> dict[str, Any]:
         "pending_interrupt_count": pending_interrupt_count,
         "completion_artifact_verified": completion_artifact_verified,
         "completion_delivery_verified": completion_delivery_verified,
+        "route_decision_snapshot": route_decision_snapshot,
         "context_build_ms": context_build_ms,
         "first_response_ms": first_response_ms,
     }
@@ -588,6 +621,7 @@ def run_case(
                 pending_interrupt_count=metrics["pending_interrupt_count"],
                 completion_artifact_verified=metrics["completion_artifact_verified"],
                 completion_delivery_verified=metrics["completion_delivery_verified"],
+                route_decision_snapshot=metrics["route_decision_snapshot"],
                 context_build_ms=metrics["context_build_ms"],
                 first_response_ms=metrics["first_response_ms"],
                 passed=False,
@@ -624,6 +658,7 @@ def run_case(
         pending_interrupt_count=metrics["pending_interrupt_count"],
         completion_artifact_verified=metrics["completion_artifact_verified"],
         completion_delivery_verified=metrics["completion_delivery_verified"],
+        route_decision_snapshot=metrics["route_decision_snapshot"],
         context_build_ms=metrics["context_build_ms"],
         first_response_ms=metrics["first_response_ms"],
     )
@@ -731,6 +766,19 @@ def _print_human_summary(results: list[SmokeResult]) -> None:
         chunks.append(f"  pending_interrupt_count: {result.pending_interrupt_count}")
         chunks.append(f"  completion_artifact_verified: {result.completion_artifact_verified}")
         chunks.append(f"  completion_delivery_verified: {result.completion_delivery_verified}")
+        route_snapshot = dict(result.route_decision_snapshot or {})
+        if route_snapshot:
+            forced = ",".join(str(item) for item in route_snapshot.get("forced_skill_names") or [])
+            route_line = (
+                f"  route_snapshot: "
+                f"{str(route_snapshot.get('route_profile') or 'none')}/"
+                f"{str(route_snapshot.get('turn_category') or 'none')} "
+                f"tool={str(route_snapshot.get('required_tool') or '-')}"
+            )
+            route_line += f" continuity={str(route_snapshot.get('continuity_source') or 'none')}"
+            if forced:
+                route_line += f" forced_skills={forced}"
+            chunks.append(route_line)
         chunks.append(f"  context_build_ms: {result.context_build_ms}")
         chunks.append(f"  first_response_ms: {result.first_response_ms}")
         if result.failure_reason:
@@ -786,6 +834,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Add multi-turn workflow regression cases (for example create -> continue -> upgrade).",
     )
     parser.add_argument(
+        "--regression-cases",
+        action="store_true",
+        help="Add the bundled transcript regression pack (continuity, delivery, memory, workflow).",
+    )
+    parser.add_argument(
         "--web-search-cases",
         action="store_true",
         help="Add no-key web-search smoke cases (news fallback vs general setup hint).",
@@ -825,6 +878,8 @@ def main(argv: list[str] | None = None) -> int:
             cases.extend(build_memory_smoke_cases())
         if args.workflow_cases:
             cases.extend(build_workflow_smoke_cases())
+        if args.regression_cases:
+            cases.extend(build_regression_smoke_cases(cwd=cwd, os_profile=args.os_profile))
         if args.web_search_cases:
             cases.extend(_create_web_search_no_key_smoke_cases(Path(temp_dir_name)))
 

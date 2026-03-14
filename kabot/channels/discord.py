@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import httpx
@@ -20,6 +20,20 @@ _DISCORD_TYPING_INTERVAL_SECONDS = 8.0
 _DISCORD_TYPING_RETRY_DELAY_SECONDS = 3.0
 _DISCORD_TYPING_MAX_DURATION_SECONDS = 120.0
 _DISCORD_TYPING_MAX_CONSECUTIVE_FAILURES = 6
+
+
+def _safe_attachment_filename(value: str, *, default: str = "attachment") -> str:
+    raw = str(value or "").strip().replace("\x00", "")
+    if not raw:
+        return default
+    candidate = PurePosixPath(raw).name
+    candidate = PureWindowsPath(candidate).name
+    candidate = candidate.strip().strip(".")
+    if not candidate:
+        return default
+    sanitized = "".join("_" if ch in '<>:"/\\|?*' else ch for ch in candidate)
+    sanitized = sanitized.strip().strip(".")
+    return sanitized or default
 
 
 class DiscordChannel(BaseChannel):
@@ -358,6 +372,7 @@ class DiscordChannel(BaseChannel):
         for attachment in payload.get("attachments") or []:
             url = attachment.get("url")
             filename = attachment.get("filename") or "attachment"
+            safe_filename = _safe_attachment_filename(str(filename), default="attachment")
             size = attachment.get("size") or 0
             if not url or not self._http:
                 continue
@@ -366,7 +381,7 @@ class DiscordChannel(BaseChannel):
                 continue
             try:
                 media_dir.mkdir(parents=True, exist_ok=True)
-                file_path = media_dir / f"{attachment.get('id', 'file')}_{filename.replace('/', '_')}"
+                file_path = media_dir / f"{attachment.get('id', 'file')}_{safe_filename}"
                 resp = await self._http.get(url)
                 resp.raise_for_status()
                 file_path.write_bytes(resp.content)

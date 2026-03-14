@@ -110,14 +110,44 @@ $freeStr
             """
         else:
             script = """
-            cpu=$(lscpu | grep -E "^Model name:|^CPU.s.:" | sed -E 's/.*: +//' | head -n 1)
-            cores=$(nproc)
-            ram=$(free -g | awk '/Mem:/ {print $2}')
-            gpu=$(lspci | grep -i vga | awk -F': ' '{print $2}' || lshw -C display 2>/dev/null | grep product | awk -F': ' '{print $2}' | xargs || echo "Unknown GPU")
-            disk=$(lsblk -d -o NAME,SIZE,MODEL | grep -v "loop" | awk 'NR>1 {print "- " $1 " (" $2 ") " $3}')
-            os=$(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')
+            if command -v lscpu >/dev/null 2>&1; then
+                cpu=$(lscpu | grep -E "^Model name:|^CPU.s.:" | sed -E 's/.*: +//' | head -n 1)
+            elif [ -r /proc/cpuinfo ]; then
+                cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)
+            else
+                cpu=$(uname -m)
+            fi
+            if command -v nproc >/dev/null 2>&1; then
+                cores=$(nproc)
+            else
+                cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo "Unknown")
+            fi
+            if command -v free >/dev/null 2>&1; then
+                ram=$(free -g | awk '/Mem:/ {print $2}')
+            elif [ -r /proc/meminfo ]; then
+                ram=$(awk '/MemTotal:/ {printf "%.0f", $2/1048576}' /proc/meminfo)
+            else
+                ram="Unknown"
+            fi
+            if command -v lspci >/dev/null 2>&1; then
+                gpu=$(lspci | grep -i vga | awk -F': ' '{print $2}' | xargs)
+            elif command -v lshw >/dev/null 2>&1; then
+                gpu=$(lshw -C display 2>/dev/null | grep product | awk -F': ' '{print $2}' | xargs)
+            else
+                gpu="Unknown GPU"
+            fi
+            if command -v lsblk >/dev/null 2>&1; then
+                disk=$(lsblk -d -o NAME,SIZE,MODEL | grep -v "loop" | awk 'NR>1 {print "- " $1 " (" $2 ") " $3}')
+            else
+                disk=$(df -h / | awk 'NR==2 {print "- " $1 " (" $2 ") mounted on " $6}')
+            fi
+            if [ -r /etc/os-release ]; then
+                os=$(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')
+            else
+                os=$(uname -sr)
+            fi
 
-            echo "### 🐧 Linux Hardware Specifications"
+            echo "### ?? Linux Hardware Specifications"
             echo "**CPU:** $cpu ($cores Cores)"
             echo "**RAM:** ~${ram}GB Total"
             echo "**GPU:** $gpu"
@@ -365,7 +395,7 @@ $($diskStr -join "`n")
             disk=$(df -h --output=target,avail,size,pcent -x tmpfs -x devtmpfs 2>/dev/null | awk 'NR>1 {printf "  %s %s free / %s total (%s used)\\n", $1, $2, $3, $4}')
 
             net=""
-            if command -v ip &>/dev/null; then
+            if command -v ip >/dev/null 2>&1; then
                 net=$(ip -s link show 2>/dev/null | awk '/^[0-9]+:/ {iface=$2; gsub(/:$/,"",iface)} /RX:/{getline; rx=$1} /TX:/{getline; tx=$1; if(iface!="lo") printf "  %s RX: %.1f MB / TX: %.1f MB\\n", iface, rx/1048576, tx/1048576}')
             fi
 
@@ -386,14 +416,14 @@ $($diskStr -join "`n")
         script = """
         cpu=$(top -l 1 | grep "CPU usage" | awk '{gsub(/%/,""); print $3+$5}')
         ram_bytes=$(sysctl -n hw.memsize)
-        ram_total=$(echo "scale=2; $ram_bytes / 1073741824" | bc)
+        ram_total=$(awk -v mem="$ram_bytes" 'BEGIN {printf "%.2f", mem / 1073741824}')
         page_size=$(sysctl -n vm.pagesize)
         vm_stat_output=$(vm_stat)
         pages_free=$(echo "$vm_stat_output" | awk '/Pages free:/ {gsub(/\\./, ""); print $3}')
         pages_inactive=$(echo "$vm_stat_output" | awk '/Pages inactive:/ {gsub(/\\./, ""); print $3}')
-        ram_free=$(echo "scale=2; ($pages_free + $pages_inactive) * $page_size / 1073741824" | bc)
-        ram_used=$(echo "scale=2; $ram_total - $ram_free" | bc)
-        ram_pct=$(echo "scale=1; $ram_used / $ram_total * 100" | bc)
+        ram_free=$(awk -v free="$pages_free" -v inactive="$pages_inactive" -v page="$page_size" 'BEGIN {printf "%.2f", (free + inactive) * page / 1073741824}')
+        ram_used=$(awk -v total="$ram_total" -v free="$ram_free" 'BEGIN {printf "%.2f", total - free}')
+        ram_pct=$(awk -v used="$ram_used" -v total="$ram_total" 'BEGIN {if (total > 0) printf "%.1f", used / total * 100; else print "0"}')
 
         uptime_str=$(uptime | sed 's/.*up //' | sed 's/,.*load.*//')
         disk=$(df -h / | awk 'NR==2 {print "  / " $4 " free / " $2 " total (" $5 " used)"}')

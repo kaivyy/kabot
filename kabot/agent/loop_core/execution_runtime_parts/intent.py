@@ -9,10 +9,104 @@ from urllib.parse import urlparse
 from kabot.agent.cron_fallback_nlp import required_tool_for_query
 from kabot.agent.tools.stock import (
     extract_crypto_ids,
-    extract_stock_name_candidates,
     extract_stock_symbols,
 )
 from kabot.bus.events import InboundMessage
+
+
+_NON_MARKET_DOTTED_SUFFIXES = {
+    "MD",
+    "TXT",
+    "JSON",
+    "YAML",
+    "YML",
+    "TOML",
+    "CSV",
+    "LOG",
+    "PDF",
+    "DOC",
+    "DOCX",
+    "XLS",
+    "XLSX",
+    "PY",
+    "JS",
+    "TS",
+    "TSX",
+    "JSX",
+    "HTML",
+    "CSS",
+    "XML",
+    "INI",
+    "CFG",
+    "CONF",
+    "ENV",
+}
+
+
+def _extract_structural_stock_symbols(raw: str) -> list[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+    tokens = [token for token in re.split(r"[\s,]+", text) if token]
+    for token_raw in tokens:
+        token = token_raw.strip().strip("()[]{}\"'`")
+        token = token.strip(".,;:!?")
+        if not token:
+            continue
+        upper = token.upper()
+        if upper.endswith("=X") and re.fullmatch(r"[A-Z]{3,10}=X", upper):
+            if upper not in seen:
+                seen.add(upper)
+                result.append(upper)
+            continue
+        if upper.startswith("^") and re.fullmatch(r"\^[A-Z]{2,8}", upper):
+            if upper not in seen:
+                seen.add(upper)
+                result.append(upper)
+            continue
+        if "." in upper and re.fullmatch(r"[A-Z0-9]{1,10}\.[A-Z]{1,5}", upper):
+            _left, right = upper.split(".", 1)
+            if right in _NON_MARKET_DOTTED_SUFFIXES:
+                continue
+            if upper not in seen:
+                seen.add(upper)
+                result.append(upper)
+            continue
+        if token == token.upper() and re.fullmatch(r"[A-Z]{2,8}", upper):
+            if upper not in seen:
+                seen.add(upper)
+                result.append(upper)
+    return result
+
+
+def _has_explicit_stock_symbol_payload(raw: str) -> bool:
+    text = str(raw or "").strip()
+    if not text:
+        return False
+
+    explicit_tokens: set[str] = set()
+    for token_raw in re.split(r"[\s,]+", text):
+        token = token_raw.strip().strip("()[]{}\"'`")
+        token = token.strip(".,;:!?")
+        if not token:
+            continue
+        explicit_tokens.add(token.upper())
+
+    for symbol in extract_stock_symbols(text):
+        normalized = str(symbol or "").strip().upper()
+        if not normalized:
+            continue
+        if normalized in explicit_tokens:
+            return True
+        root = normalized.split(".", 1)[0]
+        if root.endswith("=X"):
+            root = root[:-2]
+        if root and root in explicit_tokens:
+            return True
+    return False
 
 
 def _normalize_text(text: str) -> str:
@@ -128,19 +222,14 @@ def _looks_like_live_research_query(text: str) -> bool:
         r"\bheadline\b",
         r"\bheadlines\b",
         r"\bnews\b",
-        r"\bberita\b",
-        r"\bterbaru\b",
-        r"\bterkini\b",
-        r"\bsekarang\b",
     )
     if any(re.search(pattern, normalized) for pattern in live_marker_patterns):
         return True
-    if re.search(r"\b(news|berita)\s+update(s)?\b", normalized):
+    if re.search(r"\bnews\s+update(s)?\b", normalized):
         return True
     if re.search(r"\b(19|20)\d{2}\b", normalized):
         news_context_markers = (
             "news",
-            "berita",
             "headline",
             "headlines",
             "war",
@@ -394,64 +483,12 @@ def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> boo
         return False
 
     if normalized_tool in {"stock", "stock_analysis"}:
-        symbols = extract_stock_symbols(text)
-        if symbols:
-            return True
-
         normalized = _normalize_text(text)
         if _NON_ACTION_MARKER_RE.search(normalized) and _NON_ACTION_STOCK_TOPIC_RE.search(normalized):
             return False
-
         if _FILELIKE_QUERY_RE.search(text) or _PATHLIKE_QUERY_RE.search(text):
             return False
-
-        names = extract_stock_name_candidates(text)
-        if not names:
-            return False
-
-        stock_markers = (
-            "stock",
-            "saham",
-            "ticker",
-            "quote",
-            "harga",
-            "price",
-            "market",
-            "idx",
-            "ihsg",
-        )
-        value_markers = ("berapa", "how much", "nilai", "worth", "berapa rupiah")
-        news_conflict_markers = (
-            "berita",
-            "news",
-            "headline",
-            "breaking",
-            "war",
-            "perang",
-            "konflik",
-            "conflict",
-            "politik",
-            "politic",
-            "iran",
-            "israel",
-            "gaza",
-            "ukraine",
-            "russia",
-            "amerika",
-            "america",
-            "usa",
-        )
-        if any(marker in normalized for marker in stock_markers):
-            return True
-        if any(marker in normalized for marker in news_conflict_markers):
-            return False
-        if any(marker in normalized for marker in value_markers):
-            return True
-
-        token_count = len([token for token in normalized.split(" ") if token])
-        if token_count <= 3:
-            return True
-        return False
+        return bool(_extract_structural_stock_symbols(text)) or _has_explicit_stock_symbol_payload(text)
     if normalized_tool == "crypto":
         return bool(extract_crypto_ids(text))
     if normalized_tool == "cron":
@@ -476,7 +513,8 @@ def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> boo
         has_delivery_target = any(
             marker in normalized for marker in ("chat ini", "chat here", "kirim ke chat", "send it here", "channel ini", "channel")
         )
-        return bool(_SEND_FILE_MARKER_RE.search(text) and has_target and has_delivery_target)
+        has_imperative_send = bool(_SEND_FILE_MARKER_RE.search(text) and has_target)
+        return bool(has_imperative_send and (has_delivery_target or has_target))
     if normalized_tool == "web_search":
         normalized = _normalize_text(text)
         if len([part for part in normalized.split(" ") if part]) < 3:
@@ -531,11 +569,20 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
         has_send_verb = bool(re.search(r"(?i)\b(kirim|send|share|attach|lampirkan|upload)\b", query_text))
         has_explicit_target = bool(_FILELIKE_QUERY_RE.search(query_text) or _PATHLIKE_QUERY_RE.search(query_text))
         if has_send_verb and not has_explicit_target:
-            last_delivery = str(metadata.get("last_delivery_path") or "").strip()
-            if not last_delivery and isinstance(session_meta, dict):
+            working_directory = str(metadata.get("working_directory") or "").strip()
+            if not working_directory and isinstance(session_meta, dict):
+                working_directory = str(session_meta.get("working_directory") or "").strip()
+            delivery_route = metadata.get("delivery_route")
+            if not isinstance(delivery_route, dict) and isinstance(session_meta, dict):
+                candidate_route = session_meta.get("delivery_route")
+                if isinstance(candidate_route, dict):
+                    delivery_route = candidate_route
+            if working_directory or isinstance(delivery_route, dict):
+                return None
+            last_delivery = ""
+            last_nav = ""
+            if isinstance(session_meta, dict):
                 last_delivery = str(session_meta.get("last_delivery_path") or "").strip()
-            last_nav = str(metadata.get("last_navigated_path") or "").strip()
-            if not last_nav and isinstance(session_meta, dict):
                 last_nav = str(session_meta.get("last_navigated_path") or "").strip()
             if last_delivery or last_nav:
                 return None

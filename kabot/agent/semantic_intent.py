@@ -64,16 +64,17 @@ _HR_ZONE_ACTION_RE = re.compile(
 )
 _MEMORY_RECALL_RE = re.compile(
     r"(?i)\b("
-    r"ingat|remember|memory|memori|preference|preferensi|preferensiku|preferensimu|saved|simpan|"
-    r"apa tadi|what was|what is my|yang kamu simpan|kode preferensi|preference code|"
-    r"who am i|siapa aku|jadi siapa aku|aku siapa"
-    r")\b|代码|記住|จำได้|โค้ด|コード"
+    r"what do you remember|what did you save|what do you know about me|"
+    r"what was my preference code|what is my preference code|my preference code|"
+    r"what was the code you just remembered|"
+    r"who am i"
+    r"|saved code|memory code"
+    r")\b"
 )
 _MEMORY_COMMIT_RE = re.compile(
     r"(?i)\b("
-    r"save to memory|save this memory|commit to memory|"
-    r"simpan di memori|simpan ke memori|simpan di memory|simpan ke memory|"
-    r"masukkan ke memori|masukkan ke memory"
+    r"save to memory|save this to memory|save that to memory|save this memory|commit to memory|"
+    r"save in memory|remember this|remember that"
     r")\b"
 )
 
@@ -217,7 +218,7 @@ def _looks_like_memory_recall(text: str) -> bool:
     if len(normalized) > 240:
         return False
     if _MEMORY_COMMIT_RE.search(normalized) and not re.search(
-        r"(?i)\b(who am i|siapa aku|jadi siapa aku|aku siapa|what do you remember|apa yang kamu ingat)\b",
+        r"(?i)\b(who am i|what do you remember)\b",
         normalized,
     ):
         return False

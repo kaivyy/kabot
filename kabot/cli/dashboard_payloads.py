@@ -370,6 +370,11 @@ def _build_dashboard_recent_turn_snapshot(session_manager: Any) -> dict[str, Any
             completion_evidence = session_metadata.get("last_completion_evidence")
         if not isinstance(completion_evidence, dict):
             completion_evidence = {}
+        route_decision_snapshot = message_metadata.get("route_decision_snapshot")
+        if not isinstance(route_decision_snapshot, dict):
+            route_decision_snapshot = session_metadata.get("last_route_decision_snapshot")
+        if not isinstance(route_decision_snapshot, dict):
+            route_decision_snapshot = {}
         pending_interrupt_count = int(
             message_metadata.get("pending_interrupt_count")
             or session_metadata.get("pending_interrupt_count")
@@ -389,6 +394,7 @@ def _build_dashboard_recent_turn_snapshot(session_manager: Any) -> dict[str, Any
             "required_tool_query": str(message_metadata.get("required_tool_query") or "").strip(),
             "pending_interrupt_count": pending_interrupt_count,
             "completion_evidence": dict(completion_evidence) if completion_evidence else {},
+            "route_decision_snapshot": dict(route_decision_snapshot) if route_decision_snapshot else {},
         }
         return snapshot
     return {}

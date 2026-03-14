@@ -91,6 +91,8 @@ def _looks_like_assistant_offer_context_followup(text: str, offer_text: str) -> 
         return False
     if _looks_like_short_confirmation(raw):
         return True
+    if _looks_like_contextual_followup_request(raw):
+        return True
     if not _is_low_information_turn(raw, max_tokens=7, max_chars=96):
         return False
     if re.search(r"(https?://|www\.)", normalized):
@@ -100,6 +102,10 @@ def _looks_like_assistant_offer_context_followup(text: str, offer_text: str) -> 
     current_tokens = _tokenize_context_tokens(raw)
     offer_tokens = _tokenize_context_tokens(offer_text)
     if not current_tokens or not offer_tokens:
+        return False
+    # Medium-length substantive requests with a couple overlapping tokens tend to
+    # be fresh asks, not genuine acceptance of the prior assistant offer.
+    if len(current_tokens) >= 4:
         return False
     return bool(current_tokens & offer_tokens)
 
@@ -468,6 +474,8 @@ _ASSISTANT_FOLLOWUP_OPTION_INTRO_MARKERS = (
 )
 
 _SIDE_EFFECT_ACTION_MARKERS = (
+    "pakai path",
+    "use path",
     "cari",
     "carikan",
     "buat",
@@ -531,6 +539,14 @@ _SIDE_EFFECT_ACTION_MARKERS = (
 )
 
 _SIDE_EFFECT_ARTIFACT_MARKERS = (
+    "folder",
+    "directory",
+    "dir",
+    "path",
+    "desktop",
+    "downloads",
+    "documents",
+    "workspace",
     "file",
     "berkas",
     "dokumen",
@@ -993,12 +1009,6 @@ def _looks_like_message_delivery_request(text: str) -> bool:
     )
     if not has_delivery_action:
         return False
-    has_delivery_target = any(
-        _normalized_contains_marker(normalized, marker)
-        for marker in _SIDE_EFFECT_DELIVERY_MARKERS
-    ) or "chat" in normalized or "channel" in normalized
-    if not has_delivery_target:
-        return False
     has_file_subject = bool(_extract_read_file_path_proxy(raw)) or any(
         _normalized_contains_marker(normalized, marker)
         for marker in (
@@ -1030,7 +1040,13 @@ def _looks_like_message_delivery_request(text: str) -> bool:
             "jpeg",
         )
     )
-    return has_file_subject
+    if not has_file_subject:
+        return False
+    has_delivery_target = any(
+        _normalized_contains_marker(normalized, marker)
+        for marker in _SIDE_EFFECT_DELIVERY_MARKERS
+    ) or "chat" in normalized or "channel" in normalized
+    return has_delivery_target or has_file_subject
 
 def _looks_like_closing_acknowledgement(text: str) -> bool:
     """Detect short gratitude/closure replies that should not trigger pending actions."""

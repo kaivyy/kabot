@@ -7,6 +7,8 @@ from kabot.agent.context import ContextBuilder
 from kabot.agent.loop_core.execution_runtime import process_tool_calls
 from kabot.agent.loop_core.execution_runtime_parts.agent_loop import run_agent_loop
 from kabot.agent.loop_core.execution_runtime_parts.intent import (
+    _looks_like_live_research_query,
+    _query_has_explicit_payload_for_tool,
     _should_defer_live_research_latch_to_skill,
 )
 from kabot.bus.events import InboundMessage
@@ -103,6 +105,30 @@ def test_live_research_latch_stays_enabled_without_external_skill_match():
         "latest news about earth today",
         profile="RESEARCH",
     )
+
+
+def test_live_research_query_helper_is_english_first():
+    assert _looks_like_live_research_query("latest news about earth today") is True
+    assert _looks_like_live_research_query("berita terbaru bumi sekarang") is False
+
+
+def test_query_has_explicit_payload_for_legacy_finance_tools_requires_exact_entities():
+    assert _query_has_explicit_payload_for_tool(
+        "stock",
+        "cek harga saham bca bri mandiri adaro sekarang",
+    ) is False
+    assert _query_has_explicit_payload_for_tool(
+        "stock_analysis",
+        "how is apple stock trending lately",
+    ) is False
+    assert _query_has_explicit_payload_for_tool(
+        "stock",
+        "BBCA.JK BBRI.JK BMRI.JK ADRO.JK",
+    ) is True
+    assert _query_has_explicit_payload_for_tool(
+        "stock_analysis",
+        "AAPL trend 3 months",
+    ) is True
 
 
 @pytest.mark.asyncio

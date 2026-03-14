@@ -4,6 +4,7 @@ Chunk 1: test_run_simple_response_uses_model_chain_fallback .. test_process_tool
 
 import gc
 import warnings
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -17,6 +18,9 @@ from kabot.agent.loop_core.execution_runtime import (
     process_tool_calls,
     run_agent_loop,
     run_simple_response,
+)
+from kabot.agent.loop_core.execution_runtime_parts.artifacts import (
+    _update_followup_context_from_tool_execution,
 )
 from kabot.agent.loop_core.execution_runtime_parts.helpers import _extract_single_result_path
 from kabot.agent.loop_core.execution_runtime_parts.intent import _tool_call_intent_mismatch_reason
@@ -1110,6 +1114,101 @@ def test_extract_single_result_path_prefers_requested_directory_for_list_dir_res
     )
 
 
+def test_update_followup_context_list_dir_keeps_working_directory_canonical_without_redundant_breadcrumb(tmp_path):
+    target_dir = tmp_path / "workspace" / "docs"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    session = SimpleNamespace(metadata={})
+
+    _update_followup_context_from_tool_execution(
+        session,
+        tool_name="list_dir",
+        tool_args={"path": str(target_dir)},
+        fallback_source=f"open {target_dir}",
+        tool_result="README.md",
+    )
+
+    assert session.metadata.get("working_directory") == str(target_dir.resolve())
+    assert session.metadata.get("last_navigated_path") is None
+
+
+def test_extract_single_result_path_reads_tilde_prefixed_artifact_path_from_exec_output():
+    result = "Screenshot saved to ~/Desktop/kabot-shot.png"
+
+    assert (
+        _extract_single_result_path("exec", {}, result)
+        == "~/Desktop/kabot-shot.png"
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_expands_browser_screenshot_result_path_for_delivery_reuse(
+    tmp_path,
+    monkeypatch,
+):
+    fake_home = tmp_path / "home"
+    screenshot_path = fake_home / "Desktop" / "kabot-shot.png"
+    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+    screenshot_path.write_bytes(b"png")
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
+    tool_executor = AsyncMock(return_value="Screenshot saved to ~/Desktop/kabot-shot.png")
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="take a screenshot and send it to chat",
+        metadata={"requires_message_delivery": True},
+    )
+    response = LLMResponse(
+        content="capturing",
+        tool_calls=[
+            ToolCallRequest(
+                id="call_browser",
+                name="browser",
+                arguments={"action": "screenshot"},
+            )
+        ],
+    )
+    session = SimpleNamespace(metadata={})
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=session,
+    )
+
+    last_tool_context = session.metadata.get("last_tool_context")
+    assert isinstance(last_tool_context, dict)
+    assert Path(str(last_tool_context.get("path"))).resolve() == screenshot_path.resolve()
+    assert session.metadata.get("working_directory") == str(screenshot_path.parent.resolve())
+    assert msg.metadata.get("executed_tools") == ["browser"]
+
+
 @pytest.mark.asyncio
 async def test_process_tool_calls_captures_relative_structured_tool_result_path_for_delivery_reuse(tmp_path):
     tool_executor = AsyncMock(
@@ -1173,6 +1272,167 @@ async def test_process_tool_calls_captures_relative_structured_tool_result_path_
     assert isinstance(last_tool_context, dict)
     assert last_tool_context.get("path") == "outputs/promo.mp4"
     assert msg.metadata.get("executed_tools") == ["mcp__nanobanana__video"]
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_prefers_working_directory_over_stale_last_delivery_for_relative_artifacts(tmp_path):
+    working_dir = tmp_path / "active-workspace"
+    artifact_path = working_dir / "outputs" / "promo.mp4"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(b"video")
+
+    stale_dir = tmp_path / "stale-delivery"
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    stale_file = stale_dir / "old-report.txt"
+    stale_file.write_text("old", encoding="utf-8")
+
+    tool_executor = AsyncMock(
+        return_value={
+            "artifacts": [
+                {"path": "outputs/promo.mp4", "mime_type": "video/mp4"},
+            ]
+        }
+    )
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="render a promo video",
+        metadata={"requires_message_delivery": True},
+    )
+    response = LLMResponse(
+        content="rendering",
+        tool_calls=[
+            ToolCallRequest(
+                id="call_video",
+                name="mcp__nanobanana__video",
+                arguments={"prompt": "render a promo video"},
+            )
+        ],
+    )
+    session = SimpleNamespace(
+        metadata={
+            "working_directory": str(working_dir.resolve()),
+            "last_delivery_path": str(stale_file.resolve()),
+        }
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=session,
+    )
+
+    last_tool_context = session.metadata.get("last_tool_context")
+    assert isinstance(last_tool_context, dict)
+    assert Path(str(last_tool_context.get("path"))).resolve() == artifact_path.resolve()
+    assert session.metadata.get("working_directory") == str(artifact_path.parent.resolve())
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_prefers_last_tool_context_path_over_stale_last_delivery_for_relative_artifacts(tmp_path):
+    active_dir = tmp_path / "active-context"
+    artifact_path = active_dir / "outputs" / "promo.mp4"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(b"video")
+
+    stale_dir = tmp_path / "stale-delivery"
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    stale_file = stale_dir / "old-report.txt"
+    stale_file.write_text("old", encoding="utf-8")
+
+    tool_executor = AsyncMock(
+        return_value={
+            "artifacts": [
+                {"path": "outputs/promo.mp4", "mime_type": "video/mp4"},
+            ]
+        }
+    )
+    loop = SimpleNamespace(
+        context=ContextBuilder(tmp_path),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="render a promo video",
+        metadata={"requires_message_delivery": True},
+    )
+    response = LLMResponse(
+        content="rendering",
+        tool_calls=[
+            ToolCallRequest(
+                id="call_video",
+                name="mcp__nanobanana__video",
+                arguments={"prompt": "render a promo video"},
+            )
+        ],
+    )
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "list_dir",
+                "path": str(active_dir.resolve()),
+            },
+            "last_delivery_path": str(stale_file.resolve()),
+        }
+    )
+
+    await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=session,
+    )
+
+    last_tool_context = session.metadata.get("last_tool_context")
+    assert isinstance(last_tool_context, dict)
+    assert Path(str(last_tool_context.get("path"))).resolve() == artifact_path.resolve()
+    assert session.metadata.get("working_directory") == str(artifact_path.parent.resolve())
 
 
 @pytest.mark.asyncio
@@ -2017,3 +2277,70 @@ def test_tool_call_intent_mismatch_allows_message_send_without_explicit_path_whe
     reason = _tool_call_intent_mismatch_reason(loop, msg, "message")
 
     assert reason is None
+
+
+def test_tool_call_intent_mismatch_allows_message_send_without_explicit_path_when_session_has_delivery_route():
+    session = SimpleNamespace(
+        metadata={
+            "delivery_route": {
+                "channel": "telegram",
+                "chat_id": "chat-1",
+            }
+        }
+    )
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(has=lambda name: name == "message"),
+        sessions=SimpleNamespace(get_or_create=lambda _key: session),
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="send it here",
+        metadata={},
+    )
+
+    reason = _tool_call_intent_mismatch_reason(loop, msg, "message")
+
+    assert reason is None
+
+
+def test_tool_call_intent_mismatch_allows_message_send_without_explicit_path_when_active_working_directory_exists():
+    session = SimpleNamespace(metadata={})
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(has=lambda name: name == "message"),
+        sessions=SimpleNamespace(get_or_create=lambda _key: session),
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="send it here",
+        metadata={"working_directory": r"C:\\Users\\Arvy Kairi\\Desktop\\bot"},
+    )
+
+    reason = _tool_call_intent_mismatch_reason(loop, msg, "message")
+
+    assert reason is None
+
+
+def test_tool_call_intent_mismatch_rejects_bare_send_when_only_active_last_delivery_path_exists():
+    session = SimpleNamespace(metadata={})
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(has=lambda name: name == "message"),
+        sessions=SimpleNamespace(get_or_create=lambda _key: session),
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="send it",
+        metadata={"last_delivery_path": r"C:\\Users\\Arvy Kairi\\Desktop\\bot\\tes.md"},
+    )
+
+    reason = _tool_call_intent_mismatch_reason(loop, msg, "message")
+
+    assert reason == "low-information turn"

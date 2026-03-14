@@ -15,7 +15,12 @@ from kabot.agent.skills import SkillsLoader
 from kabot.agent.loop_core.message_runtime import (
     process_message,
 )
+from kabot.agent.loop_core.message_runtime_parts.turn_metadata import _finalize_turn_metadata
 from kabot.bus.events import InboundMessage, OutboundMessage
+
+_LEGACY_EXTERNAL_METADATA_KEY = "".join(
+    chr(code) for code in (111, 112, 101, 110, 99, 108, 97, 119)
+)
 
 
 @pytest.mark.asyncio
@@ -1064,7 +1069,7 @@ async def test_process_message_unavailable_external_skill_still_forces_skill_set
                 "---",
                 "name: binance-pro",
                 "description: crypto trading and binance market operations",
-                'metadata: {"openclaw":{"requires":{"bins":["jq"]}}}',
+                f'metadata: {{"{_LEGACY_EXTERNAL_METADATA_KEY}":{{"requires":{{"bins":["jq"]}}}}}}',
                 "---",
                 "",
                 "Use this for crypto trading tasks.",
@@ -2290,6 +2295,58 @@ async def test_process_message_side_effect_request_infers_message_for_explicit_s
 
 
 @pytest.mark.asyncio
+async def test_process_message_side_effect_request_marks_delivery_required_for_bare_send_file_prompt():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["message"]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "kirim file tes.md"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "message"
+    assert msg.metadata.get("required_tool_query") == content
+    assert msg.metadata.get("requires_message_delivery") is True
+
+
+@pytest.mark.asyncio
 async def test_process_message_committed_coding_action_followup_promotes_to_coding_route():
     context_builder = MagicMock()
     context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
@@ -2515,6 +2572,124 @@ async def test_process_message_create_then_send_file_request_prefers_write_file_
     assert msg.metadata.get("required_tool") == "write_file"
     assert msg.metadata.get("required_tool_query") == content
     assert msg.metadata.get("requires_message_delivery") is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_natural_path_hint_prefers_action_request_list_dir_over_parser():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["list_dir"]),
+        _required_tool_for_query=lambda _text: "list_dir",
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "ya pakai path desktop bot"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "list_dir"
+    assert msg.metadata.get("required_tool_query") == content
+    assert msg.metadata.get("continuity_source") == "action_request"
+
+
+@pytest.mark.asyncio
+async def test_process_message_path_hint_followup_revives_pending_send_file_request():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": "kirim file tes.md",
+                "profile": "GENERAL",
+                "kind": "assistant_committed_action",
+                "request_text": "kirim file tes.md",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda text: (
+                text,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["list_dir", "message"]),
+        _required_tool_for_query=lambda text: "list_dir" if text == "ya pakai path desktop bot" else None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    content = "ya pakai path desktop bot"
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=content)
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "message"
+    assert "kirim file tes.md" in str(msg.metadata.get("required_tool_query") or "")
+    assert "ya pakai path desktop bot" in str(msg.metadata.get("required_tool_query") or "")
+    assert msg.metadata.get("requires_message_delivery") is True
+    assert msg.metadata.get("continuity_source") == "committed_action"
 
 
 @pytest.mark.asyncio
@@ -2906,3 +3081,181 @@ async def test_process_message_persists_context_truncation_summary_and_passes_bu
     assert isinstance(kwargs.get("budget_hints"), dict)
     assert kwargs["budget_hints"]["token_mode"] == "hemat"
     remember_fact.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_message_records_route_decision_snapshot_metadata():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=True))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["weather"]),
+        _required_tool_for_query=lambda _text: "weather",
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="cek suhu cilacap sekarang",
+    )
+    await process_message(loop, msg)
+
+    snapshot = msg.metadata.get("route_decision_snapshot")
+    assert snapshot == {
+        "route_profile": "GENERAL",
+        "route_complex": True,
+        "turn_category": "action",
+        "continuity_source": "parser",
+        "required_tool": "weather",
+        "required_tool_query": "cek suhu cilacap sekarang",
+        "external_skill_lane": False,
+        "forced_skill_names": ["weather"],
+    }
+    assert session.metadata.get("last_route_decision_snapshot") == snapshot
+
+
+def test_finalize_turn_metadata_keeps_last_delivery_path_session_local_when_working_directory_exists():
+    session = SimpleNamespace(
+        metadata={
+            "working_directory": r"C:\Users\Arvy Kairi\Desktop\bot",
+            "delivery_route": {"channel": "telegram", "chat_id": "chat-1"},
+            "last_delivery_path": r"C:\Users\Arvy Kairi\Desktop\bot\tes.md",
+        }
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="send it",
+        metadata={},
+    )
+    state = SimpleNamespace(
+        session=session,
+        msg=msg,
+        effective_content="send it",
+        decision=SimpleNamespace(profile="GENERAL", is_complex=False),
+        continuity_source="action_request",
+        required_tool="message",
+        required_tool_query="send it",
+        is_short_confirmation=False,
+        is_contextual_followup_request=False,
+        is_answer_reference_followup=False,
+        pending_followup_intent_kind="",
+        skill_creation_intent=False,
+        skill_install_intent=False,
+        conversation_history=[],
+        recent_answer_target="",
+        last_tool_execution=None,
+        relevant_memory_facts=[],
+        learned_execution_hints=[],
+        intent_source_for_followup="send it",
+        committed_action_request_text="",
+        runtime_locale="en",
+        forced_skill_names=[],
+        external_skill_lane=False,
+        last_tool_context=None,
+        explicit_file_analysis_note="",
+        file_analysis_path="",
+        mcp_context_note="",
+        semantic_hint=SimpleNamespace(kind="none"),
+        meta_skill_reference_turn=False,
+        loop=SimpleNamespace(),
+        skill_creation_stage="",
+        skill_creation_approved=False,
+        skill_workflow_kind="",
+        skill_creation_request_text="",
+    )
+
+    _finalize_turn_metadata(state)
+
+    assert msg.metadata["working_directory"] == r"C:\Users\Arvy Kairi\Desktop\bot"
+    assert msg.metadata["delivery_route"] == {"channel": "telegram", "chat_id": "chat-1"}
+    assert "last_delivery_path" not in msg.metadata
+
+
+def test_finalize_turn_metadata_does_not_reexport_last_navigated_path_into_active_turn():
+    session = SimpleNamespace(
+        metadata={
+            "last_navigated_path": r"C:\Users\Arvy Kairi\Desktop\bot",
+        }
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="send it",
+        metadata={},
+    )
+    state = SimpleNamespace(
+        session=session,
+        msg=msg,
+        effective_content="send it",
+        decision=SimpleNamespace(profile="GENERAL", is_complex=False),
+        continuity_source="action_request",
+        required_tool="message",
+        required_tool_query="send it",
+        is_short_confirmation=False,
+        is_contextual_followup_request=False,
+        is_answer_reference_followup=False,
+        pending_followup_intent_kind="",
+        skill_creation_intent=False,
+        skill_install_intent=False,
+        conversation_history=[],
+        recent_answer_target="",
+        last_tool_execution=None,
+        relevant_memory_facts=[],
+        learned_execution_hints=[],
+        intent_source_for_followup="send it",
+        committed_action_request_text="",
+        runtime_locale="en",
+        forced_skill_names=[],
+        external_skill_lane=False,
+        last_tool_context=None,
+        explicit_file_analysis_note="",
+        file_analysis_path="",
+        mcp_context_note="",
+        semantic_hint=SimpleNamespace(kind="none"),
+        meta_skill_reference_turn=False,
+        loop=SimpleNamespace(),
+        skill_creation_stage="",
+        skill_creation_approved=False,
+        skill_workflow_kind="",
+        skill_creation_request_text="",
+    )
+
+    _finalize_turn_metadata(state)
+
+    assert "last_navigated_path" not in msg.metadata

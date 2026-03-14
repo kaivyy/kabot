@@ -27,6 +27,10 @@ def _apply_continuity_runtime(state: Any) -> None:
     """Mutate the provided turn state with answer-reference and follow-up context."""
 
     normalized_content = _normalize_text(state.effective_content)
+    allow_explicit_path_hint_for_committed_delivery = bool(
+        state.pending_followup_intent_kind == "assistant_committed_action"
+        and state.required_tool == "list_dir"
+    )
     minimal_answer_reference_override = normalized_content in {
         "apa itu",
         "what is that",
@@ -184,12 +188,19 @@ def _apply_continuity_runtime(state: Any) -> None:
 
     if (
         state.pending_followup_intent
-        and not state.required_tool
+        and (
+            not state.required_tool
+            or (
+                state.pending_followup_intent_kind == "assistant_committed_action"
+                and state.required_tool == "list_dir"
+            )
+        )
         and not ignore_stale_pending_intent_for_answer_reference
         and (
             state.is_short_confirmation
             or state.is_assistant_offer_context_followup
             or state.is_assistant_committed_action_followup
+            or allow_explicit_path_hint_for_committed_delivery
             or state.is_contextual_followup_request
             or (
                 state.pending_followup_intent_kind == "assistant_offer"
@@ -199,7 +210,10 @@ def _apply_continuity_runtime(state: Any) -> None:
         and not state.is_closing_ack
         and not state.is_short_greeting
         and not state.is_non_action_feedback
-        and not state.is_explicit_new_request
+        and (
+            not state.is_explicit_new_request
+            or allow_explicit_path_hint_for_committed_delivery
+        )
     ):
         intent_text = str(state.pending_followup_intent.get("text") or "").strip()
         intent_profile = (
@@ -259,16 +273,43 @@ def _apply_continuity_runtime(state: Any) -> None:
                 state.decision.profile = "CODING"
             elif intent_profile:
                 state.decision.profile = intent_profile
-            if committed_task_text and not state.required_tool:
+            if committed_task_text and (
+                not state.required_tool or state.required_tool == "list_dir"
+            ):
                 required_tool_for_query = getattr(state.loop, "_required_tool_for_query", None)
                 inferred_committed_tool = (
                     required_tool_for_query(committed_task_text)
                     if callable(required_tool_for_query)
                     else None
                 )
+                inferred_committed_query = committed_task_text
+                if not inferred_committed_tool:
+                    (
+                        inferred_committed_tool,
+                        inferred_committed_query,
+                    ) = infer_action_required_tool_for_loop(
+                        state.loop,
+                        committed_task_text,
+                    )
                 if inferred_committed_tool:
+                    override_list_dir_with_committed_delivery = bool(
+                        state.required_tool == "list_dir"
+                        and inferred_committed_tool == "message"
+                    )
                     state.required_tool = inferred_committed_tool
-                    state.required_tool_query = committed_task_text
+                    if override_list_dir_with_committed_delivery:
+                        state.required_tool_query = (
+                            "\n".join(
+                                part
+                                for part in [committed_task_text, state.effective_content]
+                                if part and str(part).strip()
+                            )
+                        ).strip()
+                        state.continuity_source = "committed_action"
+                    else:
+                        state.required_tool_query = str(
+                            inferred_committed_query or committed_task_text
+                        ).strip()
                     state.fast_direct_context = bool(
                         state.perf_cfg
                         and bool(getattr(state.perf_cfg, "fast_first_response", True))

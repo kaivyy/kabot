@@ -68,7 +68,7 @@ from kabot.agent.cron_fallback_parts.constants import (
     SYSTEM_INFO_KEYWORDS,
     WEATHER_KEYWORDS,
 )
-from kabot.agent.tools.stock import extract_stock_name_candidates, extract_stock_symbols
+from kabot.agent.tools.stock import extract_stock_symbols
 
 __all__ = [
     "CRON_MANAGEMENT_OPS",
@@ -373,9 +373,94 @@ def _extract_stock_symbol_candidates(question: str) -> list[str]:
     return extract_stock_symbols(question or "")
 
 
-def _extract_stock_name_candidates(question: str) -> list[str]:
-    # Reuse stock-tool novice-name parser for consistent cross-module behavior.
-    return extract_stock_name_candidates(question or "")
+_NON_MARKET_DOTTED_SUFFIXES = {
+    "txt",
+    "md",
+    "json",
+    "yaml",
+    "yml",
+    "csv",
+    "pdf",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "html",
+    "js",
+    "ts",
+    "py",
+    "java",
+    "cpp",
+    "c",
+    "rs",
+    "go",
+    "php",
+}
+
+_RAW_STOCKISH_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{2,12}(?:\.[A-Za-z]{1,8})?)(?![A-Za-z0-9])")
+_EXPLICIT_CRYPTO_SHORT_SYMBOLS = {"btc", "eth", "sol", "doge", "xrp", "bnb", "usdt"}
+
+
+def _extract_structural_stock_symbols(question: str) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    raw_text = str(question or "")
+    for match in _RAW_STOCKISH_TOKEN_RE.finditer(raw_text):
+        token = str(match.group(1) or "").strip()
+        if not token:
+            continue
+        token_lower = token.lower()
+        if "." in token_lower:
+            suffix = token_lower.rsplit(".", 1)[-1]
+            if suffix in _NON_MARKET_DOTTED_SUFFIXES:
+                continue
+        resolved_candidates = _extract_stock_symbol_candidates(token)
+        if not resolved_candidates:
+            continue
+        token_root = token_lower.split(".", 1)[0]
+        for symbol in resolved_candidates:
+            raw = str(symbol or "").strip()
+            if not raw:
+                continue
+            symbol_root = raw.lower().split(".", 1)[0]
+            if symbol_root != token_root:
+                continue
+            if raw in seen:
+                continue
+            seen.add(raw)
+            cleaned.append(raw)
+    return cleaned
+
+
+def _has_explicit_stock_symbol_payload(question: str) -> bool:
+    normalized = _normalize_query(question)
+    if not normalized:
+        return False
+    for symbol in _extract_structural_stock_symbols(question):
+        raw = str(symbol).strip()
+        if not raw:
+            continue
+        root = raw.split(".", 1)[0].lower()
+        raw_lower = raw.lower()
+        if raw_lower in normalized:
+            return True
+        if re.search(rf"(?<![a-z0-9]){re.escape(root)}(?![a-z0-9])", normalized):
+            return True
+    return False
+
+
+def _has_explicit_crypto_symbol_payload(question: str) -> bool:
+    normalized = _normalize_query(question)
+    if not normalized:
+        return False
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(symbol)}(?![a-z0-9])", normalized)
+        for symbol in _EXPLICIT_CRYPTO_SHORT_SYMBOLS
+    )
 
 
 def score_required_tool_intents(
@@ -621,14 +706,13 @@ def score_required_tool_intents(
         q_lower, _GEO_NEWS_STRONG_TOPIC_MARKERS, fuzzy_latin=True
     )
     has_email_workflow_marker = _contains_any(q_lower, _EMAIL_WORKFLOW_MARKERS, fuzzy_latin=True)
-    stock_symbols = _extract_stock_symbol_candidates(text)
+    stock_symbols = _extract_structural_stock_symbols(text)
     crypto_symbol_set = {str(token).lower() for token in _CRYPTO_SYMBOL_MARKERS}
     stock_symbols_non_crypto = [
         symbol
         for symbol in stock_symbols
         if str(symbol).strip().lower() not in crypto_symbol_set
     ]
-    stock_name_candidates = _extract_stock_name_candidates(text)
     has_stock_marker = (
         _contains_any(q_lower, STOCK_KEYWORDS, fuzzy_latin=True)
         and not has_email_workflow_marker
@@ -642,7 +726,8 @@ def score_required_tool_intents(
     )
     has_fx_rate_marker = _contains_any(q_lower, _FX_RATE_MARKERS, fuzzy_latin=True)
     has_fx_conversion_amount = bool(_FX_CONVERSION_AMOUNT_RE.search(text))
-    stock_has_structural_payload = bool(stock_symbols_non_crypto)
+    has_explicit_stock_symbol = _has_explicit_stock_symbol_payload(text)
+    stock_has_structural_payload = bool(stock_symbols_non_crypto and has_explicit_stock_symbol)
     if has_fx_pair_marker and (has_fx_rate_marker or _contains_any(q_lower, _STOCK_VALUE_QUERY_MARKERS, fuzzy_latin=True)):
         add("stock", 0.94, "fx-rate-query")
         stock_has_structural_payload = True
@@ -654,56 +739,15 @@ def score_required_tool_intents(
             add("stock", 0.8, "explicit-stock-symbol")
         else:
             add("stock", 0.64, "known-stock-symbol")
-    if has_stock_marker and not _is_non_action_meta_domain_turn(
+    if has_stock_marker and stock_has_structural_payload and not _is_non_action_meta_domain_turn(
         has_domain_marker=True,
         has_structural_payload=stock_has_structural_payload,
     ):
-        add("stock", 0.32 if has_stock_tracking_marker else 0.56, "stock-lexicon")
-    if stock_name_candidates and not stock_symbols_non_crypto:
-        has_value_query_marker = _contains_any(q_lower, _STOCK_VALUE_QUERY_MARKERS, fuzzy_latin=True)
-        stock_has_structural_payload = bool(stock_has_structural_payload or has_value_query_marker)
-        has_personal_chat_marker = _contains_any(q_lower, _PERSONAL_CHAT_MARKERS, fuzzy_latin=True)
-        is_currency_conversion_without_explicit_market = (
-            has_fx_rate_marker
-            and not has_fx_pair_marker
-            and not has_stock_marker
-            and not stock_symbols_non_crypto
-        )
-        has_conflicting_domain = any(
-            (
-                has_weather_marker,
-                has_geo_news_strong_marker,
-                _contains_any(q_lower, CRYPTO_KEYWORDS, fuzzy_latin=True),
-                _contains_any(q_lower, _CRYPTO_SYMBOL_MARKERS),
-                _contains_any(q_lower, REMINDER_KEYWORDS, fuzzy_latin=True),
-                _contains_any(q_lower, SERVER_MONITOR_KEYWORDS, fuzzy_latin=True),
-                _contains_any(q_lower, SYSTEM_INFO_KEYWORDS, fuzzy_latin=True),
-                _contains_any(q_lower, CLEANUP_KEYWORDS, fuzzy_latin=True),
-                _contains_any(q_lower, SPEEDTEST_KEYWORDS, fuzzy_latin=True),
-                _contains_any(q_lower, NEWS_KEYWORDS, fuzzy_latin=True),
-                has_email_workflow_marker,
-                has_productivity_doc_marker,
-            )
-        )
-        if (
-            has_value_query_marker
-            and not has_personal_chat_marker
-            and not has_conflicting_domain
-            and not is_currency_conversion_without_explicit_market
-        ):
-            add("stock", 0.62, "stock-company-name-value-query")
-        if (
-            has_fx_rate_marker
-            and (has_fx_conversion_amount or has_value_query_marker)
-            and not has_personal_chat_marker
-            and not has_conflicting_domain
-        ):
-            add("stock", 0.9, "stock-company-fx-conversion")
+        add("stock", 0.18 if has_stock_tracking_marker else 0.28, "stock-lexicon-explicit")
 
     stock_analysis_has_payload = bool(
         stock_symbols_non_crypto
-        or stock_name_candidates
-        or has_stock_marker
+        and has_explicit_stock_symbol
         or has_fx_pair_marker
     )
     if has_stock_tracking_marker and stock_analysis_has_payload and not _is_non_action_meta_domain_turn(
@@ -713,12 +757,12 @@ def score_required_tool_intents(
         add("stock_analysis", 0.92, "stock-tracking-analysis")
 
     has_crypto_marker = _contains_any(q_lower, CRYPTO_KEYWORDS, fuzzy_latin=True)
-    has_crypto_symbol = _contains_any(q_lower, _CRYPTO_SYMBOL_MARKERS)
-    if has_crypto_marker and not _is_non_action_meta_domain_turn(
+    has_crypto_symbol = _has_explicit_crypto_symbol_payload(text)
+    if has_crypto_marker and has_crypto_symbol and not _is_non_action_meta_domain_turn(
         has_domain_marker=True,
         has_structural_payload=has_crypto_symbol,
     ):
-        add("crypto", 0.66, "crypto-lexicon")
+        add("crypto", 0.28, "crypto-lexicon-explicit")
     if has_crypto_symbol:
         add("crypto", 0.86, "crypto-symbol-strong")
 

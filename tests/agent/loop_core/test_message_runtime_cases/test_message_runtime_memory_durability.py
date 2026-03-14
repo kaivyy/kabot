@@ -289,7 +289,7 @@ async def test_process_message_memory_recall_followup_bypasses_fast_simple_conte
         ),
         memory=SimpleNamespace(
             get_conversation_context=lambda _key, max_messages=30: [
-                {"role": "assistant", "content": "好的，我会记住偏好代码 MEMZH-314。"}
+                {"role": "assistant", "content": "Got it, I will remember the preference code MEMZH-314."}
             ]
         ),
         router=SimpleNamespace(
@@ -311,7 +311,7 @@ async def test_process_message_memory_recall_followup_bypasses_fast_simple_conte
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="我刚才让你记住的代码是什么？只回答代码。",
+        content="what was the code you just remembered? reply with the code only.",
     )
     response = await process_message(loop, msg)
 

@@ -102,6 +102,21 @@ class DashboardMixin:
         pretty = html.escape(json.dumps(extra or {}, ensure_ascii=False, indent=2))
         recent_turn_block = ""
         if recent_turn:
+            route_decision_snapshot = recent_turn.get("route_decision_snapshot")
+            if not isinstance(route_decision_snapshot, dict):
+                route_decision_snapshot = {}
+            forced_skills = route_decision_snapshot.get("forced_skill_names")
+            if not isinstance(forced_skills, list):
+                forced_skills = []
+            snapshot_rows = ""
+            if route_decision_snapshot:
+                snapshot_rows = (
+                    f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Route Snapshot</th><td>{html.escape(str(route_decision_snapshot.get('route_profile') or 'none'))}/{html.escape(str(route_decision_snapshot.get('turn_category') or 'none'))}</td></tr>"
+                    f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Snapshot Tool</th><td>{html.escape(str(route_decision_snapshot.get('required_tool') or ''))}</td></tr>"
+                    f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Snapshot Query</th><td>{html.escape(str(route_decision_snapshot.get('required_tool_query') or ''))}</td></tr>"
+                    f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Snapshot Continuity</th><td>{html.escape(str(route_decision_snapshot.get('continuity_source') or 'none'))}</td></tr>"
+                    f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Forced Skills</th><td>{html.escape(', '.join(str(item) for item in forced_skills))}</td></tr>"
+                )
             recent_turn_block = (
                 "<div style='margin:0 0 12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:rgba(15,23,42,.04);'>"
                 "<div style='font-size:11px;color:var(--muted);margin-bottom:8px;'>Latest continuity/routing snapshot</div>"
@@ -110,6 +125,7 @@ class DashboardMixin:
                 f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Continuity</th><td>{html.escape(str(recent_turn.get('continuity_source') or 'none'))}</td></tr>"
                 f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Route</th><td>{html.escape(str(recent_turn.get('route_profile') or ''))}</td></tr>"
                 f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Tool</th><td>{html.escape(str(recent_turn.get('required_tool') or ''))}</td></tr>"
+                f"{snapshot_rows}"
                 "</table>"
                 "</div>"
             )

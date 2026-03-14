@@ -6,17 +6,31 @@ from typing import Any
 
 from loguru import logger
 
+from kabot.agent.loop_core.directive_pipeline import normalize_directive_state
+
+
+def _directive_state(session: Any) -> dict[str, Any]:
+    try:
+        metadata = getattr(session, "metadata", None)
+        if not isinstance(metadata, dict):
+            return {}
+        return normalize_directive_state(metadata.get("directives"))
+    except Exception:
+        return {}
+
 
 def apply_think_mode(loop: Any, messages: list, session: Any) -> list:
     """Apply think mode directive by injecting reasoning prompt into context."""
     try:
-        directives = session.metadata.get("directives", {})
-        if not isinstance(directives, dict):
-            logger.warning("Directives metadata corrupted, using defaults")
-            directives = {}
-
+        directives = _directive_state(session)
+        if not directives:
+            if not isinstance(getattr(session, "metadata", None), dict):
+                logger.warning("Directives metadata corrupted, using defaults")
+            return messages
         if not directives.get("think"):
             return messages
+        if not isinstance(getattr(session, "metadata", None), dict):
+            logger.warning("Directives metadata corrupted, using defaults")
 
         reasoning_prompt = {
             "role": "system",
@@ -39,9 +53,7 @@ def apply_think_mode(loop: Any, messages: list, session: Any) -> list:
 def should_log_verbose(loop: Any, session: Any) -> bool:
     """Check if verbose logging directive is enabled for the current session."""
     try:
-        directives = session.metadata.get("directives", {})
-        if not isinstance(directives, dict):
-            return False
+        directives = _directive_state(session)
         return directives.get("verbose", False)
     except Exception as e:
         logger.error(f"Failed to check verbose mode: {e}")
@@ -60,7 +72,7 @@ def format_verbose_output(loop: Any, tool_name: str, tool_result: str, tokens_us
 def get_tool_permissions(loop: Any, session: Any) -> dict:
     """Get tool execution permissions based on elevated directive status."""
     try:
-        elevated = session.metadata.get("directives", {}).get("elevated", False)
+        elevated = _directive_state(session).get("elevated", False)
 
         return {
             "auto_approve": elevated,

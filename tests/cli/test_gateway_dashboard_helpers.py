@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -329,12 +330,13 @@ def test_build_dashboard_status_payload_includes_enriched_monitoring_data(monkey
 
     sessions_dir = tmp_path / "sessions"
     sessions_dir.mkdir()
+    recent_assistant_ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     with open(sessions_dir / "demo.jsonl", "w", encoding="utf-8") as fh:
         fh.write(
             json.dumps(
                 {
                     "role": "assistant",
-                    "timestamp": "2026-03-07T10:00:00",
+                    "timestamp": recent_assistant_ts,
                     "model": "gpt-4o-mini",
                     "usage": {"prompt_tokens": 1000, "completion_tokens": 500},
                 }
@@ -486,6 +488,16 @@ def test_build_dashboard_status_payload_includes_recent_turn_continuity_metadata
                     "route_complex": False,
                     "required_tool": "weather",
                     "required_tool_query": "cek suhu cilacap sekarang",
+                    "route_decision_snapshot": {
+                        "route_profile": "CHAT",
+                        "route_complex": False,
+                        "turn_category": "chat",
+                        "continuity_source": "answer_reference",
+                        "required_tool": "weather",
+                        "required_tool_query": "cek suhu cilacap sekarang",
+                        "external_skill_lane": False,
+                        "forced_skill_names": [],
+                    },
                 },
             }
         ]
@@ -528,6 +540,8 @@ def test_build_dashboard_status_payload_includes_recent_turn_continuity_metadata
     assert payload["recent_turn"]["required_tool_query"] == "cek suhu cilacap sekarang"
     assert payload["recent_turn"]["pending_interrupt_count"] == 2
     assert payload["recent_turn"]["completion_evidence"]["executed_tools"] == ["weather"]
+    assert payload["recent_turn"]["route_decision_snapshot"]["route_profile"] == "CHAT"
+    assert payload["recent_turn"]["route_decision_snapshot"]["required_tool"] == "weather"
 
 
 def test_build_dashboard_status_payload_includes_command_surface(monkeypatch, tmp_path):

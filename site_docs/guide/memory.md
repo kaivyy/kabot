@@ -85,11 +85,52 @@ Kabot's memory architecture uses layered ideas such as:
 - hybrid retrieval strategies
 - reranking and token-guard behavior
 - lazy initialization paths to reduce cold-start cost
+- subprocess-isolated embeddings so heavy local models can be unloaded decisively
 
 This is why some recent runtime work focused on:
 - lazy probe memory paths
 - lighter one-shot startup
 - better balance between memory power and cold-start speed
+- stronger separation between durable chat memory and heavyweight embedding lifecycles
+
+## Memory Layers In Practice
+
+Kabot's current memory stack can combine several layers:
+
+- SQLite durability for sessions, messages, facts, and operational metadata
+- hybrid recall with vector search plus BM25-style keyword search
+- reranking and token guards before prompt injection
+- optional graph memory for related-entity context
+- subprocess-based embedding workers that can fully release RAM after idle time
+
+That last point matters more than it sounds.
+
+Embedding models are often the most expensive part of local memory search. Kabot can keep lightweight session memory available while unloading the heavy embedding process when it is not needed.
+
+## Design Direction
+
+The right interaction target for Kabot is:
+
+- skill-first interaction
+- session continuity
+- tool honesty
+- workspace and route orchestration
+
+Kabot should stay strong there.
+
+But Kabot does not need to copy another project's memory shape exactly.
+
+Kabot is already stronger in some memory-specific areas:
+
+- conversation-native persistence
+- fact/profile memory tied directly to chat
+- lazy probe startup for one-shot runs
+- subprocess embedding isolation
+
+That is the parity target:
+
+- make interaction logic more session-first and evidence-driven,
+- keep Kabot's stronger memory core.
 
 ## Recent Runtime Improvements
 
@@ -153,6 +194,8 @@ Move to the advanced/runtime docs when you want to reason about:
 - [Troubleshooting](troubleshooting.md)
 - [Advanced runtime architecture](../advanced/runtime-architecture.md)
 - [Multi-agent guide](multi-agent.md)
+
+Internal parity audits live in the repository under `docs/reference/`.
 
 ## If You See Memory-Related Slowdowns
 

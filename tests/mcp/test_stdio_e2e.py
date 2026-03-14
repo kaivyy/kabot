@@ -11,6 +11,9 @@ from kabot.mcp.runtime import McpSessionRuntime
 
 @pytest.mark.asyncio
 async def test_stdio_runtime_talks_to_real_python_mcp_server(tmp_path):
+    pytest.importorskip("mcp.server.fastmcp")
+    pytest.importorskip("mcp.client.stdio")
+
     server_script = tmp_path / "mini_mcp_server.py"
     server_script.write_text(
         dedent(

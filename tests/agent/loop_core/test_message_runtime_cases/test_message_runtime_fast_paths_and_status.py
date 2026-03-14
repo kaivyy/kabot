@@ -751,6 +751,8 @@ async def test_process_message_direct_tool_fast_path_skips_full_context_build():
     loop._run_agent_loop.assert_awaited_once()
     loop._run_simple_response.assert_not_called()
     context_builder.build_messages.assert_not_called()
+    assert msg.metadata.get("required_tool") == "get_process_memory"
+    assert msg.metadata.get("required_tool_query") == "cek ram sekarang"
     route_mock.assert_not_awaited()
     assert msg.metadata.get("route_profile") == "GENERAL"
     assert msg.metadata.get("route_complex") is True
@@ -802,6 +804,8 @@ async def test_process_message_check_update_fast_path_skips_full_context_build()
     loop._run_agent_loop.assert_awaited_once()
     loop._run_simple_response.assert_not_called()
     context_builder.build_messages.assert_not_called()
+    assert msg.metadata.get("required_tool") == "check_update"
+    assert msg.metadata.get("required_tool_query") == "cek update kabot sekarang"
 
 @pytest.mark.asyncio
 async def test_process_message_research_route_defaults_to_web_search_fast_path():
@@ -854,7 +858,10 @@ async def test_process_message_research_route_defaults_to_web_search_fast_path()
 
     loop._run_agent_loop.assert_awaited_once()
     loop._run_simple_response.assert_not_called()
-    context_builder.build_messages.assert_not_called()
+    context_builder.build_messages.assert_called_once()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("required_tool_query") is None
+    assert msg.metadata.get("route_profile") == "RESEARCH"
 
 @pytest.mark.asyncio
 async def test_process_message_simple_route_emits_status_phases():

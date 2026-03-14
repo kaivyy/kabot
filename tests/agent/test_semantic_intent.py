@@ -126,7 +126,7 @@ dari sini hitung hr zona saya umur 25 tahun""",
 
 def test_semantic_intent_clears_stale_parser_tool_for_memory_recall_turn():
     hint = arbitrate_semantic_intent(
-        "kode preferensiku apa?",
+        "what is my preference code?",
         parser_tool="stock",
     )
 

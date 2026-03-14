@@ -129,6 +129,25 @@ def test_install_launchd_service_success():
                     assert mock_run.call_count >= 2
 
 
+def test_install_launchd_service_creates_logs_directory(tmp_path):
+    """launchd install should ensure the workdir logs directory exists."""
+    workdir = tmp_path / "kabot"
+    workdir.mkdir(parents=True, exist_ok=True)
+    fake_home = tmp_path / "home"
+    launch_agents = fake_home / "Library" / "LaunchAgents"
+
+    with patch("sys.platform", "darwin"):
+        with patch("kabot.core.daemon.Path.home", return_value=fake_home):
+            with patch("kabot.core.daemon.subprocess.run") as mock_run:
+                mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                success, _message = install_launchd_service(workdir=str(workdir))
+
+    assert success is True
+    assert (workdir / "logs").is_dir()
+    assert (launch_agents / "com.kabot.agent.plist").exists()
+
+
 def test_install_windows_task_service_uses_gateway_entrypoint():
     """Task scheduler command should launch `kabot gateway` entrypoint."""
     with patch("sys.platform", "win32"):

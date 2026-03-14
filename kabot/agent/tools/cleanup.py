@@ -142,21 +142,29 @@ class CleanupTool(Tool):
         else:
             cmds = [
                 "before=$(df / --output=avail | tail -1)",
-                "sudo rm -rf /tmp/* 2>/dev/null || rm -rf /tmp/* 2>/dev/null",
+                "sudo -n rm -rf /tmp/* 2>/dev/null || rm -rf /tmp/* 2>/dev/null",
                 "rm -rf ~/.cache/* 2>/dev/null",
             ]
             if level in ("standard", "deep"):
                 cmds += [
-                    "sudo apt-get clean 2>/dev/null || true",
-                    "sudo journalctl --vacuum-time=3d 2>/dev/null || true",
+                    "if command -v apt-get >/dev/null 2>&1; then sudo -n apt-get clean 2>/dev/null || true; fi",
+                    "if command -v dnf >/dev/null 2>&1; then sudo -n dnf clean all -y 2>/dev/null || true; fi",
+                    "if command -v yum >/dev/null 2>&1; then sudo -n yum clean all 2>/dev/null || true; fi",
+                    "if command -v pacman >/dev/null 2>&1; then sudo -n pacman -Scc --noconfirm 2>/dev/null || true; fi",
+                    "if command -v apk >/dev/null 2>&1; then sudo -n apk cache clean 2>/dev/null || true; fi",
+                    "if command -v zypper >/dev/null 2>&1; then sudo -n zypper clean -a 2>/dev/null || true; fi",
+                    "if command -v journalctl >/dev/null 2>&1; then sudo -n journalctl --vacuum-time=3d 2>/dev/null || true; fi",
                 ]
             if level == "deep":
                 cmds += [
-                    "sudo apt-get autoremove -y 2>/dev/null || true",
+                    "if command -v apt-get >/dev/null 2>&1; then sudo -n apt-get autoremove -y 2>/dev/null || true; fi",
+                    "if command -v dnf >/dev/null 2>&1; then sudo -n dnf autoremove -y 2>/dev/null || true; fi",
+                    "if command -v yum >/dev/null 2>&1; then sudo -n yum autoremove -y 2>/dev/null || true; fi",
+                    "if command -v zypper >/dev/null 2>&1; then sudo -n zypper rm -u -y 2>/dev/null || true; fi",
                 ]
             cmds += [
                 'after=$(df / --output=avail | tail -1)',
-                'echo "### 🧹 Linux Cleanup Complete (Level: ' + level + ')"',
+                'echo "### ?? Linux Cleanup Complete (Level: ' + level + ')"',
                 'echo "Free space: ${before}K -> ${after}K"',
             ]
             script = "\n".join(cmds)
@@ -176,7 +184,7 @@ class CleanupTool(Tool):
             ]
         if level == "deep":
             cmds += [
-                "sudo periodic daily weekly monthly 2>/dev/null || true",
+                "sudo -n periodic daily weekly monthly 2>/dev/null || true",
             ]
         cmds += [
             "after=$(df / | awk 'NR==2{print $4}')",

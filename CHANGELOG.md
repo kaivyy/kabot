@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to Kabot will be documented in this file.
 
@@ -7,20 +7,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-03-14
+
 ### Changed
+- Added a dedicated cross-platform regression workflow:
+  - `.github/workflows/ci-matrix.yml` now runs the browser/artifact, Discord media ingress, direct delivery, system cleanup, and daemon regression slice on both `ubuntu-latest` and `macos-latest`.
+- Runtime language handling is more stable and less parser-heavy:
+  - critical continuity lanes now lean on English internal guidance,
+  - user-facing replies still follow the user's language unless an explicit override is provided,
+  - non-English turns are less likely to be pre-routed by brittle lexical shortcuts.
+- Added internal architecture audit notes under `docs/reference/` for repository structure, file continuity, memory, session/runtime behavior, and directives/tool-loop behavior.
+- Session/runtime continuity is more session-first and cwd-first:
+  - sessions now persist structured `delivery_route` alongside `working_directory`,
+  - transcript mirrors are written under `~/.kabot/sessions/transcripts/`,
+  - route, cwd, and transcript state now carry more of the continuity burden than old breadcrumb fields.
+- File and delivery continuity moved further away from breadcrumb-first behavior:
+  - `working_directory` is now the canonical filesystem anchor,
+  - bare send, navigation, artifact follow-up, and `find_files` root resolution all prefer session/runtime state first,
+  - redundant live-turn copies of `last_navigated_path` and `last_delivery_path` are now demoted into compatibility fallback behavior.
+- Directive handling is now more structured:
+  - Kabot now uses a dedicated `directive_pipeline`,
+  - persisted directive state keeps richer fields like `json_output`, `raw`, `debug`, `model`, `temperature`, and `max_tokens`,
+  - live provider calls now honor directive-driven `temperature`, `max_tokens`, and `no_tools` overrides.
+- One-shot CLI sessions are more chat-like:
+  - `python -m kabot.cli.commands agent -m "..."` now defaults to a stable workspace-scoped session instead of spinning up a brand-new ephemeral session for each message.
+- External/public skill flow is broader:
+  - install/search/info/list/update/pack/publish/sync flows now cover local folders, bundles, git repos, URLs, and JSON catalogs,
+  - workspace and managed skills are preferred before legacy built-ins for finance-style workflows.
+- The built-in `skill-creator` lifecycle is more complete:
+  - scaffolded skills now include `assets/`,
+  - validation and packaging helpers are bundled,
+  - generated skills are easier to validate, bundle, and share.
+- Telegram, dashboard, and command-surface behavior are more unified:
+  - command surfaces are shared across `/help`, Telegram menu sync, and dashboard status,
+  - preview/reply behavior is more consistent,
+  - route-decision snapshots now surface in dashboard, smoke output, and `agent --logs`.
+- Browser, cleanup, daemon, and system helpers are more robust across Windows, macOS, and Linux:
+  - browser screenshots resolve nested and `~/...` paths more reliably,
+  - cleanup and system-info helpers use safer cross-platform fallbacks,
+  - service setup is more reliable on POSIX hosts.
 - Runtime now hardens follow-up/tool continuity for action turns:
   - unavailable `required_tool` routes are dropped only when tool-registry availability is known, avoiding false negatives in sparse/mock runtimes while still preventing stale parser latches from forcing removed tools,
   - direct action-delivery flow (`required_tool` + `requires_message_delivery`) now archives directory artifacts before sending when `archive_path` is available, keeping artifact evidence aligned with the actually delivered file.
 - Built-in finance execution lane is now disabled in the default agent tool registry:
   - `stock`, `stock_analysis`, and `crypto` are no longer registered by default in `AgentLoop`,
   - this keeps finance execution on skill/explicit-tool lanes instead of accidental parser fallback reuse.
+- Turn routing now records a compact `route_decision_snapshot` for replay/debugging:
+  - per-turn metadata now captures `route_profile`, `route_complex`, `turn_category`, `continuity_source`, `required_tool`, `required_tool_query`, `external_skill_lane`, and forced skills,
+  - the snapshot is persisted in session metadata, surfaced in dashboard recent-turn payloads, and emitted as structured `route_decision` runtime events for smoke parsing,
+  - smoke human summaries, the dashboard runtime panel, and CLI `agent --logs` now render that snapshot in a compact, human-readable form for transcript replay/debugging.
+- Agent smoke tooling now has a bundled `--regression-cases` transcript pack:
+  - it combines the existing continuity, delivery, memory, and workflow regression families under one flag,
+  - this makes CI/replay runs easier to keep aligned with the real multi-turn failures that previously drifted across separate smoke categories.
 
 ### Fixed
+- Cross-platform artifact/media handling is safer for macOS/Linux now:
+  - artifact-path extraction now recognizes `~/...` result paths instead of accidentally truncating them into `/...` substring matches,
+  - relative artifact outputs like `outputs/promo.mp4` now stay relative in `last_tool_context` until a real on-disk path can be verified, instead of being rewritten into misleading absolute cwd paths,
+  - Discord attachment downloads now sanitize both POSIX and Windows-style filename separators before writing to `~/.kabot/media`, so filenames like `reports\\daily\\report.txt` no longer fail by creating unintended nested paths,
+  - BrowserTool screenshots now expand `~/...`, resolve relative nested output paths, and create parent directories before handing the path to Playwright, which makes screenshot capture more reliable on macOS/Linux-style paths,
+  - runtime follow-up evidence now has explicit regression coverage proving browser screenshot result paths like `~/Desktop/kabot-shot.png` are expanded into real absolute paths before they are reused for later delivery/context,
+  - and screenshot/listing/delivery continuity now persists a canonical `working_directory` into session state so later send/find turns can reuse a cwd-style anchor instead of relying only on older breadcrumb fields.
+- Linux/macOS service and maintenance helpers are safer across POSIX shells now:
+  - Linux server monitoring no longer uses Bash-only `&>/dev/null` in its network-interface probe, so the script stays compatible with `/bin/sh` environments such as `dash`,
+  - Linux and macOS cleanup routines now use non-interactive `sudo -n ...` for privileged maintenance steps, avoiding password-prompt hangs during headless or automated runs,
+  - macOS `launchd` installation now creates the workspace `logs/` directory before loading the plist, so the configured `StandardOutPath` / `StandardErrorPath` targets are ready on first launch.
+- Linux/macOS system tooling now depends less on optional host utilities:
+  - Linux hardware-info collection now falls back gracefully when `lscpu`, `lsblk`, `lspci`, `lshw`, or `free` are unavailable, using `/proc/cpuinfo`, `/proc/meminfo`, `df`, `getconf`, and `uname` as backup sources,
+  - macOS server monitoring no longer depends on `bc`; RAM calculations now use `awk`, which is available by default on macOS,
+  - Linux cleanup is now less distro-specific by probing multiple package managers (`apt-get`, `dnf`, `yum`, `pacman`, `apk`, `zypper`) instead of assuming every host is Debian-like.
+- Cross-platform filesystem navigation now respects Linux/macOS-style user directory overrides more reliably:
+  - special-folder routing for `desktop`, `downloads`, `documents`, `pictures`, `music`, and `videos` now honors `XDG_*` environment overrides and `~/.config/user-dirs.dirs` when present,
+  - this means follow-up navigation like `open desktop folder` and path hints like `use path desktop bot` can resolve against real Linux user-dir layouts instead of assuming hardcoded `~/Desktop` paths,
+  - direct `list_dir` fallback coverage now includes those XDG-backed paths so the runtime stays aligned with actual POSIX workstation setups.
+- Memory-commit follow-ups now keep enough context even in fast-response mode:
+  - turns like `save it` no longer bypass full context assembly through the fast simple-context lane,
+  - and English memory-commit detection now also recognizes natural phrasing like `save this to memory` / `save that to memory` consistently across routing and semantic-intent helpers.
+- User-profile continuity now syncs into long-term memory when stable profile facts change:
+  - `call me ...` / `if I ask who am I ...` style updates still persist into `USER.md`,
+  - and the resulting stable facts are now also written into the memory backend (`user_profile` category) so later recall turns stay grounded across turns and sessions.
+- Legacy built-in finance tool forcing is now less parser-driven:
+  - runtime/tool-enforcement now treats `stock` and `stock_analysis` payloads as explicit only when the user actually writes a real symbol or symbol root (for example `BBCA.JK`, `AAPL`, `bbri`), instead of auto-promoting broad company-name phrasing like `saham bca bri mandiri adaro`,
+  - cron fallback intent scoring now follows the same direction: natural company aliases like `bca bri mandiri adaro` and generic coin names like `bitcoin ethereum` no longer raise legacy `stock` / `stock_analysis` / `crypto` candidates on their own,
+  - legacy crypto now only counts as explicit when the user writes short structural symbols such as `btc`, `eth`, `sol`, `doge`, `xrp`, `bnb`, or `usdt`,
+  - external finance skill matching is now subtype-aware, so a crypto-only skill like `binance-pro` no longer hijacks stock-only requests just because both are broadly finance-related, while generic market skills can still match both stock and crypto prompts,
+  - this gives external skills and model-first routing more room before legacy finance fallbacks engage, moving Kabot closer to the reference platform's language-agnostic skill/tool selection style.
+- Cross-process one-shot CLI delivery continuity is now regression-covered:
+  - new replay coverage proves that separate `agent -m` invocations can preserve `last_navigated_path` and `last_delivery_path` through persisted session state,
+  - this closes the main continuity gap behind transcripts like `buka folder desktop -> buka folder bot -> kirim file tes.md ke sini -> buka folder pi-mono`.
+- Filesystem not-found responses are now less rigid in chat:
+  - file and folder misses keep the concrete path evidence,
+  - but the wording now reads more naturally, for example `I couldn't find that folder yet: ...` instead of a blunt raw error string.
+- Assistant-offer continuity is stricter about fresh substantive asks:
+  - medium-length requests like `cek saldo futures binance sekarang` no longer get misread as acceptance of a stale assistant offer just because they overlap on a couple of tokens such as `cek` or `binance`,
+  - while short confirmations and genuinely contextual offer follow-ups still continue naturally.
+- Workspace bootstrap backfill now respects dedicated nested workspaces:
+  - when a repo root already contains a real `workspace/` bootstrap set, `ensure_workspace_templates(...)` no longer seeds duplicate `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `BOOTSTRAP.md`, or `memory/` files into the project root,
+  - this keeps Kabot's repo root clean while preserving the actual workspace persona files under `workspace/`.
 - Indonesian file-delivery parsing is more robust for real chat phrasing:
   - `kirim file TELEGRAM_DEMO.md kesini` now resolves as a valid message-send request even with bare filenames,
   - concise direct-send turns like `kirim file tes.md` now map to message delivery intent (instead of being trapped on read-only file parsing),
+  - bare send-file prompts now count as real delivery requests even without an explicit `ke sini` / `chat ini` suffix, so `requires_message_delivery` stays grounded on the actual file-send intent,
   - `cari file ... lalu kirim ke chat ini` stays on the search lane (`find_files`) instead of prematurely collapsing into direct message-send routing,
-  - `kirim file X di folder Y\ kesini` now prefers explicit filename extraction and correctly joins with folder context instead of treating delivery suffix text as part of the path.
+  - `kirim file X di folder Y\ kesini` now prefers explicit filename extraction and correctly joins with folder context instead of treating delivery suffix text as part of the path,
+  - natural path hints like `ya pakai path desktop bot` now resolve to `Desktop\\bot` instead of stalling at the parent Desktop folder,
+  - bootstrap onboarding no longer hijacks action turns like `ya pakai path desktop bot` and write them into `IDENTITY.md` while the user is clearly navigating files.
+- Post-delivery sibling-folder navigation is now explicitly regression-covered for Telegram-style chat flow:
+  - the transcript `buka folder desktop -> buka folder bot -> kirim file tes.md ke telegram -> buka folder pi-mono` is now locked in tests so a sent file no longer risks becoming the base path for the next folder-open request.
+- Folder-open and send-file continuity is now safer after failed navigation attempts:
+  - when a path hint provides a folder but the original request already names a file (for example `kirim file tes.md` then `ya pakai path desktop bot`), Kabot now combines them into the concrete file path instead of sending an archived folder like `bot.zip`,
+  - reopening the folder you are already inside (for example `buka folder bot` right after `ya pakai path desktop bot`) now reuses the active folder instead of drifting into a fake nested path like `...\\bot\\bot`,
+  - failed `list_dir` / `message` executions no longer overwrite `last_tool_context.path` with non-existent paths, so a later send-file turn can still rely on the last valid folder,
+  - direct message delivery verification now falls back to the last valid navigated folder when stale tool context paths no longer exist, which restores transcripts like `ya pakai path desktop bot -> buka folder bot -> kirim file tes.md ke sini`.
+- Action-request routing now resists stale weak parser guesses more reliably:
+  - concrete create/write requests can now override weak `read_file` / `list_dir` / `web_search` parser latches when action-tool inference has a stronger match,
+  - this prevents prompts like `buat file ...` from staying stuck on read-only parser routing just because the text mentions `file` or a filename.
+- Direct delivery execution is now more consistent across bare-send and search-then-send flows:
+  - execution runtime now promotes bare `message` delivery when the user gives a concrete send-file request with an explicit file target,
+  - but `find file ... lalu kirim ...` still stays on the AI-driven `find_files -> message` workflow instead of being flattened into a direct `message` call too early,
+  - direct message delivery now also falls back to `last_navigated_path` when `last_tool_context.path` is missing, helping follow-up send-file turns reuse the folder the user just opened.
 - Relative folder navigation parsing now handles shorthand open commands with trailing slashes (`buka bot\`) more reliably.
 - Message delivery now prefers explicit navigation context over stale internal paths:
   - when `last_tool_context.path` drifts to an internal temp folder (for example `.basetemp`) but `last_navigated_path` points to the actual user-opened folder, bare-filename sends like `kirim file tes.md ke sini` now resolve against the navigated folder first,
@@ -33,7 +138,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - if a bare-filename send still resolves to an internal temp path outside the active navigated folder, Kabot now returns not-found instead of sending stale temp artifacts.
 - Find-files fallback now respects active navigation context:
   - `find_files` root resolution now checks `last_navigated_path` before falling back to older `last_tool_context.path`, preventing context drift during search→send workflows,
+  - the resolver now also prefers canonical `working_directory` when present, so continuity behaves more like a session cwd and less like a language-specific breadcrumb parser,
   - this behavior is now aligned in both filesystem and action-request resolver paths used by the tool-enforcement facade.
+- Session hydration now exposes less breadcrumb state when a canonical working directory already exists:
+  - `_init_session(...)` now prefers `working_directory` over `last_navigated_path` when both exist, and seeds `last_tool_context` from that cwd-style state,
+  - `turn_metadata` likewise stops re-injecting `last_navigated_path` into active turn metadata when `working_directory` is already present,
+  - helper lookups that still ask for `last_navigated_path` can now fall back to `working_directory`, which lets older code paths behave correctly while the runtime shifts toward reference-style cwd continuity.
 - List-directory follow-up fallback no longer hijacks explicit send-file requests:
   - when action-intent inference resolves a conflicting file/send tool (for example `message`), the `list_dir` follow-up latch is skipped,
   - this prevents `kirim file tes.md kesini` from being downgraded into `list_dir` and returning false `File not found` errors.
@@ -57,7 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skill availability cache now refreshes when the runtime environment changes:
   - `SkillsLoader.list_skills(...)` invalidates its snapshot cache when `PATH` or other environment variables change in-process,
   - this closes a real replay bug where installing a missing CLI dependency like `jq` still left an external skill stuck in the old `unavailable` state for the next turn.
-- OpenClaw-style skill invocation policy is now wired into real Kabot behavior instead of staying as inert frontmatter:
+- reference-style skill invocation policy is now wired into real Kabot behavior instead of staying as inert frontmatter:
   - skills now expose `user-invocable`, `disable-model-invocation`, `command-dispatch`, `command-tool`, and `command-arg-mode` through Kabot's skill status/runtime metadata,
   - slash-command surfaces now hide skills marked `user-invocable: false`,
   - Telegram native skill commands now honor `command-dispatch: tool` + `command-tool` by seeding a direct tool-execution lane instead of always rephrasing the request back through the model,
@@ -65,7 +175,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - skills marked `disable-model-invocation: true` are now excluded from auto skill summaries, auto matching, and normal model prompt exposure while remaining available through explicit user invocation flows.
 - External skills now become a more reliable execution lane instead of just passive prompt candidates:
   - when exactly one eligible non-builtin external skill clearly matches the turn, Kabot now promotes it into `forced_skill_names`, routes the turn through the agent loop, and injects an explicit execution note to follow that skill first,
-  - when a skill is already explicitly forced/requested, the context builder now skips auto-matching extra skills on top of it, keeping the prompt closer to a single-skill OpenClaw-style execution contract.
+  - when a skill is already explicitly forced/requested, the context builder now skips auto-matching extra skills on top of it, keeping the prompt closer to a single-skill reference-style execution contract.
 - External-skill setup continuity is now more honest and more actionable:
   - when exactly one non-builtin external skill is the clear best match but it is not yet executable, Kabot now still locks onto that skill as the active lane instead of silently dropping back to generic behavior,
   - the runtime now injects a dedicated setup note with concrete blockers like missing CLI tools or env vars, so replies can tell the user the next real prerequisite to fix,
@@ -85,10 +195,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Built-in finance tools are now explicitly archived as legacy fallbacks:
   - `stock`, `crypto`, and `stock_analysis` are now documented and described as legacy built-in fallbacks rather than the preferred first stop,
   - Kabot's public docs now steer users toward workspace/managed finance skills first, with the built-ins preserved for exact identifier lookups and compatibility.
-- OpenClaw-style external skill intake is broader now:
+- reference-style external skill intake is broader now:
   - `kabot skills install` now accepts `--path` for local skill folders and packaged `.skill` / `.zip` bundles, not just `--git`,
   - local installs reuse the same copy + validation flow as git installs, so shared skills can come from downloads or external catalogs without manual copying,
-  - external skills that declare metadata under `metadata.openclaw` are now accepted by Kabot's skill loader alongside `metadata.kabot`.
+  - external skills that declare metadata under `metadata.reference-repo` are now accepted by Kabot's skill loader alongside `metadata.kabot`.
 - Skill-first finance routing is stronger:
   - when an eligible non-builtin external skill clearly matches a finance request, built-in `stock`, `stock_analysis`, and `crypto` tools are now treated as fallback instead of being forced immediately,
   - finance-oriented external skills now match better without relying on explicit ticker-parser wins first, which keeps the runtime closer to a skill-first external pack model.
@@ -146,7 +256,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - assistant-offer follow-ups can now infer concrete runtime checks such as process inspection from the promised offer context when a concrete request was captured,
   - generic chat offers no longer over-escalate into action/tool flows just because the assistant sentence contains vague verbs like `kasih` or time phrases such as `60 seconds`,
   - natural Indonesian process-inspection prompts such as `cek langsung proses yang paling makan CPU/RAM` and `cek proses teratas yang makan resource` now resolve to `get_process_memory` instead of falling through to generic chat or manual command suggestions.
-- Skill prompting is now more OpenClaw-style and less parser-heavy:
+- Skill prompting is now more reference-style and less parser-heavy:
   - ordinary auto-matched skills are no longer injected into the prompt as full `SKILL.md` bodies,
   - Kabot now exposes an English summary-first `## Skills (mandatory)` block with `<available_skills>` entries and asks the model to read one `SKILL.md` only when it clearly applies,
   - explicitly forced/requested skills still load their full body so grounded workflows like weather and skill-creation follow-ups stay stable,

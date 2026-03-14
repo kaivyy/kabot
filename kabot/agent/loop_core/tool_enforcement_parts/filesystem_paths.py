@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -104,14 +105,70 @@ _SPECIAL_DIR_NORMALIZED_SUBFOLDER_RE = re.compile(
 _SPECIAL_DIR_ASCII_SUBFOLDER_RE = re.compile(
     r"(?i)\b([A-Za-z0-9._-]+)\s*(?:folder|directory|dir)\b"
 )
+_SPECIAL_DIR_PATH_HINT_RE = re.compile(
+    r"(?i)\b(?:(?:ya|yes)\s+)?(?:(?:pakai|gunakan|use|with|via)\s+)?path\s+"
+    r"(?:desktop|downloads?|documents?|docs|pictures?|photos?|music|videos?|home)\b\s+([A-Za-z0-9._-]+)\b"
+)
 _SPECIAL_DIR_PREFIX_RE = re.compile(
     r"(?i)^\s*(?:desktop|downloads?|documents?|docs|pictures?|photos?|music|videos?|home)\b"
 )
 
 
-
 def _filesystem_home_dir() -> Path:
     return Path.home()
+
+
+_SPECIAL_DIR_ENV_MAP = {
+    "desktop": "XDG_DESKTOP_DIR",
+    "downloads": "XDG_DOWNLOAD_DIR",
+    "documents": "XDG_DOCUMENTS_DIR",
+    "pictures": "XDG_PICTURES_DIR",
+    "music": "XDG_MUSIC_DIR",
+    "videos": "XDG_VIDEOS_DIR",
+}
+
+
+def _expand_special_directory_value(raw_value: str, home: Path) -> Path | None:
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return None
+    cleaned = raw.strip().strip("\"'")
+    if not cleaned:
+        return None
+    cleaned = cleaned.replace("${HOME}", str(home)).replace("$HOME", str(home))
+    candidate = Path(cleaned).expanduser()
+    if not candidate.is_absolute():
+        candidate = home / candidate
+    return candidate
+
+
+def _resolve_special_directory_override(name: str, home: Path) -> Path | None:
+    env_key = _SPECIAL_DIR_ENV_MAP.get(str(name or "").strip().lower())
+    if not env_key:
+        return None
+
+    env_value = str(os.environ.get(env_key) or "").strip()
+    if env_value:
+        return _expand_special_directory_value(env_value, home)
+
+    user_dirs_path = home / ".config" / "user-dirs.dirs"
+    try:
+        contents = user_dirs_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+
+    match = re.search(rf"(?m)^\s*{re.escape(env_key)}\s*=\s*(.+?)\s*$", contents)
+    if not match:
+        return None
+    return _expand_special_directory_value(match.group(1), home)
+
+
+def _resolve_special_directory_home_child(name: str, default_child: str) -> Path:
+    home = _filesystem_home_dir()
+    override = _resolve_special_directory_override(name, home)
+    if override is not None:
+        return override
+    return home / default_child
 
 
 def _normalize_filesystem_candidate(value: str) -> str:
@@ -227,6 +284,14 @@ def _resolve_find_files_root(
         return list_path
 
     if isinstance(metadata, dict):
+        working_directory = str(metadata.get("working_directory") or "").strip()
+        if working_directory:
+            try:
+                resolved_working_directory = Path(working_directory).expanduser().resolve()
+                if resolved_working_directory.exists() and resolved_working_directory.is_dir():
+                    return str(resolved_working_directory)
+            except Exception:
+                return working_directory
         last_nav = str(metadata.get("last_navigated_path") or "").strip()
         if last_nav:
             try:
@@ -288,21 +353,20 @@ def _resolve_special_directory_path(text: str) -> str | None:
         normalized,
     ):
         return str(Path.cwd().expanduser().resolve())
-    home = _filesystem_home_dir()
-    if re.search(r"(?i)\bdesktop\b|桌面|デスクトップ|เดสก์ท็อป", normalized):
-        return str(home / "Desktop")
-    if re.search(r"(?i)\bdownloads?\b|下载|下載|ダウンロード|ดาวน์โหลด", normalized):
-        return str(home / "Downloads")
-    if re.search(r"(?i)\bdocuments?\b|\bdocs\b|文档|文件档案|文件檔案|書類|ドキュメント|เอกสาร", normalized):
-        return str(home / "Documents")
+    if re.search(r"(?i)\bdesktop\b|\u684c\u9762|\u30c7\u30b9\u30af\u30c8\u30c3\u30d7|\u0e40\u0e14\u0e2a\u0e01\u0e4c\u0e17\u0e47\u0e2d\u0e1b", normalized):
+        return str(_resolve_special_directory_home_child("desktop", "Desktop"))
+    if re.search(r"(?i)\bdownloads?\b|\u4e0b\u8f7d|\u4e0b\u8f09|\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9|\u0e14\u0e32\u0e27\u0e19\u0e4c\u0e42\u0e2b\u0e25\u0e14", normalized):
+        return str(_resolve_special_directory_home_child("downloads", "Downloads"))
+    if re.search(r"(?i)\bdocuments?\b|\bdocs\b|\u6587\u6863|\u6587\u4ef6\u6863\u6848|\u6587\u4ef6\u6a94\u6848|\u66f8\u985e|\u30c9\u30ad\u30e5\u30e1\u30f3\u30c8|\u0e40\u0e2d\u0e01\u0e2a\u0e32\u0e23", normalized):
+        return str(_resolve_special_directory_home_child("documents", "Documents"))
     if re.search(r"(?i)\bpictures?\b|\bphotos?\b", normalized):
-        return str(home / "Pictures")
+        return str(_resolve_special_directory_home_child("pictures", "Pictures"))
     if re.search(r"(?i)\bmusic\b", normalized):
-        return str(home / "Music")
+        return str(_resolve_special_directory_home_child("music", "Music"))
     if re.search(r"(?i)\bvideos?\b", normalized):
-        return str(home / "Videos")
+        return str(_resolve_special_directory_home_child("videos", "Videos"))
     if re.search(r"(?i)\bhome\b", normalized):
-        return str(home)
+        return str(_filesystem_home_dir())
     return None
 
 
@@ -384,17 +448,27 @@ def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | Non
     fallback_path = ""
     if isinstance(last_tool_context, dict):
         fallback_path = str(last_tool_context.get("path") or "").strip()
+    fallback_dir_path = fallback_path
+    if fallback_dir_path:
+        try:
+            fallback_obj = Path(fallback_dir_path)
+            if fallback_obj.suffix:
+                fallback_dir_path = str(fallback_obj.parent)
+        except Exception:
+            pass
 
     explicit_path = _extract_explicit_path_candidate(raw)
     if explicit_path:
         trimmed_explicit = str(explicit_path).strip().rstrip("\\/")
-        if fallback_path and trimmed_explicit and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", trimmed_explicit):
+        if Path(trimmed_explicit).suffix:
+            return None
+        if fallback_dir_path and trimmed_explicit and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", trimmed_explicit):
             explicit_parts = [part for part in re.split(r"[\\/]", trimmed_explicit) if part]
             if len(explicit_parts) == 1:
-                fallback_name = Path(fallback_path).name.strip().lower()
+                fallback_name = Path(fallback_dir_path).name.strip().lower()
                 if fallback_name and fallback_name == explicit_parts[0].lower():
-                    return fallback_path
-            return str(Path(fallback_path) / trimmed_explicit)
+                    return fallback_dir_path
+            return str(Path(fallback_dir_path) / trimmed_explicit)
         return explicit_path
 
     relative_dir = _extract_relative_directory_candidate(raw)
@@ -421,6 +495,17 @@ def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | Non
                 and not any(sep in nested_candidate for sep in ("/", "\\"))
                 and normalized_nested not in _FILESYSTEM_TARGET_MARKERS
             ):
+                    return str(Path(special_dir) / nested_candidate)
+        path_hint_match = _SPECIAL_DIR_PATH_HINT_RE.search(normalized_raw)
+        if path_hint_match:
+            nested_candidate = _normalize_filesystem_candidate(path_hint_match.group(1))
+            normalized_nested = _normalize_text(nested_candidate)
+            if (
+                nested_candidate
+                and not nested_candidate.isdigit()
+                and not any(sep in nested_candidate for sep in ("/", "\\"))
+                and normalized_nested not in _FILESYSTEM_TARGET_MARKERS
+            ):
                 return str(Path(special_dir) / nested_candidate)
         if _SPECIAL_DIR_PREFIX_RE.search(normalized_raw):
             ascii_tail_match = _SPECIAL_DIR_ASCII_SUBFOLDER_RE.search(normalized_raw)
@@ -438,11 +523,14 @@ def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | Non
         return str(Path(special_dir) / relative_dir)
     if special_dir:
         return special_dir
-    if relative_dir and fallback_path:
-        return str(Path(fallback_path) / relative_dir)
+    if relative_dir and fallback_dir_path:
+        fallback_name = Path(fallback_dir_path).name.strip().lower()
+        if fallback_name and fallback_name == relative_dir.strip().lower():
+            return fallback_dir_path
+        return str(Path(fallback_dir_path) / relative_dir)
 
-    if fallback_path and _is_low_information_followup(raw):
-        return fallback_path
+    if fallback_dir_path and _is_low_information_followup(raw):
+        return fallback_dir_path
 
     return None
 

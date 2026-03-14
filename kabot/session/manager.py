@@ -11,6 +11,7 @@ from loguru import logger
 
 from kabot.core.context_engine import LegacyContextEngine
 from kabot.core.queue import DormantQueue
+from kabot.session.transcript import resolve_transcript_path, write_session_transcript
 from kabot.utils.helpers import ensure_dir, safe_filename
 from kabot.utils.pid_lock import PIDLock
 
@@ -140,6 +141,7 @@ class SessionManager:
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.sessions_dir = ensure_dir(Path.home() / ".kabot" / "sessions")
+        self.transcripts_dir = ensure_dir(self.sessions_dir / "transcripts")
         self._cache: dict[str, Session] = {}
 
     def _get_session_path(self, key: str) -> Path:
@@ -208,6 +210,8 @@ class SessionManager:
     def save(self, session: Session) -> None:
         """Save a session to disk with PID-based locking and atomic writes."""
         path = self._get_session_path(session.key)
+        transcript_path = resolve_transcript_path(self.transcripts_dir, session.key)
+        session.metadata["transcript_path"] = str(transcript_path)
 
         # Use PIDLock for multi-process safety (Phase 13 fix)
         with PIDLock(path):
@@ -237,6 +241,10 @@ class SessionManager:
                 os.replace(temp_path, path)
 
         self._cache[session.key] = session
+        try:
+            write_session_transcript(self.transcripts_dir, session)
+        except Exception as e:
+            logger.warning(f"Failed to update session transcript for {session.key}: {e}")
 
     def delete(self, key: str) -> bool:
         """

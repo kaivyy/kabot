@@ -19,7 +19,7 @@ def test_ensure_workspace_templates_creates_required_files(tmp_path: Path):
     assert len(created) >= 7
 
 
-def test_ensure_workspace_templates_use_openclaw_style_bootstrap_language(tmp_path: Path):
+def test_ensure_workspace_templates_use_reference_bootstrap_language(tmp_path: Path):
     workspace = tmp_path / "workspace"
 
     ensure_workspace_templates(workspace)
@@ -86,3 +86,19 @@ def test_ensure_workspace_templates_varies_persona_between_workspaces(tmp_path: 
 
     assert alpha_soul != beta_soul
     assert alpha_bootstrap != beta_bootstrap
+
+
+def test_ensure_workspace_templates_skips_repo_root_when_nested_workspace_exists(tmp_path: Path):
+    repo_root = tmp_path / "repo"
+    nested_workspace = repo_root / "workspace"
+    nested_workspace.mkdir(parents=True)
+    (repo_root / ".git").mkdir()
+    (nested_workspace / "SOUL.md").write_text("nested soul", encoding="utf-8")
+    (nested_workspace / "AGENTS.md").write_text("nested agents", encoding="utf-8")
+
+    created = ensure_workspace_templates(repo_root)
+
+    assert created == []
+    assert not (repo_root / "SOUL.md").exists()
+    assert not (repo_root / "IDENTITY.md").exists()
+    assert not (repo_root / "memory").exists()

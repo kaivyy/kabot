@@ -5,7 +5,6 @@ import hashlib
 import os
 import signal
 import sys
-import time
 from pathlib import Path
 
 import typer
@@ -36,6 +35,7 @@ from kabot.cli.dashboard_payloads import (
 )
 from kabot.cron.callbacks import build_cli_cron_callback
 from kabot.cron.callbacks import should_use_reminder_fallback as _should_use_reminder_fallback_impl
+from kabot.session.session_key import build_agent_session_key, normalize_agent_id
 from kabot.utils.text_safety import repair_common_mojibake_text
 
 console = Console()
@@ -53,9 +53,76 @@ def _normalize_cli_message_text(value: str | None) -> str:
     return repair_common_mojibake_text(value or "")
 
 
+def _format_cli_route_snapshot(snapshot: dict[str, object] | None) -> str | None:
+    if not isinstance(snapshot, dict) or not snapshot:
+        return None
+
+    route_profile = str(snapshot.get("route_profile") or "").strip() or "unknown"
+    turn_category = str(snapshot.get("turn_category") or "").strip()
+    required_tool = str(snapshot.get("required_tool") or "").strip()
+    continuity_source = str(snapshot.get("continuity_source") or "").strip()
+    forced_skill_names = snapshot.get("forced_skill_names")
+
+    route_label = route_profile
+    if turn_category:
+        route_label = f"{route_label}/{turn_category}"
+
+    parts = [f"route snapshot: {route_label}"]
+    if required_tool:
+        parts.append(f"tool={required_tool}")
+    if continuity_source:
+        parts.append(f"continuity={continuity_source}")
+    if isinstance(forced_skill_names, list):
+        normalized_forced = [str(name).strip() for name in forced_skill_names if str(name).strip()]
+        if normalized_forced:
+            parts.append(f"forced={','.join(normalized_forced)}")
+    return " | ".join(parts)
+
+
+def _print_cli_route_snapshot(agent_loop, session_key: str, *, logs: bool) -> None:
+    if not logs:
+        return
+    sessions = getattr(agent_loop, "sessions", None)
+    get_or_create = getattr(sessions, "get_or_create", None)
+    if not callable(get_or_create):
+        return
+    try:
+        session = get_or_create(session_key)
+    except Exception:
+        return
+    metadata = getattr(session, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    summary = _format_cli_route_snapshot(metadata.get("last_route_decision_snapshot"))
+    if summary:
+        print(summary)
+
+
+def _resolve_runtime_markdown_render(agent_loop, default: bool) -> bool:
+    if not default:
+        return False
+    metadata = getattr(agent_loop, "_last_outbound_metadata", None)
+    if isinstance(metadata, dict) and metadata.get("render_markdown") is False:
+        return False
+    return True
+
+
 def _make_ephemeral_one_shot_session_id(message: str) -> str:
     digest = hashlib.sha1(str(message or "").encode("utf-8", "ignore")).hexdigest()[:10]
-    return f"cli:oneshot:{int(time.time() * 1000)}:{digest}"
+    return f"cli:oneshot:ephemeral:{digest}"
+
+
+def _make_workspace_scoped_one_shot_session_id(agent_id: str, workspace: Path | str | None) -> str:
+    normalized_agent = normalize_agent_id(agent_id)
+    workspace_text = str(Path(workspace).resolve()) if workspace else ""
+    digest = hashlib.sha1(workspace_text.encode("utf-8", "ignore")).hexdigest()[:12]
+    return build_agent_session_key(
+        normalized_agent,
+        channel="cli",
+        peer_kind="direct",
+        peer_id=f"workspace-{digest}",
+        dm_scope="per-channel-peer",
+    )
 
 
 def _session_option_was_explicit(ctx: typer.Context | None) -> bool:
@@ -76,6 +143,8 @@ def _resolve_one_shot_session_id(
     session_id: str,
     *,
     message: str | None,
+    agent_id: str,
+    workspace: Path | str | None,
 ) -> str:
     normalized_session = str(session_id or "").strip() or "cli:default"
     if not message:
@@ -84,7 +153,7 @@ def _resolve_one_shot_session_id(
         return normalized_session
     if normalized_session != "cli:default":
         return normalized_session
-    return _make_ephemeral_one_shot_session_id(message)
+    return _make_workspace_scoped_one_shot_session_id(agent_id, workspace)
 
 
 def agent(
@@ -103,11 +172,6 @@ def agent(
     from kabot.cron.service import CronService
 
     message = _normalize_cli_message_text(message)
-    resolved_one_shot_session_id = _resolve_one_shot_session_id(
-        ctx,
-        session_id,
-        message=message,
-    )
     config = load_config()
     _resolve_commands_override("_inject_skill_env", _inject_skill_env)(config)
 
@@ -137,6 +201,13 @@ def agent(
     )
     bound_agent_id = resolve_agent_id_for_workspace(config, Path.cwd())
     bound_workspace = resolve_agent_workspace(config, bound_agent_id)
+    resolved_one_shot_session_id = _resolve_one_shot_session_id(
+        ctx,
+        session_id,
+        message=message,
+        agent_id=bound_agent_id,
+        workspace=bound_workspace,
+    )
 
     # Initialize CronService (required for reminder tools)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
@@ -231,7 +302,15 @@ def agent(
                         probe_mode=True,
                         persist_history=True,
                     )
-                _print_agent_response(response, render_markdown=markdown)
+                _print_agent_response(
+                    response,
+                    render_markdown=_resolve_runtime_markdown_render(agent_loop, markdown),
+                )
+                _print_cli_route_snapshot(
+                    agent_loop,
+                    resolved_one_shot_session_id,
+                    logs=logs,
+                )
 
                 # Keep process alive briefly when a CLI reminder is due soon,
                 # so one-shot calls like "ingatkan 2 menit lagi" can fire.
@@ -326,7 +405,11 @@ def agent(
 
                         with _thinking_ctx():
                             response = await agent_loop.process_direct(user_input, session_id)
-                        _print_agent_response(response, render_markdown=markdown)
+                        _print_agent_response(
+                            response,
+                            render_markdown=_resolve_runtime_markdown_render(agent_loop, markdown),
+                        )
+                        _print_cli_route_snapshot(agent_loop, session_id, logs=logs)
                     except KeyboardInterrupt:
                         _save_history()
                         _restore_terminal()

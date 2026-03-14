@@ -1,7 +1,7 @@
 """Tests for Webhook Ingress Infrastructure.
 
 Split from tests/gateway/test_webhooks.py to keep test modules below 1000 lines.
-Chunk 2: test_dashboard_page_includes_openclaw_like_sections .. test_dashboard_chat_stream_api_returns_sse_snapshot.
+Chunk 2: test_dashboard_page_includes_reference_sections .. test_dashboard_chat_stream_api_returns_sse_snapshot.
 """
 import re
 from unittest.mock import AsyncMock, MagicMock
@@ -10,7 +10,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_dashboard_page_includes_openclaw_like_sections(aiohttp_client):
+async def test_dashboard_page_includes_reference_sections(aiohttp_client):
     """Dashboard HTML should expose chat/sessions/nodes/config panels."""
     from kabot.gateway.webhook_server import WebhookServer
 

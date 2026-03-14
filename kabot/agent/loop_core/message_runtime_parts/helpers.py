@@ -143,7 +143,7 @@ def _build_skill_creation_workflow_note(
         return (
             "[Skill Workflow]\n"
             f"- The user has explicitly approved the plan for {workflow_subject} in this conversation.\n"
-            "- Reply in the same language as the user and keep the tone natural, collaborative, and concise.\n"
+            "- Understand the user's language and answer in that language unless they explicitly ask for a different language.\n"
             "- You may now execute the approved plan, write files if needed, and run focused verification for the approved scope.\n"
             "- Keep the implementation inside the workspace skills directory unless the user asked for a different target.\n"
             "- Never hardcode API keys or secrets; use env/config requirements instead."
@@ -152,7 +152,7 @@ def _build_skill_creation_workflow_note(
         return (
             "[Skill Workflow]\n"
             f"- This request is for {workflow_subject}.\n"
-            "- Reply in the same language as the user and keep the tone natural, collaborative, and concise.\n"
+            "- Understand the user's language and answer in that language unless they explicitly ask for a different language.\n"
             "- Do not create files yet.\n"
             "- Stay in discovery mode on this turn: ask only the minimum questions needed about scope, source/target, auth/dependencies, and trust/overwrite implications.\n"
             "- Do not claim the work is already being executed yet."
@@ -160,7 +160,7 @@ def _build_skill_creation_workflow_note(
     return (
         "[Skill Workflow]\n"
         "- Stay in skill-workflow mode unless the user clearly changes topic.\n"
-        "- Reply in the same language as the user and keep the tone natural, collaborative, and concise.\n"
+        "- Understand the user's language and answer in that language unless they explicitly ask for a different language.\n"
         "- Do not create or modify files until the user explicitly approves a written plan in this conversation.\n"
         "- If requirements are still incomplete, continue discovery with concise follow-up questions.\n"
         "- If requirements are complete but no plan has been approved yet, present a short implementation plan and ask for approval.\n"
@@ -280,20 +280,22 @@ def _resolve_runtime_locale(session: Any, msg: InboundMessage, text: str) -> str
 
     msg_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
     explicit = _normalize_locale_tag(
-        msg_meta.get("locale") or msg_meta.get("language") or msg_meta.get("lang")
+        msg_meta.get("runtime_locale") or msg_meta.get("locale") or msg_meta.get("language") or msg_meta.get("lang")
     )
+    detected = _normalize_locale_tag(detect_locale(text)) or "en"
+    session_meta["input_locale"] = detected
     if explicit:
         session_meta["runtime_locale"] = explicit
         return explicit
 
-    detected = _normalize_locale_tag(detect_locale(text))
     cached = _normalize_locale_tag(session_meta.get("runtime_locale"))
     if detected and detected != "en":
         session_meta["runtime_locale"] = detected
         return detected
     if cached:
         return cached
-    return detected or "en"
+    session_meta["runtime_locale"] = detected
+    return detected
 
 
 def _tool_registry_has(loop: Any, tool_name: str) -> bool:
@@ -431,15 +433,11 @@ def _looks_like_live_research_query(text: str) -> bool:
         r"\bheadline\b",
         r"\bheadlines\b",
         r"\bnews\b",
-        r"\bberita\b",
-        r"\bterbaru\b",
-        r"\bterkini\b",
-        r"\bsekarang\b",
     )
     if any(re.search(pattern, normalized) for pattern in live_marker_patterns):
         return True
 
-    if re.search(r"\b(news|berita)\s+update(s)?\b", normalized):
+    if re.search(r"\bnews\s+update(s)?\b", normalized):
         return True
 
     # Date/year queries generally imply external verification.
@@ -451,11 +449,6 @@ def _looks_like_live_research_query(text: str) -> bool:
         "find",
         "search",
         "look up",
-        "cari",
-        "carikan",
-        "telusuri",
-        "buscar",
-        "rechercher",
     )
     if any(normalized.startswith(f"{verb} ") for verb in search_verbs):
         return True
@@ -528,9 +521,9 @@ def _looks_like_temporal_context_query(text: str) -> bool:
 
 _MEMORY_COMMIT_RE = re.compile(
     r"(?i)\b("
-    r"simpan|save(?: it| this| that)?|ingat(?:kan)?|remember(?: it| this| that)?|"
-    r"catat(?:kan)?|note(?: it| this| that)?|save to memory|simpan ke memory|"
-    r"commit ke memory|masukkan ke memory"
+    r"save(?: it| this| that)?|remember(?: it| this| that)?|"
+    r"note(?: it| this| that)?|save to memory|"
+    r"save this to memory|save that to memory|commit to memory|save in memory"
     r")\b"
 )
 
@@ -547,24 +540,10 @@ _MEMORY_RECALL_RE = re.compile(
     r"(?i)\b("
     r"what do you remember about me|what did you save|what did you remember|"
     r"what is my preference code|what was my preference code|my preference code|"
-    r"apa yang kamu simpan|apa yang kamu ingat|apa preferensiku|"
-    r"kode preferensiku apa|apa kode preferensiku|kode yang tadi kamu ingat|"
-    r"who am i|siapa aku|jadi siapa aku|aku siapa|"
+    r"what was the code you just remembered|"
+    r"who am i|"
     r"remembered code|saved code|memory code"
     r")\b"
-)
-
-_MEMORY_RECALL_NON_LATIN_PHRASES = (
-    "我刚才让你记住的代码是什么",
-    "你记得我的代码",
-    "你刚刚记住了什么",
-    "偏好代码",
-    "さっき覚えていたコード",
-    "何を覚えてる",
-    "好みのコード",
-    "รหัสความชอบของฉัน",
-    "รหัสที่คุณจำไว้",
-    "เมื่อกี้คุณจำอะไรไว้",
 )
 
 
@@ -573,9 +552,7 @@ def _looks_like_memory_recall_turn(text: str) -> bool:
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    if _MEMORY_RECALL_RE.search(normalized):
-        return True
-    return any(phrase in raw for phrase in _MEMORY_RECALL_NON_LATIN_PHRASES)
+    return bool(_MEMORY_RECALL_RE.search(normalized))
 
 
 async def _resolve_relevant_memory_facts(
