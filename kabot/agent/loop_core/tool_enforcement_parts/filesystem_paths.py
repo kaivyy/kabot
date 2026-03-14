@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from kabot.agent.loop_core.tool_enforcement_parts.common import (
@@ -260,6 +260,25 @@ def _looks_like_explicit_filesystem_path(path: str | None) -> bool:
     )
 
 
+def _looks_like_windows_rooted_path(path: str | None) -> bool:
+    candidate = str(path or "").strip()
+    if not candidate:
+        return False
+    return bool(re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\)", candidate))
+
+
+def _join_context_path(base_path: str, child_path: str) -> str:
+    base = str(base_path or "").strip()
+    child = str(child_path or "").strip()
+    if not base:
+        return child
+    if not child:
+        return base
+    if _looks_like_windows_rooted_path(base):
+        return str(PureWindowsPath(base) / PureWindowsPath(child))
+    return str(Path(base) / child)
+
+
 def _resolve_find_files_root(
     loop: Any,
     text: str,
@@ -465,10 +484,14 @@ def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | Non
         if fallback_dir_path and trimmed_explicit and not re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", trimmed_explicit):
             explicit_parts = [part for part in re.split(r"[\\/]", trimmed_explicit) if part]
             if len(explicit_parts) == 1:
-                fallback_name = Path(fallback_dir_path).name.strip().lower()
+                fallback_name = (
+                    PureWindowsPath(fallback_dir_path).name.strip().lower()
+                    if _looks_like_windows_rooted_path(fallback_dir_path)
+                    else Path(fallback_dir_path).name.strip().lower()
+                )
                 if fallback_name and fallback_name == explicit_parts[0].lower():
                     return fallback_dir_path
-            return str(Path(fallback_dir_path) / trimmed_explicit)
+            return _join_context_path(fallback_dir_path, trimmed_explicit)
         return explicit_path
 
     relative_dir = _extract_relative_directory_candidate(raw)
@@ -520,14 +543,18 @@ def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | Non
                 ):
                     return str(Path(special_dir) / nested_candidate)
     if special_dir and relative_dir:
-        return str(Path(special_dir) / relative_dir)
+        return _join_context_path(special_dir, relative_dir)
     if special_dir:
         return special_dir
     if relative_dir and fallback_dir_path:
-        fallback_name = Path(fallback_dir_path).name.strip().lower()
+        fallback_name = (
+            PureWindowsPath(fallback_dir_path).name.strip().lower()
+            if _looks_like_windows_rooted_path(fallback_dir_path)
+            else Path(fallback_dir_path).name.strip().lower()
+        )
         if fallback_name and fallback_name == relative_dir.strip().lower():
             return fallback_dir_path
-        return str(Path(fallback_dir_path) / relative_dir)
+        return _join_context_path(fallback_dir_path, relative_dir)
 
     if fallback_dir_path and _is_low_information_followup(raw):
         return fallback_dir_path

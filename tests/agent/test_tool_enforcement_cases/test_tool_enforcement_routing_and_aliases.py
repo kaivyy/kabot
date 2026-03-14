@@ -289,6 +289,31 @@ def test_required_tool_for_query_prefers_web_fetch_for_direct_page_requests(agen
     )
 
 
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_supports_web_fetch_direct_url(agent_loop):
+    tool_executor = AsyncMock(return_value="HTTP 200\n\n[EXTERNAL_CONTENT]\nBBCA page\n[/EXTERNAL_CONTENT]")
+    agent_loop.tools.execute = tool_executor
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="finance.yahoo.com/quote/BBCA.JK",
+    )
+
+    result = await execute_required_tool_fallback(agent_loop, "web_fetch", msg)
+
+    assert "BBCA page" in result
+    tool_executor.assert_awaited_once_with(
+        "web_fetch",
+        {
+            "url": "https://finance.yahoo.com/quote/BBCA.JK",
+            "extract_mode": "markdown",
+            "context_text": "finance.yahoo.com/quote/BBCA.JK",
+        },
+    )
+
+
 def test_required_tool_for_query_does_not_route_general_knowledge_questions_to_stock(agent_loop):
     assert agent_loop._required_tool_for_query("JAM BERAPA") is None
     assert agent_loop._required_tool_for_query("jam berapa sekarang") is None
@@ -756,6 +781,86 @@ async def test_execute_required_tool_fallback_read_file_calls_read_file_tool(age
     result = await agent_loop._execute_required_tool_fallback("read_file", msg)
     assert "providers" in result
     execute_mock.assert_awaited_once_with("read_file", {"path": "config.json"})
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_read_file_prefers_active_working_directory_for_bare_filename(
+    agent_loop,
+):
+    execute_mock = AsyncMock(return_value='{"providers": {"openai": {"api_key": "***"}}}')
+    agent_loop.tools.execute = execute_mock
+    kabot_dir = agent_loop.workspace / ".kabot"
+    kabot_dir.mkdir(parents=True, exist_ok=True)
+    config_path = kabot_dir / "config.json"
+    config_path.write_text('{"providers": {"openai": {"api_key": "***"}}}', encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="buka config.json",
+        metadata={"working_directory": str(kabot_dir.resolve())},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("read_file", msg)
+
+    assert "providers" in result
+    execute_mock.assert_awaited_once_with("read_file", {"path": str(config_path.resolve())})
+    assert msg.metadata.get("working_directory") == str(kabot_dir.resolve())
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_read_file_uses_resolved_workspace_path_when_file_exists(
+    agent_loop,
+):
+    execute_mock = AsyncMock(return_value='{"providers": {"openai": {"api_key": "***"}}}')
+    agent_loop.tools.execute = execute_mock
+    config_path = agent_loop.workspace / "config.json"
+    config_path.write_text('{"providers": {"openai": {"api_key": "***"}}}', encoding="utf-8")
+
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="buka config.json",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("read_file", msg)
+
+    assert "providers" in result
+    execute_mock.assert_awaited_once_with("read_file", {"path": str(config_path.resolve())})
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_read_file_uses_session_working_directory_for_bare_filename(
+    agent_loop,
+):
+    execute_mock = AsyncMock(return_value='{"embedding_model": "all-MiniLM-L6-v2"}')
+    agent_loop.tools.execute = execute_mock
+    kabot_dir = agent_loop.workspace / ".kabot"
+    kabot_dir.mkdir(parents=True, exist_ok=True)
+    config_path = kabot_dir / "config.json"
+    config_path.write_text('{"embedding_model": "all-MiniLM-L6-v2"}', encoding="utf-8")
+
+    session = agent_loop.sessions.get_or_create("telegram:chat-1")
+    session.metadata["working_directory"] = str(kabot_dir.resolve())
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="buka config.json",
+        metadata={},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("read_file", msg)
+
+    assert "all-MiniLM-L6-v2" in result
+    execute_mock.assert_awaited_once_with("read_file", {"path": str(config_path.resolve())})
 
 @pytest.mark.asyncio
 async def test_execute_required_tool_fallback_read_file_uses_last_file_context_path(agent_loop):

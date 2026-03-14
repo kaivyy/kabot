@@ -19,6 +19,24 @@ class _ChatOnlyProvider:
         return _Resp()
 
 
+class _StructuredRouteProvider:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.chat_calls = 0
+
+    def get_default_model(self) -> str:
+        return "openai-codex/gpt-5.3-codex"
+
+    async def chat(self, *args, **kwargs):
+        self.chat_calls += 1
+
+        class _Resp:
+            def __init__(self, content: str) -> None:
+                self.content = content
+
+        return _Resp(self.content)
+
+
 @pytest.mark.asyncio
 async def test_route_weather_query_is_complex():
     router = IntentRouter(_ChatOnlyProvider())
@@ -94,4 +112,35 @@ async def test_route_indonesian_weather_query_no_longer_uses_fast_parser_shortcu
 
     await router.route("tolong cek suhu cilacap hari ini")
 
+    assert provider.chat_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_route_multilingual_action_turn_uses_structured_model_decision():
+    provider = _StructuredRouteProvider(
+        '{"profile":"GENERAL","turn_category":"action","is_complex":true}'
+    )
+    router = IntentRouter(provider)
+
+    decision = await router.route("このチャットに tes.md を送って")
+
+    assert decision.profile == "GENERAL"
+    assert decision.turn_category == "action"
+    assert decision.is_complex is True
+    assert provider.chat_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_route_multilingual_project_inspection_turn_sets_filesystem_grounding_mode():
+    provider = _StructuredRouteProvider(
+        '{"profile":"GENERAL","turn_category":"action","is_complex":true,"grounding_mode":"filesystem_inspection"}'
+    )
+    router = IntentRouter(provider)
+
+    decision = await router.route("この openclaw フォルダの中身を見て、どんなアプリか説明して")
+
+    assert decision.profile == "GENERAL"
+    assert decision.turn_category == "action"
+    assert decision.grounding_mode == "filesystem_inspection"
+    assert decision.is_complex is True
     assert provider.chat_calls == 1

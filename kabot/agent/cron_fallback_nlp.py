@@ -144,6 +144,20 @@ def required_tool_for_query(
 def extract_weather_location(question: str) -> str | None:
     """Extract probable weather location from user query."""
 
+    _WEATHER_PROVIDER_ONLY_MARKERS = {
+        "wttr",
+        "wttr.in",
+        "open-meteo",
+        "open meteo",
+        "openmeteo",
+        "openweather",
+        "open weather",
+        "weatherapi",
+        "weather api",
+        "weather.com",
+        "accuweather",
+    }
+
     def _strip_weather_terms(value: str) -> str:
         cleaned = str(value or "")
         weather_terms = tuple(sorted(set((*WEATHER_KEYWORDS, *_WEATHER_WIND_MARKERS)), key=len, reverse=True))
@@ -296,6 +310,13 @@ def extract_weather_location(question: str) -> str | None:
                 tokens[0] = attached_di.group(1)
         candidate = " ".join(tokens).strip(" .,!?:;")
         if len(candidate) > 80 or re.search(r"[\(\):]", candidate):
+            return ""
+        candidate_lower = candidate.casefold()
+        if re.search(r"(?i)(?:https?://|www\.)", candidate):
+            return ""
+        if re.fullmatch(r"(?i)[a-z0-9-]+(?:\.[a-z0-9-]+)+/?", candidate):
+            return ""
+        if candidate_lower in _WEATHER_PROVIDER_ONLY_MARKERS:
             return ""
         if re.fullmatch(
             r"(?i)\d+(?:[.,]\d+)?\s*(?:km/?h|kph|m/?s|mph|kt|kts|knots?|°|deg(?:ree)?s?)?",

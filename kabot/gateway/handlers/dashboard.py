@@ -579,7 +579,14 @@ class DashboardMixin:
         access_note = ""
         if callable(self.control_handler) and not write_access:
             access_note = self._read_only_notice_html("Cron actions")
-        return "<h2>Cron Jobs</h2><div class='muted'>Schedule, status, timing, and quick actions for background jobs.</div><table><tr><th>Name</th><th>Schedule</th><th>State</th><th>Last</th><th>Last Run</th><th>Next Run</th><th>Duration</th><th>Actions</th></tr>" + "".join(rows) + "</table>" + access_note + self._result_message_html(action_result, action_status_code, "cron-result")
+        return (
+            f"{self._panel_intro_html('Cron Jobs', 'Schedule, status, timing, and quick actions for background jobs.', eyebrow='Automation')}"
+            "<table><tr><th>Name</th><th>Schedule</th><th>State</th><th>Last</th><th>Last Run</th><th>Next Run</th><th>Duration</th><th>Actions</th></tr>"
+            + "".join(rows)
+            + "</table>"
+            + access_note
+            + self._result_message_html(action_result, action_status_code, "cron-result")
+        )
 
     def _render_skills_fragment(
         self,
@@ -628,13 +635,20 @@ class DashboardMixin:
                 if env_hint:
                     api_form = f"<form style='display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;' hx-post='{html.escape(action_url)}' hx-target='#panel-skills' hx-swap='outerHTML'><input type='hidden' name='action' value='skills.set_api_key' /><input type='hidden' name='skill_key' value='{skill_key}' /><input type='password' name='api_key' placeholder='{html.escape(env_hint)}' style='min-width:140px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg-soft, var(--bg));color:var(--text);' /><button type='submit' style='padding:4px 8px;font-size:11px;border-radius:6px;'>Save Key</button></form>"
                 actions = toggle_form + api_form
-            rows.append("<div style='padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);'><div style='display:flex;align-items:flex-start;justify-content:space-between;gap:12px;'><div><div class='mono' style='font-size:12px;font-weight:600;'>" + html.escape(str(skill.get("name", "-"))) + f"</div>{meta_html}</div><div style='display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;'><span class='kb-badge {badge_cls}'>" + html.escape(state_raw.replace("_", " ")) + "</span>" + enabled_badge + "</div></div><div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;'>" + actions + "</div></div>")
+            rows.append("<div class='kb-list-card'><div style='display:flex;align-items:flex-start;justify-content:space-between;gap:12px;'><div><div class='mono' style='font-size:12px;font-weight:600;'>" + html.escape(str(skill.get("name", "-"))) + f"</div>{meta_html}</div><div style='display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;'><span class='kb-badge {badge_cls}'>" + html.escape(state_raw.replace("_", " ")) + "</span>" + enabled_badge + "</div></div><div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;'>" + actions + "</div></div>")
         if not rows:
-            rows.append("<div style='text-align:center;padding:24px;color:var(--muted);font-size:12px;'>No skills registered. Add skill snapshots to your status payload to see them here.</div>")
+            rows.append("<div class='kb-panel-empty'>No skills registered. Add skill snapshots to your status payload to see them here.</div>")
         access_note = ""
         if callable(self.control_handler) and not write_access:
             access_note = self._read_only_notice_html("Skill actions")
-        return "<h2>Skills</h2><div class='muted'>Installed skill status, environment readiness, and quick toggles.</div><div style='display:flex;flex-direction:column;gap:8px;margin-top:12px;'>" + "".join(rows) + "</div>" + access_note + self._result_message_html(action_result, action_status_code, "skills-result")
+        return (
+            f"{self._panel_intro_html('Skills', 'Installed skill status, environment readiness, and quick toggles.', eyebrow='Extensions')}"
+            "<div class='kb-stack-list'>"
+            + "".join(rows)
+            + "</div>"
+            + access_note
+            + self._result_message_html(action_result, action_status_code, "skills-result")
+        )
 
     def _render_commands_fragment(self) -> str:
         status = self._read_dashboard_status()
@@ -656,7 +670,7 @@ class DashboardMixin:
                 meta_bits.append("admin only")
             meta_html = f"<div class='muted' style='margin-top:4px;font-size:10px;'>{' | '.join(meta_bits)}</div>"
             rows.append(
-                "<div style='padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);'>"
+                "<div class='kb-list-card'>"
                 "<div style='display:flex;align-items:flex-start;justify-content:space-between;gap:12px;'>"
                 f"<div><div class='mono' style='font-size:12px;font-weight:600;'>/{html.escape(str(item.get('name', '-') or '-'))}</div>"
                 f"<div style='margin-top:4px;font-size:12px;'>{html.escape(str(item.get('description', '') or ''))}</div>{meta_html}</div>"
@@ -664,11 +678,10 @@ class DashboardMixin:
                 "</div></div>"
             )
         if not rows:
-            rows.append("<div style='text-align:center;padding:24px;color:var(--muted);font-size:12px;'>No command surface available yet.</div>")
+            rows.append("<div class='kb-panel-empty'>No command surface available yet.</div>")
         return (
-            "<h2>Commands</h2>"
-            "<div class='muted'>Merged slash-command surface from static commands, router commands, and workspace skills.</div>"
-            "<div style='display:flex;flex-direction:column;gap:8px;margin-top:12px;'>"
+            f"{self._panel_intro_html('Commands', 'Merged slash-command surface from static commands, router commands, and workspace skills.', eyebrow='Surface Map')}"
+            "<div class='kb-stack-list'>"
             + "".join(rows)
             + "</div>"
         )
@@ -698,7 +711,12 @@ class DashboardMixin:
             )
         if not rows:
             rows.append("<tr><td colspan='4' style='color:var(--muted);text-align:center;padding:18px;'>No sub-agent activity recorded yet.</td></tr>")
-        return "<h2>Sub-Agent Activity</h2><div class='muted'>Recent delegated runs, duration, and outcome snapshots.</div><table><tr><th>Run</th><th>Status</th><th>Duration</th><th>Started</th></tr>" + "".join(rows) + "</table>"
+        return (
+            f"{self._panel_intro_html('Sub-Agent Activity', 'Recent delegated runs, duration, and outcome snapshots.', eyebrow='Delegation')}"
+            "<table><tr><th>Run</th><th>Status</th><th>Duration</th><th>Started</th></tr>"
+            + "".join(rows)
+            + "</table>"
+        )
 
     def _render_git_fragment(self) -> str:
         status = self._read_dashboard_status()
@@ -712,7 +730,12 @@ class DashboardMixin:
             rows.append(f"<tr><td class='mono'>{html.escape(str(item.get('sha', '-')))}</td><td>{html.escape(str(item.get('subject', '-')))}</td><td>{html.escape(str(item.get('author', '-')))}</td><td class='mono' style='font-size:11px;'>{html.escape(str(item.get('timestamp', '-')))}</td></tr>")
         if not rows:
             rows.append("<tr><td colspan='4' style='color:var(--muted);text-align:center;padding:18px;'>No git history available.</td></tr>")
-        return "<h2>Recent Commits</h2><div class='muted'>Latest repository activity visible from the current workspace.</div><table><tr><th>SHA</th><th>Subject</th><th>Author</th><th>When</th></tr>" + "".join(rows) + "</table>"
+        return (
+            f"{self._panel_intro_html('Recent Commits', 'Latest repository activity visible from the current workspace.', eyebrow='Workspace Git')}"
+            "<table><tr><th>SHA</th><th>Subject</th><th>Author</th><th>When</th></tr>"
+            + "".join(rows)
+            + "</table>"
+        )
 
     def _render_dashboard_panel(
         self,
@@ -759,20 +782,12 @@ class DashboardMixin:
         for key, label, _title in self._USAGE_WINDOW_OPTIONS:
             url = self._dashboard_url_with_token(path, request, query={"window": key})
             active = key == active_window
-            style = (
-                "padding:6px 10px;border-radius:999px;border:1px solid var(--border);"
-                "font-size:11px;font-weight:600;"
-                + (
-                    "background:var(--accent);color:#081018;border-color:var(--accent);"
-                    if active
-                    else "background:var(--bg);color:var(--text);"
-                )
-            )
+            btn_cls = "kb-panel-tab kb-panel-tab--active" if active else "kb-panel-tab"
             buttons.append(
                 f"<button type='button' hx-get='{html.escape(url)}' hx-target='#{html.escape(panel_id)}' hx-swap='outerHTML' "
-                f"style='{style}'>{html.escape(label)}</button>"
+                f"class='{btn_cls}'>{html.escape(label)}</button>"
             )
-        return "<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;'>" + "".join(buttons) + "</div>"
+        return "<div class='kb-panel-tabs'>" + "".join(buttons) + "</div>"
 
     @classmethod
     def _select_usage_window(cls, status: dict[str, Any], window_key: str) -> dict[str, Any]:

@@ -224,6 +224,22 @@ def _finance_skill_matches_request(skill_name: str, description: str, text: str)
     return request_kind == skill_kind
 
 
+def _finance_skill_name_is_grounded(skill_name: str, text: str) -> bool:
+    request_kind = _classify_finance_request(text)
+    normalized_name = str(skill_name or "").strip().lower().replace("-", " ").replace("_", " ")
+    if not request_kind or not normalized_name:
+        return False
+    stock_markers = _STOCK_DOMAIN_MARKERS | {"ticker", "tickers", "quote", "quotes"}
+    crypto_markers = _CRYPTO_DOMAIN_MARKERS | {"ticker", "tickers", "quote", "quotes"}
+    if request_kind == "stock":
+        return any(marker in normalized_name for marker in stock_markers)
+    if request_kind == "crypto":
+        return any(marker in normalized_name for marker in crypto_markers)
+    if request_kind == "mixed":
+        return any(marker in normalized_name for marker in stock_markers | crypto_markers)
+    return any(marker in normalized_name for marker in ("stock", "stocks", "saham", "crypto", "ticker", "quote"))
+
+
 def _coerce_frontmatter_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -447,11 +463,20 @@ class SkillsLoader:
                 if len(kw) >= 2 and any(ord(ch) > 127 for ch in kw) and kw in message_lower
             }
             alias_bonus = _intent_alias_bonus(skill_name, message_lower)
+            name_words = set(skill_name.replace("-", " ").split())
+            # Also check stemmed name words (e.g., "debugging" -> "debug")
+            stemmed_name = {_naive_stem(w) for w in name_words}
+            stemmed_msg = {_naive_stem(w) for w in msg_keywords}
+            name_overlap = (name_words & msg_keywords) | (stemmed_name & stemmed_msg)
+            explicit_full_name_match = bool(
+                re.search(rf"(?<![\w-]){re.escape(skill_name.lower())}(?![\w-])", message_lower)
+            )
             finance_skill_match = _finance_skill_matches_request(
                 skill_name,
                 self._get_skill_description(skill_name),
                 message,
             )
+            finance_name_grounded = _finance_skill_name_is_grounded(skill_name, message)
 
             if (
                 not overlap
@@ -459,29 +484,23 @@ class SkillsLoader:
                 and not contain_overlap
                 and not contain_body_overlap
                 and alias_bonus <= 0
-                and not finance_skill_match
+                and not name_overlap
+                and not explicit_full_name_match
+                and not (finance_skill_match and finance_name_grounded)
             ):
                 continue
 
             # Primary keywords score 1.0 each, body keywords 0.2 each
             score = len(overlap) + 0.2 * len(body_overlap)
             score += 0.8 * len(contain_overlap) + 0.2 * len(contain_body_overlap)
-            if finance_skill_match:
+            if finance_skill_match and finance_name_grounded:
                 score += 2.5
 
-            # Strong bonus: exact skill name match (e.g., user says "spotify" or "discord")
-            name_words = set(skill_name.replace("-", " ").split())
-            # Also check stemmed name words (e.g., "debugging" → "debug")
-            stemmed_name = {_naive_stem(w) for w in name_words}
-            stemmed_msg = {_naive_stem(w) for w in msg_keywords}
-            name_overlap = (name_words & msg_keywords) | (stemmed_name & stemmed_msg)
+            # Strong bonus: exact skill name or token match (e.g., user says "spotify" or "discord")
             if name_overlap:
                 score += 2.0 * len(name_overlap)
 
             # Strongest signal: user explicitly references full skill name.
-            explicit_full_name_match = bool(
-                re.search(rf"(?<![\w-]){re.escape(skill_name.lower())}(?![\w-])", message_lower)
-            )
             if explicit_full_name_match:
                 score += 5.0
             if alias_bonus > 0:
@@ -504,7 +523,7 @@ class SkillsLoader:
                 alias_bonus <= 0
                 and not explicit_full_name_match
                 and not name_overlap
-                and not finance_skill_match
+                and not (finance_skill_match and finance_name_grounded)
                 and total_overlap < 2
             ):
                 continue

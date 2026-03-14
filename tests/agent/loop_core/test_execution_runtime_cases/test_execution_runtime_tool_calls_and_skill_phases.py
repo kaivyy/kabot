@@ -79,7 +79,70 @@ async def test_process_tool_calls_blocks_image_tool_for_non_image_intent(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_process_tool_calls_blocks_legacy_stock_tool_when_external_finance_skill_matches(tmp_path):
+async def test_process_tool_calls_blocks_legacy_stock_tool_when_external_skill_lane_is_active(tmp_path):
+    tool_executor = AsyncMock(return_value='{"symbol":"BBCA","price":6900}')
+    loop = SimpleNamespace(
+        context=SimpleNamespace(
+            add_assistant_message=lambda messages, content, tool_calls=None, reasoning_content=None: [
+                *messages,
+                {"role": "assistant", "content": content, **({"tool_calls": tool_calls} if tool_calls else {})},
+            ],
+            add_tool_result=lambda messages, _id, _name, result: [*messages, {"role": "tool", "tool_call_id": _id, "name": _name, "content": result}],
+            skills=SimpleNamespace(
+                has_preferred_external_skill_match=lambda text, profile="GENERAL": "bbca" in str(text).lower(),
+            ),
+        ),
+        memory=SimpleNamespace(add_message=AsyncMock(return_value=None)),
+        tools=SimpleNamespace(get=lambda _name: None, execute=tool_executor, has=lambda _name: True),
+        loop_detector=SimpleNamespace(
+            check=lambda _name, _params: SimpleNamespace(stuck=False, level="ok", message=""),
+            record=lambda _name, _params, _call_id: None,
+        ),
+        truncator=SimpleNamespace(
+            truncate=lambda value, _tool_name: value,
+            _count_tokens=lambda _value: 0,
+        ),
+        _should_log_verbose=lambda _session: False,
+        _format_verbose_output=lambda _tool, _result, _tokens: "",
+        _format_tool_result=lambda result: str(result),
+        _get_tool_status_message=lambda _tool, _args: None,
+        _get_tool_permissions=lambda _session: {},
+        _resolve_agent_id_for_message=lambda _msg: "main",
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+        exec_auto_approve=False,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="cek harga saham bbca bri mandiri adaro sekarang",
+        metadata={
+            "external_skill_lane": True,
+            "forced_skill_names": ["yahoo-finance-stock"],
+        },
+    )
+    response = LLMResponse(
+        content="tool-run",
+        tool_calls=[ToolCallRequest(id="call_stock", name="stock", arguments={"symbol": "BBCA"})],
+    )
+
+    updated = await process_tool_calls(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        response,
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert tool_executor.await_count == 0
+    tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_stock"]
+    assert tool_messages
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_process_tool_calls_allows_legacy_stock_tool_for_generic_finance_turn_even_if_external_skill_exists(tmp_path):
     tool_executor = AsyncMock(return_value='{"symbol":"BBCA","price":6900}')
     loop = SimpleNamespace(
         context=SimpleNamespace(
@@ -132,10 +195,10 @@ async def test_process_tool_calls_blocks_legacy_stock_tool_when_external_finance
         session=SimpleNamespace(metadata={}),
     )
 
-    assert tool_executor.await_count == 0
+    tool_executor.assert_awaited_once_with("stock", {"symbol": "BBCA"})
     tool_messages = [m for m in updated if m.get("role") == "tool" and m.get("tool_call_id") == "call_stock"]
     assert tool_messages
-    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" in str(tool_messages[-1].get("content") or "")
+    assert "TOOL_CALL_BLOCKED_INTENT_MISMATCH" not in str(tool_messages[-1].get("content") or "")
 
 @pytest.mark.asyncio
 async def test_process_tool_calls_allows_image_tool_for_image_intent(tmp_path):

@@ -72,6 +72,9 @@ from kabot.agent.loop_core.tool_enforcement_parts.history_routing import (
 from kabot.agent.loop_core.message_runtime_parts.user_profile import (
     infer_user_profile_updates,
 )
+from kabot.agent.loop_core.execution_runtime_parts.intent import (
+    _extract_direct_fetch_url_candidate,
+)
 from kabot.agent.tools.stock import (
     extract_crypto_ids,
     extract_stock_name_candidates,
@@ -343,6 +346,80 @@ def _set_last_delivery_path(loop: Any, msg: InboundMessage, metadata: dict[str, 
     return normalized
 
 
+def _looks_like_absolute_or_rooted_path(path_value: str) -> bool:
+    raw = str(path_value or "").strip()
+    if not raw:
+        return False
+    return bool(raw.startswith(("~", "/")) or re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\)", raw))
+
+
+def _resolve_read_file_execution_path(
+    loop: Any,
+    msg: InboundMessage,
+    metadata: dict[str, Any],
+    path_value: str,
+    *,
+    last_tool_context: dict[str, Any] | None = None,
+) -> tuple[str, Path]:
+    raw = str(path_value or "").strip()
+    if not raw:
+        return raw, _resolve_delivery_path(loop, raw)
+
+    if _looks_like_absolute_or_rooted_path(raw):
+        if re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\)", raw):
+            return raw, Path(raw).expanduser()
+        resolved = _resolve_delivery_path(loop, raw)
+        return str(resolved), resolved
+
+    candidate = Path(raw).expanduser()
+    candidate_roots: list[Path] = []
+    seen_roots: set[str] = set()
+
+    def _append_root(path_hint: str | None) -> None:
+        hint = str(path_hint or "").strip()
+        if not hint:
+            return
+        try:
+            resolved_hint = Path(hint).expanduser().resolve()
+        except Exception:
+            return
+        if not resolved_hint.exists():
+            return
+        if resolved_hint.is_file():
+            resolved_hint = resolved_hint.parent
+        if not resolved_hint.is_dir():
+            return
+        key = str(resolved_hint)
+        if key in seen_roots:
+            return
+        seen_roots.add(key)
+        candidate_roots.append(resolved_hint)
+
+    _append_root(_get_working_directory(loop, msg, metadata))
+    _append_root(_get_last_navigated_path(loop, msg, metadata))
+    if isinstance(last_tool_context, dict):
+        _append_root(str(last_tool_context.get("path") or "").strip())
+
+    first_candidate: Path | None = None
+    for root in candidate_roots:
+        try:
+            resolved_candidate = (root / candidate).resolve()
+        except Exception:
+            continue
+        if first_candidate is None:
+            first_candidate = resolved_candidate
+        if resolved_candidate.exists():
+            return str(resolved_candidate), resolved_candidate
+
+    if first_candidate is not None:
+        return str(first_candidate), first_candidate
+
+    resolved = _resolve_delivery_path(loop, raw)
+    if resolved.exists():
+        return str(resolved), resolved
+    return raw, resolved
+
+
 async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: InboundMessage) -> str | None:
     """Deterministic fallback when model skips required tools repeatedly."""
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
@@ -423,6 +500,16 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         )
         return str(result)
 
+    if required_tool == "web_fetch":
+        url = _extract_direct_fetch_url_candidate(source_text)
+        if not url:
+            return i18n_t("web_fetch.validation_error", source_text, error="missing URL")
+        result = await _exec_tool(
+            "web_fetch",
+            {"url": url, "extract_mode": "markdown", "context_text": source_text},
+        )
+        return str(result)
+
     if required_tool == "list_dir":
         last_tool_context = metadata.get("last_tool_context") if isinstance(metadata.get("last_tool_context"), dict) else {}
         path = _extract_list_dir_path(source_text, last_tool_context=last_tool_context)
@@ -455,20 +542,26 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         return str(result)
 
     if required_tool == "read_file":
+        last_tool_context = (
+            metadata.get("last_tool_context")
+            if isinstance(metadata.get("last_tool_context"), dict)
+            else {}
+        )
         path = _extract_read_file_path(source_text)
         if not path:
             path = str(metadata.get("file_analysis_path") or "").strip()
         if not path:
-            last_tool_context = (
-                metadata.get("last_tool_context")
-                if isinstance(metadata.get("last_tool_context"), dict)
-                else {}
-            )
             path = str(last_tool_context.get("path") or "").strip()
         if not path:
             return i18n_t("filesystem.need_path", source_text)
 
-        resolved_path = _resolve_delivery_path(loop, path)
+        execution_path, resolved_path = _resolve_read_file_execution_path(
+            loop,
+            msg,
+            metadata,
+            path,
+            last_tool_context=last_tool_context,
+        )
         if resolved_path.exists() and resolved_path.is_dir() and _tool_name_available(loop, "list_dir"):
             payload: dict[str, Any] = {"path": str(resolved_path)}
             limit = _extract_list_dir_limit(source_text)
@@ -479,7 +572,10 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             result = await _exec_tool("list_dir", payload)
             return str(result)
 
-        result = await _exec_tool("read_file", {"path": path})
+        if resolved_path.exists() and resolved_path.is_file() and isinstance(metadata, dict):
+            _set_last_navigated_path(loop, msg, metadata, str(resolved_path.parent))
+
+        result = await _exec_tool("read_file", {"path": execution_path})
         return str(result)
 
     if required_tool == "write_file":

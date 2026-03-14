@@ -306,19 +306,46 @@ class BaseMixin:
     def _read_only_notice_html(subject: str) -> str:
         label = html.escape(str(subject or "Actions"))
         return (
-            "<div class='muted' style='margin-top:8px;'>"
+            "<div class='kb-readonly-note'>"
             f"Read-only token detected. {label} require "
             "<span class='mono'>operator.write</span>."
             "</div>"
         )
 
     @staticmethod
+    def _panel_intro_html(
+        title: str,
+        description: str,
+        *,
+        eyebrow: str = "",
+        actions_html: str = "",
+    ) -> str:
+        eyebrow_html = ""
+        if str(eyebrow or "").strip():
+            eyebrow_html = (
+                f"<div class='kb-panel-eyebrow'>{html.escape(str(eyebrow).strip())}</div>"
+            )
+        actions_block = (
+            f"<div class='kb-panel-actions'>{actions_html}</div>" if actions_html else ""
+        )
+        return (
+            "<div class='kb-panel-head'>"
+            "<div class='kb-panel-head__meta'>"
+            f"{eyebrow_html}"
+            f"<h2 class='kb-panel-title'>{html.escape(str(title or '').strip())}</h2>"
+            f"<div class='kb-panel-desc'>{html.escape(str(description or '').strip())}</div>"
+            "</div>"
+            f"{actions_block}"
+            "</div>"
+        )
+
+    @staticmethod
     def _result_message_html(result: dict[str, Any] | None, status_code: int, element_id: str) -> str:
         if result is None:
-            return f"<div id='{html.escape(element_id)}' style='font-family:ui-monospace,monospace;color:var(--muted);font-size:12px;margin-top:8px;'></div>"
+            return f"<div id='{html.escape(element_id)}' class='kb-result-slot'></div>"
         ok = status_code == 200
-        color = "#10b981" if ok else "#ef4444"
         title = "Success" if ok else "Action failed"
+        result_cls = "kb-result--ok" if ok else "kb-result--err"
         summary = ""
         if isinstance(result.get("message"), str) and str(result.get("message")).strip():
             summary = str(result.get("message")).strip()
@@ -329,13 +356,13 @@ class BaseMixin:
             summary = "Action completed." if ok else str(result.get("error") or result.get("message") or "Request failed.")
         payload = html.escape(json.dumps(result, ensure_ascii=False, indent=2))
         return (
-            f"<div id='{html.escape(element_id)}' style='font-family:ui-monospace,monospace;color:var(--muted);font-size:12px;margin-top:8px;'>"
-            f"<div style='border:1px solid {color};border-radius:10px;padding:10px 12px;background:rgba(0,0,0,.08);'>"
-            f"<div style='color:{color};font-weight:700;margin-bottom:4px;'>{html.escape(title)}</div>"
-            f"<div style='color:var(--text);font-family:inherit;font-size:12px;'>{html.escape(summary)}</div>"
-            f"<details style='margin-top:8px;'>"
-            "<summary style='cursor:pointer;color:var(--muted);font-size:11px;'>Details</summary>"
-            f"<pre class='mono' style='margin-top:8px;font-size:11px;max-height:180px;overflow:auto;'>{payload}</pre>"
+            f"<div id='{html.escape(element_id)}' class='kb-result-slot'>"
+            f"<div class='kb-result {result_cls}'>"
+            f"<div class='kb-result__title'>{html.escape(title)}</div>"
+            f"<div class='kb-result__summary'>{html.escape(summary)}</div>"
+            f"<details class='kb-result__details'>"
+            "<summary>Details</summary>"
+            f"<pre class='mono kb-result__payload'>{payload}</pre>"
             "</details>"
             "</div>"
             "</div>"
@@ -380,8 +407,7 @@ class BaseMixin:
         if callable(self.control_handler) and not self._request_has_scope(request, "operator.write"):
             access_note = self._read_only_notice_html("Session actions")
         return (
-            "<h2>Sessions</h2>"
-            "<div class='muted'>Recent session activity from runtime state.</div>"
+            f"{self._panel_intro_html('Sessions', 'Recent session activity from runtime state.', eyebrow='Session State')}"
             "<table><tr><th>Session Key</th><th>Updated</th><th>Actions</th></tr>"
             f"{''.join(rows)}"
             "</table>"
@@ -437,8 +463,7 @@ class BaseMixin:
         if callable(self.control_handler) and not self._request_has_scope(request, "operator.write"):
             access_note = self._read_only_notice_html("Node actions")
         return (
-            "<h2>Nodes</h2>"
-            "<div class='muted'>Runtime components and channel nodes.</div>"
+            f"{self._panel_intro_html('Nodes', 'Runtime components and channel nodes.', eyebrow='Topology')}"
             "<table><tr><th>ID</th><th>Kind</th><th>State</th><th>Actions</th></tr>"
             f"{''.join(rows)}"
             "</table>"

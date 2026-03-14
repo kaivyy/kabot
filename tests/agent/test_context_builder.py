@@ -171,6 +171,9 @@ def test_context_builder_exposes_summary_first_skill_guidance_for_auto_selected_
     )
 
     assert "## Skills (mandatory)" in prompt
+    assert "references/" in prompt
+    assert "scripts/" in prompt
+    assert "If `web_search` is unavailable" in prompt
     assert "<available_skills>" in prompt
     assert "1password" in prompt
     assert "Use 1Password vaults to fetch and manage credentials." not in prompt
@@ -216,6 +219,32 @@ def test_context_builder_loads_forced_skill_names_even_without_auto_match(tmp_pa
     assert "Forced weather skill context loaded." in prompt
     assert "### Skill: weather" not in prompt
     assert "# Requested Skills" in prompt
+
+
+def test_context_builder_keeps_external_requested_skills_summary_first_when_requested(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    builder.skills.match_skills = lambda _msg, _profile: []  # type: ignore[assignment]
+    builder.skills.load_skills_for_context = lambda skills: (
+        "Forced weather skill context loaded." if skills == ["weather"] else ""
+    )  # type: ignore[assignment]
+    builder.skills.build_skills_summary_for_names = (  # type: ignore[assignment]
+        lambda skills: "<skills><skill><name>weather</name></skill></skills>"
+        if skills == ["weather"]
+        else ""
+    )
+
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="prediksi 3-6 jam ke depan",
+        skill_names=["weather"],
+        budget_hints={"summary_only_requested_skills": True},
+    )
+
+    assert "Forced weather skill context loaded." not in prompt
+    assert "# Requested Skills" not in prompt
+    assert "## Skills (mandatory)" in prompt
+    assert "<available_skills>" in prompt
+    assert "<skill><name>weather</name></skill>" in prompt
 
 
 def test_context_builder_includes_skills_summary_for_catalog_question(tmp_path: Path):

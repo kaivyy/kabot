@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from kabot.agent.cron_fallback_nlp import required_tool_for_query
+from kabot.agent.skills_matching import looks_like_explicit_skill_use_request
 from kabot.agent.tools.stock import (
     extract_crypto_ids,
     extract_stock_symbols,
@@ -113,6 +114,22 @@ def _normalize_text(text: str) -> str:
     return " ".join(str(text or "").strip().lower().split())
 
 
+_LIVE_FINANCE_DOMAIN_RE = re.compile(
+    r"(?i)\b("
+    r"stock|stocks|saham|ticker|tickers|quote|quotes|market|markets|"
+    r"harga|price|crypto|bitcoin|btc|ethereum|eth|coin|coins|token|tokens|"
+    r"forex|fx|kurs|rate|exchange(?:\s+rate)?|usd|idr|rupiah|ihsg|idx|jkse|nasdaq|dow|nikkei"
+    r")\b"
+)
+_LIVE_FINANCE_VALUE_RE = re.compile(
+    r"(?i)\b("
+    r"berapa|how much|what(?:'s| is)|harga(?:nya)?|price|quote|nilai|value|"
+    r"kurs|rate|last|latest|current|now|today|hari ini|sekarang|saat ini|"
+    r"terbaru|terkini|real[\s-]?time|live|open|close|closing|high|low"
+    r")\b"
+)
+
+
 def _is_low_information_turn(text: str, *, max_tokens: int, max_chars: int) -> bool:
     raw_text = str(text or "")
     normalized = _normalize_text(raw_text)
@@ -203,6 +220,39 @@ def _extract_primary_intent_text(text: str) -> str:
     return raw
 
 
+def _looks_like_live_finance_lookup(text: str) -> bool:
+    focused = _extract_primary_intent_text(text)
+    normalized = _normalize_text(focused)
+    if not normalized:
+        return False
+    if _PERSONAL_HR_CALC_RE.search(normalized):
+        return False
+    if _MEMORY_COMMIT_INTENT_RE.search(normalized):
+        return False
+
+    has_stock_symbol = False
+    has_crypto_symbol = False
+    try:
+        has_stock_symbol = bool(
+            _extract_structural_stock_symbols(focused)
+            or _has_explicit_stock_symbol_payload(focused)
+            or extract_stock_symbols(focused)
+        )
+    except Exception:
+        has_stock_symbol = False
+    try:
+        has_crypto_symbol = bool(extract_crypto_ids(focused))
+    except Exception:
+        has_crypto_symbol = False
+
+    has_finance_domain = bool(
+        has_stock_symbol or has_crypto_symbol or _LIVE_FINANCE_DOMAIN_RE.search(normalized)
+    )
+    if not has_finance_domain:
+        return False
+    return bool(_LIVE_FINANCE_VALUE_RE.search(normalized))
+
+
 def _looks_like_live_research_query(text: str) -> bool:
     focused = _extract_primary_intent_text(text)
     normalized = _normalize_text(focused)
@@ -212,6 +262,8 @@ def _looks_like_live_research_query(text: str) -> bool:
         return False
     if _MEMORY_COMMIT_INTENT_RE.search(normalized):
         return False
+    if _looks_like_live_finance_lookup(focused):
+        return True
 
     live_marker_patterns = (
         r"\blatest\b",
@@ -249,8 +301,26 @@ def _should_defer_live_research_latch_to_skill(
     text: str,
     *,
     profile: str = "GENERAL",
+    message_metadata: dict[str, Any] | None = None,
+    session_metadata: dict[str, Any] | None = None,
 ) -> bool:
-    """Return True when a matched external skill should outrank web-search forcing."""
+    """Return True when an active or explicitly requested external skill should outrank live-search forcing."""
+    active_metadata = getattr(loop, "_active_message_metadata", None)
+    current_turn_skill_lane = any(
+        isinstance(metadata, dict) and metadata.get("external_skill_lane")
+        for metadata in (message_metadata, active_metadata)
+    )
+    if current_turn_skill_lane:
+        return True
+
+    prior_session_skill_lane = bool(
+        isinstance(session_metadata, dict) and session_metadata.get("external_skill_lane")
+    )
+
+    explicit_skill_request = looks_like_explicit_skill_use_request(text)
+    if not explicit_skill_request and not prior_session_skill_lane:
+        return False
+
     context_builder = getattr(loop, "context", None)
     skills_loader = getattr(context_builder, "skills", None)
     matcher = getattr(skills_loader, "should_prefer_external_finance_skill", None)
@@ -319,12 +389,25 @@ _IMAGE_MARKER_RE = re.compile(
 _TTS_MARKER_RE = re.compile(
     r"(?i)\b(tts|text\s*to\s*speech|voice|suara|audio|narrat(?:e|ion)|bacakan|read\s+aloud|speak|ucapkan)\b"
 )
+_BROWSER_INTERACTION_MARKER_RE = re.compile(
+    r"(?i)\b("
+    r"browser|playwright|screenshot|screen\s*shot|capture|full\s*page|"
+    r"click|klik|tap|press|fill|type|input|selector|dom|snapshot|"
+    r"login|log\s*in|signin|sign\s*in|hover|scroll|form|"
+    r"interact(?:ive|ion)?|popup|modal"
+    r")\b"
+)
 _DIRECT_FETCH_VERB_RE = re.compile(
     r"(?i)\b(fetch|open|visit|read|scrape|crawl|ambil|buka|baca|ringkas|summari[sz]e|isi website|isi halaman|konten website|konten halaman)\b"
 )
 _DIRECT_FETCH_URL_RE = re.compile(r"(?i)\bhttps?://[^\s]+")
 _DIRECT_FETCH_DOMAIN_RE = re.compile(
     r"(?i)\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/[^\s]*)?\b"
+)
+_DIRECT_FETCH_SITE_RE = re.compile(r"(?i)\bsite:(?P<domain>[a-z0-9.-]+\.[a-z]{2,})\b")
+_WEB_RESULT_URL_RE = re.compile(r"(?i)\bhttps?://[^\s<>()\[\]\"']+")
+_WEB_SOURCE_SELECTION_LEAD_RE = re.compile(
+    r"(?i)\b(use|pakai|pake|gunakan|via|from|source|sumber|provider|coba|try)\b"
 )
 _NON_ACTION_MARKER_RE = re.compile(
     r"(?i)\b(stop|hentikan|berhenti|jangan|bukan|dont|don't|do not|cancel|batalkan|ga usah|gak usah|nggak usah|tidak usah|no need)\b"
@@ -333,6 +416,16 @@ _NON_ACTION_STOCK_TOPIC_RE = re.compile(
     r"(?i)\b(stock|saham|ticker|market|harga|price|idx|ihsg)\b"
 )
 _SKILL_CREATION_GUARDED_TOOLS = {"write_file", "edit_file", "exec"}
+_WEB_SOURCE_ALIAS_DOMAINS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("yahoo finance", ("finance.yahoo.com",)),
+    ("google finance", ("google.com",)),
+    ("stockbit", ("stockbit.com",)),
+    ("rti", ("rti.co.id",)),
+    ("idx", ("idx.co.id",)),
+    ("indonesia stock exchange", ("idx.co.id",)),
+    ("tradingview", ("tradingview.com",)),
+    ("investing", ("investing.com",)),
+)
 
 
 def _extract_direct_fetch_url_candidate(text: str) -> str | None:
@@ -361,6 +454,166 @@ def _looks_like_direct_page_fetch_request(text: str) -> bool:
     if not _extract_direct_fetch_url_candidate(raw):
         return False
     return bool(_DIRECT_FETCH_VERB_RE.search(raw))
+
+
+def _normalize_web_domain_candidate(value: str) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    if raw.startswith("site:"):
+        raw = raw[5:].strip()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return ""
+    candidate = str(parsed.netloc or parsed.path or "").strip().lower()
+    if not candidate:
+        return ""
+    if "@" in candidate:
+        candidate = candidate.split("@", 1)[-1]
+    if ":" in candidate:
+        candidate = candidate.split(":", 1)[0]
+    if candidate.startswith("www."):
+        candidate = candidate[4:]
+    return candidate.lstrip(".")
+
+
+def _extract_preferred_web_domains(text: str, *, include_aliases: bool = True) -> list[str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+
+    explicit_url = _extract_direct_fetch_url_candidate(raw)
+    if explicit_url:
+        explicit_domain = _normalize_web_domain_candidate(explicit_url)
+        if explicit_domain and explicit_domain not in seen:
+            seen.add(explicit_domain)
+            result.append(explicit_domain)
+
+    for match in _DIRECT_FETCH_SITE_RE.finditer(raw):
+        candidate = _normalize_web_domain_candidate(match.group("domain"))
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            result.append(candidate)
+
+    normalized = _normalize_text(raw)
+    if include_aliases and normalized:
+        for alias, domains in _WEB_SOURCE_ALIAS_DOMAINS:
+            if alias not in normalized:
+                continue
+            for domain in domains:
+                candidate = _normalize_web_domain_candidate(domain)
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    result.append(candidate)
+
+    return result
+
+
+def _looks_like_web_source_selection_followup(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if raw.startswith("/"):
+        return False
+    explicit_url = _extract_direct_fetch_url_candidate(raw)
+    if (_PATHLIKE_QUERY_RE.search(raw) or _FILELIKE_QUERY_RE.search(raw)) and not explicit_url:
+        return False
+    preferred_domains = _extract_preferred_web_domains(raw)
+    if not preferred_domains:
+        return False
+    if explicit_url:
+        return True
+    if _WEB_SOURCE_SELECTION_LEAD_RE.search(raw):
+        return True
+    return _is_low_information_turn(raw, max_tokens=8, max_chars=96)
+
+
+def _looks_like_browser_interaction_request(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if _looks_like_direct_page_fetch_request(raw):
+        return False
+    return bool(_BROWSER_INTERACTION_MARKER_RE.search(raw))
+
+
+def _build_source_constrained_web_search_query(base_query: str, source_text: str) -> str | None:
+    preferred_domains = _extract_preferred_web_domains(source_text)
+    if not preferred_domains:
+        return None
+
+    base = " ".join(str(_extract_primary_intent_text(base_query) or base_query or "").split()).strip()
+    if not base:
+        return None
+
+    domain = preferred_domains[0]
+    if f"site:{domain}" in _normalize_text(base):
+        return base
+    return f"{base} site:{domain}".strip()
+
+
+def _extract_web_search_result_urls(result_text: str) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for match in _WEB_RESULT_URL_RE.finditer(str(result_text or "")):
+        candidate = str(match.group(0) or "").rstrip(").,!?]>}")
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        urls.append(candidate)
+    return urls
+
+
+def _select_web_fetch_url_from_search_result(query_text: str, result_text: str) -> str | None:
+    urls = _extract_web_search_result_urls(result_text)
+    if not urls:
+        return None
+
+    preferred_domains = _extract_preferred_web_domains(query_text, include_aliases=False)
+    if preferred_domains:
+        normalized_urls = [
+            (_normalize_web_domain_candidate(url), url)
+            for url in urls
+        ]
+        for preferred_domain in preferred_domains:
+            normalized_preferred = _normalize_web_domain_candidate(preferred_domain)
+            if not normalized_preferred:
+                continue
+            for candidate_domain, candidate_url in normalized_urls:
+                if not candidate_domain:
+                    continue
+                if (
+                    candidate_domain == normalized_preferred
+                    or candidate_domain.endswith(f".{normalized_preferred}")
+                    or normalized_preferred.endswith(f".{candidate_domain}")
+                ):
+                    return candidate_url
+        return None
+
+    site_match = _DIRECT_FETCH_SITE_RE.search(str(query_text or ""))
+    if site_match:
+        preferred_domain = _normalize_web_domain_candidate(site_match.group("domain"))
+        if preferred_domain:
+            for candidate_url in urls:
+                candidate_domain = _normalize_web_domain_candidate(candidate_url)
+                if (
+                    candidate_domain == preferred_domain
+                    or candidate_domain.endswith(f".{preferred_domain}")
+                ):
+                    return candidate_url
+
+    if len(urls) == 1:
+        return urls[0]
+    return None
 
 
 def _tools_has(loop: Any, tool_name: str, *, default: bool = True) -> bool:
@@ -550,6 +803,23 @@ def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> boo
 
 def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name: str) -> str | None:
     normalized_tool = str(tool_name or "").strip().lower()
+    query_text = _resolve_query_text_from_message(msg)
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    session_meta = _session_metadata(loop, msg) if hasattr(loop, "sessions") else None
+
+    if normalized_tool == "browser":
+        if _query_has_explicit_payload_for_tool("web_fetch", query_text):
+            return "expected 'web_fetch'"
+        if (
+            _looks_like_live_research_query(query_text)
+            and not _looks_like_browser_interaction_request(query_text)
+            and (_tools_has(loop, "web_search") or _tools_has(loop, "web_fetch"))
+        ):
+            return "prefer web_search/web_fetch for headless factual lookup"
+        if _looks_like_web_source_selection_followup(query_text):
+            return "prefer web_search then web_fetch for source follow-up"
+        return None
+
     is_guarded = (
         normalized_tool in _GUARDED_TOOL_CALLS
         or _is_image_like_tool(normalized_tool)
@@ -557,10 +827,6 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
     )
     if not is_guarded:
         return None
-
-    query_text = _resolve_query_text_from_message(msg)
-    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
-    session_meta = _session_metadata(loop, msg) if hasattr(loop, "sessions") else None
 
     if normalized_tool == "web_search" and _looks_like_direct_page_fetch_request(query_text):
         return None
@@ -624,16 +890,13 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
         return None
 
     if normalized_tool in {"stock", "stock_analysis", "crypto"}:
-        context_builder = getattr(loop, "context", None)
-        skills_loader = getattr(context_builder, "skills", None)
-        external_finance = getattr(skills_loader, "has_external_finance_skill_available", None)
-        try:
-            if callable(external_finance) and external_finance():
-                return "prefer external finance skill over legacy finance tool"
-        except Exception:
-            pass
-        if _should_defer_live_research_latch_to_skill(loop, query_text, profile="GENERAL"):
-            return "prefer matched external skill over legacy finance tool"
+        if _should_defer_live_research_latch_to_skill(
+            loop,
+            query_text,
+            profile="GENERAL",
+            message_metadata=metadata if isinstance(metadata, dict) else None,
+        ):
+            return "prefer active or explicit external skill over legacy finance tool"
 
     expected_tool = _resolve_expected_tool_for_query(loop, msg)
 

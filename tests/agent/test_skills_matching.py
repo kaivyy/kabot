@@ -501,7 +501,12 @@ def test_list_skills_invalidates_cache_when_runtime_env_changes(tmp_path, monkey
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
-    (bin_dir / "jq.cmd").write_text("@echo off\necho {}\n", encoding="ascii")
+    jq_name = "jq.cmd" if os.name == "nt" else "jq"
+    jq_path = bin_dir / jq_name
+    jq_contents = "@echo off\necho {}\n" if os.name == "nt" else "#!/bin/sh\necho '{}'\n"
+    jq_path.write_text(jq_contents, encoding="ascii")
+    if os.name != "nt":
+        jq_path.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{empty_bin}")
 
     second = loader.list_skills(filter_unavailable=False)
@@ -540,7 +545,7 @@ def test_legacy_external_metadata_is_accepted_for_always_skill(tmp_path, monkeyp
     assert "binance-pro" in loader.get_always_skills()
 
 
-def test_external_finance_skill_is_still_preferred_even_when_requirements_missing(tmp_path, monkeypatch):
+def test_external_finance_skill_is_still_preferred_when_query_has_grounded_overlap_even_if_requirements_missing(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
@@ -569,7 +574,13 @@ def test_external_finance_skill_is_still_preferred_even_when_requirements_missin
 
     loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
 
-    assert loader.should_prefer_external_finance_skill("cek harga btc sekarang", profile="GENERAL") is True
+    assert (
+        loader.should_prefer_external_finance_skill(
+            "cek harga btc di binance sekarang",
+            profile="GENERAL",
+        )
+        is True
+    )
 
 
 def test_crypto_only_finance_skill_does_not_match_stock_query(tmp_path, monkeypatch):
@@ -613,7 +624,48 @@ def test_crypto_only_finance_skill_does_not_match_stock_query(tmp_path, monkeypa
     )
 
 
-def test_generic_finance_skill_can_match_stock_query(tmp_path, monkeypatch):
+def test_generic_finance_skill_does_not_auto_match_crosslingual_stock_query_without_grounded_overlap(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    skill_dir = workspace / "skills" / "market-intel"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: market-intel",
+                'description: analyze stocks, crypto, market quotes, watchlists, and tickers"',
+                "---",
+                "",
+                "Use for broad market research tasks.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    assert "market-intel" not in loader.match_skills(
+        "cek harga saham bca bri mandiri adaro sekarang",
+        profile="GENERAL",
+    )
+    assert (
+        loader.should_prefer_external_finance_skill(
+            "cek harga saham bca bri mandiri adaro sekarang",
+            profile="GENERAL",
+        )
+        is False
+    )
+
+
+def test_generic_finance_skill_can_match_when_query_shares_grounded_market_terms(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
@@ -642,12 +694,12 @@ def test_generic_finance_skill_can_match_stock_query(tmp_path, monkeypatch):
     loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
 
     assert "market-intel" in loader.match_skills(
-        "cek harga saham bca bri mandiri adaro sekarang",
+        "analyze apple stock market quotes and watchlists",
         profile="GENERAL",
     )
     assert (
         loader.should_prefer_external_finance_skill(
-            "cek harga saham bca bri mandiri adaro sekarang",
+            "analyze apple stock market quotes and watchlists",
             profile="GENERAL",
         )
         is True

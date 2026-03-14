@@ -989,7 +989,7 @@ async def test_process_message_substantive_new_finance_request_breaks_stale_assi
 
 
 @pytest.mark.asyncio
-async def test_process_message_single_eligible_external_skill_becomes_forced_execution_lane():
+async def test_process_message_explicit_external_skill_request_becomes_forced_execution_lane():
     context_builder = MagicMock()
     context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
     context_builder.skills = SimpleNamespace(
@@ -1044,7 +1044,7 @@ async def test_process_message_single_eligible_external_skill_becomes_forced_exe
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="cek saldo futures binance sekarang",
+        content="pakai skill binance-pro untuk cek saldo futures binance sekarang",
     )
     await process_message(loop, msg)
 
@@ -1054,12 +1054,16 @@ async def test_process_message_single_eligible_external_skill_becomes_forced_exe
     assert msg.metadata.get("external_skill_lane") is True
     kwargs = context_builder.build_messages.call_args.kwargs
     assert kwargs["skill_names"] == ["binance-pro"]
+    assert kwargs["budget_hints"]["summary_only_requested_skills"] is True
     assert "[External Skill Note]" in kwargs["current_message"]
     assert "binance-pro" in kwargs["current_message"]
+    assert "references/" in kwargs["current_message"]
+    assert "scripts/" in kwargs["current_message"]
+    assert "If `web_search` is unavailable" in kwargs["current_message"]
 
 
 @pytest.mark.asyncio
-async def test_process_message_unavailable_external_skill_still_forces_skill_setup_lane():
+async def test_process_message_explicit_unavailable_external_skill_still_forces_skill_setup_lane(monkeypatch):
     workspace = Path(tempfile.mkdtemp())
     skill_dir = workspace / "skills" / "binance-pro"
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -1077,6 +1081,7 @@ async def test_process_message_unavailable_external_skill_still_forces_skill_set
         ),
         encoding="utf-8",
     )
+    monkeypatch.setenv("PATH", str(workspace / "empty-bin"))
 
     context_builder = MagicMock()
     context_builder.skills = SkillsLoader(workspace=workspace, builtin_skills_dir=workspace / "builtin")
@@ -1123,7 +1128,7 @@ async def test_process_message_unavailable_external_skill_still_forces_skill_set
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="cek saldo futures binance sekarang",
+        content="pakai skill binance-pro untuk cek saldo futures binance sekarang",
     )
     await process_message(loop, msg)
 
@@ -3138,6 +3143,7 @@ async def test_process_message_records_route_decision_snapshot_metadata():
         "route_profile": "GENERAL",
         "route_complex": True,
         "turn_category": "action",
+        "grounding_mode": "none",
         "continuity_source": "parser",
         "required_tool": "weather",
         "required_tool_query": "cek suhu cilacap sekarang",
@@ -3259,3 +3265,61 @@ def test_finalize_turn_metadata_does_not_reexport_last_navigated_path_into_activ
     _finalize_turn_metadata(state)
 
     assert "last_navigated_path" not in msg.metadata
+
+
+def test_finalize_turn_metadata_persists_external_skill_lane_into_session_metadata():
+    session = SimpleNamespace(
+        metadata={
+            "working_directory": "/tmp/workspace",
+        }
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="cek harga bbca sekarang",
+        metadata={},
+    )
+    state = SimpleNamespace(
+        session=session,
+        msg=msg,
+        effective_content="cek harga bbca sekarang",
+        decision=SimpleNamespace(profile="GENERAL", is_complex=True),
+        continuity_source="external_skill_followup",
+        required_tool="",
+        required_tool_query="",
+        is_short_confirmation=False,
+        is_contextual_followup_request=True,
+        is_answer_reference_followup=False,
+        pending_followup_intent_kind="",
+        skill_creation_intent=False,
+        skill_install_intent=False,
+        conversation_history=[],
+        recent_answer_target="",
+        last_tool_execution=None,
+        relevant_memory_facts=[],
+        learned_execution_hints=[],
+        intent_source_for_followup="cek harga bbca sekarang",
+        committed_action_request_text="",
+        runtime_locale="en",
+        forced_skill_names=["yahoo-finance-stock"],
+        external_skill_lane=True,
+        last_tool_context=None,
+        explicit_file_analysis_note="",
+        file_analysis_path="",
+        mcp_context_note="",
+        semantic_hint=SimpleNamespace(kind="none"),
+        meta_skill_reference_turn=False,
+        loop=SimpleNamespace(),
+        skill_creation_stage="",
+        skill_creation_approved=False,
+        skill_workflow_kind="",
+        skill_creation_request_text="",
+    )
+
+    _finalize_turn_metadata(state)
+
+    assert msg.metadata["forced_skill_names"] == ["yahoo-finance-stock"]
+    assert msg.metadata["external_skill_lane"] is True
+    assert session.metadata["forced_skill_names"] == ["yahoo-finance-stock"]
+    assert session.metadata["external_skill_lane"] is True

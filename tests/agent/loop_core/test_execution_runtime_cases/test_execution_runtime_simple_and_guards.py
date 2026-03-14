@@ -282,6 +282,138 @@ async def test_run_agent_loop_action_request_skips_planning_when_tool_inference_
 
 
 @pytest.mark.asyncio
+async def test_run_agent_loop_grounded_project_inspection_retries_when_model_answers_without_filesystem_tools():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value=None)
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(True, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda _name: False)
+    loop.max_iterations = 2
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (LLMResponse(content="It looks like a modern TypeScript app."), None),
+            (LLMResponse(content="Still looks like a Node project."), None),
+        ]
+    )
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content},
+        ]
+    )
+
+    content = "periksa folder openclaw ini dan jelaskan aplikasi apa itu"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "suppress_required_tool_inference": True,
+            "requires_grounded_filesystem_inspection": True,
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert "grounded project inspection" in result.lower()
+    assert loop._call_llm_with_fallback.await_count == 2
+    retry_messages = loop._call_llm_with_fallback.await_args_list[1].args[0]
+    assert any(
+        "list_dir, read_file, find_files, or exec" in str(message.get("content") or "")
+        for message in retry_messages
+        if isinstance(message, dict)
+    )
+    loop._execute_required_tool_fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_grounded_project_inspection_warms_up_listing_and_representative_files(tmp_path):
+    project_dir = tmp_path / "openclaw"
+    project_dir.mkdir()
+    (project_dir / "README.md").write_text("# OpenClaw\nAgent runtime", encoding="utf-8")
+    (project_dir / "package.json").write_text('{"name":"openclaw","private":true}', encoding="utf-8")
+
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value=None)
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(True, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda name: name in {"list_dir", "read_file"})
+    loop._execute_tool = AsyncMock(
+        side_effect=[
+            "📁 src\n📄 README.md\n📄 package.json",
+            "# OpenClaw\nAgent runtime",
+            '{"name":"openclaw","private":true}',
+        ]
+    )
+    loop.max_iterations = 1
+    loop._call_llm_with_fallback = AsyncMock(
+        return_value=(LLMResponse(content="Ini aplikasi agent runtime."), None)
+    )
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content},
+        ]
+    )
+
+    content = "periksa folder openclaw ini dan jelaskan aplikasi apa itu"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "suppress_required_tool_inference": True,
+            "requires_grounded_filesystem_inspection": True,
+            "working_directory": str(project_dir),
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={"working_directory": str(project_dir)}),
+    )
+
+    assert result == "Ini aplikasi agent runtime."
+    assert loop._execute_tool.await_count == 3
+    first_call = loop._execute_tool.await_args_list[0]
+    assert first_call.args[0] == "list_dir"
+    assert first_call.args[1]["path"] == str(project_dir)
+    llm_messages = loop._call_llm_with_fallback.await_args.args[0]
+    warmup_message = str(llm_messages[-1].get("content") or "")
+    assert "[Grounded Inspection Warmup]" in warmup_message
+    assert "📄 README.md" in warmup_message
+    assert "[Representative File: README.md]" in warmup_message
+    assert "[Representative File: package.json]" in warmup_message
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_save_memory_direct_tool_gets_llm_summary_not_raw_tool_text():
     loop = _make_loop()
     loop._required_tool_for_query = lambda _text: "save_memory"
@@ -2344,3 +2476,23 @@ def test_tool_call_intent_mismatch_rejects_bare_send_when_only_active_last_deliv
     reason = _tool_call_intent_mismatch_reason(loop, msg, "message")
 
     assert reason == "low-information turn"
+
+
+def test_tool_call_intent_mismatch_blocks_browser_for_headless_live_lookup():
+    session = SimpleNamespace(metadata={})
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(has=lambda name: name in {"web_search", "web_fetch"}),
+        sessions=SimpleNamespace(get_or_create=lambda _key: session),
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        _session_key="telegram:chat-1",
+        content="cek harga saham bbca sekarang",
+        metadata={},
+    )
+
+    reason = _tool_call_intent_mismatch_reason(loop, msg, "browser")
+
+    assert reason == "prefer web_search/web_fetch for headless factual lookup"

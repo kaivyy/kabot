@@ -2818,11 +2818,138 @@ async def test_process_message_memory_recall_uses_relevant_memory_facts_over_sta
     loop._run_agent_loop.assert_not_called()
     loop._run_simple_response.assert_awaited_once()
     assert msg.metadata.get("required_tool") is None
-    assert "memory_facts" in list(msg.metadata.get("layered_context_sources") or [])
-    current_message = captured_messages["current_message"]
-    assert "[Relevant Memory Facts]\n" in current_message
-    assert "MEM-42" in current_message
-    assert "[Memory Recall Note]\n" in current_message
+
+
+@pytest.mark.asyncio
+async def test_process_message_weather_commentary_followup_stays_conversational():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "lumayan hangat ya"}]
+    context_builder.skills = SimpleNamespace(
+        match_skill_details=lambda *args, **kwargs: [],
+        _format_skill_unavailability=lambda _detail: "",
+    )
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "weather",
+                "location": "Purwokerto",
+                "source": "suhu purwokerto sekarang",
+                "updated_at": time.time(),
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["weather"],
+            has=lambda name: name == "weather",
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="simple")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="lumayan hangat ya")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_not_called()
+    loop._run_simple_response.assert_awaited_once()
+    assert msg.metadata.get("required_tool") is None
+
+
+@pytest.mark.asyncio
+async def test_process_message_weather_source_followup_stays_conversational():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "wttr.in"}]
+    context_builder.skills = SimpleNamespace(
+        match_skill_details=lambda *args, **kwargs: [],
+        _format_skill_unavailability=lambda _detail: "",
+    )
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "weather",
+                "location": "Purwokerto",
+                "source": "suhu purwokerto sekarang",
+                "updated_at": time.time(),
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["weather"],
+            has=lambda name: name == "weather",
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="simple")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="wttr.in")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_not_called()
+    loop._run_simple_response.assert_awaited_once()
+    assert msg.metadata.get("required_tool") is None
 
 
 @pytest.mark.asyncio

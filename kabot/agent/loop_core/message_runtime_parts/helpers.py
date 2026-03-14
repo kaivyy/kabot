@@ -81,11 +81,17 @@ from kabot.agent.loop_core.message_runtime_parts.followup import (  # noqa: E402
 from kabot.agent.loop_core.message_runtime_parts.user_profile import (  # noqa: E402,I001
     build_user_profile_memory_facts,
 )
+from kabot.agent.tools.stock import (  # noqa: E402,I001
+    extract_crypto_ids,
+    extract_stock_symbols,
+)
 
 __all__ = [
     "_KEEPALIVE_INITIAL_DELAY_SECONDS",
     "_KEEPALIVE_INTERVAL_SECONDS",
     "_build_temporal_context_note",
+    "_build_grounded_filesystem_inspection_note",
+    "_build_session_continuity_action_note",
     "_classify_assistant_followup_intent_kind",
     "_clear_pending_followup_intent",
     "_clear_pending_followup_tool",
@@ -422,6 +428,41 @@ def _looks_like_live_research_query(text: str) -> bool:
         return False
     if _PERSONAL_HR_CALC_RE.search(normalized):
         return False
+
+    has_stock_symbol = False
+    has_crypto_symbol = False
+    try:
+        has_stock_symbol = bool(extract_stock_symbols(focused))
+    except Exception:
+        has_stock_symbol = False
+    try:
+        has_crypto_symbol = bool(extract_crypto_ids(focused))
+    except Exception:
+        has_crypto_symbol = False
+    has_finance_domain = bool(
+        has_stock_symbol
+        or has_crypto_symbol
+        or re.search(
+            r"(?i)\b("
+            r"stock|stocks|saham|ticker|tickers|quote|quotes|market|markets|"
+            r"harga|price|crypto|bitcoin|btc|ethereum|eth|coin|coins|token|tokens|"
+            r"forex|fx|kurs|rate|exchange(?:\s+rate)?|usd|idr|rupiah|ihsg|idx|jkse|nasdaq|dow|nikkei"
+            r")\b",
+            normalized,
+        )
+    )
+    has_finance_value_request = bool(
+        re.search(
+            r"(?i)\b("
+            r"berapa|how much|what(?:'s| is)|harga(?:nya)?|price|quote|nilai|value|"
+            r"kurs|rate|last|latest|current|now|today|hari ini|sekarang|saat ini|"
+            r"terbaru|terkini|real[\s-]?time|live|open|close|closing|high|low"
+            r")\b",
+            normalized,
+        )
+    )
+    if has_finance_domain and has_finance_value_request:
+        return True
 
     # Time-sensitive or "latest" wording should always force live search.
     live_marker_patterns = (
@@ -794,7 +835,9 @@ from kabot.agent.loop_core.message_runtime_parts.context_notes import (
     _assistant_response_looks_like_skill_plan,
     _build_budget_hints,
     _build_explicit_file_analysis_note,
+    _build_grounded_filesystem_inspection_note,
     _build_filesystem_location_context_note,
+    _build_session_continuity_action_note,
     _build_temporal_context_note,
     _build_untrusted_context_payload,
     _clear_skill_creation_flow,
@@ -815,4 +858,3 @@ from kabot.agent.loop_core.message_runtime_parts.context_notes import (
     _should_store_followup_intent,
     _update_skill_creation_flow_after_response,
 )
-

@@ -110,6 +110,40 @@ def test_semantic_intent_keeps_weather_metric_interpretation_ai_driven():
     assert hint.required_tool is None
 
 
+def test_semantic_intent_keeps_weather_commentary_ai_driven():
+    hint = arbitrate_semantic_intent(
+        "suhu purwokerto lumayan hangat ya",
+        parser_tool="weather",
+        pending_followup_tool="weather",
+        pending_followup_source="suhu purwokerto sekarang berapa",
+        last_tool_context={
+            "tool": "weather",
+            "location": "Purwokerto",
+            "source": "suhu purwokerto sekarang berapa",
+        },
+    )
+
+    assert hint.kind == "weather_commentary"
+    assert hint.required_tool is None
+
+
+def test_semantic_intent_keeps_weather_source_followup_ai_driven():
+    hint = arbitrate_semantic_intent(
+        "wttr.in",
+        parser_tool=None,
+        pending_followup_tool="weather",
+        pending_followup_source="suhu purwokerto sekarang",
+        last_tool_context={
+            "tool": "weather",
+            "location": "Purwokerto",
+            "source": "suhu purwokerto sekarang",
+        },
+    )
+
+    assert hint.kind == "weather_source_followup"
+    assert hint.required_tool is None
+
+
 def test_semantic_intent_clears_weather_parser_for_quoted_hr_zone_request():
     hint = arbitrate_semantic_intent(
         """Iya, untuk laki-laki saat lari, HR (detak jantung) sering di atas 160 bpm itu belum tentu berbahaya.

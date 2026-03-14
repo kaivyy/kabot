@@ -41,19 +41,14 @@ class ControlMixin:
         action_btns = []
         for action_id, label, desc, icon in actions:
             action_btns.append(
-                f"<form style='display:inline;' hx-post='/dashboard/partials/control{token_suffix}' "
+                f"<form class='kb-control-form' hx-post='/dashboard/partials/control{token_suffix}' "
                 f"hx-target='#control-result' hx-swap='innerHTML'>"
                 f"<input type='hidden' name='action' value='{action_id}' />"
-                f"<button type='submit' style='display:flex;align-items:center;gap:8px;padding:10px 14px;"
-                f"border-radius:8px;font-size:12px;width:100%;text-align:left;background:var(--bg);"
-                f"border:1px solid var(--border);color:var(--text);cursor:pointer;transition:all .15s;'"
-                f" onmouseover=\"this.style.borderColor='var(--accent)';this.style.background='var(--accent-subtle)'\""
-                f" onmouseout=\"this.style.borderColor='var(--border)';this.style.background='var(--bg)'\""
-                f"{button_disabled}>"
-                f"<span style='font-size:16px;'>{icon}</span>"
-                f"<div style='flex:1;'>"
-                f"<div style='font-weight:600;'>{label}</div>"
-                f"<div style='font-size:10px;color:var(--muted);margin-top:1px;'>{desc}</div>"
+                f"<button type='submit' class='kb-control-tile'{button_disabled}>"
+                f"<span class='kb-control-tile__icon'>{icon}</span>"
+                f"<div class='kb-control-tile__body'>"
+                f"<div class='kb-control-tile__title'>{label}</div>"
+                f"<div class='kb-control-tile__desc'>{desc}</div>"
                 f"</div>"
                 f"</button></form>"
             )
@@ -61,27 +56,21 @@ class ControlMixin:
         read_only_note = ""
         if controls_enabled and not write_enabled:
             read_only_note = self._read_only_notice_html("Control actions")
+        status_badge_html = (
+            "<div class='kb-inline-status'>"
+            f"{status_dot}<span>{html.escape(status_label)}</span>"
+            "</div>"
+        )
 
         fragment = (
             "<div style='padding:18px;'>"
-            "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;'>"
-            "<div>"
-            "<h2 style='margin:0;font-size:15px;font-weight:600;'>Control Actions</h2>"
-            "<div style='font-size:11px;color:var(--muted);margin-top:2px;'>Execute runtime control commands.</div>"
-            "</div>"
-            f"<div style='display:flex;align-items:center;gap:6px;font-size:11px;'>"
-            f"{status_dot} <span style='font-weight:500;'>{status_label}</span></div>"
-            "</div>"
+            f"{self._panel_intro_html('Control Actions', 'Execute runtime control commands directly from the dashboard.', eyebrow='Operator Actions', actions_html=status_badge_html)}"
             f"{read_only_note}"
-
-            "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:16px;'>"
+            "<div class='kb-control-grid'>"
             f"{''.join(action_btns)}"
             "</div>"
-
-            "<div id='control-result' style='border:1px solid var(--border);border-radius:8px;padding:12px 14px;"
-            "background:var(--bg);min-height:40px;font-size:11px;font-family:ui-monospace,monospace;"
-            "color:var(--muted);overflow:auto;max-height:200px;'>"
-            "<span style='opacity:.5;'>Response will appear here...</span>"
+            "<div id='control-result' class='kb-control-result'>"
+            "<span class='kb-control-result__placeholder'>Response will appear here...</span>"
             "</div>"
             "</div>"
         )
@@ -144,9 +133,9 @@ class ControlMixin:
         message = html.escape(json.dumps(result, ensure_ascii=False))
         if status_code == 200:
             body = (
-                "<div style='color:var(--success);font-weight:500;'>"
+                "<div class='kb-control-result__success'>"
                 f"Success: Action completed. {message}</div>"
             )
         else:
-            body = f"<div style='color:var(--danger);font-weight:500;'>Error: {message}</div>"
+            body = f"<div class='kb-control-result__error'>Error: {message}</div>"
         return web.Response(text=body, content_type="text/html", status=status_code)

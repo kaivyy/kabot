@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -96,6 +97,162 @@ def _build_filesystem_location_context_note(loop: Any, session: Any, last_tool_c
         lines.append(f"Last navigated filesystem path: {last_path}")
     lines.append(
         "Understand the user's language and answer in that language unless they explicitly ask for a different language. If they ask where you are now, use the concrete path context above."
+    )
+    return "\n".join(lines)
+
+
+def _build_session_continuity_action_note(
+    loop: Any,
+    session: Any,
+    *,
+    last_tool_context: dict[str, Any] | None = None,
+    pending_followup_tool: str | None = None,
+    pending_followup_source: str = "",
+    recent_file_path: str = "",
+) -> str:
+    session_meta = getattr(session, "metadata", None)
+    if not isinstance(session_meta, dict):
+        session_meta = {}
+
+    workspace = getattr(loop, "workspace", None)
+    workspace_path = ""
+    if isinstance(workspace, Path):
+        workspace_path = str(workspace.expanduser().resolve())
+    elif isinstance(workspace, str) and str(workspace).strip():
+        try:
+            workspace_path = str(Path(workspace).expanduser().resolve())
+        except Exception:
+            workspace_path = str(workspace).strip()
+
+    working_directory = str(session_meta.get("working_directory") or "").strip()
+    delivery_route = session_meta.get("delivery_route")
+
+    continuity_fields = []
+    if working_directory:
+        continuity_fields.append(("Current working directory from session", working_directory))
+    if isinstance(delivery_route, dict) and delivery_route:
+        continuity_fields.append(
+            (
+                "Current delivery route from session",
+                json.dumps(delivery_route, ensure_ascii=False, sort_keys=True),
+            )
+        )
+    if isinstance(last_tool_context, dict):
+        last_tool_name = str(last_tool_context.get("tool") or "").strip()
+        if last_tool_name:
+            tool_bits = [f"tool={last_tool_name}"]
+            for key in ("path", "source", "location", "query"):
+                value = str(last_tool_context.get(key) or "").strip()
+                if value:
+                    tool_bits.append(f"{key}={value}")
+            continuity_fields.append(("Last grounded tool context", "; ".join(tool_bits)))
+    pending_tool_name = str(pending_followup_tool or "").strip()
+    if pending_tool_name:
+        pending_summary = f"tool={pending_tool_name}"
+        pending_source = str(pending_followup_source or "").strip()
+        if pending_source:
+            pending_summary += f"; source={pending_source}"
+        continuity_fields.append(("Pending follow-up tool", pending_summary))
+    recent_file = str(recent_file_path or "").strip()
+    if recent_file:
+        continuity_fields.append(("Recent grounded file path", recent_file))
+
+    if not continuity_fields:
+        return ""
+    if workspace_path:
+        continuity_fields.insert(0, ("Workspace root", workspace_path))
+
+    lines = ["[System Note: Session continuity context]"]
+    for label, value in continuity_fields:
+        lines.append(f"{label}: {value}")
+    lines.extend(
+        (
+            "Resolve short or follow-up task requests against the grounded session context above before asking the user to repeat paths, file names, folders, or destinations.",
+            "Do not rely on fixed language-specific keywords. Understand the user's actual language and intent naturally, including Japanese, Chinese, Thai, Indonesian, English, and mixed-language turns.",
+            "If the user is continuing an earlier file, folder, delivery, or tool workflow, stay on that workflow unless they clearly reset or change topic.",
+            "Answer in the user's language unless they explicitly ask for a different language.",
+        )
+    )
+    return "\n".join(lines)
+
+
+def _parent_pathlike(path: str) -> str:
+    raw = str(path or "").strip().rstrip("/\\")
+    if not raw:
+        return ""
+    last_sep = max(raw.rfind("/"), raw.rfind("\\"))
+    if last_sep <= 0:
+        return ""
+    return raw[:last_sep]
+
+
+def _build_grounded_filesystem_inspection_note(
+    loop: Any,
+    session: Any,
+    *,
+    last_tool_context: dict[str, Any] | None = None,
+    recent_file_path: str = "",
+) -> str:
+    session_meta = getattr(session, "metadata", None)
+    if not isinstance(session_meta, dict):
+        session_meta = {}
+
+    workspace = getattr(loop, "workspace", None)
+    workspace_path = ""
+    if isinstance(workspace, Path):
+        workspace_path = str(workspace.expanduser().resolve())
+    elif isinstance(workspace, str) and str(workspace).strip():
+        try:
+            workspace_path = str(Path(workspace).expanduser().resolve())
+        except Exception:
+            workspace_path = str(workspace).strip()
+
+    working_directory = str(session_meta.get("working_directory") or "").strip()
+    last_tool_name = ""
+    last_tool_path = ""
+    if isinstance(last_tool_context, dict):
+        last_tool_name = str(last_tool_context.get("tool") or "").strip()
+        last_tool_path = str(last_tool_context.get("path") or "").strip()
+    recent_file = str(recent_file_path or "").strip()
+
+    preferred_root = working_directory
+    if not preferred_root and last_tool_path:
+        if last_tool_name == "read_file" or re.search(r"\.[A-Za-z0-9]{1,12}$", last_tool_path):
+            preferred_root = _parent_pathlike(last_tool_path)
+        else:
+            preferred_root = last_tool_path
+    if not preferred_root and recent_file:
+        preferred_root = _parent_pathlike(recent_file)
+    if not preferred_root:
+        preferred_root = workspace_path
+
+    context_lines = []
+    if preferred_root:
+        context_lines.append(f"Preferred inspection root: {preferred_root}")
+    if workspace_path:
+        context_lines.append(f"Workspace root: {workspace_path}")
+    if working_directory and working_directory != preferred_root:
+        context_lines.append(f"Current working directory from session: {working_directory}")
+    if last_tool_name:
+        tool_summary = f"tool={last_tool_name}"
+        if last_tool_path:
+            tool_summary += f"; path={last_tool_path}"
+        context_lines.append(f"Last grounded tool context: {tool_summary}")
+    if recent_file:
+        context_lines.append(f"Recent grounded file path: {recent_file}")
+    if not context_lines:
+        return ""
+
+    lines = ["[System Note: Grounded filesystem inspection]"]
+    lines.extend(context_lines)
+    lines.extend(
+        (
+            "This turn requires real filesystem inspection before you explain what the local folder, repo, project, or app is.",
+            "Inspect actual evidence first. Start with list_dir, read_file, find_files, or exec on the grounded path above as needed.",
+            "After listing the structure, inspect representative files such as README.md, package.json, pyproject.toml, Dockerfile, mkdocs.yml, or other key entry/config files when they exist.",
+            "Do not answer with a generic technology guess or only restate filenames. Explain the project from the inspected evidence.",
+            "Answer in the user's language unless they explicitly ask for a different language.",
+        )
     )
     return "\n".join(lines)
 
@@ -633,6 +790,3 @@ async def _schedule_context_truncation_memory_fact(
         task.add_done_callback(pending_tasks.discard)
         return
     await _persist()
-
-
-

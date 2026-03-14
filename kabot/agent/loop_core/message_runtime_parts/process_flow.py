@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,7 +20,9 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _KEEPALIVE_INTERVAL_SECONDS,
     _build_budget_hints,
     _build_explicit_file_analysis_note,
+    _build_grounded_filesystem_inspection_note,
     _build_filesystem_location_context_note,
+    _build_session_continuity_action_note,
     _build_skill_creation_workflow_note,
     _build_temporal_context_note,
     _build_untrusted_context_payload,
@@ -79,11 +82,11 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _set_pending_followup_intent,
     _set_pending_followup_tool,
     _set_skill_creation_flow,
-     _should_persist_probe_history,
-     _should_store_followup_intent,
-     _tool_registry_has,
-     _update_skill_creation_flow_after_response,
- )
+    _should_persist_probe_history,
+    _should_store_followup_intent,
+    _tool_registry_has,
+    _update_skill_creation_flow_after_response,
+)
 from kabot.agent.loop_core.message_runtime_parts.mcp_context import (
     _extract_explicit_mcp_prompt_reference,
     _extract_explicit_mcp_resource_reference,
@@ -121,6 +124,10 @@ from kabot.agent.loop_core.message_runtime_parts.user_profile import (
     sync_user_profile_memory,
 )
 from kabot.agent.loop_core.execution_runtime_parts.intent import (
+    _build_source_constrained_web_search_query,
+    _extract_direct_fetch_url_candidate,
+    _looks_like_live_finance_lookup,
+    _looks_like_web_source_selection_followup,
     _should_defer_live_research_latch_to_skill,
 )
 from kabot.agent.loop_core.tool_enforcement import (
@@ -138,6 +145,13 @@ from kabot.agent.skills import (
     looks_like_skill_creation_request,
     looks_like_skill_install_request,
     normalize_skill_reference_name,
+)
+from kabot.agent.skills_matching import (
+    looks_like_explicit_skill_use_request,
+)
+from kabot.agent.tools.stock import (
+    extract_crypto_ids,
+    extract_stock_symbols,
 )
 from kabot.bus.events import InboundMessage, OutboundMessage
 from kabot.core.command_router import CommandContext
@@ -352,6 +366,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and bool(getattr(perf_cfg, "fast_first_response", True))
         and required_tool in direct_tools
     )
+    requires_live_data_honesty_note = False
     should_load_history_for_continuity = bool(
         not _looks_like_explicit_new_request(effective_content)
         and not _looks_like_closing_acknowledgement(effective_content)
@@ -443,6 +458,10 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         msg.metadata["route_complex"] = bool(decision.is_complex)
     except Exception:
         pass
+    route_turn_category = str(getattr(decision, "turn_category", "") or "").strip().lower()
+    route_grounding_mode = str(getattr(decision, "grounding_mode", "") or "").strip().lower()
+    if route_grounding_mode == "filesystem_inspection" and not bool(getattr(decision, "is_complex", False)):
+        decision.is_complex = True
 
     pending_followup_tool_payload = _get_pending_followup_tool(session, now_ts)
     pending_followup_tool = (
@@ -488,7 +507,10 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     is_short_greeting = _looks_like_short_greeting_smalltalk(effective_content)
     is_non_action_feedback = _looks_like_non_action_meta_feedback(effective_content)
     raw_is_explicit_new_request = _looks_like_explicit_new_request(effective_content)
-    is_side_effect_request = _looks_like_side_effect_request(effective_content)
+    is_side_effect_request = bool(
+        _looks_like_side_effect_request(effective_content)
+        or route_turn_category in {"action", "contextual_action"}
+    )
     is_weather_context_followup = bool(
         _looks_like_weather_context_followup(effective_content)
         and (
@@ -549,6 +571,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         }
         pending_followup_intent_text = recent_assistant_option_prompt
         pending_followup_intent_kind = "assistant_offer"
+    explicit_skill_use_request = looks_like_explicit_skill_use_request(effective_content)
     semantic_hint = arbitrate_semantic_intent(
         effective_content,
         parser_tool=required_tool,
@@ -557,8 +580,18 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         last_tool_context=last_tool_context,
         payload_checker=_query_has_tool_payload,
     )
-    meta_skill_reference_turn = looks_like_meta_skill_or_workflow_prompt(effective_content)
-    if semantic_hint.kind in {"advice_turn", "meta_feedback", "weather_metric_interpretation", "memory_recall"}:
+    meta_skill_reference_turn = (
+        looks_like_meta_skill_or_workflow_prompt(effective_content)
+        and not explicit_skill_use_request
+    )
+    if semantic_hint.kind in {
+        "advice_turn",
+        "meta_feedback",
+        "weather_metric_interpretation",
+        "weather_commentary",
+        "weather_source_followup",
+        "memory_recall",
+    }:
         required_tool = None
         required_tool_query = effective_content
         continuity_source = None
@@ -835,29 +868,85 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 and required_tool in direct_tools
             )
 
-    if (
+    pure_temporal_context_query = bool(
+        _looks_like_temporal_context_query(effective_content)
+        and not _looks_like_live_finance_lookup(effective_content)
+        and not re.search(
+            r"\b(latest|breaking|headline|headlines|news|update)\b",
+            _normalize_text(effective_content),
+        )
+    )
+    live_research_latch_active = bool(
         not required_tool
-        and str(decision.profile).upper() == "RESEARCH"
-        and _tool_registry_has(loop, "web_search")
         and _looks_like_live_research_query(effective_content)
+        and not pure_temporal_context_query
         and not _should_defer_live_research_latch_to_skill(
             loop,
             effective_content,
-            profile=str(decision.profile).upper() or "RESEARCH",
+            profile=str(decision.profile).upper() or "GENERAL",
+            session_metadata=session.metadata if isinstance(getattr(session, "metadata", None), dict) else None,
         )
         and not is_non_action_feedback
-    ):
-        required_tool = "web_search"
-        required_tool_query = effective_content
-        decision.is_complex = True
-        logger.info(
-            f"Research safety latch: '{_normalize_text(effective_content)[:120]}' -> required_tool=web_search"
-        )
-        fast_direct_context = bool(
-            perf_cfg
-            and bool(getattr(perf_cfg, "fast_first_response", True))
-            and required_tool in direct_tools
-        )
+    )
+    if live_research_latch_active:
+        if _tool_registry_has(loop, "web_search"):
+            required_tool = "web_search"
+            required_tool_query = effective_content
+            decision.is_complex = True
+            continuity_source = continuity_source or "action_request"
+            logger.info(
+                f"Live research safety latch: '{_normalize_text(effective_content)[:120]}' -> required_tool=web_search"
+            )
+            fast_direct_context = bool(
+                perf_cfg
+                and bool(getattr(perf_cfg, "fast_first_response", True))
+                and required_tool in direct_tools
+            )
+        elif _looks_like_live_finance_lookup(effective_content):
+            stock_symbols: list[str] = []
+            crypto_ids: list[str] = []
+            try:
+                stock_symbols = list(extract_stock_symbols(effective_content) or [])
+            except Exception:
+                stock_symbols = []
+            try:
+                crypto_ids = list(extract_crypto_ids(effective_content) or [])
+            except Exception:
+                crypto_ids = []
+
+            if stock_symbols and _tool_registry_has(loop, "stock"):
+                required_tool = "stock"
+                required_tool_query = effective_content
+                decision.is_complex = True
+                continuity_source = continuity_source or "action_request"
+                logger.info(
+                    f"Live finance fallback latch: '{_normalize_text(effective_content)[:120]}' -> required_tool=stock"
+                )
+                fast_direct_context = bool(
+                    perf_cfg
+                    and bool(getattr(perf_cfg, "fast_first_response", True))
+                    and required_tool in direct_tools
+                )
+            elif crypto_ids and _tool_registry_has(loop, "crypto"):
+                required_tool = "crypto"
+                required_tool_query = effective_content
+                decision.is_complex = True
+                continuity_source = continuity_source or "action_request"
+                logger.info(
+                    f"Live finance fallback latch: '{_normalize_text(effective_content)[:120]}' -> required_tool=crypto"
+                )
+                fast_direct_context = bool(
+                    perf_cfg
+                    and bool(getattr(perf_cfg, "fast_first_response", True))
+                    and required_tool in direct_tools
+                )
+            else:
+                decision.is_complex = True
+                requires_live_data_honesty_note = True
+                logger.info(
+                    "Live data honesty latch: "
+                    f"'{_normalize_text(effective_content)[:120]}' -> no live tool available"
+                )
 
     web_search_demotion_followup = bool(
         pending_followup_tool == "web_search"
@@ -896,6 +985,47 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             "Web-search follow-up demotion: "
             f"'{_normalize_text(effective_content)[:120]}' -> complex knowledge route"
         )
+
+    web_source_selection_followup = bool(
+        pending_followup_tool == "web_search"
+        and _looks_like_web_source_selection_followup(effective_content)
+        and not is_assistant_offer_context_followup
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not is_explicit_new_request
+        and (_tool_registry_has(loop, "web_search") or _tool_registry_has(loop, "web_fetch"))
+    )
+    if web_source_selection_followup:
+        grounded_search_source = str(
+            pending_followup_source
+            or (last_tool_context.get("source") if isinstance(last_tool_context, dict) else "")
+            or effective_content
+        ).strip()
+        preferred_fetch_url = _extract_direct_fetch_url_candidate(effective_content)
+        constrained_query = _build_source_constrained_web_search_query(
+            grounded_search_source,
+            effective_content,
+        )
+        if preferred_fetch_url and _tool_registry_has(loop, "web_fetch"):
+            required_tool = "web_fetch"
+            required_tool_query = preferred_fetch_url
+            continuity_source = "web_source_direct_fetch"
+        elif constrained_query and _tool_registry_has(loop, "web_search"):
+            required_tool = "web_search"
+            required_tool_query = constrained_query
+            continuity_source = "web_source_followup"
+        if required_tool:
+            decision.is_complex = True
+            logger.info(
+                "Web source follow-up: "
+                f"'{_normalize_text(effective_content)[:120]}' -> required_tool={required_tool}"
+            )
+            fast_direct_context = bool(
+                perf_cfg
+                and bool(getattr(perf_cfg, "fast_first_response", True))
+                and required_tool in direct_tools
+            )
 
     if (
         pending_followup_tool
@@ -1106,9 +1236,21 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             "clarify or restate the most recent answer more directly in the "
             "same factual style, in the user's language unless they explicitly ask for a different language."
         )
+    if requires_live_data_honesty_note:
+        llm_current_message = (
+            f"{llm_current_message}\n\n"
+            "[Live Data Constraint Note]\n"
+            "- The user is asking for fresh or current information.\n"
+            "- Do not guess a latest price, quote, date, headline, or live value from memory.\n"
+            "- If a live web or finance tool is unavailable, blocked, or rate-limited, say that plainly.\n"
+            "- Offer the next best grounded path: exact URL for web_fetch, screenshot, pasted number, or enabling web search."
+        )
     filesystem_location_context_note = ""
+    session_continuity_action_note = ""
+    grounded_filesystem_inspection_note = ""
     explicit_file_analysis_note = ""
     mcp_context_note = ""
+    requires_grounded_filesystem_inspection = False
     file_analysis_path = ""
     coding_build_request = False
     skill_creation_stage = str((current_skill_flow or {}).get("stage") or "discovery").strip().lower() or "discovery"
@@ -1227,15 +1369,40 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             pending_followup_tool = None
             pending_followup_source = ""
 
-    if (
-        not forced_skill_names
-        and not skill_creation_intent
+    session_metadata = getattr(session, "metadata", None)
+    persisted_external_skills: list[str] = []
+    if isinstance(session_metadata, dict):
+        raw_persisted_skills = session_metadata.get("forced_skill_names")
+        if isinstance(raw_persisted_skills, (list, tuple, set)):
+            persisted_external_skills = [
+                normalized
+                for normalized in (
+                    normalize_skill_reference_name(str(skill_name or ""))
+                    for skill_name in raw_persisted_skills
+                )
+                if normalized
+            ]
+    context_builder = None
+    skills_loader = None
+    match_skill_details = None
+    matched_skill_details: list[dict[str, Any]] = []
+    should_probe_external_skills = bool(
+        not skill_creation_intent
         and not skill_install_intent
         and not meta_skill_reference_turn
         and not is_closing_ack
         and not is_short_greeting
         and not is_non_action_feedback
-    ):
+        and (
+            not forced_skill_names
+            or (
+                isinstance(session_metadata, dict)
+                and bool(session_metadata.get("external_skill_lane"))
+                and persisted_external_skills
+            )
+        )
+    )
+    if should_probe_external_skills:
         context_builder = getattr(loop, "context", None)
         resolve_context = getattr(loop, "_resolve_context_for_message", None)
         if callable(resolve_context):
@@ -1247,7 +1414,6 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 logger.debug(f"Failed resolving context builder for skill execution latch: {exc}")
         skills_loader = getattr(context_builder, "skills", None)
         match_skill_details = getattr(skills_loader, "match_skill_details", None)
-        matched_skill_details: list[dict[str, Any]] = []
         if callable(match_skill_details):
             try:
                 matched_skill_details = list(
@@ -1269,6 +1435,72 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             except Exception as exc:
                 logger.debug(f"External skill execution latch failed: {exc}")
 
+    persisted_external_skill_matches_current_turn = False
+    if persisted_external_skills and matched_skill_details:
+        persisted_skill_names = set(persisted_external_skills)
+        for detail in matched_skill_details:
+            if not isinstance(detail, dict):
+                continue
+            source = str(detail.get("source") or "").strip().lower()
+            skill_name = normalize_skill_reference_name(str(detail.get("name") or ""))
+            if not skill_name or not source or source == "builtin":
+                continue
+            if skill_name in persisted_skill_names:
+                persisted_external_skill_matches_current_turn = True
+                break
+
+    should_rehydrate_external_skill_lane = bool(
+        not forced_skill_names
+        and isinstance(session_metadata, dict)
+        and bool(session_metadata.get("external_skill_lane"))
+        and persisted_external_skills
+        and not skill_creation_intent
+        and not skill_install_intent
+        and not meta_skill_reference_turn
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and (
+            (
+                not is_explicit_new_request
+                and (
+                    raw_is_contextual_followup_request
+                    or _is_short_context_followup(effective_content)
+                    or pending_followup_tool == "web_search"
+                    or _looks_like_web_source_selection_followup(effective_content)
+                    or _looks_like_web_search_demotion_followup(effective_content)
+                )
+            )
+            or persisted_external_skill_matches_current_turn
+        )
+    )
+    if should_rehydrate_external_skill_lane:
+        forced_skill_names = list(dict.fromkeys(persisted_external_skills))
+        external_skill_lane = True
+        llm_current_message = (
+            f"{llm_current_message}\n\n"
+            "[External Skill Continuity Note]\n"
+            f"- Continue using the active external skill lane: {', '.join(forced_skill_names)}.\n"
+            "- Treat this turn as a follow-up to the same skill workflow unless the user clearly changes topic.\n"
+            "- Load/follow that skill now and keep its `references/` and bundled `scripts/` as the source of truth."
+        ).strip()
+        continuity_source = continuity_source or "external_skill_followup"
+        if not decision.is_complex:
+            decision.is_complex = True
+        logger.info(
+            "External skill continuity latch: "
+            f"'{_normalize_text(effective_content)[:120]}' -> skills={','.join(forced_skill_names)}"
+        )
+
+    if (
+        not forced_skill_names
+        and not skill_creation_intent
+        and not skill_install_intent
+        and not meta_skill_reference_turn
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+    ):
         format_skill_unavailability = getattr(skills_loader, "_format_skill_unavailability", None)
         eligible_external_matches: list[dict[str, str]] = []
         unavailable_external_matches: list[dict[str, str]] = []
@@ -1315,7 +1547,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 }
             )
 
-        if len(eligible_external_matches) == 1:
+        if len(eligible_external_matches) == 1 and explicit_skill_use_request:
             primary_skill = eligible_external_matches[0]
             forced_skill_names = [primary_skill["name"]]
             external_skill_lane = True
@@ -1325,6 +1557,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 f"- The installed external skill `{primary_skill['name']}` is the best match for this request.\n"
                 "- Load and follow that skill first.\n"
                 "- Prefer the skill workflow over generic fallback behavior.\n"
+                "- Treat the skill's `references/` docs and bundled `scripts/` as the primary source of truth for endpoint and execution details.\n"
+                "- Read only the relevant reference files, and prefer running bundled scripts over improvising generic endpoint guesses.\n"
+                "- If `web_search` is unavailable, keep going with the skill's `references/`, bundled `scripts/`, direct `web_fetch`, or grounded `exec` workflow instead of stopping on missing search credentials.\n"
                 "- If the skill still needs credentials or setup, explain that briefly and ask only for the missing requirement."
             ).strip()
             if not decision.is_complex:
@@ -1333,7 +1568,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 "External skill execution latch: "
                 f"'{_normalize_text(effective_content)[:120]}' -> skill={primary_skill['name']}"
             )
-        elif len(unavailable_external_matches) == 1:
+        elif len(unavailable_external_matches) == 1 and explicit_skill_use_request:
             primary_skill = unavailable_external_matches[0]
             forced_skill_names = [primary_skill["name"]]
             external_skill_lane = True
@@ -1548,6 +1783,57 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         not required_tool
         and not skill_creation_intent
         and not skill_install_intent
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+    ):
+        continuity_note_candidate = _build_session_continuity_action_note(
+            loop,
+            session,
+            last_tool_context=last_tool_context,
+            pending_followup_tool=pending_followup_tool,
+            pending_followup_source=pending_followup_source,
+            recent_file_path=recent_history_file_path,
+        )
+        should_apply_continuity_note = bool(
+            continuity_note_candidate
+            and (
+                route_turn_category in {"action", "contextual_action"}
+                or raw_is_contextual_followup_request
+                or raw_is_short_confirmation
+                or is_file_context_followup
+                or bool(pending_followup_tool)
+                or pending_followup_intent_kind in {"assistant_offer", "assistant_committed_action"}
+            )
+        )
+        if should_apply_continuity_note:
+            session_continuity_action_note = continuity_note_candidate
+            llm_current_message = (
+                f"{llm_current_message}\n\n{session_continuity_action_note}"
+            ).strip()
+
+        should_apply_grounded_filesystem_inspection = bool(
+            route_grounding_mode == "filesystem_inspection"
+            and route_turn_category in {"action", "contextual_action"}
+        )
+        if should_apply_grounded_filesystem_inspection:
+            inspection_note_candidate = _build_grounded_filesystem_inspection_note(
+                loop,
+                session,
+                last_tool_context=last_tool_context,
+                recent_file_path=recent_history_file_path,
+            )
+            if inspection_note_candidate:
+                grounded_filesystem_inspection_note = inspection_note_candidate
+                llm_current_message = (
+                    f"{llm_current_message}\n\n{grounded_filesystem_inspection_note}"
+                ).strip()
+                requires_grounded_filesystem_inspection = True
+
+    if (
+        not required_tool
+        and not skill_creation_intent
+        and not skill_install_intent
         and _looks_like_temporal_context_query(effective_content)
     ):
         temporal_context_note = _build_temporal_context_note()
@@ -1606,6 +1892,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             required_tool = "read_file"
             required_tool_query = file_analysis_path
             decision.is_complex = True
+            requires_grounded_filesystem_inspection = False
 
     if required_tool:
         _set_pending_followup_tool(session, required_tool, now_ts, str(required_tool_query or effective_content))
@@ -1693,6 +1980,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         last_tool_context=last_tool_context,
         explicit_file_analysis_note=explicit_file_analysis_note,
         file_analysis_path=file_analysis_path,
+        route_grounding_mode=route_grounding_mode,
+        requires_grounded_filesystem_inspection=requires_grounded_filesystem_inspection,
         mcp_context_note=mcp_context_note,
         semantic_hint=semantic_hint,
         meta_skill_reference_turn=meta_skill_reference_turn,
@@ -1731,6 +2020,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             effective_content=effective_content,
             filesystem_location_context_note=filesystem_location_context_note,
             explicit_file_analysis_note=explicit_file_analysis_note,
+            route_grounding_mode=route_grounding_mode,
             mcp_context_note=mcp_context_note,
             runtime_locale=runtime_locale,
             observed_continuity_source=observed_continuity_source,
@@ -1748,6 +2038,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             probe_mode=probe_mode,
             conversation_history=conversation_history,
             forced_skill_names=forced_skill_names,
+            external_skill_lane=external_skill_lane,
             turn_id=turn_id,
             intent_source_for_followup=intent_source_for_followup,
             pending_followup_intent_request_text=pending_followup_intent_request_text,
@@ -1765,4 +2056,3 @@ from kabot.agent.loop_core.message_runtime_parts.tail import (  # noqa: E402,I00
     process_pending_exec_approval,
     process_system_message,
 )
-

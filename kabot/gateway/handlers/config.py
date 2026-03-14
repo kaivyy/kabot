@@ -75,12 +75,7 @@ class ConfigMixin:
 
         fragment = (
             "<div style='padding:18px;'>"
-            "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;'>"
-            "<div>"
-            "<h2 style='margin:0;font-size:15px;font-weight:600;'>Configuration</h2>"
-            "<div style='font-size:11px;color:var(--muted);margin-top:2px;'>Runtime config preview and quick settings.</div>"
-            "</div>"
-            "</div>"
+            f"{self._panel_intro_html('Configuration', 'Runtime config preview and quick settings.', eyebrow='Operator Controls')}"
 
             # Token Mode Section
             "<div style='margin-bottom:20px;'>"

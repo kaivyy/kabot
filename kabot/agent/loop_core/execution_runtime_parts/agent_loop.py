@@ -49,7 +49,11 @@ from kabot.agent.loop_core.execution_runtime_parts.llm import (
     run_simple_response,
 )
 from kabot.agent.loop_core.execution_runtime_parts.progress import TurnProgressRuntime
-from kabot.agent.loop_core.execution_runtime_parts.tool_processing import process_tool_calls
+from kabot.agent.loop_core.execution_runtime_parts.tool_processing import (
+    _tool_result_continuation_payload,
+    _tool_result_fetch_fallback_payload,
+    process_tool_calls,
+)
 from kabot.agent.loop_core.tool_enforcement import (
     _extract_list_dir_limit,
     _extract_list_dir_path,
@@ -92,6 +96,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     max_tool_retry = max(0, int(getattr(_runtime_resilience_cfg(loop), "max_tool_retry_per_turn", 1)))
     tool_enforcement_retries = 0
     immediate_action_retried = False
+    grounded_filesystem_inspection_retried = False
     suppress_required_tool_inference = bool(message_metadata.get("suppress_required_tool_inference", False))
     required_tool = None if suppress_required_tool_inference else loop._required_tool_for_query(msg.content)
     raw_user_text = str(msg.content or "").strip()
@@ -102,13 +107,19 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     route_profile = str(message_metadata.get("route_profile", "")).strip().upper()
     continuity_source = str(message_metadata.get("continuity_source") or "").strip().lower()
     external_skill_lane = bool(message_metadata.get("external_skill_lane", False))
+    requires_grounded_filesystem_inspection = bool(
+        message_metadata.get("requires_grounded_filesystem_inspection", False)
+    )
     runtime_locale = str(message_metadata.get("runtime_locale") or "").strip() or None
     toolbacked_continuity_sources = {"action_request", "committed_action"}
     coding_execution_continuity_sources = {"coding_request", "committed_coding_action"}
+    grounded_filesystem_tools = {"list_dir", "read_file", "find_files", "exec"}
     enforce_toolbacked_action = continuity_source in toolbacked_continuity_sources
     enforce_real_execution = continuity_source in (
         toolbacked_continuity_sources | coding_execution_continuity_sources
     )
+    if requires_grounded_filesystem_inspection:
+        enforce_real_execution = True
     if external_skill_lane and not required_tool:
         enforce_toolbacked_action = False
         enforce_real_execution = False
@@ -217,7 +228,12 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         and not required_tool
         and has_web_search_tool
         and _looks_like_live_research_query(raw_user_text)
-        and not _should_defer_live_research_latch_to_skill(loop, raw_user_text, profile=route_profile or "GENERAL")
+        and not _should_defer_live_research_latch_to_skill(
+            loop,
+            raw_user_text,
+            profile=route_profile or "GENERAL",
+            message_metadata=message_metadata,
+        )
     ):
         required_tool = "web_search"
         logger.info("Live-research safety latch: forcing required_tool=web_search")
@@ -228,7 +244,12 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         and route_profile == "RESEARCH"
         and has_web_search_tool
         and _looks_like_live_research_query(question_text)
-        and not _should_defer_live_research_latch_to_skill(loop, question_text, profile=route_profile or "RESEARCH")
+        and not _should_defer_live_research_latch_to_skill(
+            loop,
+            question_text,
+            profile=route_profile or "RESEARCH",
+            message_metadata=message_metadata,
+        )
     ):
         required_tool = "web_search"
         logger.info("Research route safety latch: forcing required_tool=web_search")
@@ -349,6 +370,161 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             return ""
         return str(_resolve_delivery_path(loop, candidate))
 
+    def _record_executed_tool_name(tool_name: str) -> None:
+        if not isinstance(message_metadata, dict):
+            return
+        executed_tools = message_metadata.get("executed_tools")
+        if not isinstance(executed_tools, list):
+            executed_tools = []
+        if tool_name not in executed_tools:
+            executed_tools.append(tool_name)
+        message_metadata["executed_tools"] = executed_tools
+
+    def _path_looks_like_file(path: str, *, tool_name: str = "") -> bool:
+        raw = str(path or "").strip()
+        if not raw:
+            return False
+        if str(tool_name or "").strip().lower() == "read_file":
+            return True
+        try:
+            candidate = Path(raw).expanduser()
+            if candidate.suffix:
+                return True
+        except Exception:
+            pass
+        filename = raw.replace("\\", "/").rstrip("/").split("/")[-1]
+        return "." in filename and not filename.startswith(".")
+
+    def _resolve_grounded_inspection_root() -> str:
+        explicit_file_path = str(_extract_read_file_path(question_text) or "").strip()
+        if explicit_file_path:
+            try:
+                explicit_candidate = Path(explicit_file_path).expanduser().resolve()
+                if explicit_candidate.exists() and explicit_candidate.is_file():
+                    return str(explicit_candidate.parent)
+                if explicit_candidate.suffix:
+                    return str(explicit_candidate.parent)
+            except Exception:
+                pass
+
+        last_tool_context = _message_last_tool_context() or _session_last_tool_context()
+        explicit_dir_path = _extract_list_dir_path(
+            question_text,
+            last_tool_context=last_tool_context if isinstance(last_tool_context, dict) else None,
+        )
+        if explicit_dir_path:
+            return str(_resolve_delivery_path(loop, explicit_dir_path))
+
+        candidate_roots = [
+            str(message_metadata.get("working_directory") or "").strip(),
+        ]
+        session_metadata = getattr(session, "metadata", None)
+        if isinstance(session_metadata, dict):
+            candidate_roots.append(str(session_metadata.get("working_directory") or "").strip())
+        if isinstance(last_tool_context, dict):
+            tool_name = str(last_tool_context.get("tool") or "").strip()
+            path_hint = str(last_tool_context.get("path") or "").strip()
+            if path_hint:
+                if _path_looks_like_file(path_hint, tool_name=tool_name):
+                    try:
+                        candidate_roots.append(str(Path(path_hint).expanduser().resolve().parent))
+                    except Exception:
+                        pass
+                else:
+                    candidate_roots.append(path_hint)
+
+        workspace = getattr(loop, "workspace", None)
+        if isinstance(workspace, Path):
+            candidate_roots.append(str(workspace.expanduser().resolve()))
+        elif isinstance(workspace, str) and str(workspace).strip():
+            try:
+                candidate_roots.append(str(Path(workspace).expanduser().resolve()))
+            except Exception:
+                candidate_roots.append(str(workspace).strip())
+
+        for candidate in candidate_roots:
+            raw = str(candidate or "").strip()
+            if not raw:
+                continue
+            try:
+                resolved = Path(raw).expanduser().resolve()
+            except Exception:
+                continue
+            if resolved.exists():
+                if resolved.is_file():
+                    return str(resolved.parent)
+                if resolved.is_dir():
+                    return str(resolved)
+
+        return ""
+
+    def _parse_list_dir_entry_names(raw_listing: str) -> tuple[list[str], list[str]]:
+        files: list[str] = []
+        directories: list[str] = []
+        for line in str(raw_listing or "").splitlines():
+            stripped = str(line or "").strip()
+            if stripped.startswith("📄 "):
+                files.append(stripped[2:].strip())
+            elif stripped.startswith("📁 "):
+                directories.append(stripped[2:].strip())
+        return files, directories
+
+    def _select_representative_inspection_files(root: str, raw_listing: str) -> list[str]:
+        if not root:
+            return []
+        root_path = Path(root).expanduser()
+        files, _directories = _parse_list_dir_entry_names(raw_listing)
+        if not files:
+            return []
+        preferred_names = (
+            "README.md",
+            "README",
+            "README.txt",
+            "package.json",
+            "pyproject.toml",
+            "Cargo.toml",
+            "go.mod",
+            "composer.json",
+            "Dockerfile",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "mkdocs.yml",
+        )
+        chosen: list[str] = []
+        seen: set[str] = set()
+        lower_to_original = {name.lower(): name for name in files}
+        for preferred_name in preferred_names:
+            original = lower_to_original.get(preferred_name.lower())
+            if not original:
+                continue
+            candidate = str((root_path / original).expanduser())
+            if candidate not in seen:
+                seen.add(candidate)
+                chosen.append(candidate)
+            if len(chosen) >= 2:
+                return chosen
+        for fallback_name in files:
+            candidate = str((root_path / fallback_name).expanduser())
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            chosen.append(candidate)
+            if len(chosen) >= 2:
+                break
+        return chosen
+
+    def _truncate_inspection_text(value: Any, *, limit: int = 2500) -> str:
+        text = str(value or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1].rstrip() + "…"
+
+    async def _execute_grounded_inspection_tool(tool_name: str, payload: dict[str, Any]) -> Any:
+        execute_tool = getattr(loop, "_execute_tool", None)
+        if callable(execute_tool):
+            return await execute_tool(tool_name, payload, session_key=msg.session_key)
+        return await loop.tools.execute(tool_name, payload)
+
     def _should_summarize_raw_direct_result(tool_name: str, result_text: str) -> bool:
         if not result_text:
             return False
@@ -406,7 +582,14 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         required_tool = None
     tools_executed = False
 
-    is_weak_model = loop._is_weak_model(model)
+    is_weak_model_fn = getattr(loop, "_is_weak_model", None)
+    if callable(is_weak_model_fn):
+        try:
+            is_weak_model = bool(is_weak_model_fn(model))
+        except Exception:
+            is_weak_model = False
+    else:
+        is_weak_model = False
     max_critic_retries = 1 if is_weak_model else 2
     critic_threshold = 5 if is_weak_model else 7
 
@@ -424,6 +607,94 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     )
 
     await progress_runtime.publish_phase(skill_creation_phase or "thinking")
+
+    if (
+        requires_grounded_filesystem_inspection
+        and not required_tool
+        and not is_background_task
+    ):
+        inspection_root = _resolve_grounded_inspection_root()
+        list_dir_available = True
+        read_file_available = True
+        if callable(has_tool):
+            try:
+                list_dir_available = bool(has_tool("list_dir"))
+            except Exception:
+                list_dir_available = True
+            try:
+                read_file_available = bool(has_tool("read_file"))
+            except Exception:
+                read_file_available = True
+        if inspection_root and list_dir_available:
+            await progress_runtime.publish_phase("tool")
+            try:
+                inspection_listing_result = await _execute_grounded_inspection_tool(
+                    "list_dir",
+                    {"path": inspection_root, "limit": 80},
+                )
+            except Exception as exc:
+                inspection_listing_result = (
+                    f"Grounded inspection warmup failed for {inspection_root}: {exc}"
+                )
+            inspection_listing_text = str(inspection_listing_result or "").strip()
+            if inspection_listing_text:
+                tools_executed = True
+                _record_executed_tool_name("list_dir")
+                _update_followup_context_from_tool_execution(
+                    session,
+                    tool_name="list_dir",
+                    tool_args={"path": inspection_root, "limit": 80},
+                    fallback_source=question_text,
+                    tool_result=inspection_listing_result,
+                )
+                inspection_context_blocks = [
+                    "[Grounded Inspection Warmup]",
+                    f"Inspection root: {inspection_root}",
+                    "[Initial Directory Listing]",
+                    _truncate_inspection_text(inspection_listing_text, limit=2400),
+                ]
+                representative_paths = (
+                    _select_representative_inspection_files(inspection_root, inspection_listing_text)
+                    if read_file_available
+                    else []
+                )
+                for representative_path in representative_paths:
+                    try:
+                        representative_result = await _execute_grounded_inspection_tool(
+                            "read_file",
+                            {"path": representative_path},
+                        )
+                    except Exception as exc:
+                        representative_result = f"Failed to read {representative_path}: {exc}"
+                    representative_text = str(representative_result or "").strip()
+                    if not representative_text:
+                        continue
+                    tools_executed = True
+                    _record_executed_tool_name("read_file")
+                    _update_followup_context_from_tool_execution(
+                        session,
+                        tool_name="read_file",
+                        tool_args={"path": representative_path},
+                        fallback_source=question_text,
+                        tool_result=representative_result,
+                    )
+                    inspection_context_blocks.extend(
+                        (
+                            f"[Representative File: {Path(representative_path).name}]",
+                            _truncate_inspection_text(representative_text, limit=2000),
+                        )
+                    )
+                inspection_context_blocks.extend(
+                    (
+                        "[Inspection Note]",
+                        "Use the real filesystem evidence above when answering what this local folder, repo, or app is.",
+                        "If the evidence is still insufficient, inspect more representative files before concluding.",
+                    )
+                )
+                messages = [
+                    *messages,
+                    {"role": "user", "content": "\n".join(inspection_context_blocks)},
+                ]
 
     # === FAST PATH: Execute deterministic tools directly, skip LLM tool-call step ===
     # This bypasses fragile tool-call protocols for deterministic intents.
@@ -603,6 +874,8 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             if not source_hint:
                 source_hint = _resolve_query_text_from_message(msg)
             direct_tool_args: dict[str, Any] = {}
+            if required_tool == "web_search" and source_hint:
+                direct_tool_args["query"] = source_hint
             if required_tool == "write_file" and explicit_artifact_path:
                 direct_tool_args["path"] = explicit_artifact_path
             if required_tool == "list_dir":
@@ -634,197 +907,256 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 if required_tool not in executed_tools:
                     executed_tools.append(required_tool)
                 message_metadata["executed_tools"] = executed_tools
-            direct_artifact_path = _extract_single_result_path(required_tool, direct_tool_args, direct_result)
-            verified_artifact_path = ""
-            artifact_exists = False
-            if direct_artifact_path:
-                verified_artifact_path, artifact_exists = _verify_completion_artifact_path(
-                    loop,
-                    direct_artifact_path,
+            continue_after_direct_tool = False
+            if required_tool == "web_search":
+                passthrough_payload = _tool_result_fetch_fallback_payload(
+                    msg,
+                    required_tool,
+                    direct_tool_args,
+                    str(direct_result or ""),
+                    tool_call_count=1,
                 )
-            if required_tool == "message" and not verified_artifact_path:
-                delivery_candidate_path = _resolve_delivery_candidate_path()
-                if delivery_candidate_path:
+                passthrough_execute_tool = str(
+                    (passthrough_payload or {}).get("execute_tool") or ""
+                ).strip()
+                if passthrough_execute_tool:
+                    passthrough_args = passthrough_payload.get("arguments") or {}
+                    passthrough_result = await _execute_grounded_inspection_tool(
+                        passthrough_execute_tool,
+                        passthrough_args,
+                    )
+                    _update_followup_context_from_tool_execution(
+                        session,
+                        tool_name=passthrough_execute_tool,
+                        tool_args=passthrough_args,
+                        fallback_source=source_hint,
+                        tool_result=passthrough_result,
+                    )
+                    if isinstance(message_metadata, dict):
+                        executed_tools = message_metadata.get("executed_tools")
+                        if not isinstance(executed_tools, list):
+                            executed_tools = []
+                        if passthrough_execute_tool not in executed_tools:
+                            executed_tools.append(passthrough_execute_tool)
+                        message_metadata["executed_tools"] = executed_tools
+                    return await progress_runtime.return_with_phase(
+                        str(passthrough_result or "").strip(),
+                        phase=str(passthrough_payload.get("phase") or "tool").strip() or "tool",
+                    )
+                continuation_payload = _tool_result_continuation_payload(
+                    loop,
+                    msg,
+                    session,
+                    required_tool,
+                    direct_tool_args,
+                    str(direct_result or ""),
+                    tool_call_count=1,
+                )
+                if isinstance(continuation_payload, dict) and bool(continuation_payload.get("continue_loop")):
+                    continuation_message = str(continuation_payload.get("append_message") or "").strip()
+                    if continuation_message:
+                        messages.append({"role": "user", "content": continuation_message})
+                    if isinstance(message_metadata, dict):
+                        message_metadata["suppress_required_tool_inference"] = True
+                    required_tool = None
+                    tool_enforcement_retries = 0
+                    continue_after_direct_tool = True
+                    logger.info(
+                        "Web-search setup fallback: continuing without search setup prompt "
+                        f"for '{_resolve_query_text_from_message(msg)[:120]}'"
+                    )
+            if not continue_after_direct_tool:
+                direct_artifact_path = _extract_single_result_path(required_tool, direct_tool_args, direct_result)
+                verified_artifact_path = ""
+                artifact_exists = False
+                if direct_artifact_path:
                     verified_artifact_path, artifact_exists = _verify_completion_artifact_path(
                         loop,
-                        delivery_candidate_path,
+                        direct_artifact_path,
                     )
-            direct_delivery_verified = bool(
-                required_tool == "message"
-                and verified_artifact_path
-                and artifact_exists
-                and str(direct_result or "").strip().lower().startswith("message sent to ")
-            )
-            if required_tool == "message" and isinstance(message_metadata, dict):
-                message_metadata["message_delivery_verified"] = direct_delivery_verified
-            _update_completion_evidence(
-                message_metadata,
-                session,
-                artifact_paths=[verified_artifact_path] if verified_artifact_path else None,
-                artifact_verified=artifact_exists if verified_artifact_path else None,
-                delivery_paths=[verified_artifact_path] if direct_delivery_verified else None,
-                delivery_verified=direct_delivery_verified if required_tool == "message" else None,
-            )
-            if direct_delivery_verified and required_tool == "message":
-                session_metadata = getattr(session, "metadata", None)
-                if isinstance(session_metadata, dict):
-                    session_metadata.pop("pending_followup_intent", None)
-                    session_metadata.pop("pending_followup_tool", None)
-            if (
-                artifact_verification_required
-                and verified_artifact_path
-                and not artifact_exists
-            ):
-                return await progress_runtime.return_with_phase(
-                    "I couldn't verify the requested artifact because the target file still "
-                    "does not exist. I won't claim the task is done without filesystem evidence.",
-                    phase="error",
+                if required_tool == "message" and not verified_artifact_path:
+                    delivery_candidate_path = _resolve_delivery_candidate_path()
+                    if delivery_candidate_path:
+                        verified_artifact_path, artifact_exists = _verify_completion_artifact_path(
+                            loop,
+                            delivery_candidate_path,
+                        )
+                direct_delivery_verified = bool(
+                    required_tool == "message"
+                    and verified_artifact_path
+                    and artifact_exists
+                    and str(direct_result or "").strip().lower().startswith("message sent to ")
                 )
-            if (
-                delivery_required
-                and required_tool != "message"
-                and callable(has_tool)
-                and has_tool("message")
-            ):
-                artifact_path = verified_artifact_path or direct_artifact_path
-                if artifact_path and artifact_exists:
-                    archive_replaced_directory = False
-                    try:
-                        resolved_artifact = Path(str(artifact_path)).expanduser().resolve()
-                    except Exception:
-                        resolved_artifact = None
-
-                    if (
-                        resolved_artifact is not None
-                        and resolved_artifact.exists()
-                        and resolved_artifact.is_dir()
-                        and callable(has_tool)
-                        and has_tool("archive_path")
-                    ):
-                        archive_result = await loop._execute_required_tool_fallback("archive_path", msg)
-                        archive_text = str(archive_result or "").strip()
-                        archive_candidate = _extract_single_result_path(
-                            "archive_path",
-                            {"path": str(resolved_artifact)},
-                            archive_result,
-                        )
-                        if archive_candidate:
-                            verified_archive_path, archive_exists = _verify_completion_artifact_path(
-                                loop,
-                                archive_candidate,
-                            )
-                            if verified_archive_path and archive_exists:
-                                artifact_path = verified_archive_path
-                                artifact_exists = True
-                                archive_replaced_directory = True
-                                if isinstance(message_metadata, dict):
-                                    executed_tools = message_metadata.get("executed_tools")
-                                    if not isinstance(executed_tools, list):
-                                        executed_tools = []
-                                    if "archive_path" not in executed_tools:
-                                        executed_tools.append("archive_path")
-                                    message_metadata["executed_tools"] = executed_tools
-                                _update_followup_context_from_tool_execution(
-                                    session,
-                                    tool_name="archive_path",
-                                    tool_args={"path": str(resolved_artifact)},
-                                    fallback_source=source_hint,
-                                    tool_result=archive_text or archive_result,
-                                )
-                            elif archive_text:
-                                return await progress_runtime.return_with_phase(archive_text)
-                        elif archive_text:
-                            return await progress_runtime.return_with_phase(archive_text)
-
-                    if isinstance(message_metadata, dict):
-                        last_tool_context = message_metadata.get("last_tool_context")
-                        if not isinstance(last_tool_context, dict):
-                            last_tool_context = {"tool": required_tool, "source": source_hint}
-                        last_tool_context["path"] = artifact_path
-                        message_metadata["last_tool_context"] = last_tool_context
-                    message_result = await loop._execute_required_tool_fallback("message", msg)
-                    message_text = str(message_result or "").strip()
-                    if message_text:
-                        _update_followup_context_from_tool_execution(
-                            session,
-                            tool_name="message",
-                            tool_args={"files": [artifact_path]},
-                            fallback_source=source_hint,
-                            tool_result=message_text,
-                        )
-                        if isinstance(message_metadata, dict):
-                            executed_tools = message_metadata.get("executed_tools")
-                            if not isinstance(executed_tools, list):
-                                executed_tools = []
-                            if "message" not in executed_tools:
-                                executed_tools.append("message")
-                            message_metadata["executed_tools"] = executed_tools
-                            if message_text.lower().startswith("message sent to "):
-                                message_metadata["message_delivery_verified"] = True
-                            if archive_replaced_directory:
-                                existing_evidence = message_metadata.get("completion_evidence")
-                                if isinstance(existing_evidence, dict):
-                                    existing_evidence["artifact_paths"] = [artifact_path]
-                                    message_metadata["completion_evidence"] = existing_evidence
-                        _update_completion_evidence(
-                            message_metadata,
-                            session,
-                            artifact_paths=[artifact_path],
-                            artifact_verified=True,
-                            delivery_paths=[artifact_path],
-                            delivery_verified=message_text.lower().startswith("message sent to "),
-                        )
-                        return await progress_runtime.return_with_phase(message_text)
-                if artifact_path and not artifact_exists:
+                if required_tool == "message" and isinstance(message_metadata, dict):
+                    message_metadata["message_delivery_verified"] = direct_delivery_verified
+                _update_completion_evidence(
+                    message_metadata,
+                    session,
+                    artifact_paths=[verified_artifact_path] if verified_artifact_path else None,
+                    artifact_verified=artifact_exists if verified_artifact_path else None,
+                    delivery_paths=[verified_artifact_path] if direct_delivery_verified else None,
+                    delivery_verified=direct_delivery_verified if required_tool == "message" else None,
+                )
+                if direct_delivery_verified and required_tool == "message":
+                    session_metadata = getattr(session, "metadata", None)
+                    if isinstance(session_metadata, dict):
+                        session_metadata.pop("pending_followup_intent", None)
+                        session_metadata.pop("pending_followup_tool", None)
+                if (
+                    artifact_verification_required
+                    and verified_artifact_path
+                    and not artifact_exists
+                ):
                     return await progress_runtime.return_with_phase(
                         "I couldn't verify the requested artifact because the target file still "
                         "does not exist. I won't claim the task is done without filesystem evidence.",
                         phase="error",
                     )
-            if delivery_required and required_tool == "message" and not direct_delivery_verified:
-                return await progress_runtime.return_with_phase(
-                    "I couldn't verify delivery because no file attachment was sent through "
-                    "the message tool. I won't claim the file was sent without evidence.",
-                    phase="error",
+                if (
+                    delivery_required
+                    and required_tool != "message"
+                    and callable(has_tool)
+                    and has_tool("message")
+                ):
+                    artifact_path = verified_artifact_path or direct_artifact_path
+                    if artifact_path and artifact_exists:
+                        archive_replaced_directory = False
+                        try:
+                            resolved_artifact = Path(str(artifact_path)).expanduser().resolve()
+                        except Exception:
+                            resolved_artifact = None
+
+                        if (
+                            resolved_artifact is not None
+                            and resolved_artifact.exists()
+                            and resolved_artifact.is_dir()
+                            and callable(has_tool)
+                            and has_tool("archive_path")
+                        ):
+                            archive_result = await loop._execute_required_tool_fallback("archive_path", msg)
+                            archive_text = str(archive_result or "").strip()
+                            archive_candidate = _extract_single_result_path(
+                                "archive_path",
+                                {"path": str(resolved_artifact)},
+                                archive_result,
+                            )
+                            if archive_candidate:
+                                verified_archive_path, archive_exists = _verify_completion_artifact_path(
+                                    loop,
+                                    archive_candidate,
+                                )
+                                if verified_archive_path and archive_exists:
+                                    artifact_path = verified_archive_path
+                                    artifact_exists = True
+                                    archive_replaced_directory = True
+                                    if isinstance(message_metadata, dict):
+                                        executed_tools = message_metadata.get("executed_tools")
+                                        if not isinstance(executed_tools, list):
+                                            executed_tools = []
+                                        if "archive_path" not in executed_tools:
+                                            executed_tools.append("archive_path")
+                                        message_metadata["executed_tools"] = executed_tools
+                                    _update_followup_context_from_tool_execution(
+                                        session,
+                                        tool_name="archive_path",
+                                        tool_args={"path": str(resolved_artifact)},
+                                        fallback_source=source_hint,
+                                        tool_result=archive_text or archive_result,
+                                    )
+                                elif archive_text:
+                                    return await progress_runtime.return_with_phase(archive_text)
+                            elif archive_text:
+                                return await progress_runtime.return_with_phase(archive_text)
+
+                        if isinstance(message_metadata, dict):
+                            last_tool_context = message_metadata.get("last_tool_context")
+                            if not isinstance(last_tool_context, dict):
+                                last_tool_context = {"tool": required_tool, "source": source_hint}
+                            last_tool_context["path"] = artifact_path
+                            message_metadata["last_tool_context"] = last_tool_context
+                        message_result = await loop._execute_required_tool_fallback("message", msg)
+                        message_text = str(message_result or "").strip()
+                        if message_text:
+                            _update_followup_context_from_tool_execution(
+                                session,
+                                tool_name="message",
+                                tool_args={"files": [artifact_path]},
+                                fallback_source=source_hint,
+                                tool_result=message_text,
+                            )
+                            if isinstance(message_metadata, dict):
+                                executed_tools = message_metadata.get("executed_tools")
+                                if not isinstance(executed_tools, list):
+                                    executed_tools = []
+                                if "message" not in executed_tools:
+                                    executed_tools.append("message")
+                                message_metadata["executed_tools"] = executed_tools
+                                if message_text.lower().startswith("message sent to "):
+                                    message_metadata["message_delivery_verified"] = True
+                                if archive_replaced_directory:
+                                    existing_evidence = message_metadata.get("completion_evidence")
+                                    if isinstance(existing_evidence, dict):
+                                        existing_evidence["artifact_paths"] = [artifact_path]
+                                        message_metadata["completion_evidence"] = existing_evidence
+                            _update_completion_evidence(
+                                message_metadata,
+                                session,
+                                artifact_paths=[artifact_path],
+                                artifact_verified=True,
+                                delivery_paths=[artifact_path],
+                                delivery_verified=message_text.lower().startswith("message sent to "),
+                            )
+                            return await progress_runtime.return_with_phase(message_text)
+                    if artifact_path and not artifact_exists:
+                        return await progress_runtime.return_with_phase(
+                            "I couldn't verify the requested artifact because the target file still "
+                            "does not exist. I won't claim the task is done without filesystem evidence.",
+                            phase="error",
+                        )
+                if delivery_required and required_tool == "message" and not direct_delivery_verified:
+                    return await progress_runtime.return_with_phase(
+                        "I couldn't verify delivery because no file attachment was sent through "
+                        "the message tool. I won't claim the file was sent without evidence.",
+                        phase="error",
+                    )
+                metadata = getattr(msg, "metadata", None)
+                summarize_file_analysis = bool(
+                    required_tool == "read_file"
+                    and isinstance(metadata, dict)
+                    and metadata.get("file_analysis_mode")
                 )
-            metadata = getattr(msg, "metadata", None)
-            summarize_file_analysis = bool(
-                required_tool == "read_file"
-                and isinstance(metadata, dict)
-                and metadata.get("file_analysis_mode")
-            )
-            if (
-                required_tool in raw_direct_tools
-                and not summarize_file_analysis
-                and not _should_summarize_raw_direct_result(required_tool, str(direct_result or ""))
-            ):
+                if (
+                    required_tool in raw_direct_tools
+                    and not summarize_file_analysis
+                    and not _should_summarize_raw_direct_result(required_tool, str(direct_result or ""))
+                ):
+                    return await progress_runtime.return_with_phase(direct_result)
+                # Read-only direct tools still get an LLM-formatted summary.
+                summary_messages = messages + [
+                    {
+                        "role": "user",
+                        "content": (
+                            f"[TOOL RESULT: {required_tool}]\n{direct_result}\n\n"
+                            "Use this tool result to answer the user's actual request in a clear, friendly "
+                            "response in the user's language unless they explicitly ask for a different language. Do not ask the user to resend a "
+                            "path or repeat the same file reference. Be concise and highlight the most "
+                            "important information."
+                        ),
+                    }
+                ]
+                try:
+                    request_overrides, _disable_tools = _active_llm_request_overrides(loop)
+                    summary_response = await loop.provider.chat(
+                        messages=summary_messages,
+                        model=model,
+                        **request_overrides,
+                    )
+                    if summary_response and summary_response.content:
+                        return await progress_runtime.return_with_phase(summary_response.content)
+                except Exception as e:
+                    logger.warning(f"LLM summary failed for {required_tool}, returning raw result: {e}")
+                # Fallback: return raw result if LLM still fails
                 return await progress_runtime.return_with_phase(direct_result)
-            # Read-only direct tools still get an LLM-formatted summary.
-            summary_messages = messages + [
-                {
-                    "role": "user",
-                    "content": (
-                        f"[TOOL RESULT: {required_tool}]\n{direct_result}\n\n"
-                        "Use this tool result to answer the user's actual request in a clear, friendly "
-                        "response in the user's language unless they explicitly ask for a different language. Do not ask the user to resend a "
-                        "path or repeat the same file reference. Be concise and highlight the most "
-                        "important information."
-                    ),
-                }
-            ]
-            try:
-                request_overrides, _disable_tools = _active_llm_request_overrides(loop)
-                summary_response = await loop.provider.chat(
-                    messages=summary_messages,
-                    model=model,
-                    **request_overrides,
-                )
-                if summary_response and summary_response.content:
-                    return await progress_runtime.return_with_phase(summary_response.content)
-            except Exception as e:
-                logger.warning(f"LLM summary failed for {required_tool}, returning raw result: {e}")
-            # Fallback: return raw result if LLM still fails
-            return await progress_runtime.return_with_phase(direct_result)
     # === END FAST PATH ===
 
     skip_plan_for_speed = (
@@ -922,6 +1254,42 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                         tool_result=fallback_result,
                     )
                     return await progress_runtime.return_with_phase(fallback_result)
+        if (
+            requires_grounded_filesystem_inspection
+            and response.has_tool_calls
+            and not any(tc.name in grounded_filesystem_tools for tc in response.tool_calls)
+            and not is_background_task
+        ):
+            if not grounded_filesystem_inspection_retried:
+                grounded_filesystem_inspection_retried = True
+                logger.warning(
+                    "Grounded filesystem inspection enforcement: expected repository/file inspection tools "
+                    f"but got {[tc.name for tc in response.tool_calls]} (iter {iteration})"
+                )
+                if response.content:
+                    messages = loop.context.add_assistant_message(
+                        messages,
+                        response.content,
+                        reasoning_content=response.reasoning_content,
+                    )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "SYSTEM: This request requires grounded filesystem inspection before you explain "
+                            "the local folder, repo, project, or app. Call list_dir, read_file, find_files, "
+                            "or exec to inspect local files first. Do not answer from guesswork or only "
+                            "repeat filenames."
+                        ),
+                    }
+                )
+                continue
+            return await progress_runtime.return_with_phase(
+                "I couldn't verify a grounded project inspection because no filesystem inspection tool "
+                "was used. I won't describe the local app or repo from guesswork.",
+                phase="error",
+            )
+
         if response.has_tool_calls:
             tools_executed = True
 
@@ -951,10 +1319,22 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                             "Do not answer with a guessed completion, filename, promise, or placeholder. "
                             "Call the necessary tool(s) now, or explicitly state the concrete execution blocker "
                             "if no suitable tool or permission exists."
+                            + (
+                                " For this turn, inspect the local filesystem first with list_dir, read_file, "
+                                "find_files, or exec before you explain what the project or app is."
+                                if requires_grounded_filesystem_inspection
+                                else ""
+                            )
                         ),
                     }
                 )
                 continue
+            if requires_grounded_filesystem_inspection:
+                return await progress_runtime.return_with_phase(
+                    "I couldn't verify a grounded project inspection because no filesystem inspection "
+                    "tool execution happened. I won't explain the local app or repo without evidence.",
+                    phase="error",
+                )
             return await progress_runtime.return_with_phase(
                 "I couldn't verify completion because no tool or skill execution happened. "
                 "I won't claim the task is done without evidence. Please retry with the "
@@ -1201,6 +1581,16 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 if isinstance(session_metadata, dict):
                     passthrough_payload = session_metadata.pop("tool_result_passthrough", None)
             if isinstance(passthrough_payload, dict):
+                if bool(passthrough_payload.get("continue_loop")):
+                    continuation_message = str(passthrough_payload.get("append_message") or "").strip()
+                    if continuation_message:
+                        messages.append({"role": "user", "content": continuation_message})
+                    logger.info(
+                        "Continuing agent loop after tool passthrough note: "
+                        f"tool={passthrough_payload.get('tool') or 'unknown'} "
+                        f"reason={passthrough_payload.get('reason') or 'unknown'}"
+                    )
+                    continue
                 passthrough_execute_tool = str(
                     passthrough_payload.get("execute_tool") or ""
                 ).strip()
@@ -1233,5 +1623,3 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         else:
             return await progress_runtime.return_with_phase(response.content)
     return await progress_runtime.return_with_phase("I've completed processing but have no response to give.")
-
-

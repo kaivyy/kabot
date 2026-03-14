@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5-rc1] - 2026-03-15
+
+### Changed
+- Model-first repo/folder inspection turns are now more grounded and closer to OpenClaw behavior:
+  - structured routing can mark multilingual turns as `filesystem_inspection` without relying on Indonesian-only parser keywords,
+  - the message runtime now injects a grounded filesystem-inspection note with the active project/root context,
+  - the execution loop now performs an initial grounded inspection warmup from the active repo/folder context and can preload representative files like `README.md` or manifest files before the model explains the app,
+  - the execution runtime now refuses to describe a local app/repo from guesswork and requires real `list_dir` / `read_file` / `find_files` / `exec` inspection evidence first.
+- Headless web lookup is now closer to OpenClaw's `web_search -> web_fetch` contract:
+  - web-search follow-ups like `Yahoo Finance`, `Stockbit`, `IDX`, or direct finance/news URLs can now continue from the earlier search context instead of dropping back to generic chat,
+  - direct and tool-call web-search lanes now auto-fetch the selected result URL when the query is source-constrained,
+  - when `web_search` is unavailable because search credentials are missing, Kabot now keeps the same turn alive for skill/reference/script-driven fallback instead of immediately stopping on the setup hint,
+  - generic `web_search` setup-hint failures now pass through honestly unless the turn already has a grounded fallback lane such as an active external skill or an explicit direct-fetch target,
+  - and browser use is now discouraged for live factual lookup turns so VPS/headless runtimes prefer `web_search` / `web_fetch` instead of brittle Playwright paths.
+- External skill execution is now closer to OpenClaw's reference-driven workflow:
+  - the system prompt now tells the model to use a selected skill's `references/` and `scripts/` as the primary source of truth,
+  - the external-skill lane now explicitly prefers bundled scripts and relevant reference files over ad hoc endpoint guessing,
+  - skill-guidance now explicitly tells the model to keep going with `references/`, `scripts/`, grounded `web_fetch`, or `exec` when search setup is unavailable,
+  - explicit `pakai/use skill ...` turns are no longer mistaken for meta workflow discussion, so named external skills reliably force the intended execution or setup lane,
+  - external-skill turns now stay summary-first at prompt-build time instead of eagerly inlining full `SKILL.md` content, which is closer to OpenClaw's "select skill -> read SKILL.md -> follow it" contract,
+  - runtime defers to external skills for live/web turns only when the user explicitly requests that skill or the skill lane is already active, instead of hard-blocking legacy finance/web paths just because a matching external skill exists,
+  - runtime now detects active external-skill lanes from message/session metadata consistently across message routing, tool-call guards, and execution fallback paths,
+  - external-skill lane state and forced skill names are now persisted into session metadata for follow-up continuity instead of living only on the active turn,
+  - short contextual follow-ups can now rehydrate the previously active external skill lane from session state, so source-switch turns like `Yahoo Finance` stay on the same skill workflow,
+  - and same-domain follow-up requests can now keep a persisted external skill lane active when the current turn still matches that installed skill, even if the user does not re-mention the skill name,
+  - while explicit new-topic turns now clear persisted external skill lane state cleanly instead of letting stale skill continuity bleed into unrelated requests,
+  - and finance-oriented skill auto-matching now requires grounded lexical/name overlap instead of promoting generic market skills solely from broad domain classification.
+- Live data and grounded follow-up replies are less hallucination-prone:
+  - stock/market quote turns like `saham BBCA berapa` now get a live-data safety latch even on general routes, preferring `web_search` first and falling back to legacy `stock`/`crypto` tools only when search is unavailable but the symbol is explicit,
+  - live finance/news turns are no longer suppressed just because they contain words like `today` or `sekarang`, so `latest news ... today` and quote requests still route to live lookup instead of falling back to generic chat,
+  - when no live source is available, Kabot now injects an honesty note so the model explains the limitation instead of inventing a current quote or fresh date,
+  - weather follow-up commentary like `lumayan hangat ya` or `suhu Purwokerto lumayan hangat ya` now stays AI-driven chat instead of re-triggering a new weather fetch,
+  - and weather source/provider follow-ups like `wttr.in`, `open-meteo`, or `sumber darimana` no longer get misread as new weather-location fetches.
+- The dashboard shell is more polished and operator-friendly:
+  - the sidebar now uses grouped navigation with a clearer control-shell hierarchy,
+  - desktop and mobile headers now stay in sync with the active section and expose faster refresh/chat actions,
+  - the mobile drawer now has a proper backdrop and escape-to-close behavior,
+  - the overview/chat/runtime/settings panels now use stronger hero copy and a more intentional visual rhythm closer to the OpenClaw control-console feel,
+  - reusable dashboard panel chrome now gives sessions, nodes, cron, skills, commands, config, and control sections more consistent headings, result states, tabs, and action surfaces,
+  - and the chat panel now behaves more like a proper operator workspace with active-session chips, a cleaner transcript surface, a better composer, and more mobile-friendly layout behavior.
+
+### Fixed
+- Bare `read_file` follow-ups now honor the active filesystem context:
+  - filename-only requests like `buka config.json` now resolve against the current `working_directory` or session-persisted navigated folder before falling back to generic workspace/cwd resolution,
+  - deterministic read-file fallback now keeps `.kabot/config.json`-style continuity stable after opening a folder,
+  - and successful fallback reads refresh the active navigated directory so later file follow-ups stay grounded.
+- Clean installs now include the HTML parsing dependency used by `web_fetch`:
+  - `beautifulsoup4` is now declared as a runtime dependency so fresh release/test environments do not fail importing `kabot.agent.tools.web_fetch`.
+
 ## [0.6.5] - 2026-03-14
 
 ### Changed
@@ -3226,6 +3275,3 @@ After deep verification analysis, discovered that Phase 13 initial implementatio
 
 ### Phase 12 and Earlier
 See git history for previous changes.
-
-
-

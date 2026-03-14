@@ -68,6 +68,7 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
     probe_mode = state.probe_mode
     conversation_history = state.conversation_history
     forced_skill_names = state.forced_skill_names
+    external_skill_lane = bool(getattr(state, "external_skill_lane", False))
     turn_id = state.turn_id
     intent_source_for_followup = state.intent_source_for_followup
     pending_followup_intent_request_text = state.pending_followup_intent_request_text
@@ -268,6 +269,8 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
                     budget_hints["compact_system_prompt"] = True
                 if accuracy_context_required and not decision.is_complex and not required_tool:
                     budget_hints["compact_system_prompt"] = True
+                if external_skill_lane and forced_skill_names:
+                    budget_hints["summary_only_requested_skills"] = True
                 messages = await asyncio.to_thread(
                     context_builder.build_messages,
                     history=conversation_history,

@@ -38,6 +38,35 @@ _WEATHER_METRIC_QUERY_RE = re.compile(
     r"how|what|why|is that|too fast|too slow|strong|weak"
     r")\b"
 )
+_WEATHER_COMMENTARY_MARKER_RE = re.compile(
+    r"(?i)\b("
+    r"lumayan|cukup|agak|ternyata|terasa|rasanya|kayaknya|kayak|"
+    r"pretty|quite|kind of|feels?|seems?"
+    r")\b"
+)
+_WEATHER_TEMPERATURE_FEEL_RE = re.compile(
+    r"(?i)\b("
+    r"hangat|panas|dingin|sejuk|adem|gerah|lembap|humid|warm|hot|cold|cool|chilly|humid"
+    r")\b"
+)
+_WEATHER_FRESH_QUERY_MARKER_RE = re.compile(
+    r"(?i)\b("
+    r"forecast|prakiraan|prediksi|ramalan|besok|lusa|tomorrow|later|next|"
+    r"hujan|rain|angin|wind|humidity|kelembapan|derajat|degree|degrees|"
+    r"berapa|gimana|bagaimana|kenapa|why|how|what|when"
+    r")\b"
+)
+_WEATHER_SOURCE_MARKER_RE = re.compile(
+    r"(?i)\b("
+    r"source|sumber(?:nya)?|provider|dari mana|darimana|pakai apa|"
+    r"source nya|source-nya|sumbernya dari mana"
+    r")\b"
+)
+_WEATHER_PROVIDER_MARKER_RE = re.compile(
+    r"(?i)\b("
+    r"wttr(?:[.\s]?in)?|open[\s-]?meteo|openweather|weatherapi|weather\.com|accuweather"
+    r")\b"
+)
 _IDR_CONVERSION_RE = re.compile(
     r"(?i)\b("
     r"idr|rupiah|dirupiahkan|rupiahkan|konversi|convert(?:ed|ion)?|"
@@ -170,6 +199,56 @@ def _looks_like_weather_metric_interpretation_followup(text: str) -> bool:
     return bool(_WEATHER_METRIC_QUERY_RE.search(normalized))
 
 
+def _looks_like_weather_commentary_followup(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized or raw.startswith("/"):
+        return False
+    if len(normalized) > 140:
+        return False
+    if _WEATHER_METRIC_VALUE_RE.search(raw):
+        return False
+    if "?" in raw:
+        return False
+    if _WEATHER_FRESH_QUERY_MARKER_RE.search(normalized):
+        return False
+    has_temp_feel = bool(_WEATHER_TEMPERATURE_FEEL_RE.search(normalized))
+    if not has_temp_feel:
+        return False
+    has_commentary_marker = bool(
+        _WEATHER_COMMENTARY_MARKER_RE.search(normalized)
+        or normalized.endswith((" ya", " yah", " kan", " juga"))
+        or normalized.startswith(("lumayan ", "cukup ", "agak ", "pretty ", "quite "))
+    )
+    has_weather_anchor = bool(
+        _WEATHER_MARKER_RE.search(normalized)
+        or extract_weather_location(raw)
+    )
+    return bool(has_commentary_marker or has_weather_anchor)
+
+
+def _looks_like_weather_source_followup(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized or raw.startswith("/"):
+        return False
+    if len(normalized) > 140:
+        return False
+    if _WEATHER_METRIC_VALUE_RE.search(raw):
+        return False
+    has_source_marker = bool(_WEATHER_SOURCE_MARKER_RE.search(normalized))
+    has_provider_marker = bool(
+        _WEATHER_PROVIDER_MARKER_RE.search(raw)
+        or _WEATHER_PROVIDER_MARKER_RE.search(normalized)
+        or re.fullmatch(r"(?i)(?:https?://)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+/?", raw)
+    )
+    if not has_source_marker and not has_provider_marker:
+        return False
+    if extract_weather_location(raw):
+        return False
+    return True
+
+
 def _looks_like_quote_conversion_followup(text: str) -> bool:
     raw = str(text or "").strip()
     normalized = _normalize_text(raw)
@@ -264,6 +343,22 @@ def arbitrate_semantic_intent(
             kind="advice_turn",
             reason="hr_zone_not_weather",
         )
+    if (
+        (parser_tool == "weather" or pending_followup_tool == "weather")
+        and _looks_like_weather_source_followup(raw)
+    ):
+        return SemanticIntentHint(
+            kind="weather_source_followup",
+            reason="weather_source_followup",
+        )
+    if (
+        (parser_tool == "weather" or pending_followup_tool == "weather")
+        and _looks_like_weather_commentary_followup(raw)
+    ):
+        return SemanticIntentHint(
+            kind="weather_commentary",
+            reason="weather_commentary_followup",
+        )
 
     stock_context = last_tool_context if isinstance(last_tool_context, dict) else {}
     stock_tool_active = str((stock_context or {}).get("tool") or "").strip() == "stock"
@@ -311,6 +406,18 @@ def arbitrate_semantic_intent(
             or pending_followup_source
             or ""
         ).strip()
+
+    if context_tool == "weather" and _looks_like_weather_commentary_followup(raw):
+        return SemanticIntentHint(
+            kind="weather_commentary",
+            reason="weather_commentary_followup",
+        )
+
+    if context_tool == "weather" and _looks_like_weather_source_followup(raw):
+        return SemanticIntentHint(
+            kind="weather_source_followup",
+            reason="weather_source_followup",
+        )
 
     if context_tool == "weather" and context_source and _looks_like_weather_followup(raw):
         if _looks_like_weather_metric_interpretation_followup(raw):

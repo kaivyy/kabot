@@ -21,6 +21,7 @@ def _build_route_decision_snapshot(state: Any) -> dict[str, Any]:
         "route_profile": str(getattr(state.decision, "profile", "") or "").strip(),
         "route_complex": bool(getattr(state.decision, "is_complex", False)),
         "turn_category": str(getattr(state, "observed_turn_category", "") or "").strip() or "none",
+        "grounding_mode": str(getattr(state, "route_grounding_mode", "") or "").strip() or "none",
         "continuity_source": str(getattr(state, "continuity_source", "") or "").strip() or "none",
         "required_tool": str(getattr(state, "required_tool", "") or "").strip(),
         "required_tool_query": str(
@@ -70,6 +71,9 @@ def _finalize_turn_metadata(state: Any) -> None:
         state.msg.metadata["route_profile"] = state.decision.profile
         state.msg.metadata["route_complex"] = bool(getattr(state.decision, "is_complex", False))
         state.msg.metadata["turn_category"] = state.observed_turn_category
+        state.msg.metadata["route_grounding_mode"] = (
+            str(getattr(state, "route_grounding_mode", "") or "").strip() or "none"
+        )
         session_metadata = getattr(state.session, "metadata", None)
         if isinstance(session_metadata, dict):
             session_metadata["last_turn_category"] = state.observed_turn_category
@@ -94,6 +98,13 @@ def _finalize_turn_metadata(state: Any) -> None:
         else:
             state.msg.metadata.pop("last_tool_context", None)
         if isinstance(session_metadata, dict):
+            if state.forced_skill_names:
+                session_metadata["forced_skill_names"] = list(state.forced_skill_names)
+            else:
+                session_metadata.pop("forced_skill_names", None)
+            session_metadata["external_skill_lane"] = bool(
+                getattr(state, "external_skill_lane", False)
+            )
             working_directory = str(session_metadata.get("working_directory") or "").strip()
             if working_directory:
                 state.msg.metadata["working_directory"] = working_directory
@@ -120,6 +131,9 @@ def _finalize_turn_metadata(state: Any) -> None:
             state.msg.metadata["mcp_context_mode"] = True
         else:
             state.msg.metadata.pop("mcp_context_mode", None)
+        state.msg.metadata["requires_grounded_filesystem_inspection"] = bool(
+            getattr(state, "requires_grounded_filesystem_inspection", False)
+        )
         if state.semantic_hint.kind != "none":
             state.msg.metadata["semantic_intent_hint"] = state.semantic_hint.kind
         else:
@@ -136,6 +150,7 @@ def _finalize_turn_metadata(state: Any) -> None:
             or state.skill_install_intent
             or bool(state.forced_skill_names)
             or bool(state.mcp_context_note)
+            or bool(getattr(state, "requires_grounded_filesystem_inspection", False))
             or state.continuity_source in {"committed_action", "action_request"}
         )
         if state.required_tool:

@@ -69,6 +69,11 @@ def test_extract_weather_location_rejects_forecast_keyword_without_real_location
     assert extract_weather_location("prediksi 3-6 jam ke depan") is None
 
 
+def test_extract_weather_location_rejects_weather_provider_domain_as_location():
+    assert extract_weather_location("wttr.in") is None
+    assert extract_weather_location("open-meteo") is None
+
+
 def test_extract_weather_location_handles_japanese_compact_weather_question():
     query = "東京の天気どう？"
     assert extract_weather_location(query) == "東京"

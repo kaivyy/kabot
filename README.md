@@ -26,7 +26,7 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
-## What's New In v0.6.5
+## What's New In v0.6.5-rc1
 
 - **Session-first continuity** so file navigation, delivery reuse, and one-shot CLI follow-ups stay grounded in `working_directory`, `delivery_route`, and transcript state instead of stale breadcrumbs.
 - **Multilingual, user-language replies** with English internal guidance, lighter parser dependence, and stronger continuity for profile, memory, weather, and research turns.
@@ -73,7 +73,7 @@ If you are new, follow this exact flow:
 
 No need to clone repo for normal usage.
 
-Recommended optional step for `v0.6.5`:
+Recommended optional step for `v0.6.5-rc1`:
 
 5. **Inspect MCP availability** (`kabot mcp status`)
 
@@ -150,7 +150,7 @@ kabot mcp status   # inspect configured MCP servers
 
 ### Python-Native MCP Quickstart
 
-Kabot `0.6.5` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
+Kabot `0.6.5-rc1` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
 
 Useful commands:
 
@@ -1458,5 +1458,4 @@ Special thanks to the open-source community and projects like **Kabot** that ins
 <p align="center">
   Built with ❤️ by <a href="https://github.com/kaivyy">@kaivyy</a>
 </p>
-
 

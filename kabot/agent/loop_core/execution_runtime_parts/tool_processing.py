@@ -40,6 +40,9 @@ from kabot.agent.loop_core.execution_runtime_parts.helpers import (
     _update_followup_context_from_tool_execution,
     _verify_completion_artifact_path,
 )
+from kabot.agent.loop_core.execution_runtime_parts.intent import (
+    _select_web_fetch_url_from_search_result,
+)
 from kabot.agent.loop_core.execution_runtime_parts.llm import (
     call_llm_with_fallback,
     format_tool_result,
@@ -73,6 +76,91 @@ _NO_RESULTS_PASSTHROUGH_MARKERS = (
     "saya belum menemukan hasil web yang relevan untuk:",
     "saya belum jumpa hasil web yang relevan untuk:",
 )
+
+
+def _has_available_tool(loop: Any, tool_name: str) -> bool:
+    tools = getattr(loop, "tools", None)
+    has_tool = getattr(tools, "has", None)
+    if not callable(has_tool):
+        return False
+    try:
+        return bool(has_tool(tool_name))
+    except Exception:
+        return False
+
+
+def _selected_skill_lane_names(msg: InboundMessage, session: Any) -> list[str]:
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    session_metadata = getattr(session, "metadata", None)
+
+    raw_candidates: list[str] = []
+    for container in (metadata, session_metadata):
+        if not isinstance(container, dict):
+            continue
+        for key in ("forced_skill_names", "skill_names"):
+            value = container.get(key)
+            if isinstance(value, (list, tuple, set)):
+                raw_candidates.extend(str(item or "").strip() for item in value)
+        single_name = str(container.get("skill_name") or "").strip()
+        if single_name:
+            raw_candidates.append(single_name)
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in raw_candidates:
+        normalized = " ".join(str(candidate or "").split()).strip()
+        lowered = normalized.lower()
+        if not normalized or lowered in seen:
+            continue
+        seen.add(lowered)
+        result.append(normalized)
+    return result
+
+
+def _build_web_search_unavailable_continuation_note(
+    loop: Any,
+    msg: InboundMessage,
+    session: Any,
+) -> str:
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    session_metadata = getattr(session, "metadata", None)
+    selected_skills = _selected_skill_lane_names(msg, session)
+    external_skill_lane = bool(
+        metadata.get("external_skill_lane")
+        or (isinstance(session_metadata, dict) and session_metadata.get("external_skill_lane"))
+    )
+    has_web_fetch = _has_available_tool(loop, "web_fetch")
+    has_exec = _has_available_tool(loop, "exec")
+
+    lines = [
+        "[Tool Continuity Note]",
+        "web_search is unavailable in this runtime because search credentials are not configured.",
+        "Continue the same user task now instead of stopping on setup.",
+        "- Do not ask the user to configure web_search first unless no grounded fallback path exists.",
+    ]
+    if selected_skills:
+        lines.append(f"- Selected skill lane: {', '.join(selected_skills)}.")
+    elif external_skill_lane:
+        lines.append("- Stay on the current external-skill lane.")
+    if selected_skills or external_skill_lane:
+        lines.append(
+            "- Read/follow the selected skill now and treat its `references/` and bundled `scripts/` as the source of truth."
+        )
+    if has_web_fetch:
+        lines.append(
+            "- Use `web_fetch` when you already have a grounded URL or can derive one from the selected skill/reference."
+        )
+    if has_exec:
+        lines.append(
+            "- Use `exec` or a bundled script for public HTTP endpoints when that is the documented workflow."
+        )
+    lines.extend(
+        [
+            "- Do not call `web_search` again in this turn unless the user explicitly asks to configure it.",
+            "- If no grounded URL, skill workflow, or public endpoint is available, explain the exact blocker briefly.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _tool_result_passthrough_payload(
@@ -114,14 +202,28 @@ def _tool_result_fetch_fallback_payload(
     raw_result = str(result_text or "").strip()
     if not raw_result:
         return None
+    query_hint = str(tool_args.get("query") or "").strip()
+    source_text = query_hint or _resolve_query_text_from_message(msg)
+
+    selected_url = _select_web_fetch_url_from_search_result(source_text, raw_result)
+    if selected_url:
+        return {
+            "execute_tool": "web_fetch",
+            "arguments": {
+                "url": selected_url,
+                "extract_mode": "markdown",
+            },
+            "phase": "tool",
+            "tool": "web_fetch",
+            "reason": "search_then_fetch",
+        }
+
     lowered = raw_result.lower()
     is_setup_hint = "web_search needs a search api key" in lowered and "use web_fetch" in lowered
     is_no_results = any(marker in lowered for marker in _NO_RESULTS_PASSTHROUGH_MARKERS)
     if not is_setup_hint and not is_no_results:
         return None
 
-    query_hint = str(tool_args.get("query") or "").strip()
-    source_text = query_hint or _resolve_query_text_from_message(msg)
     if not _looks_like_direct_page_fetch_request(source_text):
         return None
 
@@ -138,6 +240,56 @@ def _tool_result_fetch_fallback_payload(
         "phase": "tool",
         "tool": "web_fetch",
         "reason": "page_fetch_fallback",
+    }
+
+
+def _tool_result_continuation_payload(
+    loop: Any,
+    msg: InboundMessage,
+    session: Any,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    result_text: str,
+    *,
+    tool_call_count: int,
+) -> dict[str, Any] | None:
+    del tool_args
+
+    normalized_tool = str(tool_name or "").strip().lower()
+    if normalized_tool != "web_search" or tool_call_count != 1:
+        return None
+
+    lowered = str(result_text or "").strip().lower()
+    is_setup_hint = "web_search needs a search api key" in lowered and "use web_fetch" in lowered
+    if not is_setup_hint:
+        return None
+
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    session_metadata = getattr(session, "metadata", None)
+    external_skill_lane = bool(
+        metadata.get("external_skill_lane")
+        or (isinstance(session_metadata, dict) and session_metadata.get("external_skill_lane"))
+    )
+    selected_skills = _selected_skill_lane_names(msg, session)
+    direct_fetch_query = _resolve_query_text_from_message(msg)
+    direct_fetch_url = _extract_direct_fetch_url_candidate(direct_fetch_query)
+    direct_fetch_requested = bool(
+        direct_fetch_url and _looks_like_direct_page_fetch_request(direct_fetch_query)
+    )
+    has_grounded_fallback = bool(
+        external_skill_lane
+        or selected_skills
+        or direct_fetch_requested
+    )
+    if not has_grounded_fallback:
+        return None
+
+    return {
+        "append_message": _build_web_search_unavailable_continuation_note(loop, msg, session),
+        "continue_loop": True,
+        "phase": "tool",
+        "tool": normalized_tool,
+        "reason": "capability_unavailable_continue",
     }
 
 
@@ -531,6 +683,16 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
             tool_call_count=len(response.tool_calls),
         )
         if passthrough_payload is None:
+            passthrough_payload = _tool_result_continuation_payload(
+                loop,
+                msg,
+                session,
+                tc.name,
+                tool_params,
+                result_str,
+                tool_call_count=len(response.tool_calls),
+            )
+        if passthrough_payload is None:
             passthrough_payload = _tool_result_passthrough_payload(
                 tc.name,
                 result_str,
@@ -563,5 +725,3 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
                     tool_results=[{"tool_call_id": tc.id, "name": tc.name, "result": str(result)[:1000]}],
                 )
     return messages
-
-

@@ -137,12 +137,23 @@ class ChatMixin:
             for model_id in suggestion_models[:200]
         )
         model_map_json = html.escape(json.dumps(model_map, ensure_ascii=False))
+        fallback_tokens = [
+            str(item).strip()
+            for item in str(selected_fallbacks or "").split(",")
+            if str(item).strip()
+        ]
+        provider_label = html.escape(selected_provider or "auto")
+        model_label = html.escape(selected_model or "auto")
+        route_label = html.escape(
+            f"{channel_name} / {chat_id}" if chat_id and chat_id != channel_name else channel_name
+        )
+        fallback_label = html.escape(
+            "none" if not fallback_tokens else f"{len(fallback_tokens)} configured"
+        )
         read_only_note = ""
         if callable(self.control_handler) and not enabled:
             read_only_note = (
-                "<div style='padding:10px 16px;border-top:1px solid var(--border,#222635);"
-                "border-bottom:1px solid var(--border,#222635);background:rgba(245,158,11,.08);"
-                "font-size:11px;color:var(--muted,#8b92a5);'>"
+                "<div class='kb-chat-banner kb-chat-banner--warn'>"
                 "Read-only token detected. Sending chat requires "
                 "<span class='mono'>operator.write</span>."
                 "</div>"
@@ -152,36 +163,70 @@ class ChatMixin:
             "<style>"
             "@keyframes kb-pulse{0%,100%{opacity:1}50%{opacity:.4}}"
             "@keyframes kb-fadein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}"
-            ".kb-msg-row{animation:kb-fadein .25s ease both}"
-            ".kb-bubble{max-width:78%;padding:11px 15px;font-size:13.5px;line-height:1.6;word-break:break-word;white-space:pre-wrap;border-radius:16px;position:relative;}"
-            ".kb-bubble.user{background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;border-bottom-right-radius:4px;box-shadow:0 4px 14px rgba(14,165,233,.35);}"
-            ".kb-bubble.agent{background:var(--bg-elevated,#11141d);border:1px solid var(--border,#222635);color:var(--text,#f0f3f9);border-bottom-left-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:ui-monospace,monospace;font-size:12.5px;}"
+            ".kb-chat-shell{display:flex;flex-direction:column;height:100%;background:linear-gradient(180deg,color-mix(in srgb,var(--panel,#0a0c10) 92%,transparent) 0%,color-mix(in srgb,var(--bg,#000) 94%,transparent) 100%);border-radius:16px;overflow:hidden;border:1px solid color-mix(in srgb,var(--border,#222635) 84%,transparent);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);}"
+            ".kb-chat-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px 18px;background:linear-gradient(135deg,color-mix(in srgb,var(--bg-accent,#0f121a) 86%,transparent),color-mix(in srgb,var(--bg-elevated,#11141d) 82%,transparent));border-bottom:1px solid var(--border,#222635);flex-shrink:0;}"
+            ".kb-chat-header__stack{display:grid;gap:10px;min-width:0;}"
+            ".kb-chat-header__main{display:flex;align-items:center;gap:12px;min-width:0;}"
+            ".kb-chat-header__eyebrow{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted,#8b92a5);}"
+            ".kb-chat-header__title{font-family:'Space Grotesk','Inter',ui-sans-serif,system-ui,sans-serif;font-size:18px;line-height:1.05;letter-spacing:-.03em;color:var(--text,#f0f3f9);}"
+            ".kb-chat-header__subtitle{font-size:11px;line-height:1.5;color:var(--muted,#8b92a5);max-width:56ch;}"
+            ".kb-chat-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}"
+            ".kb-chat-chip{display:inline-flex;align-items:center;gap:8px;min-height:30px;padding:0 10px;border-radius:999px;border:1px solid color-mix(in srgb,var(--border,#222635) 82%,transparent);background:color-mix(in srgb,var(--bg,#000) 72%,transparent);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted,#8b92a5);}"
+            ".kb-chat-chip strong{font-size:11px;letter-spacing:0;text-transform:none;color:var(--text,#f0f3f9);font-weight:600;}"
+            ".kb-chat-banner{padding:11px 16px;border-top:1px solid var(--border,#222635);border-bottom:1px solid var(--border,#222635);font-size:11px;line-height:1.5;color:var(--text,#f0f3f9);}"
+            ".kb-chat-banner--warn{background:rgba(245,158,11,.08);}"
+            ".kb-msg-row{animation:kb-fadein .25s ease both;position:relative;z-index:1;}"
+            ".kb-bubble{max-width:min(82%,860px);padding:12px 15px;font-size:13px;line-height:1.68;word-break:break-word;white-space:pre-wrap;border-radius:18px;position:relative;backdrop-filter:blur(8px);}"
+            ".kb-bubble.user{background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;border-bottom-right-radius:6px;box-shadow:0 8px 24px rgba(14,165,233,.28);}"
+            ".kb-bubble.agent{background:linear-gradient(180deg,color-mix(in srgb,var(--bg-elevated,#11141d) 92%,transparent) 0%,color-mix(in srgb,var(--bg-accent,#0f121a) 68%,transparent) 100%);border:1px solid color-mix(in srgb,var(--border,#222635) 84%,transparent);color:var(--text,#f0f3f9);border-bottom-left-radius:6px;box-shadow:0 8px 22px rgba(0,0,0,.18);font-family:inherit;font-size:13px;}"
             ".kb-bubble.status{background:rgba(14,165,233,.08);border:1px dashed rgba(14,165,233,.28);color:var(--text,#f0f3f9);border-radius:12px;font-family:inherit;font-size:12px;}"
-            ".kb-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;letter-spacing:0;}"
+            ".kb-avatar{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;letter-spacing:0;}"
             ".kb-avatar.user{background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff;}"
             ".kb-avatar.agent{background:linear-gradient(135deg,#1e293b,#334155);color:#94a3b8;border:1px solid var(--border,#222635);}"
             ".kb-ts{font-size:10px;color:var(--muted,#8b92a5);margin-top:4px;}"
             ".kb-phase-badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 8px;font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;background:rgba(14,165,233,.12);color:#7dd3fc;border:1px solid rgba(14,165,233,.25);}"
-            ".kb-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;height:100%;color:var(--muted,#8b92a5);}"
+            ".kb-chat-log{position:relative;flex:1;overflow-y:auto;padding:22px 16px 18px;display:flex;flex-direction:column;gap:16px;background:linear-gradient(180deg,color-mix(in srgb,var(--bg,#000) 96%,transparent) 0%,color-mix(in srgb,var(--panel,#0a0c10) 92%,transparent) 100%);scroll-behavior:smooth;}"
+            ".kb-chat-log::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,color-mix(in srgb,var(--border,#222635) 18%,transparent) 1px,transparent 1px),linear-gradient(color-mix(in srgb,var(--border,#222635) 14%,transparent) 1px,transparent 1px);background-size:28px 28px;opacity:.18;pointer-events:none;}"
+            ".kb-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;height:100%;color:var(--muted,#8b92a5);position:relative;z-index:1;}"
             ".kb-empty-icon{width:52px;height:52px;border-radius:50%;background:var(--bg-elevated,#11141d);border:1px solid var(--border,#222635);display:flex;align-items:center;justify-content:center;font-size:24px;animation:kb-pulse 3s ease infinite;}"
+            ".kb-empty-copy{display:grid;gap:4px;text-align:center;}"
             ".kb-cfg-panel{position:absolute;right:0;top:calc(100% + 8px);width:300px;padding:16px;background:rgba(17,20,29,.95);border:1px solid var(--border,#222635);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.5);backdrop-filter:blur(12px);z-index:50;}"
             ".kb-tag{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border,#222635);border-radius:20px;padding:2px 8px;background:var(--bg,#000);font-size:10px;cursor:default;}"
+            ".kb-chat-form{padding:14px 16px;background:linear-gradient(180deg,color-mix(in srgb,var(--bg-accent,#0f121a) 94%,transparent) 0%,color-mix(in srgb,var(--bg,#000) 90%,transparent) 100%);border-top:1px solid var(--border,#222635);flex-shrink:0;}"
+            ".kb-chat-compose{display:flex;align-items:flex-end;gap:10px;background:color-mix(in srgb,var(--bg,#000) 82%,transparent);border:1px solid color-mix(in srgb,var(--border,#222635) 84%,transparent);border-radius:16px;padding:11px 12px;transition:border-color .2s,box-shadow .2s,transform .2s;}"
+            ".kb-chat-submit{width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#0ea5e9,#0284c7);color:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:none;cursor:pointer;transition:transform .2s,box-shadow .2s;box-shadow:0 6px 18px rgba(14,165,233,.32);}"
+            ".kb-chat-submit:hover:not(:disabled){transform:translateY(-1px) scale(1.03);}"
+            ".kb-chat-hintrow{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:8px;}"
+            ".kb-chat-hint{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted,#8b92a5);}"
+            ".kb-chat-result{min-height:14px;font-size:11px;text-align:right;font-family:ui-monospace,monospace;color:var(--muted,#8b92a5);}"
+            ".kb-chat-result--ok{color:#10b981;}"
+            ".kb-chat-result--err{color:#ef4444;}"
+            "@media (max-width:768px){.kb-chat-header{flex-direction:column;align-items:stretch;}.kb-chat-meta{gap:6px;}.kb-chat-chip{min-height:28px;padding:0 9px;}.kb-cfg-panel{right:auto;left:0;width:min(100vw - 56px,320px);}.kb-chat-hintrow{align-items:flex-start;}.kb-chat-result{text-align:left;}}"
             "</style>"
-            "<div style='display:flex;flex-direction:column;height:100%;background:var(--panel,#0a0c10);border-radius:12px;overflow:hidden;border:1px solid var(--border,#222635);'>"
+            "<div class='kb-chat-shell'>"
 
             # â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            "<div style='display:flex;align-items:center;justify-content:space-between;padding:14px 18px;"
-            "background:linear-gradient(135deg,#0a0c10,#11141d);border-bottom:1px solid var(--border,#222635);flex-shrink:0;'>"
-            "  <div style='display:flex;align-items:center;gap:10px;'>"
-            "    <div style='position:relative;'>"
+            "<div class='kb-chat-header'>"
+            "  <div class='kb-chat-header__stack'>"
+            "    <div class='kb-chat-header__main'>"
+            "      <div style='position:relative;'>"
             "      <div style='width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#0ea5e9,#6366f1);"
             "           display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:white;box-shadow:0 0 16px rgba(14,165,233,.4);'>K</div>"
             "      <div style='position:absolute;bottom:0;right:0;width:10px;height:10px;border-radius:50%;background:#10b981;"
             "           border:2px solid var(--panel,#0a0c10);box-shadow:0 0 6px #10b981;animation:kb-pulse 2s ease infinite;'></div>"
+            "      </div>"
+            "      <div>"
+            "        <div class='kb-chat-header__eyebrow'>Active Operator Session</div>"
+            "        <div class='kb-chat-header__title'>Kabot Agent</div>"
+            "        <div class='kb-chat-header__subtitle'>Live transcript and operator loop for the active gateway session.</div>"
+            "      </div>"
             "    </div>"
-            "    <div>"
-            "      <div style='font-size:13px;font-weight:600;color:var(--text,#f0f3f9);'>Kabot Agent</div>"
-            f"     <div style='font-size:10px;color:var(--muted,#8b92a5);font-family:monospace;margin-top:1px;'>{html.escape(session_key)}</div>"
+            "    <div class='kb-chat-meta'>"
+            f"      <span class='kb-chat-chip'>Session <strong>{html.escape(session_key)}</strong></span>"
+            f"      <span class='kb-chat-chip'>Route <strong>{route_label}</strong></span>"
+            f"      <span class='kb-chat-chip'>Provider <strong>{provider_label}</strong></span>"
+            f"      <span class='kb-chat-chip'>Model <strong>{model_label}</strong></span>"
+            f"      <span class='kb-chat-chip'>Fallbacks <strong>{fallback_label}</strong></span>"
             "    </div>"
             "  </div>"
             "  <details class='relative' style='position:relative;'>"
@@ -242,27 +287,24 @@ class ChatMixin:
             f"{read_only_note}"
 
             # â”€â”€ Chat Log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            f"<div id='chat-log' style='flex:1;overflow-y:auto;padding:20px 16px;display:flex;flex-direction:column;gap:16px;"
-            f"background:var(--bg,#000);scroll-behavior:smooth;'"
+            f"<div id='chat-log' class='kb-chat-log'"
             f"hx-get='{html.escape(log_url)}' hx-trigger='load' hx-swap='innerHTML'>"
             "  <div class='kb-empty'>"
             "    <div class='kb-empty-icon'>ðŸ’¬</div>"
-            "    <div style='text-align:center;'>"
+            "    <div class='kb-empty-copy'>"
             "      <div style='font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text,#f0f3f9);'>Ready to chat</div>"
-            "      <div style='font-size:12px;'>Connecting to session stream...</div>"
+            "      <div style='font-size:12px;'>Connecting to the active session stream...</div>"
             "    </div>"
             "  </div>"
             "</div>"
 
             # â”€â”€ Input Form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            f"<form id='chat-form' hx-include=\"[name='provider'], [name='model'], [name='fallbacks']\""
-            f"      style='padding:14px 16px;background:var(--bg-accent,#0f121a);border-top:1px solid var(--border,#222635);flex-shrink:0;'"
+            f"<form id='chat-form' class='kb-chat-form' hx-include=\"[name='provider'], [name='model'], [name='fallbacks']\""
             f"      hx-post='{html.escape(post_url)}' hx-target='#chat-result' hx-swap='innerHTML'>"
             f"  <input type='hidden' name='session_key' value='{html.escape(session_key)}' />"
             f"  <input type='hidden' name='channel' value='{html.escape(channel_name)}' />"
             f"  <input type='hidden' name='chat_id' value='{html.escape(chat_id)}' />"
-            "  <div style='display:flex;align-items:flex-end;gap:10px;background:var(--bg,#000);border:1px solid var(--border,#222635);"
-            "              border-radius:14px;padding:10px 12px;transition:border-color .2s,box-shadow .2s;'"
+            "  <div class='kb-chat-compose'"
             "       onfocusin=\"this.style.borderColor='#0ea5e9';this.style.boxShadow='0 0 0 3px rgba(14,165,233,.15)';\" "
             "       onfocusout=\"this.style.borderColor='var(--border)';this.style.boxShadow='none';\">"
             "    <textarea name='prompt' rows='1' style='flex:1;background:transparent;border:none;color:var(--text,#f0f3f9);font-size:13.5px;"
@@ -270,16 +312,16 @@ class ChatMixin:
             f"              {input_disabled_attr}"
             "              placeholder='Message Kabot...' oninput='this.style.height=\"\";this.style.height=Math.min(this.scrollHeight,120)+\"px\"'"
             "              onkeydown=\"if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.closest('form').requestSubmit();}\"></textarea>"
-            f"   <button type='submit' style='width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#0ea5e9,#0284c7);"
-            f"           color:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:none;cursor:pointer;"
-            f"           transition:all .2s;box-shadow:0 4px 12px rgba(14,165,233,.4);'{disabled_attr}"
-            "            onmouseover=\"this.style.transform='scale(1.07)';\" onmouseout=\"this.style.transform='scale(1)';\">"
+            f"   <button type='submit' class='kb-chat-submit'{disabled_attr}>"
             "      <svg width='16' height='16' fill='none' stroke='currentColor' viewBox='0 0 24 24'>"
             "        <path stroke-linecap='round' stroke-linejoin='round' stroke-width='2.5' d='M5 12h14M12 5l7 7-7 7'/>"
             "      </svg>"
             "   </button>"
             "  </div>"
-            "  <div id='chat-result' style='margin-top:6px;font-size:11px;text-align:center;font-family:monospace;min-height:14px;color:var(--muted,#8b92a5);'></div>"
+            "  <div class='kb-chat-hintrow'>"
+            "    <span class='kb-chat-hint'>Enter to send. Shift+Enter for newline.</span>"
+            "    <span id='chat-result' class='kb-chat-result'></span>"
+            "  </div>"
             "</form>"
             "<script>(function(){"
             "var f=document.getElementById('chat-form'); if(!f) return;"
@@ -317,7 +359,7 @@ class ChatMixin:
             "  if(!prompt) return;"
             "  appendPendingPrompt(prompt);"
             "  var cr=document.getElementById('chat-result');"
-            "  if(cr) cr.innerHTML=\"<span style='color:#10b981;'>Queued...</span>\";"
+            "  if(cr) cr.innerHTML=\"<span class='kb-chat-result--ok'>Queued...</span>\";"
             "});"
             "f.addEventListener('htmx:afterRequest', function(){"
             "  var ta=f.querySelector('textarea[name=prompt]'); if(ta){ta.value='';ta.style.height='';}"
@@ -420,7 +462,7 @@ class ChatMixin:
             f"    try{{"
             f"      var p=JSON.parse(ev.data||'{{}}'); var msgs=Array.isArray(p.messages)?p.messages:[];"
             f"      if(!msgs.length){{el.innerHTML='<div class=\"kb-empty\"><div class=\"kb-empty-icon\">ðŸ’¬</div>"
-            f"<div style=\"text-align:center;\"><div style=\"font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text);\">No messages yet</div>"
+            f"<div class=\"kb-empty-copy\"><div style=\"font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text);\">No messages yet</div>"
             f"<div style=\"font-size:12px;\">Send a prompt to start chatting</div></div></div>'; if(window.kabotScrollChatToLatest)window.kabotScrollChatToLatest(true); return;}}"
             f"      var rows=[];"
             f"      msgs.slice(-50).forEach(function(m){{"
@@ -524,7 +566,7 @@ class ChatMixin:
             fragment = (
                 "<div class='kb-empty'>"
                 "  <div class='kb-empty-icon'>ðŸ’¬</div>"
-                "  <div style='text-align:center;'>"
+                "  <div class='kb-empty-copy'>"
                 "    <div style='font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text,#f0f3f9);'>No messages yet</div>"
                 "    <div style='font-size:12px;'>Send a prompt to start chatting</div>"
                 "  </div>"
@@ -606,13 +648,13 @@ class ChatMixin:
         chat_id = str(data.get("chat_id", "") or "dashboard").strip()
         if not prompt:
             return web.Response(
-                text="<span style='color:#ef4444;'>Missing chat prompt</span>",
+                text="<span class='kb-chat-result--err'>Missing chat prompt</span>",
                 content_type="text/html",
                 status=400,
             )
         if not callable(self.control_handler):
             return web.Response(
-                text="<span style='color:#ef4444;'>Runtime chat handler unavailable</span>",
+                text="<span class='kb-chat-result--err'>Runtime chat handler unavailable</span>",
                 content_type="text/html",
                 status=501,
             )
@@ -629,9 +671,7 @@ class ChatMixin:
             },
         )
         return web.Response(
-            text="<span style='color:#10b981;'>Queued: sending to runtime...</span>",
+            text="<span class='kb-chat-result--ok'>Queued: sending to runtime...</span>",
             content_type="text/html",
             status=202,
         )
-
-
