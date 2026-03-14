@@ -61,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - this makes CI/replay runs easier to keep aligned with the real multi-turn failures that previously drifted across separate smoke categories.
 
 ### Fixed
+- Browser tool import is now optional-dependency safe in CI environments:
+  - `kabot.agent.tools.browser` no longer hard-fails module import when `playwright` is absent,
+  - browser launch now raises a clear runtime error with installation guidance only when browser execution is actually requested,
+  - this unblocks cross-platform regression suites that only validate browser path logic without launching a real browser runtime.
 - Cross-platform artifact/media handling is safer for macOS/Linux now:
   - artifact-path extraction now recognizes `~/...` result paths instead of accidentally truncating them into `/...` substring matches,
   - relative artifact outputs like `outputs/promo.mp4` now stay relative in `last_tool_context` until a real on-disk path can be verified, instead of being rewritten into misleading absolute cwd paths,

@@ -4,7 +4,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from loguru import logger
-from playwright.async_api import async_playwright
+try:
+    from playwright.async_api import async_playwright as _async_playwright
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    _async_playwright = None
 
 from kabot.agent.tools.base import Tool
 
@@ -142,7 +145,12 @@ class BrowserTool(Tool):
     async def _launch(self, headless: bool = True, **kwargs):
         """Lazy initialization of browser."""
         if not self.playwright:
-            self.playwright = await async_playwright().start()
+            if _async_playwright is None:
+                raise RuntimeError(
+                    "Playwright is not installed. Install with `pip install playwright` "
+                    "and run `playwright install` before using browser tool."
+                )
+            self.playwright = await _async_playwright().start()
             self.browser = await self.playwright.chromium.launch(headless=headless)
             self.context = await self.browser.new_context()
             self.page = await self.context.new_page()
