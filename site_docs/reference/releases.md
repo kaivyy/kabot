@@ -1,5 +1,34 @@
 # Releases
 
+## v0.6.6-rc3
+
+Release date: 2026-03-15
+
+Status: Release candidate
+
+### Highlights
+
+- Keeps the OpenClaw-style runtime direction while tightening real skill execution continuity.
+- Makes approved skill workflows, freshly created skills, and active external stock/finance skills stay grounded to actual execution evidence.
+- Lets direct GitHub skill sources and exact installed skill names steer the workflow from grounded skill inventory and source paths instead of extra action keywords.
+
+### Notable fixes
+
+- Approved `skill-creator` and installer turns now require real tool or approved-skill execution before Kabot can claim success.
+- Newly created workspace skills can now be reused immediately on the first matching follow-up instead of bouncing back to `skill-creator`.
+- Active external stock/finance lanes stay on the selected skill workflow instead of drifting into generic `web_search` setup errors.
+- Exact installed skill names and direct GitHub skill source URLs now trigger the correct skill lane from grounded inventory/source matching.
+
+### Validation snapshot
+
+- Targeted runtime guard regression slice: `2 passed`.
+- Targeted transcript and skill continuity regression slices: `9 passed`.
+- Targeted skill matching regression slice: `3 passed`.
+- `python -m build --no-isolation` will normalize artifacts as `kabot-0.6.6rc3.tar.gz` and `kabot-0.6.6rc3-py3-none-any.whl`.
+- `mkdocs build --strict` succeeded for the updated release docs.
+
+See full details in root `CHANGELOG.md`.
+
 ## v0.6.6-rc2
 
 Release date: 2026-03-15

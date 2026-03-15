@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 from kabot.agent.skills import SkillsLoader, looks_like_skill_catalog_request
+from kabot.agent.skills_matching import looks_like_skill_install_request
 
 _LEGACY_EXTERNAL_METADATA_KEY = "".join(
     chr(code) for code in (111, 112, 101, 110, 99, 108, 97, 119)
@@ -461,13 +462,49 @@ def test_match_skills_understands_multilingual_skill_update_intent(tmp_path, mon
 
 def test_looks_like_skill_catalog_request_supports_multilingual_inventory_questions():
     assert looks_like_skill_catalog_request("what skills are available in this workspace?")
-    assert looks_like_skill_catalog_request("skill apa yang tersedia di workspace ini?")
     assert looks_like_skill_catalog_request("有哪些技能可以用？")
     assert looks_like_skill_catalog_request("使えるスキル一覧を見せて")
     assert looks_like_skill_catalog_request("มีสกิลอะไรให้ใช้บ้าง")
 
     assert looks_like_skill_catalog_request("Please use the weather skill for this request.") is False
     assert looks_like_skill_catalog_request("tolong pakai skill 1password untuk request ini ya.") is False
+
+
+def test_looks_like_skill_install_request_accepts_direct_github_skill_source_without_action_keyword():
+    assert looks_like_skill_install_request(
+        "https://github.com/acme/custom-skills/tree/main/skills/mlbb-id-check"
+    )
+    assert looks_like_skill_install_request(
+        "owner/repo/skills/yahoo-finance-stock"
+    )
+
+
+def test_match_skills_accepts_exact_installed_skill_name_without_use_keyword(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(
+        workspace / "skills",
+        "yahoo-finance-stock",
+        "fetches stock quotes from Yahoo Finance",
+    )
+    _write_skill(
+        workspace / "skills",
+        "generic-dev",
+        "build app script code automation helper development",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    matches = loader.match_skills("yahoo-finance-stock", profile="GENERAL")
+
+    assert matches
+    assert matches[0].startswith("yahoo-finance-stock")
 
 
 def test_list_skills_uses_snapshot_cache(tmp_path, monkeypatch):

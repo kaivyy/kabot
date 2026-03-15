@@ -93,6 +93,9 @@ def _finalize_turn_metadata(state: Any) -> None:
         state.msg.metadata["external_skill_lane"] = bool(
             getattr(state, "external_skill_lane", False)
         )
+        state.msg.metadata["requires_real_skill_execution"] = bool(
+            getattr(state, "requires_real_skill_execution", False)
+        )
         if state.last_tool_context:
             state.msg.metadata["last_tool_context"] = state.last_tool_context
         else:
@@ -104,6 +107,9 @@ def _finalize_turn_metadata(state: Any) -> None:
                 session_metadata.pop("forced_skill_names", None)
             session_metadata["external_skill_lane"] = bool(
                 getattr(state, "external_skill_lane", False)
+            )
+            session_metadata["requires_real_skill_execution"] = bool(
+                getattr(state, "requires_real_skill_execution", False)
             )
             working_directory = str(session_metadata.get("working_directory") or "").strip()
             if working_directory:

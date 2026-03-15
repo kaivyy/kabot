@@ -1309,9 +1309,18 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         current_skill_flow
         and str((current_skill_flow or {}).get("stage") or "").strip().lower() == "approved"
         and recent_created_skill_name
-        and _looks_like_existing_skill_use_followup(
-            msg.content,
-            assistant_offer_text=pending_followup_intent_text,
+        and (
+            _looks_like_existing_skill_use_followup(
+                msg.content,
+                assistant_offer_text=pending_followup_intent_text,
+            )
+            or (
+                not is_explicit_new_request
+                and (
+                    is_short_confirmation
+                    or _is_short_context_followup(msg.content)
+                )
+            )
         )
         and not is_closing_ack
         and not is_short_greeting
@@ -1369,6 +1378,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         skill_creation_intent = False
     forced_skill_names: list[str] | None = None
     external_skill_lane = False
+    requires_real_skill_execution = False
     llm_current_message = effective_content
     if is_non_action_feedback:
         llm_current_message = (
@@ -1411,11 +1421,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         skill_creation_intent = False
         skill_install_intent = False
         forced_skill_names = [recent_created_skill_name]
+        external_skill_lane = True
         if existing_skill_required_tool_query:
             intent_source_for_followup = existing_skill_required_tool_query
             pending_followup_intent_request_text = existing_skill_required_tool_query
             committed_action_request_text = existing_skill_required_tool_query
         continuity_source = "existing_skill_followup"
+        requires_real_skill_execution = True
         llm_current_message = (
             f"{effective_content}\n\n"
             "[Existing Skill Note]\n"
@@ -1457,6 +1469,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         llm_current_message = (
             f"{effective_content}\n\n{_build_skill_creation_workflow_note(first_turn=first_turn, approved=skill_creation_approved, kind=skill_workflow_kind)}"
         ).strip()
+        if skill_creation_approved:
+            requires_real_skill_execution = True
         _set_skill_creation_flow(
             session,
             skill_creation_request_text,
@@ -1567,6 +1581,22 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             except Exception as exc:
                 logger.debug(f"External skill execution latch failed: {exc}")
 
+    recent_created_skill_matches_current_turn = False
+    recent_created_skill_detail: dict[str, Any] | None = None
+    if recent_created_skill_name and matched_skill_details:
+        recent_skill_normalized = normalize_skill_reference_name(recent_created_skill_name)
+        for detail in matched_skill_details:
+            if not isinstance(detail, dict):
+                continue
+            skill_name = normalize_skill_reference_name(str(detail.get("name") or ""))
+            if skill_name != recent_skill_normalized:
+                continue
+            if not bool(detail.get("eligible")):
+                continue
+            recent_created_skill_matches_current_turn = True
+            recent_created_skill_detail = detail
+            break
+
     persisted_external_skill_matches_current_turn = False
     if persisted_external_skills and matched_skill_details:
         persisted_skill_names = set(persisted_external_skills)
@@ -1580,6 +1610,42 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             if skill_name in persisted_skill_names:
                 persisted_external_skill_matches_current_turn = True
                 break
+
+    should_force_recent_created_skill_lane = bool(
+        not forced_skill_names
+        and current_skill_flow
+        and str((current_skill_flow or {}).get("stage") or "").strip().lower() == "approved"
+        and recent_created_skill_name
+        and recent_created_skill_matches_current_turn
+        and not skill_creation_intent
+        and not skill_install_intent
+        and not meta_skill_reference_turn
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+    )
+    if should_force_recent_created_skill_lane:
+        forced_skill_names = [recent_created_skill_name]
+        external_skill_lane = (
+            str((recent_created_skill_detail or {}).get("source") or "").strip().lower() != "builtin"
+        )
+        requires_real_skill_execution = True
+        llm_current_message = (
+            f"{effective_content}\n\n"
+            "[Existing Skill Note]\n"
+            f"- The skill `{recent_created_skill_name}` was already created earlier in this conversation.\n"
+            "- Do not restart the skill-creator workflow.\n"
+            "- Load and follow that existing skill now.\n"
+            "- Use that existing skill now for the user's current request."
+        ).strip()
+        continuity_source = "existing_skill_followup"
+        if not decision.is_complex:
+            decision.is_complex = True
+        logger.info(
+            "Recent created skill latch: "
+            f"'{_normalize_text(effective_content)[:120]}' -> skill={recent_created_skill_name}"
+        )
+        _clear_skill_creation_flow(session)
 
     should_rehydrate_external_skill_lane = bool(
         not forced_skill_names
@@ -1609,6 +1675,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     if should_rehydrate_external_skill_lane:
         forced_skill_names = list(dict.fromkeys(persisted_external_skills))
         external_skill_lane = True
+        requires_real_skill_execution = True
         llm_current_message = (
             f"{llm_current_message}\n\n"
             "[External Skill Continuity Note]\n"
@@ -1704,6 +1771,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             primary_skill = eligible_external_matches[0]
             forced_skill_names = [primary_skill["name"]]
             external_skill_lane = True
+            requires_real_skill_execution = True
             llm_current_message = (
                 f"{llm_current_message}\n\n"
                 "[External Skill Note]\n"
@@ -1725,6 +1793,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             primary_skill = unavailable_external_matches[0]
             forced_skill_names = [primary_skill["name"]]
             external_skill_lane = True
+            requires_real_skill_execution = True
             setup_note_lines = [
                 "[External Skill Setup Note]",
                 f"- The installed external skill `{primary_skill['name']}` is the best match for this request, but it is not executable yet.",
@@ -1780,6 +1849,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         if auto_external_setup_turn:
             forced_skill_names = [str(primary_unavailable_skill["name"])]
             external_skill_lane = True
+            requires_real_skill_execution = True
             setup_note_lines = [
                 "[External Skill Setup Note]",
                 f"- The installed external skill `{primary_unavailable_skill['name']}` is the clearest workflow match for this request, but it is not executable yet.",
@@ -1879,6 +1949,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 )
             forced_skill_names = [primary_skill["name"]]
             external_skill_lane = primary_skill["source"] != "builtin"
+            if external_skill_lane:
+                requires_real_skill_execution = True
             llm_current_message = (
                 f"{llm_current_message}\n\n"
                 "[Skill Adaptation Note]\n"
@@ -2302,6 +2374,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         skill_creation_approved=skill_creation_approved,
         skill_workflow_kind=skill_workflow_kind,
         skill_creation_request_text=skill_creation_request_text,
+        requires_real_skill_execution=requires_real_skill_execution,
         observed_turn_category=None,
         observed_continuity_source=None,
         runtime_locale=None,

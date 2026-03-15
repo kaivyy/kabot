@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6-rc3] - 2026-03-15
+
+### Fixed
+- Skill workflow continuity is more grounded again:
+  - approved skill-creation and installer turns now mark themselves as requiring real skill execution, so the runtime rejects guessed “done” replies and keeps asking for concrete tool or approved-skill execution evidence,
+  - freshly created workspace skills can now be reused immediately on the first matching request without falling back into `skill-creator`,
+  - active external skill lanes now keep their real-execution requirement during stock/finance follow-ups instead of silently drifting into generic `web_search` setup errors,
+- direct GitHub skill source URLs now enter the installer workflow from the grounded source path itself instead of depending on extra action keywords,
+  - exact installed skill names can now trigger the explicit skill fast path from the grounded skill inventory itself instead of requiring `use/run/follow` wording first,
+  - and short active-lane follow-ups like `skills saham nya dipake` now stay on the current external skill workflow through session continuity rather than falling back to generic skill explanation mode.
+
 ## [0.6.6-rc2] - 2026-03-15
 
 ### Fixed

@@ -603,6 +603,68 @@ async def test_run_agent_loop_action_request_retries_and_rejects_text_only_compl
 
 
 @pytest.mark.asyncio
+async def test_run_agent_loop_approved_skill_workflow_retries_and_rejects_text_only_completion_without_execution():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: None
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value="unused")
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(10, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda _name: False)
+    loop.max_iterations = 2
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content},
+        ]
+    )
+    loop._call_llm_with_fallback = AsyncMock(
+        side_effect=[
+            (LLMResponse(content="Aku lanjut implementasi sekarang."), None),
+            (LLMResponse(content="Skill sudah jadi."), None),
+        ]
+    )
+
+    content = "approve, eksekusi"
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content=content,
+        metadata={
+            "effective_content": content,
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "forced_skill_names": ["skill-creator"],
+            "requires_real_skill_execution": True,
+            "skill_creation_guard": {
+                "active": True,
+                "stage": "approved",
+                "approved": True,
+                "request_text": "buat skill saham via Yahoo Finance",
+            },
+        },
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=SimpleNamespace(metadata={}),
+    )
+
+    assert "couldn't verify completion" in result.lower()
+    assert loop._call_llm_with_fallback.await_count == 2
+    second_messages = loop._call_llm_with_fallback.await_args_list[1].args[0]
+    assert "requires real execution with tools or approved skills" in second_messages[-1]["content"].lower()
+    loop._execute_required_tool_fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_existing_skill_runtime_followup_uses_server_monitor_fallback_instead_of_generic_error():
     loop = _make_loop()
     raw_result = "### Server Resource Monitor\n**CPU Load:** 12.0%\n**RAM:** 2.00 / 8.00 GB"

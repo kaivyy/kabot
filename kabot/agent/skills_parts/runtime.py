@@ -8,7 +8,6 @@ from typing import Any
 from kabot.agent.skills_matching import (
     WORKFLOW_CHAINS,
     _extract_keywords,
-    looks_like_explicit_skill_use_request,
     normalize_skill_reference_name,
 )
 
@@ -176,9 +175,6 @@ def get_always_skills(loader: Any) -> list[str]:
 
 
 def match_explicit_skill_fast_path(loader: Any, *, message: str, message_lower: str, max_results: int) -> list[str] | None:
-    if not looks_like_explicit_skill_use_request(message):
-        return None
-
     matched_name = ""
     for skill_name, _skill_file, _source in iter_unique_skill_candidates(loader):
         if re.search(rf"(?<![\w-]){re.escape(skill_name.lower())}(?![\w-])", message_lower):

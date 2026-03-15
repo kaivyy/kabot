@@ -104,6 +104,9 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     route_profile = str(message_metadata.get("route_profile", "")).strip().upper()
     continuity_source = str(message_metadata.get("continuity_source") or "").strip().lower()
     external_skill_lane = bool(message_metadata.get("external_skill_lane", False))
+    requires_real_skill_execution = bool(
+        message_metadata.get("requires_real_skill_execution", False)
+    )
     requires_grounded_filesystem_inspection = bool(
         message_metadata.get("requires_grounded_filesystem_inspection", False)
     )
@@ -117,7 +120,9 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     )
     if requires_grounded_filesystem_inspection:
         enforce_real_execution = True
-    if external_skill_lane and not required_tool:
+    if requires_real_skill_execution:
+        enforce_real_execution = True
+    if external_skill_lane and not required_tool and not requires_real_skill_execution:
         enforce_toolbacked_action = False
         enforce_real_execution = False
     coding_execution_context = bool(

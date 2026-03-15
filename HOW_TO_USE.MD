@@ -283,7 +283,7 @@ Kabot now includes sophisticated backend systems that prevent common AI agent fa
 - **Auto-Compaction**: Summarizes old messages when context overflows (keeps recent 10 exchanges)
 - **Result Truncation**: Caps tool results at 30% of context window to prevent bloat
 
-### Runtime Continuity And Anti-Hallucination Upgrades (v0.6.6-rc2)
+### Runtime Continuity And Anti-Hallucination Upgrades (v0.6.6-rc3)
 
 - **Committed action continuity:** if Kabot says it will create, send, or upgrade something, replies like `ya`, `yes continue`, and `lanjut` are much more likely to continue that exact task.
 - **Answer-reference continuity:** follow-ups like `yang kedua`, `lebih singkat`, or `maksudnya apa` can stay attached to the latest real answer.
