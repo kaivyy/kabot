@@ -169,6 +169,38 @@ class TestExecToolFirewallIntegration:
         assert "safety guard" in result.lower()
 
 
+class TestExecToolSafetyGuardPathParsing:
+    """Regression tests for workspace path parsing in legacy guard."""
+
+    def test_relative_path_with_slashes_is_not_treated_as_absolute_path(self, temp_firewall_config):
+        tool = ExecTool(
+            firewall_config_path=temp_firewall_config,
+            restrict_to_workspace=True,
+            auto_approve=True,
+        )
+
+        guard_error = tool._guard_command(
+            "python3 skills/stock-guardrail/scripts/fetch_price.py TLKM.JK --json",
+            "/root/.kabot/workspace-telegram_main",
+        )
+
+        assert guard_error is None
+
+    def test_absolute_path_outside_workspace_still_blocked(self, temp_firewall_config):
+        tool = ExecTool(
+            firewall_config_path=temp_firewall_config,
+            restrict_to_workspace=True,
+            auto_approve=True,
+        )
+
+        guard_error = tool._guard_command(
+            "python3 /etc/passwd",
+            "/root/.kabot/workspace-telegram_main",
+        )
+
+        assert guard_error == "Error: Command blocked by safety guard (path outside working dir)"
+
+
 class TestExecToolErrorHandling:
     """Test error handling in ExecTool."""
 

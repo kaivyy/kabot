@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Exec safety guard no longer false-positives relative script paths that contain `/` separators:
+  - commands like `python3 skills/stock-guardrail/scripts/fetch_price.py TLKM.JK --json` are now treated as workspace-relative paths instead of being misread as absolute `/stock-guardrail/...` paths,
+  - absolute paths outside the active working directory are still blocked as before.
+
 ## [0.6.6-rc3] - 2026-03-15
 
 ### Fixed

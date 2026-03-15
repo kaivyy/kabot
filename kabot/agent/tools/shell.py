@@ -453,7 +453,10 @@ class ExecTool(Tool):
             cwd_path = Path(cwd).resolve()
 
             win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd)
-            posix_paths = re.findall(r"/[^\s\"']+", cmd)
+            # Match only true absolute POSIX paths (token starts with '/'), not
+            # relative tokens that merely contain '/' such as
+            # 'skills/stock-guardrail/scripts/fetch_price.py'.
+            posix_paths = re.findall(r"(?:(?<=^)|(?<=[\s='\"`]))/[^\s\"']+", cmd)
 
             for raw in win_paths + posix_paths:
                 try:
