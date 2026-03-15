@@ -623,7 +623,7 @@ async def test_process_message_stock_trend_followup_uses_recent_stock_context_fo
 
 
 @pytest.mark.asyncio
-async def test_process_message_contextual_stock_followup_keeps_analysis_intent_from_recent_user_query():
+async def test_process_message_contextual_stock_followup_no_longer_forces_stale_analysis_intent():
     context_builder = MagicMock()
     context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
     session = SimpleNamespace(
@@ -689,9 +689,10 @@ async def test_process_message_contextual_stock_followup_keeps_analysis_intent_f
     msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="lanjut yang tadi")
     await process_message(loop, msg)
 
-    loop._run_agent_loop.assert_awaited_once()
-    assert msg.metadata.get("required_tool") == "stock_analysis"
-    assert "breakout" in str(msg.metadata.get("required_tool_query", "")).lower()
+    loop._run_simple_response.assert_awaited_once()
+    loop._run_agent_loop.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("continuity_source") != "pending_followup_intent"
 
 
 @pytest.mark.asyncio
@@ -1874,7 +1875,7 @@ async def test_process_message_explicit_new_request_does_not_reuse_last_tool_exe
 
 
 @pytest.mark.asyncio
-async def test_process_message_answer_reference_beats_last_tool_execution_context():
+async def test_process_message_plain_maksudnya_no_longer_forces_answer_reference_note():
     captured_messages = {}
 
     def _build_messages(**kwargs):
@@ -1937,19 +1938,17 @@ async def test_process_message_answer_reference_beats_last_tool_execution_contex
     msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="maksudnya apa itu")
     await process_message(loop, msg)
 
-    loop._run_simple_response.assert_not_called()
+    loop._run_simple_response.assert_awaited_once()
     loop._run_agent_loop.assert_not_called()
     assert msg.metadata.get("required_tool") is None
-    assert msg.metadata.get("continuity_source") == "answer_reference"
+    assert msg.metadata.get("continuity_source") != "answer_reference"
     current_message = captured_messages.get("current_message") or str(msg.metadata.get("effective_content") or "")
-    assert current_message.startswith("maksudnya apa itu\n\n[Answer Reference Target]\n")
-    assert "[Grounded Answer Note]\n" in current_message
-    assert "[Answer Reference Context]\n" in current_message
-    assert assistant_text in current_message
+    assert current_message == "maksudnya apa itu"
+    assert "[Answer Reference Context]\n" not in current_message
 
 
 @pytest.mark.asyncio
-async def test_process_message_plain_apa_itu_reuses_recent_assistant_answer_context():
+async def test_process_message_plain_apa_itu_keeps_history_without_forcing_answer_reference_note():
     captured_messages = {}
 
     def _build_messages(**kwargs):
@@ -1959,9 +1958,7 @@ async def test_process_message_plain_apa_itu_reuses_recent_assistant_answer_cont
     context_builder = MagicMock()
     context_builder.build_messages.side_effect = _build_messages
     context_builder.consume_last_truncation_summary.return_value = None
-    assistant_text = (
-        "Skill ini akan cek uptime, load, RAM, disk, network, dan service penting di VPS Linux."
-    )
+    assistant_text = "1. Cek uptime\n2. Cek load\n3. Cek RAM"
     session = SimpleNamespace(metadata={})
     history = [{"role": "assistant", "content": assistant_text}]
 
@@ -2007,11 +2004,10 @@ async def test_process_message_plain_apa_itu_reuses_recent_assistant_answer_cont
     loop._run_simple_response.assert_awaited_once()
     loop._run_agent_loop.assert_not_called()
     assert msg.metadata.get("required_tool") is None
-    assert msg.metadata.get("continuity_source") == "answer_reference"
+    assert msg.metadata.get("continuity_source") != "answer_reference"
     current_message = captured_messages.get("current_message") or str(msg.metadata.get("effective_content") or "")
-    assert current_message.startswith("apa itu\n\n[Answer Reference Target]\n")
-    assert "[Answer Reference Context]\n" in current_message
-    assert assistant_text in current_message
+    assert current_message == "apa itu"
+    assert "[Answer Reference Context]\n" not in current_message
 
 
 @pytest.mark.asyncio
@@ -2286,7 +2282,7 @@ async def test_process_message_explicit_weather_query_marks_parser_continuity_so
 
 
 @pytest.mark.asyncio
-async def test_process_message_contextual_followup_reuses_recent_assistant_answer_topic():
+async def test_process_message_contextual_followup_no_longer_forces_recent_assistant_answer_topic():
     captured_messages = {}
 
     def _build_messages(**kwargs):
@@ -2350,12 +2346,9 @@ async def test_process_message_contextual_followup_reuses_recent_assistant_answe
     loop._run_simple_response.assert_awaited_once()
     loop._run_agent_loop.assert_not_called()
     assert msg.metadata.get("required_tool") is None
-    assert msg.metadata.get("continuity_source") == "answer_reference"
-    current_message = captured_messages["current_message"]
-    assert current_message.startswith("kalau untuk bepergian bagaimana\n\n[Answer Reference Target]\n")
-    assert "[Grounded Answer Note]\n" in current_message
-    assert "[Answer Reference Context]\n" in current_message
-    assert assistant_text in current_message
+    assert msg.metadata.get("continuity_source") != "answer_reference"
+    current_message = captured_messages.get("current_message") or str(msg.metadata.get("effective_content") or "")
+    assert current_message == "kalau untuk bepergian bagaimana"
 
 
 @pytest.mark.asyncio
@@ -2449,17 +2442,19 @@ async def test_process_message_multilingual_option_reference_followup_reuses_rec
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("followup_text", "assistant_text", "pending_intent_text"),
+    ("followup_text", "assistant_text", "pending_intent_text", "expects_answer_reference"),
     (
         (
             "\u0e02\u0e49\u0e2d\u0e17\u0e35\u0e48\u0e2a\u0e2d\u0e07\u0e04\u0e37\u0e2d\u0e2d\u0e30\u0e44\u0e23 \u0e15\u0e2d\u0e1a\u0e2a\u0e31\u0e49\u0e19\u0e46",
             "\U0001f4c1 .basetemp\n\U0001f4c1 .claude\n\U0001f4c4 .dockerignore",
             "tampilkan 3 item pertama dari folder c:\\users\\arvy kairi\\desktop\\bot\\kabot",
+            True,
         ),
         (
             "\u305d\u308c\u3063\u3066\u3069\u3046\u3044\u3046\u610f\u5473\uff1f\u4e00\u884c\u3060\u3051\u3002",
             "halo-mcp-konteks",
             "gunakan tool mcp.local_echo.echo dengan argumen text='halo-mcp-konteks' lalu tampilkan hasilnya saja.",
+            False,
         ),
     ),
 )
@@ -2467,6 +2462,7 @@ async def test_process_message_answer_reference_ignores_stale_pending_intent_con
     followup_text: str,
     assistant_text: str,
     pending_intent_text: str,
+    expects_answer_reference: bool,
 ):
     captured_messages = {}
 
@@ -2534,7 +2530,10 @@ async def test_process_message_answer_reference_ignores_stale_pending_intent_con
     )
     await process_message(loop, msg)
 
-    assert msg.metadata.get("continuity_source") == "answer_reference"
+    if expects_answer_reference:
+        assert msg.metadata.get("continuity_source") == "answer_reference"
+    else:
+        assert msg.metadata.get("continuity_source") != "answer_reference"
     effective_content = str(msg.metadata.get("effective_content") or "")
     assert "[Follow-up Context]\n" not in effective_content
 
@@ -2611,7 +2610,7 @@ async def test_process_message_answer_reference_selection_followup_can_fast_repl
 
 
 @pytest.mark.asyncio
-async def test_process_message_answer_reference_meaning_followup_can_fast_reply_from_target():
+async def test_process_message_answer_reference_meaning_followup_no_longer_forces_fast_reply_from_target():
     session = SimpleNamespace(metadata={})
     history = [{"role": "assistant", "content": "halo-mcp-konteks"}]
     captured = {}
@@ -2662,11 +2661,10 @@ async def test_process_message_answer_reference_meaning_followup_can_fast_reply_
     )
     await process_message(loop, msg)
 
-    loop._run_simple_response.assert_not_called()
+    loop._run_simple_response.assert_awaited_once()
     loop._run_agent_loop.assert_not_called()
-    assert msg.metadata.get("continuity_source") == "answer_reference"
-    assert "halo-mcp-konteks" in captured["final_content"]
-    assert "\u305d\u308c\u3063\u3066\u3069\u3046\u3044\u3046\u610f\u5473" not in captured["final_content"]
+    assert msg.metadata.get("continuity_source") != "answer_reference"
+    assert captured["final_content"] == "simple"
 
 
 @pytest.mark.asyncio
@@ -2797,7 +2795,9 @@ async def test_process_message_memory_recall_uses_relevant_memory_facts_over_sta
         _resolve_context_for_message=lambda _msg: context_builder,
         context=context_builder,
         tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
-        _required_tool_for_query=lambda text: "stock" if "code" in str(text or "").lower() else None,
+        _required_tool_for_query=lambda text: (
+            "stock" if "store" in str(text or "").lower() or "stored" in str(text or "").lower() else None
+        ),
         _run_simple_response=AsyncMock(return_value="MEM-42"),
         _run_agent_loop=AsyncMock(return_value="agent"),
         _finalize_session=AsyncMock(
@@ -2811,7 +2811,7 @@ async def test_process_message_memory_recall_uses_relevant_memory_facts_over_sta
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="what is my preference code?",
+        content="what name did you store for me?",
     )
     await process_message(loop, msg)
 

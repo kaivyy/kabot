@@ -167,6 +167,24 @@ _SKILL_CATALOG_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(技能).{0,18}(有什么|有哪些|可以用|列表|列出|显示|推荐)", re.DOTALL),
 )
 
+_DIRECT_GITHUB_SKILL_URL_RE = re.compile(
+    r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/"
+    r"(?:tree|blob)/[^/\s]+/[^\s#]*(?:/skills?/[^ \t\r\n#]+|/SKILL\.md)\b",
+    re.IGNORECASE,
+)
+_DIRECT_GITHUB_SKILL_PATH_RE = re.compile(
+    r"\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/"
+    r"(?:skills?/[^ \t\r\n#]+|[^ \t\r\n#]*/SKILL\.md)\b",
+    re.IGNORECASE,
+)
+_SKILL_INSTALL_ACTION_RE = re.compile(
+    r"\b("
+    r"install|pasang|tambahkan|unduh|download|sinkron|sync|upgrade|update|"
+    r"use|gunakan|pakai|pake|follow|ikuti"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _EXPLICIT_SKILL_USE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(use|run|follow|apply)\b.{0,24}\b(skill|skills)\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"\b(skill|skills)\b.{0,24}\b(use|run|follow|apply)\b", re.IGNORECASE | re.DOTALL),
@@ -264,6 +282,10 @@ def looks_like_skill_install_request(text: str) -> bool:
     for pattern in _SKILL_INSTALL_PATTERNS:
         if pattern.search(content):
             return True
+    if _DIRECT_GITHUB_SKILL_URL_RE.search(content) and _SKILL_INSTALL_ACTION_RE.search(content):
+        return True
+    if _DIRECT_GITHUB_SKILL_PATH_RE.search(content) and _SKILL_INSTALL_ACTION_RE.search(content):
+        return True
     return False
 
 

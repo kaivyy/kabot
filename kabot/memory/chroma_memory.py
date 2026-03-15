@@ -758,6 +758,17 @@ class HybridMemoryManager(MemoryBackend):
 
                 if msg.get("tool_results"):
                     formatted["tool_results"] = msg["tool_results"]
+                    if (
+                        msg["role"] == "tool"
+                        and isinstance(msg["tool_results"], list)
+                        and msg["tool_results"]
+                        and isinstance(msg["tool_results"][0], dict)
+                    ):
+                        first_result = msg["tool_results"][0]
+                        if first_result.get("tool_call_id"):
+                            formatted["tool_call_id"] = first_result.get("tool_call_id")
+                        if first_result.get("name"):
+                            formatted["name"] = first_result.get("name")
 
                 context.append(formatted)
 
@@ -961,5 +972,4 @@ class HybridMemoryManager(MemoryBackend):
 
 # Backward compatibility alias
 ChromaMemoryManager = HybridMemoryManager
-
 

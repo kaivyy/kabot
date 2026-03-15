@@ -80,6 +80,7 @@ from kabot.agent.loop_core.message_runtime_parts.followup import (  # noqa: E402
 )
 from kabot.agent.loop_core.message_runtime_parts.user_profile import (  # noqa: E402,I001
     build_user_profile_memory_facts,
+    looks_like_self_identity_recall,
 )
 from kabot.agent.tools.stock import (  # noqa: E402,I001
     extract_crypto_ids,
@@ -151,8 +152,11 @@ def _build_skill_creation_workflow_note(
             f"- The user has explicitly approved the plan for {workflow_subject} in this conversation.\n"
             "- Understand the user's language and answer in that language unless they explicitly ask for a different language.\n"
             "- You may now execute the approved plan, write files if needed, and run focused verification for the approved scope.\n"
+            "- Prefer the bundled skill-creator helpers when they fit: scaffold with `scripts/init_skill.py`, validate with `scripts/quick_validate.py`, and package with `scripts/package_skill.py` when distribution matters.\n"
+            "- If this is an API-backed skill, keep the implementation grounded in the real endpoint/auth/request/response examples already established in the conversation.\n"
             "- Keep the implementation inside the workspace skills directory unless the user asked for a different target.\n"
-            "- Never hardcode API keys or secrets; use env/config requirements instead."
+            "- Never hardcode API keys or secrets; use env/config requirements instead.\n"
+            "- Before calling the skill done, verify the created files and any new scripts."
         )
     if first_turn:
         return (
@@ -161,6 +165,8 @@ def _build_skill_creation_workflow_note(
             "- Understand the user's language and answer in that language unless they explicitly ask for a different language.\n"
             "- Do not create files yet.\n"
             "- Stay in discovery mode on this turn: ask only the minimum questions needed about scope, source/target, auth/dependencies, and trust/overwrite implications.\n"
+            "- Try to ground the design in one or two concrete trigger/output examples before planning.\n"
+            "- For API skills, capture the real endpoint/auth/request/response shape first; use any JSON, payload, or error sample the user already gave as the starting source of truth.\n"
             "- Do not claim the work is already being executed yet."
         )
     return (
@@ -170,6 +176,7 @@ def _build_skill_creation_workflow_note(
         "- Do not create or modify files until the user explicitly approves a written plan in this conversation.\n"
         "- If requirements are still incomplete, continue discovery with concise follow-up questions.\n"
         "- If requirements are complete but no plan has been approved yet, present a short implementation plan and ask for approval.\n"
+        "- For API skills, the plan should name the endpoint/auth/request/response shape and which parts will live in `SKILL.md`, `references/`, `scripts/`, or `assets/`.\n"
         "- Only after explicit approval may you scaffold files, write code, or run verification."
     )
 
@@ -577,13 +584,31 @@ def _looks_like_memory_commit_turn(text: str) -> bool:
     return bool(_MEMORY_COMMIT_RE.search(normalized))
 
 
-_MEMORY_RECALL_RE = re.compile(
+_MEMORY_RECALL_INTERROGATIVE_RE = re.compile(
     r"(?i)\b("
-    r"what do you remember about me|what did you save|what did you remember|"
-    r"what is my preference code|what was my preference code|my preference code|"
-    r"what was the code you just remembered|"
-    r"who am i|"
-    r"remembered code|saved code|memory code"
+    r"who|what|which|when|where|why|how|"
+    r"tell|show|reply|answer"
+    r")\b"
+)
+_MEMORY_RECALL_ACTION_RE = re.compile(
+    r"(?i)\b("
+    r"remember|remembered|save|saved|store|stored|recall|memory|"
+    r"preference|preferences|code|call(?:ed)?|address(?:ed)?"
+    r")\b"
+)
+_MEMORY_RECALL_CONTEXT_RE = re.compile(
+    r"(?i)\b("
+    r"before|earlier|previous(?:ly)?|prior|last|just"
+    r")\b"
+)
+_MEMORY_RECALL_WORK_RE = re.compile(
+    r"(?i)\b("
+    r"decide|decided|decision|agree|agreed|plan|planned|todo|task|deadline|status"
+    r")\b"
+)
+_MEMORY_RECALL_SUBJECT_RE = re.compile(
+    r"(?i)\b("
+    r"i|me|my|mine|myself|we|us|our|ours"
     r")\b"
 )
 
@@ -593,7 +618,29 @@ def _looks_like_memory_recall_turn(text: str) -> bool:
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    return bool(_MEMORY_RECALL_RE.search(normalized))
+    if raw.startswith("/"):
+        return False
+    if looks_like_self_identity_recall(raw):
+        return True
+    if len(normalized) > 240:
+        return False
+    interrogative_turn = bool(
+        raw.endswith(("?", "？"))
+        or _MEMORY_RECALL_INTERROGATIVE_RE.search(normalized)
+    )
+    if _looks_like_memory_commit_turn(raw) and not interrogative_turn:
+        return False
+    if not interrogative_turn:
+        return False
+    has_memory_anchor = bool(_MEMORY_RECALL_ACTION_RE.search(normalized))
+    has_context_anchor = bool(_MEMORY_RECALL_CONTEXT_RE.search(normalized))
+    has_work_anchor = bool(_MEMORY_RECALL_WORK_RE.search(normalized))
+    has_subject_anchor = bool(_MEMORY_RECALL_SUBJECT_RE.search(normalized))
+    if has_memory_anchor and (has_subject_anchor or has_work_anchor):
+        return True
+    if has_context_anchor and has_work_anchor:
+        return True
+    return False
 
 
 async def _resolve_relevant_memory_facts(
@@ -683,6 +730,13 @@ def _looks_like_short_confirmation(text: str) -> bool:
     # not continue stale pending tool/intent context.
     if _SHORT_INTERROGATIVE_RE.search(normalized):
         return False
+    informative_tokens = [
+        token
+        for token in re.findall(r"\w+", normalized, flags=re.UNICODE)
+        if len(token) >= 3 and token not in _ASSISTANT_OFFER_CONTEXT_STOPWORDS
+    ]
+    if len(informative_tokens) >= 2:
+        return False
     return True
 
 
@@ -736,80 +790,6 @@ _ASSISTANT_OFFER_CONTEXT_STOPWORDS = {
     "ya",
     "yeah",
 }
-
-_CONTEXTUAL_FOLLOWUP_PHRASES = (
-    "ya lanjut",
-    "lanjut rencana",
-    "lanjut analisis",
-    "lanjut yang",
-    "maksudnya",
-    "kenapa",
-    "kok",
-    "yang formal",
-    "yang kedua",
-    "nomor 2",
-    "coba ulang",
-    "jelasin",
-    "jelaskan",
-    "trend nya",
-    "trendnya",
-    "再简短一点",
-    "更短一点",
-    "这是什么意思",
-    "什么意思",
-    "もっと短く",
-    "それどういう意味",
-    "สั้นกว่านี้",
-    "หมายความว่าไง",
-)
-
-_CONTEXTUAL_FOLLOWUP_EXACT = {
-    "naik ya",
-    "turun ya",
-}
-_ANSWER_REFERENCE_FOLLOWUP_PHRASES = (
-    "yang pertama",
-    "yang kedua",
-    "yang ketiga",
-    "yang keempat",
-    "yang kelima",
-    "nomor 1",
-    "nomor 2",
-    "nomor 3",
-    "nomor 4",
-    "nomor 5",
-    "opsi 1",
-    "opsi 2",
-    "opsi 3",
-    "opsi 4",
-    "opsi 5",
-    "the first",
-    "the second",
-    "the third",
-    "the fourth",
-    "the fifth",
-    "maksudnya",
-    "coba ulang",
-    "ulang dari awal",
-    "versi singkat",
-    "versi pendek",
-    "jelasin lagi",
-    "jelaskan lagi",
-    "再简短一点",
-    "再短一点",
-    "更短一点",
-    "这是什么意思",
-    "這是什麼意思",
-    "什么意思",
-    "什麼意思",
-    "もっと短く",
-    "短くして",
-    "それどういう意味",
-    "どういう意味",
-    "สั้นกว่านี้",
-    "หมายความว่าไง",
-    "หมายความว่าอะไร",
-)
 
 from kabot.agent.loop_core.message_runtime_parts.reference_resolution import (
     _assistant_followup_text_looks_committed_action,

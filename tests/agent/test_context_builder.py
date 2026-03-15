@@ -42,6 +42,24 @@ def test_build_messages_does_not_crash_on_malformed_history(tmp_path: Path):
     assert messages[-1]["role"] == "user"
 
 
+def test_build_messages_includes_explicit_history_context_marker_when_history_present(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+    history = [
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "lanjutkan"},
+    ]
+
+    messages = builder.build_messages(history=history, current_message="pakai data terbaru")
+
+    assert any(
+        isinstance(msg, dict)
+        and msg.get("role") == "system"
+        and "[Chat messages since your last reply - for context]" in str(msg.get("content") or "")
+        for msg in messages
+    )
+    assert messages[-1]["role"] == "user"
+
+
 def test_context_builder_passes_skills_config_to_loader(tmp_path: Path):
     managed_dir = tmp_path / "managed-skills"
     builder = ContextBuilder(
@@ -177,6 +195,38 @@ def test_context_builder_exposes_summary_first_skill_guidance_for_auto_selected_
     assert "<available_skills>" in prompt
     assert "1password" in prompt
     assert "Use 1Password vaults to fetch and manage credentials." not in prompt
+
+
+def test_context_builder_general_prompt_includes_diagnostics_and_api_skill_guidance(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="kenapa whatsapp kabot error dan tolong buat skill dari API ini",
+    )
+
+    assert "inspect real local evidence first" in prompt
+    assert "config files, logs, docs, status output" in prompt
+    assert "when creating a skill from an API" in prompt
+    assert "`references/` for API notes" in prompt
+    assert "`scripts/` for deterministic wrappers" in prompt
+
+
+def test_context_builder_includes_openclaw_style_memory_recall_and_docs_guidance(tmp_path: Path):
+    builder = ContextBuilder(tmp_path)
+
+    prompt = builder.build_system_prompt(
+        profile="GENERAL",
+        current_message="what did you save about me and why is kabot behaving like this",
+        tool_names=["memory_search", "get_memory", "read_file", "exec"],
+    )
+
+    assert "## Memory Recall" in prompt
+    assert "use `memory_search` first" in prompt
+    assert "use `get_memory` to pull only the needed details" in prompt
+    assert "## Documentation & Diagnostics" in prompt
+    assert "~/.kabot/config.json" in prompt
+    assert "~/.kabot/logs/" in prompt
 
 
 def test_context_builder_uses_summary_first_block_for_explicit_skill_usage_prompt(tmp_path: Path):

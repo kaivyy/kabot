@@ -38,6 +38,28 @@ def test_get_conversation_context(mem):
     assert len(ctx) == 2
 
 
+def test_get_conversation_context_surfaces_tool_call_id_for_tool_messages(mem):
+    mem.create_session("s1", "telegram", "chat1")
+    mem.add_message(
+        "s1",
+        "assistant",
+        "",
+        tool_calls=[{"id": "call-1", "name": "web_fetch", "arguments": {"url": "https://example.com"}}],
+    )
+    mem.add_message(
+        "s1",
+        "tool",
+        "HTTP 200",
+        tool_results=[{"tool_call_id": "call-1", "name": "web_fetch", "result": "HTTP 200"}],
+    )
+
+    ctx = mem.get_conversation_context("s1")
+
+    assert ctx[-1]["role"] == "tool"
+    assert ctx[-1]["tool_call_id"] == "call-1"
+    assert ctx[-1]["name"] == "web_fetch"
+
+
 def test_health_check(mem):
     status = mem.health_check()
     assert status["status"] == "ok"

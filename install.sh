@@ -123,6 +123,38 @@ is_interactive() {
     [ -t 0 ] && [ -t 1 ]
 }
 
+ensure_python_package() {
+    local module_name=$1
+    local package_name=$2
+
+    if "$VENV_DIR/bin/python" -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('$module_name') else 1)" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    log_info "Installing Python dependency: $package_name"
+    pip install "$package_name"
+}
+
+bootstrap_browser_runtime() {
+    if [ "${KABOT_SKIP_BROWSER_BOOTSTRAP:-0}" = "1" ]; then
+        log_warn "Skipping browser/bootstrap dependencies because KABOT_SKIP_BROWSER_BOOTSTRAP=1"
+        return 0
+    fi
+
+    if [ "$IS_TERMUX" -eq 1 ]; then
+        log_warn "Skipping Playwright bootstrap on Termux."
+        return 0
+    fi
+
+    ensure_python_package "bs4" "beautifulsoup4"
+    ensure_python_package "playwright" "playwright"
+
+    log_info "Bootstrapping Playwright Chromium runtime..."
+    if ! "$VENV_DIR/bin/python" -m playwright install chromium; then
+        log_warn "Playwright browser bootstrap failed. You can retry later with: $BIN_DIR/kabot doctor --fix"
+    fi
+}
+
 main() {
     # Print Logo
     echo -e "${GREEN}"
@@ -169,6 +201,10 @@ EOF
     else
         log_info "Installing from PyPI..."
         pip install kabot
+    fi
+
+    if [ "$RUNTIME_OS" = "linux" ] || [ "$RUNTIME_OS" = "macos" ]; then
+        bootstrap_browser_runtime
     fi
 
     # Create wrapper script

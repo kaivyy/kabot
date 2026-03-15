@@ -149,8 +149,14 @@ async def test_process_message_call_me_preference_persists_profile_without_expli
 
 
 @pytest.mark.asyncio
-async def test_process_message_self_identity_recall_uses_profile_fast_reply(tmp_path: Path):
+async def test_process_message_self_identity_recall_uses_profile_memory_context(tmp_path: Path):
     ensure_workspace_templates(tmp_path)
+    captured: dict[str, str] = {}
+
+    def _build_messages(**kwargs):
+        captured["current_message"] = str(kwargs.get("current_message") or "")
+        return [{"role": "user", "content": captured["current_message"]}]
+
     session = SimpleNamespace(
         metadata={
             "user_profile": {
@@ -160,12 +166,12 @@ async def test_process_message_self_identity_recall_uses_profile_fast_reply(tmp_
         }
     )
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    context_builder.build_messages.side_effect = _build_messages
     context_builder.consume_last_truncation_summary.return_value = None
     loop = _build_loop(
         workspace=tmp_path,
         session=session,
-        response="should-not-run",
+        response="Maha Raja",
         context_builder=context_builder,
     )
 
@@ -179,8 +185,9 @@ async def test_process_message_self_identity_recall_uses_profile_fast_reply(tmp_
 
     assert response is not None
     assert response.content == "Maha Raja"
-    context_builder.build_messages.assert_not_called()
-    loop._run_simple_response.assert_not_awaited()
+    context_builder.build_messages.assert_called_once()
+    assert "User prefers to be addressed as: Maha Raja" in captured["current_message"]
+    loop._run_simple_response.assert_awaited_once()
     loop._run_agent_loop.assert_not_awaited()
 
 

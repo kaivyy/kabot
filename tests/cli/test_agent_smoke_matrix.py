@@ -352,11 +352,17 @@ def test_build_memory_smoke_cases_include_cross_lingual_followups():
 
 
 def test_build_workflow_smoke_cases_include_ping_pong_upgrade_transcript():
-    cases = build_workflow_smoke_cases()
+    cases = build_workflow_smoke_cases(
+        cwd=Path(r"C:\Users\Arvy Kairi\Desktop\bot\kabot"),
+        os_profile="windows",
+    )
 
     ping_pong_case = next(case for case in cases if case.label == "workflow-pingpong-upgrade")
     status_case = next(case for case in cases if case.label == "workflow-status-server-followup")
     weather_case = next(case for case in cases if case.label == "workflow-weather-forecast-followup")
+    finance_case = next(case for case in cases if case.label == "workflow-finance-refresh-followup")
+    install_case = next(case for case in cases if case.label == "workflow-skill-install-github-url")
+    repo_case = next(case for case in cases if case.label == "workflow-repo-inspection-grounded")
 
     assert ping_pong_case.category == "workflow"
     assert ping_pong_case.prompt == "create a ping pong game web based"
@@ -392,6 +398,21 @@ def test_build_workflow_smoke_cases_include_ping_pong_upgrade_transcript():
         "I couldn't fetch weather for Prediksi",
     )
 
+    assert finance_case.category == "workflow"
+    assert finance_case.prompt == "saham bbca berapa"
+    assert finance_case.followup_prompts == ("pakai data terbaru",)
+    assert "bbca" in tuple(item.lower() for item in finance_case.expected_any_contains)
+    assert finance_case.expected_turn_category == "action"
+
+    assert install_case.category == "workflow"
+    assert "github.com/acme/custom-skills/tree/main/skills/mlbb-id-check" in install_case.prompt
+    assert install_case.expected_any_contains == ("github", "skill", "repo", "install")
+
+    assert repo_case.category == "workflow"
+    assert r"C:\Users\Arvy Kairi\Desktop\bot\kabot" in repo_case.prompt
+    assert "kabot" in tuple(item.lower() for item in repo_case.expected_any_contains)
+    assert repo_case.expected_turn_category == "action"
+
 
 def test_build_regression_smoke_cases_include_key_transcript_families():
     cases = build_regression_smoke_cases(
@@ -406,6 +427,9 @@ def test_build_regression_smoke_cases_include_key_transcript_families():
     assert "memory-followup-id-en" in labels
     assert "workflow-status-server-followup" in labels
     assert "workflow-weather-forecast-followup" in labels
+    assert "workflow-finance-refresh-followup" in labels
+    assert "workflow-skill-install-github-url" in labels
+    assert "workflow-repo-inspection-grounded" in labels
 
 
 def test_main_regression_cases_runs_regression_pack(monkeypatch, tmp_path):
@@ -440,6 +464,9 @@ def test_main_regression_cases_runs_regression_pack(monkeypatch, tmp_path):
     assert "delivery-find-send" in seen_labels
     assert "memory-followup-id-en" in seen_labels
     assert "workflow-status-server-followup" in seen_labels
+    assert "workflow-finance-refresh-followup" in seen_labels
+    assert "workflow-skill-install-github-url" in seen_labels
+    assert "workflow-repo-inspection-grounded" in seen_labels
 
 
 def test_create_mcp_local_echo_continuity_case_writes_temp_config(tmp_path):

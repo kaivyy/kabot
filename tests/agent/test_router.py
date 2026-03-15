@@ -38,17 +38,27 @@ class _StructuredRouteProvider:
 
 
 @pytest.mark.asyncio
-async def test_route_weather_query_is_complex():
-    router = IntentRouter(_ChatOnlyProvider())
+async def test_route_weather_query_uses_structured_model_decision_instead_of_fast_parser():
+    provider = _StructuredRouteProvider(
+        '{"profile":"GENERAL","turn_category":"action","is_complex":true}'
+    )
+    router = IntentRouter(provider)
     decision = await router.route("check the weather in Cilacap today")
     assert decision.is_complex is True
+    assert decision.turn_category == "action"
+    assert provider.chat_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_route_set_relative_reminder_is_complex():
-    router = IntentRouter(_ChatOnlyProvider())
+async def test_route_set_relative_reminder_uses_structured_model_decision_instead_of_fast_parser():
+    provider = _StructuredRouteProvider(
+        '{"profile":"GENERAL","turn_category":"action","is_complex":true}'
+    )
+    router = IntentRouter(provider)
     decision = await router.route("set a reminder in 2 minutes to eat")
     assert decision.is_complex is True
+    assert decision.turn_category == "action"
+    assert provider.chat_calls == 1
 
 
 @pytest.mark.asyncio
@@ -61,8 +71,10 @@ async def test_route_set_relative_reminder_is_complex():
         ("what timezone am I in?", "GENERAL"),
     ],
 )
-async def test_route_temporal_queries_skip_llm_classification(query, expected_profile):
-    provider = _ChatOnlyProvider()
+async def test_route_temporal_queries_use_structured_model_decision(query, expected_profile):
+    provider = _StructuredRouteProvider(
+        '{"profile":"GENERAL","turn_category":"chat","is_complex":false}'
+    )
     router = IntentRouter(provider)
 
     decision = await router.route(query)
@@ -70,7 +82,7 @@ async def test_route_temporal_queries_skip_llm_classification(query, expected_pr
     assert decision.profile == expected_profile
     assert decision.is_complex is False
     assert getattr(decision, "turn_category", None) == "chat"
-    assert provider.chat_calls == 0
+    assert provider.chat_calls == 1
 
 
 @pytest.mark.asyncio
@@ -82,15 +94,17 @@ async def test_route_temporal_queries_skip_llm_classification(query, expected_pr
         "what did you save about me? answer briefly.",
     ],
 )
-async def test_route_memory_recall_queries_skip_llm_coding_misclassification(query):
-    provider = _ChatOnlyProvider()
+async def test_route_memory_recall_queries_use_structured_model_decision(query):
+    provider = _StructuredRouteProvider(
+        '{"profile":"GENERAL","turn_category":"chat","is_complex":false}'
+    )
     router = IntentRouter(provider)
 
     decision = await router.route(query)
 
     assert decision.profile == "GENERAL"
     assert getattr(decision, "turn_category", None) == "chat"
-    assert provider.chat_calls == 0
+    assert provider.chat_calls == 1
 
 
 @pytest.mark.asyncio
@@ -107,11 +121,27 @@ async def test_route_general_knowledge_query_marks_chat_turn_category():
 
 @pytest.mark.asyncio
 async def test_route_indonesian_weather_query_no_longer_uses_fast_parser_shortcuts():
-    provider = _ChatOnlyProvider()
+    provider = _StructuredRouteProvider(
+        '{"profile":"GENERAL","turn_category":"action","is_complex":true}'
+    )
     router = IntentRouter(provider)
 
-    await router.route("tolong cek suhu cilacap hari ini")
+    decision = await router.route("tolong cek suhu cilacap hari ini")
 
+    assert decision.turn_category == "action"
+    assert provider.chat_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_route_english_weather_query_no_longer_uses_fast_parser_shortcuts():
+    provider = _StructuredRouteProvider(
+        '{"profile":"GENERAL","turn_category":"action","is_complex":true}'
+    )
+    router = IntentRouter(provider)
+
+    decision = await router.route("check the weather in Cilacap today")
+
+    assert decision.turn_category == "action"
     assert provider.chat_calls == 1
 
 

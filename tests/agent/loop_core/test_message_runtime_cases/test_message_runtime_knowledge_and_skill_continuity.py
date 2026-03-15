@@ -99,6 +99,76 @@ async def test_process_message_web_search_setup_hint_followups_demote_back_to_gr
 
 
 @pytest.mark.asyncio
+async def test_process_message_language_switch_followup_no_longer_uses_indonesian_web_parser():
+    context_builder = MagicMock()
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_tool": {
+                "tool": "web_search",
+                "source": "harga saham bbca sekarang",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            },
+            "last_tool_context": {
+                "tool": "web_search",
+                "source": "harga saham bbca sekarang",
+                "updated_at": time.time(),
+            },
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="simple")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="pakai bahasa inggris",
+    )
+    await process_message(loop, msg)
+
+    loop._run_simple_response.assert_awaited_once()
+    loop._run_agent_loop.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    context_builder.build_messages.assert_not_called()
+    assert session.metadata.get("pending_followup_tool") is None
+
+
+@pytest.mark.asyncio
 async def test_process_message_web_search_source_followup_prefers_selected_source_contract():
     context_builder = MagicMock()
     context_builder.build_messages.return_value = [{"role": "user", "content": "yahoo finance"}]
@@ -596,6 +666,259 @@ async def test_process_message_live_finance_lookup_without_live_tools_adds_hones
 
     assert msg.metadata.get("required_tool") is None
     assert "do not guess a latest price" in captured["current_message"].lower()
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_message_live_data_refresh_followup_keeps_grounded_web_search_lookup():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "pakai data terbaru"}]
+    context_builder.skills = SimpleNamespace(
+        should_prefer_external_finance_skill=lambda _text, profile="GENERAL": False,
+        has_preferred_external_skill_match=lambda _text, profile="GENERAL": False,
+    )
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_tool": {
+                "tool": "web_search",
+                "source": "saham bbca berapa",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            },
+            "last_tool_context": {
+                "tool": "web_search",
+                "source": "saham bbca berapa",
+                "updated_at": time.time(),
+            },
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["web_search", "web_fetch"],
+            has=lambda name: name in {"web_search", "web_fetch"},
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="pakai data terbaru",
+    )
+    await process_message(loop, msg)
+
+    assert msg.metadata.get("required_tool") == "web_search"
+    required_query = str(msg.metadata.get("required_tool_query") or "").lower()
+    assert "bbca" in required_query
+    assert "terbaru" in required_query
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_message_live_data_refresh_followup_without_live_tools_keeps_honesty_context():
+    captured: dict[str, str] = {}
+
+    def _build_messages(**kwargs):
+        captured["current_message"] = str(kwargs.get("current_message") or "")
+        return [{"role": "user", "content": captured["current_message"]}]
+
+    context_builder = MagicMock()
+    context_builder.build_messages.side_effect = _build_messages
+    context_builder.skills = SimpleNamespace(
+        should_prefer_external_finance_skill=lambda _text, profile="GENERAL": False,
+        has_preferred_external_skill_match=lambda _text, profile="GENERAL": False,
+    )
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": "saham bbca berapa",
+                "profile": "GENERAL",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+                "request_text": "saham bbca berapa",
+            },
+            "last_tool_context": {
+                "tool": "message",
+                "source": "saham bbca berapa",
+                "updated_at": time.time(),
+            },
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="pakai data terbaru",
+    )
+    await process_message(loop, msg)
+
+    assert msg.metadata.get("required_tool") is None
+    assert "saham bbca berapa" in captured["current_message"].lower()
+    assert "do not guess a latest price" in captured["current_message"].lower()
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_message_live_data_refresh_followup_rehydrates_active_finance_skill_lane():
+    captured: dict[str, object] = {}
+
+    def _build_messages(**kwargs):
+        captured["current_message"] = str(kwargs.get("current_message") or "")
+        captured["skill_names"] = list(kwargs.get("skill_names") or [])
+        return [{"role": "user", "content": "pakai data terbaru"}]
+
+    context_builder = MagicMock()
+    context_builder.build_messages.side_effect = _build_messages
+    context_builder.skills = SimpleNamespace(
+        should_prefer_external_finance_skill=lambda _text, profile="GENERAL": False,
+        has_preferred_external_skill_match=lambda _text, profile="GENERAL": False,
+    )
+    session = SimpleNamespace(
+        metadata={
+            "external_skill_lane": True,
+            "forced_skill_names": ["yahoo-finance-stock"],
+            "pending_followup_tool": {
+                "tool": "web_search",
+                "source": "saham bbca berapa",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            },
+            "last_tool_context": {
+                "tool": "web_search",
+                "source": "saham bbca berapa",
+                "updated_at": time.time(),
+            },
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["web_search", "web_fetch"],
+            has=lambda name: name in {"web_search", "web_fetch"},
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="pakai data terbaru",
+    )
+    await process_message(loop, msg)
+
+    assert msg.metadata.get("required_tool") == "web_search"
+    assert msg.metadata.get("forced_skill_names") == ["yahoo-finance-stock"]
+    assert msg.metadata.get("external_skill_lane") is True
+    required_query = str(msg.metadata.get("required_tool_query") or "").lower()
+    assert "bbca" in required_query
+    assert "terbaru" in required_query
+    assert captured["skill_names"] == ["yahoo-finance-stock"]
+    assert "[External Skill Continuity Note]" in str(captured["current_message"])
     loop._run_agent_loop.assert_awaited_once()
     loop._run_simple_response.assert_not_called()
 

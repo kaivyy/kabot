@@ -262,7 +262,7 @@ You are a helpful AI assistant. Be direct, competent, and resourceful.
 - Treat grounded chat context as real state: working directories, file paths, delivery destinations, recent tool context, and follow-up intent should carry across turns unless the user clearly resets.
 - Use tools directly when they are the best way to complete the task.
 - Read files before making assumptions about their contents.
-- If the user asks what a folder, repo, project, or app is, inspect real local files first and explain from that evidence instead of giving a generic stack guess.
+- If the user asks what a folder, repo, project, app, config, or local docs/bootstrap setup is, inspect real local files first and explain from that evidence instead of giving a generic stack guess.
 - Be concise, concrete, and execution-first.
 - When unsure, investigate first, then respond from evidence.
 - Do not ask the user to repeat paths, file names, folders, or destinations that are already grounded in context.
@@ -270,11 +270,13 @@ You are a helpful AI assistant. Be direct, competent, and resourceful.
 ## Tool Usage
 - File operations: Use read_file, write_file, edit_file immediately
 - Web tasks: For VPS/headless factual lookup, use web_search first to discover the current source or URL, then use web_fetch to read the chosen page. If web_search is unavailable or unconfigured, keep going with the selected skill's `references/` / `scripts/`, direct `web_fetch` for grounded URLs, or `exec` / bundled scripts for public endpoints instead of stopping on missing search credentials. Use browser only for truly interactive work such as screenshots, clicks, form fills, login flows, or DOM inspection.
+- Troubleshooting Kabot/runtime issues: inspect real local evidence first — config files, logs, docs, status output, session state, and tool availability. Diagnose the root cause from evidence before suggesting fixes, and prefer fixing it yourself when you have the needed tools.
 - System tasks: Use exec for shell commands
 - System info: Use get_system_info to check hardware specs (CPU, RAM, GPU, Storage, OS)
 - Server monitoring: Use server_monitor to check REAL-TIME resource usage (CPU load %, RAM used/free, disk usage %, uptime)
 - Cleanup: Use cleanup_system to free disk space (temp files, caches, recycle bin, etc.)
 - Configuration: If user gives you an API key or Token (like Meta, OpenAI, etc), use edit_file to save it into ~/.kabot/config.json under the proper integration section immediately. Do not just remember it in chat.
+- Skill/API work: when creating a skill from an API, first ground the workflow on the real endpoint/auth/request/response shape, then prefer `references/` for API notes and `scripts/` for deterministic wrappers instead of vague prose-only instructions.
 - Never say "I cannot access files" â€” you CAN with read_file
 - Never fabricate information â€” always verify with tools first
 - NEVER tell the user to "run this command yourself" â€” YOU have exec, get_system_info, and cleanup_system tools, use them directly
@@ -476,6 +478,14 @@ Always check platform before writing scripts."""
         if skill_parts:
             parts.extend(skill_parts)
 
+        memory_prompt = self._build_memory_recall_prompt(tool_names=tool_names)
+        if memory_prompt:
+            parts.append(memory_prompt)
+
+        docs_prompt = self._build_docs_diagnostics_prompt(compact=compact_prompt)
+        if docs_prompt:
+            parts.append(docs_prompt)
+
         # Supplemental bootstrap files
         if not compact_prompt:
             bootstrap = self._load_bootstrap_files(self.SUPPLEMENTAL_FILES)
@@ -575,6 +585,43 @@ Follow these guardrails to avoid repeating past mistakes.""")
             ]
         )
         return "\n".join(lines)
+
+    def _build_memory_recall_prompt(self, *, tool_names: list[str] | None = None) -> str:
+        available_tools = {
+            str(tool_name or "").strip()
+            for tool_name in (tool_names or [])
+            if str(tool_name or "").strip()
+        }
+        if "memory_search" not in available_tools and "get_memory" not in available_tools:
+            return ""
+
+        lines = [
+            "## Memory Recall",
+            "- Before answering anything about prior work, decisions, dates, people, preferences, or todos: use `memory_search` first.",
+        ]
+        if "get_memory" in available_tools:
+            lines.append(
+                "- After `memory_search`, use `get_memory` to pull only the needed details before answering."
+            )
+        else:
+            lines.append(
+                "- Answer those recall questions only from grounded memory hits; if confidence stays low, say you checked and need more context."
+            )
+        lines.append(
+            "- Do not answer memory-style questions from vague chat intuition when the memory tools are available."
+        )
+        return "\n".join(lines)
+
+    def _build_docs_diagnostics_prompt(self, *, compact: bool = False) -> str:
+        if compact:
+            return ""
+        workspace_path = self._resolved_workspace_path
+        return (
+            "## Documentation & Diagnostics\n"
+            "- For Kabot behavior, commands, config, memory, skills, runtime, or architecture: consult local docs and config first.\n"
+            f"- Prefer grounded local evidence such as `{workspace_path}/README.md`, `{workspace_path}/CHANGELOG.md`, workspace bootstrap/docs files, `~/.kabot/config.json`, `~/.kabot/logs/`, and relevant `SKILL.md` files before speculating.\n"
+            "- When diagnosing issues and shell/file tools are available, inspect status/logs/config yourself instead of asking the user to do it for you."
+        )
 
     def _should_use_compact_system_prompt(
         self,
@@ -861,6 +908,17 @@ If you are performing a multi-step task, start the first step NOW."""
             if dropped_summary:
                 self._last_truncation_summary = dropped_summary
 
+        if truncated_history:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "[Chat messages since your last reply - for context]\n"
+                        "Treat the following user/assistant messages as conversation context only. "
+                        "The final user message that follows is the current request."
+                    ),
+                }
+            )
         messages.extend(truncated_history)
 
         # Current message (with optional image attachments)

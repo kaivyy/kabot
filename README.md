@@ -104,6 +104,16 @@ Installer scripts auto-detect runtime profile (macOS/Linux/WSL/Windows/Termux/he
 curl -fsSL https://raw.githubusercontent.com/kaivyy/kabot/main/install.sh | bash
 ```
 
+On Linux/macOS, the one-command installer also bootstraps common runtime extras automatically:
+- verifies `beautifulsoup4` inside Kabot's virtualenv,
+- installs the Python `playwright` package if needed,
+- runs `python -m playwright install chromium`.
+
+If you want to skip browser bootstrap on headless/minimal hosts, set:
+```bash
+KABOT_SKIP_BROWSER_BOOTSTRAP=1 curl -fsSL https://raw.githubusercontent.com/kaivyy/kabot/main/install.sh | bash
+```
+
 **Windows (PowerShell)**
 ```powershell
 iwr -useb https://raw.githubusercontent.com/kaivyy/kabot/main/install.ps1 | iex
@@ -1458,4 +1468,3 @@ Special thanks to the open-source community and projects like **Kabot** that ins
 <p align="center">
   Built with ❤️ by <a href="https://github.com/kaivyy">@kaivyy</a>
 </p>
-

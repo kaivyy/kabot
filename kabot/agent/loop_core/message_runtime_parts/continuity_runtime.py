@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from loguru import logger
@@ -26,50 +25,15 @@ from kabot.agent.loop_core.tool_enforcement import infer_action_required_tool_fo
 def _apply_continuity_runtime(state: Any) -> None:
     """Mutate the provided turn state with answer-reference and follow-up context."""
 
-    normalized_content = _normalize_text(state.effective_content)
     allow_explicit_path_hint_for_committed_delivery = bool(
         state.pending_followup_intent_kind == "assistant_committed_action"
         and state.required_tool == "list_dir"
     )
-    minimal_answer_reference_override = normalized_content in {
-        "apa itu",
-        "what is that",
-        "what is this",
-        "itu apa",
-        "artinya apa",
-        "meaning?",
-    }
-    contextual_answer_reference_override = bool(
-        state.recent_assistant_answer
-        and state.raw_is_contextual_followup_request
-        and re.search(
-            r"\b(untuk|buat|for)\b.+\b(bagaimana|gimana|how)\b",
-            normalized_content,
-        )
-        and "trend" not in normalized_content
-    )
     recent_answer_context_candidate = bool(
         state.recent_assistant_answer
         and (
-            minimal_answer_reference_override
-            or
             state.raw_is_answer_reference_followup
-            or (
-                state.raw_is_contextual_followup_request
-                and (
-                    contextual_answer_reference_override
-                    or (
-                        not state.pending_followup_tool
-                        and not (
-                            state.pending_followup_intent
-                            and state.pending_followup_intent_kind in {
-                                "assistant_offer",
-                                "assistant_committed_action",
-                            }
-                        )
-                    )
-                )
-            )
+            or state.raw_is_contextual_followup_request
         )
     )
     recent_answer_option_selection_reference = (
@@ -97,15 +61,12 @@ def _apply_continuity_runtime(state: Any) -> None:
     )
     if (
         not state.required_tool
-        and (
-            contextual_answer_reference_override
-            or not (
-                state.pending_followup_intent
-                and state.pending_followup_intent_kind in {
-                    "assistant_offer",
-                    "assistant_committed_action",
-                }
-            )
+        and not (
+            state.pending_followup_intent
+            and state.pending_followup_intent_kind in {
+                "assistant_offer",
+                "assistant_committed_action",
+            }
         )
         and recent_answer_context_candidate
         and not state.is_closing_ack
@@ -185,6 +146,27 @@ def _apply_continuity_runtime(state: Any) -> None:
         state.continuity_source == "answer_reference"
         and state.pending_followup_intent_kind != "assistant_offer"
     )
+    pending_intent_kind = str(
+        ((state.pending_followup_intent or {}).get("kind") if state.pending_followup_intent else "") or ""
+    ).strip().lower()
+    generic_pending_intent_followup = bool(
+        pending_intent_kind not in {"assistant_offer", "assistant_committed_action"}
+        and state.is_short_confirmation
+    )
+    skill_managed_pending_intent_followup = bool(
+        pending_intent_kind in {"assistant_offer", "assistant_committed_action"}
+        and (
+            state.is_short_confirmation
+            or state.is_assistant_offer_context_followup
+            or state.is_assistant_committed_action_followup
+            or allow_explicit_path_hint_for_committed_delivery
+            or state.is_contextual_followup_request
+            or (
+                pending_intent_kind == "assistant_offer"
+                and state.is_answer_reference_followup
+            )
+        )
+    )
 
     if (
         state.pending_followup_intent
@@ -197,15 +179,8 @@ def _apply_continuity_runtime(state: Any) -> None:
         )
         and not ignore_stale_pending_intent_for_answer_reference
         and (
-            state.is_short_confirmation
-            or state.is_assistant_offer_context_followup
-            or state.is_assistant_committed_action_followup
-            or allow_explicit_path_hint_for_committed_delivery
-            or state.is_contextual_followup_request
-            or (
-                state.pending_followup_intent_kind == "assistant_offer"
-                and state.is_answer_reference_followup
-            )
+            generic_pending_intent_followup
+            or skill_managed_pending_intent_followup
         )
         and not state.is_closing_ack
         and not state.is_short_greeting

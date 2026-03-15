@@ -147,8 +147,9 @@ class BrowserTool(Tool):
         if not self.playwright:
             if _async_playwright is None:
                 raise RuntimeError(
-                    "Playwright is not installed. Install with `pip install playwright` "
-                    "and run `playwright install` before using browser tool."
+                    "Playwright is not installed. Re-run the Linux/macOS installer or install "
+                    "with `pip install playwright` and run `python -m playwright install chromium` "
+                    "before using browser tool."
                 )
             self.playwright = await _async_playwright().start()
             self.browser = await self.playwright.chromium.launch(headless=headless)

@@ -318,6 +318,41 @@ def test_match_skills_understands_external_skill_install_intent_for_skill_instal
         "show me installable curated skills from openai/skills",
         profile="GENERAL",
     )[0].startswith("skill-installer")
+    assert loader.match_skills(
+        "tolong pasang https://github.com/acme/custom-skills/tree/main/skills/mlbb-id-check",
+        profile="GENERAL",
+    )[0].startswith("skill-installer")
+    assert loader.match_skills(
+        "install owner/repo/skills/yahoo-finance-stock",
+        profile="GENERAL",
+    )[0].startswith("skill-installer")
+
+
+def test_match_skills_supports_custom_external_api_skill_after_install(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = tmp_path / "builtin"
+    builtin.mkdir(parents=True, exist_ok=True)
+
+    _write_skill(
+        workspace / "skills",
+        "mlbb-id-check",
+        "mobile legends mlbb game id zone api lookup checker account profile",
+    )
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+
+    matches = loader.match_skills(
+        "cek id game mlbb dan zone nya",
+        profile="GENERAL",
+    )
+
+    assert matches
+    assert matches[0].startswith("mlbb-id-check")
 
 
 def test_match_skills_understands_multilingual_skill_creation_intent(tmp_path, monkeypatch):
@@ -704,3 +739,40 @@ def test_generic_finance_skill_can_match_when_query_shares_grounded_market_terms
         )
         is True
     )
+
+
+def test_builtin_config_manager_matches_runtime_config_troubleshooting(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = Path(__file__).resolve().parents[2] / "kabot" / "skills"
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    matches = loader.match_skills(
+        "periksa config.json kabot dan cek kenapa whatsapp 401 unauthorized setelah relink",
+        profile="GENERAL",
+    )
+
+    assert matches
+    assert matches[0].startswith("config-manager")
+
+
+def test_builtin_config_manager_exposes_grounded_diagnostics_adaptation(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("kabot.agent.skills.Path.home", lambda: fake_home)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    builtin = Path(__file__).resolve().parents[2] / "kabot" / "skills"
+
+    loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
+    details = {
+        str(item.get("name")): item
+        for item in loader.list_skills(filter_unavailable=False)
+    }
+
+    assert details["config-manager"]["adapt_grounded_diagnostics"] is True

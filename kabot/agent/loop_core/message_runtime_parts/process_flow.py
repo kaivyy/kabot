@@ -126,6 +126,7 @@ from kabot.agent.loop_core.message_runtime_parts.user_profile import (
 from kabot.agent.loop_core.execution_runtime_parts.intent import (
     _build_source_constrained_web_search_query,
     _extract_direct_fetch_url_candidate,
+    _looks_like_live_data_refresh_followup,
     _looks_like_live_finance_lookup,
     _looks_like_web_source_selection_followup,
     _should_defer_live_research_latch_to_skill,
@@ -976,8 +977,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 "Do not call web search again unless the user explicitly asks for live, latest, or verified external information."
             ).strip()
         continuity_source = "knowledge_followup"
-        decision.is_complex = True
-        fast_direct_context = False
+        fast_direct_context = bool(
+            perf_cfg and bool(getattr(perf_cfg, "fast_first_response", True))
+        )
         _clear_pending_followup_tool(session)
         pending_followup_tool = None
         pending_followup_source = ""
@@ -1025,6 +1027,93 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 perf_cfg
                 and bool(getattr(perf_cfg, "fast_first_response", True))
                 and required_tool in direct_tools
+            )
+
+    grounded_live_followup_source = str(
+        pending_followup_source
+        or pending_followup_intent_request_text
+        or pending_followup_intent_text
+        or (last_tool_context.get("source") if isinstance(last_tool_context, dict) else "")
+        or effective_content
+    ).strip()
+    live_data_refresh_followup = bool(
+        not required_tool
+        and _looks_like_live_data_refresh_followup(effective_content)
+        and not is_assistant_offer_context_followup
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not is_explicit_new_request
+        and (
+            pending_followup_tool in {"web_search", "stock", "crypto"}
+            or (
+                grounded_live_followup_source
+                and _looks_like_live_research_query(grounded_live_followup_source)
+                and (
+                    pending_followup_intent is not None
+                    or isinstance(last_tool_context, dict)
+                )
+            )
+        )
+    )
+    if live_data_refresh_followup:
+        refresh_query = grounded_live_followup_source
+        if refresh_query and effective_content:
+            refresh_query = f"{refresh_query} {effective_content}".strip()
+        elif effective_content:
+            refresh_query = effective_content
+
+        finance_source = grounded_live_followup_source or effective_content
+        finance_stock_ids = extract_stock_symbols(finance_source)
+        finance_crypto_ids = extract_crypto_ids(finance_source)
+
+        preferred_live_tool = str(pending_followup_tool or "").strip().lower()
+        if preferred_live_tool == "web_search" and _tool_registry_has(loop, "web_search"):
+            required_tool = "web_search"
+            required_tool_query = refresh_query
+        elif preferred_live_tool == "stock" and _tool_registry_has(loop, "stock"):
+            required_tool = "stock"
+            required_tool_query = finance_source
+        elif preferred_live_tool == "crypto" and _tool_registry_has(loop, "crypto"):
+            required_tool = "crypto"
+            required_tool_query = finance_source
+        elif _tool_registry_has(loop, "web_search"):
+            required_tool = "web_search"
+            required_tool_query = refresh_query
+        elif finance_stock_ids and _tool_registry_has(loop, "stock"):
+            required_tool = "stock"
+            required_tool_query = finance_source
+        elif finance_crypto_ids and _tool_registry_has(loop, "crypto"):
+            required_tool = "crypto"
+            required_tool_query = finance_source
+        else:
+            requires_live_data_honesty_note = True
+            if grounded_live_followup_source:
+                effective_content = (
+                    f"{effective_content}\n\n"
+                    "[Live Follow-up Context]\n"
+                    f"{grounded_live_followup_source}\n\n"
+                    "[Live Data Continuity]\n"
+                    "The user is asking for fresher or latest data for the same topic. "
+                    "Keep the reply grounded in that earlier live-data request and do not answer from stale memory."
+                ).strip()
+
+        decision.is_complex = True
+        continuity_source = "live_data_refresh_followup"
+        if required_tool:
+            logger.info(
+                "Live-data refresh follow-up: "
+                f"'{_normalize_text(effective_content)[:120]}' -> required_tool={required_tool}"
+            )
+            fast_direct_context = bool(
+                perf_cfg
+                and bool(getattr(perf_cfg, "fast_first_response", True))
+                and required_tool in direct_tools
+            )
+        else:
+            logger.info(
+                "Live-data refresh follow-up: "
+                f"'{_normalize_text(effective_content)[:120]}' -> no live tool available"
             )
 
     if (
@@ -1188,33 +1277,40 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not is_closing_ack
         and not is_short_greeting
         and not is_non_action_feedback
-        and not is_explicit_new_request
     )
     skill_creation_followup = bool(
         current_skill_flow
         and current_skill_flow_kind != "install"
-        and (
-            is_short_confirmation
-            or _looks_like_skill_creation_approval(msg.content)
-            or skill_workflow_detail_followup
-        )
         and not is_closing_ack
         and not is_short_greeting
         and not is_non_action_feedback
-        and not is_explicit_new_request
+        and (
+            skill_workflow_detail_followup
+            or (
+                not is_explicit_new_request
+                and (
+                    is_short_confirmation
+                    or _looks_like_skill_creation_approval(msg.content)
+                )
+            )
+        )
     )
     skill_install_followup = bool(
         current_skill_flow
         and current_skill_flow_kind == "install"
-        and (
-            is_short_confirmation
-            or _looks_like_skill_creation_approval(msg.content)
-            or skill_workflow_detail_followup
-        )
         and not is_closing_ack
         and not is_short_greeting
         and not is_non_action_feedback
-        and not is_explicit_new_request
+        and (
+            skill_workflow_detail_followup
+            or (
+                not is_explicit_new_request
+                and (
+                    is_short_confirmation
+                    or _looks_like_skill_creation_approval(msg.content)
+                )
+            )
+        )
     )
     skill_creation_intent = bool(
         looks_like_skill_creation_request(effective_content) or skill_creation_followup
@@ -1332,7 +1428,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             stage=skill_creation_stage,
             kind=skill_workflow_kind,
         )
-    elif current_skill_flow and is_explicit_new_request:
+    elif current_skill_flow and is_explicit_new_request and not skill_workflow_detail_followup:
         _clear_skill_creation_flow(session)
 
     unavailable_required_tool = str(required_tool or "").strip()
@@ -1502,6 +1598,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not is_non_action_feedback
     ):
         format_skill_unavailability = getattr(skills_loader, "_format_skill_unavailability", None)
+        eligible_skill_matches: list[dict[str, str]] = []
         eligible_external_matches: list[dict[str, str]] = []
         unavailable_external_matches: list[dict[str, str]] = []
         for detail in matched_skill_details:
@@ -1510,13 +1607,33 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             skill_name = normalize_skill_reference_name(str(detail.get("name") or ""))
             source = str(detail.get("source") or "").strip().lower()
             if not skill_name or not source or source == "builtin":
+                if skill_name and source and bool(detail.get("eligible")):
+                    eligible_skill_matches.append(
+                        {
+                            "name": skill_name,
+                            "source": source,
+                            "description": str(detail.get("description") or "").strip(),
+                            "adapt_grounded_diagnostics": bool(
+                                detail.get("adapt_grounded_diagnostics")
+                            ),
+                        }
+                    )
                 continue
             if bool(detail.get("eligible")):
+                skill_summary = {
+                    "name": skill_name,
+                    "source": source,
+                    "description": str(detail.get("description") or "").strip(),
+                    "adapt_grounded_diagnostics": bool(
+                        detail.get("adapt_grounded_diagnostics")
+                    ),
+                }
+                eligible_skill_matches.append(skill_summary)
                 eligible_external_matches.append(
                     {
-                        "name": skill_name,
-                        "source": source,
-                        "description": str(detail.get("description") or "").strip(),
+                        "name": skill_summary["name"],
+                        "source": skill_summary["source"],
+                        "description": skill_summary["description"],
                     }
                 )
                 continue
@@ -1590,6 +1707,160 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 "External skill setup latch: "
                 f"'{_normalize_text(effective_content)[:120]}' -> skill={primary_skill['name']} "
                 f"missing={primary_skill['missing_reason']}"
+            )
+
+        primary_unavailable_skill = (
+            unavailable_external_matches[0] if len(unavailable_external_matches) == 1 else None
+        )
+        single_unavailable_skill_prefers_grounded_diagnostics = bool(
+            primary_unavailable_skill
+            and bool(primary_unavailable_skill.get("adapt_grounded_diagnostics"))
+            and bool(getattr(decision, "is_complex", False))
+            and str(getattr(decision, "turn_category", "") or "").strip().lower()
+            in {"action", "contextual_action", "command"}
+        )
+        single_unavailable_external_action_workflow = bool(
+            primary_unavailable_skill
+            and str(primary_unavailable_skill.get("source") or "").strip().lower() != "builtin"
+            and str(getattr(decision, "turn_category", "") or "").strip().lower()
+            in {"action", "contextual_action", "command"}
+            and not looks_like_meta_skill_or_workflow_prompt(effective_content)
+        )
+        auto_external_setup_turn = bool(
+            not forced_skill_names
+            and not required_tool
+            and not explicit_skill_use_request
+            and primary_unavailable_skill is not None
+            and str(primary_unavailable_skill.get("source") or "").strip().lower() != "builtin"
+            and not looks_like_meta_skill_or_workflow_prompt(effective_content)
+            and (
+                _looks_like_live_research_query(effective_content)
+                or route_grounding_mode == "filesystem_inspection"
+                or str(decision.profile or "").strip().upper() in {"CODING", "RESEARCH"}
+                or single_unavailable_skill_prefers_grounded_diagnostics
+                or single_unavailable_external_action_workflow
+            )
+        )
+        if auto_external_setup_turn:
+            forced_skill_names = [str(primary_unavailable_skill["name"])]
+            external_skill_lane = True
+            setup_note_lines = [
+                "[External Skill Setup Note]",
+                f"- The installed external skill `{primary_unavailable_skill['name']}` is the clearest workflow match for this request, but it is not executable yet.",
+                f"- Missing requirements: {primary_unavailable_skill['missing_reason']}.",
+                "- Stay on this skill lane first instead of silently falling back to generic legacy behavior.",
+                "- Explain the missing setup briefly and continue from the next grounded requirement, script, credential, or binary the user needs for this skill.",
+            ]
+            if primary_unavailable_skill["install_hint"]:
+                setup_note_lines.append(
+                    f"- Helpful install/setup hint: {primary_unavailable_skill['install_hint']}"
+                )
+            llm_current_message = f"{llm_current_message}\n\n" + "\n".join(setup_note_lines)
+            llm_current_message = llm_current_message.strip()
+            if not decision.is_complex:
+                decision.is_complex = True
+            continuity_source = continuity_source or "external_skill_setup"
+            logger.info(
+                "External skill auto-setup latch: "
+                f"'{_normalize_text(effective_content)[:120]}' -> skill={primary_unavailable_skill['name']} "
+                f"missing={primary_unavailable_skill['missing_reason']}"
+            )
+
+        primary_skill = eligible_skill_matches[0] if len(eligible_skill_matches) == 1 else None
+        single_skill_is_grounded_weather = bool(
+            primary_skill
+            and str(primary_skill.get("name") or "").strip().lower() == "weather"
+            and not raw_is_contextual_followup_request
+            and not is_answer_reference_followup
+        )
+        single_skill_is_creator_workflow = bool(
+            primary_skill
+            and str(primary_skill.get("name") or "").strip().lower() == "skill-creator"
+            and str(getattr(decision, "turn_category", "") or "").strip().lower()
+            in {"action", "contextual_action", "command"}
+            and not looks_like_meta_skill_or_workflow_prompt(effective_content)
+        )
+        single_skill_prefers_grounded_diagnostics = bool(
+            primary_skill
+            and bool(primary_skill.get("adapt_grounded_diagnostics"))
+            and bool(getattr(decision, "is_complex", False))
+            and str(getattr(decision, "turn_category", "") or "").strip().lower()
+            in {"action", "contextual_action", "command"}
+        )
+        if single_skill_is_creator_workflow:
+            required_tool = None
+            required_tool_query = ""
+            skill_creation_intent = True
+            skill_install_intent = False
+            forced_skill_names = ["skill-creator"]
+            llm_current_message = (
+                f"{effective_content}\n\n"
+                f"{_build_skill_creation_workflow_note(first_turn=True, approved=False, kind='create')}"
+            ).strip()
+            _set_skill_creation_flow(
+                session,
+                skill_creation_request_text,
+                now_ts,
+                stage=skill_creation_stage,
+                kind="create",
+            )
+            continuity_source = continuity_source or "skill_creator_adaptation"
+            if not decision.is_complex:
+                decision.is_complex = True
+            logger.info(
+                "Skill-creator adaptation latch: "
+                f"'{_normalize_text(effective_content)[:120]}' -> workflow=skill-creator"
+            )
+        single_external_action_workflow = bool(
+            primary_skill
+            and str(primary_skill.get("source") or "").strip().lower() != "builtin"
+            and str(getattr(decision, "turn_category", "") or "").strip().lower()
+            in {"action", "contextual_action", "command"}
+            and not looks_like_meta_skill_or_workflow_prompt(effective_content)
+        )
+        auto_skill_adaptation_turn = bool(
+            not forced_skill_names
+            and not skill_creation_intent
+            and not skill_install_intent
+            and not required_tool
+            and not explicit_skill_use_request
+            and primary_skill is not None
+            and (
+                _looks_like_live_research_query(effective_content)
+                or route_grounding_mode == "filesystem_inspection"
+                or str(decision.profile or "").strip().upper() in {"CODING", "RESEARCH"}
+                or single_skill_is_grounded_weather
+                or single_skill_prefers_grounded_diagnostics
+                or single_external_action_workflow
+            )
+        )
+        if auto_skill_adaptation_turn:
+            diagnostics_note = ""
+            if single_skill_prefers_grounded_diagnostics:
+                diagnostics_note = (
+                    "- This is a grounded diagnostics/config turn: inspect the real config, "
+                    "status output, logs, and other local evidence before suggesting changes.\n"
+                )
+            forced_skill_names = [primary_skill["name"]]
+            external_skill_lane = primary_skill["source"] != "builtin"
+            llm_current_message = (
+                f"{llm_current_message}\n\n"
+                "[Skill Adaptation Note]\n"
+                f"- The installed skill `{primary_skill['name']}` is the clearest workflow match for this request.\n"
+                "- Adapt to that skill before answering normally.\n"
+                "- Read its SKILL.md first, then follow its workflow.\n"
+                f"{diagnostics_note}"
+                "- Use the skill's `references/`, bundled `scripts/`, grounded tools, or live-web steps before giving a generic text answer.\n"
+                "- If the skill still requires a concrete tool, URL, or credential after reading it, say that briefly and continue from the grounded next step."
+            ).strip()
+            continuity_source = continuity_source or (
+                "external_skill_adaptation" if external_skill_lane else "skill_adaptation"
+            )
+            if not decision.is_complex:
+                decision.is_complex = True
+            logger.info(
+                "Skill adaptation latch: "
+                f"'{_normalize_text(effective_content)[:120]}' -> skill={primary_skill['name']}"
             )
 
     if (

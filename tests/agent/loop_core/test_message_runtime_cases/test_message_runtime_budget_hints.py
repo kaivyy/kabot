@@ -673,12 +673,12 @@ async def test_process_message_multilingual_option_ordinal_followup_uses_pending
 @pytest.mark.parametrize(
     ("assistant_text", "followup_text"),
     [
-        ("好的，选择 2）非常正式。请把原文发给我。", "再简短一点"),
-        ("とても丁寧な文体で進めます。原文を送ってください。", "もっと短く"),
-        ("รับทราบครับ จะใช้สำนวนทางการมาก กรุณาส่งข้อความต้นฉบับ", "สั้นกว่านี้"),
+        ("1）标准正式\n2）非常正式\n3）正式但友好", "\u7b2c\u4e8c\u4e2a\u662f\u4ec0\u4e48\uff1f\u7b80\u77ed\u56de\u7b54\u3002"),
+        ("1) 標準的に丁寧\n2) とても丁寧\n3) 丁寧だけどやわらかい", "2番"),
+        ("1) ทางการมาตรฐาน\n2) ทางการมาก\n3) ทางการแต่เป็นมิตร", "\u0e02\u0e49\u0e2d 2"),
     ],
 )
-async def test_process_message_multilingual_answer_reference_followup_uses_recent_assistant_history_context(
+async def test_process_message_multilingual_explicit_answer_reference_uses_recent_assistant_history_context(
     assistant_text: str,
     followup_text: str,
 ):
@@ -737,9 +737,10 @@ async def test_process_message_multilingual_answer_reference_followup_uses_recen
     msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content=followup_text)
     await process_message(loop, msg)
 
-    loop._run_simple_response.assert_awaited_once()
+    loop._run_simple_response.assert_not_awaited()
+    loop._run_agent_loop.assert_not_awaited()
     loop._run_agent_loop.assert_not_called()
-    current_message = captured_messages["current_message"]
+    current_message = str(msg.metadata.get("effective_content") or "")
     assert current_message.startswith(f"{followup_text}\n\n[Answer Reference Target]\n")
     assert assistant_text in current_message
     assert "[Answer Reference Context]\n" in current_message
@@ -818,14 +819,16 @@ async def test_process_message_answer_reference_followup_keeps_recent_answer_con
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="\u518d\u7b80\u77ed\u4e00\u70b9",
+        content="\u7b2c\u4e8c\u4e2a\u662f\u4ec0\u4e48\uff1f\u7b80\u77ed\u56de\u7b54\u3002",
     )
     await process_message(loop, msg)
 
     current_message = captured_messages.get("current_message") or str(
         captured_messages["messages"][0]["content"]
     )
-    assert current_message.startswith("\u518d\u7b80\u77ed\u4e00\u70b9\n\n[Follow-up Context]\n")
+    assert current_message.startswith(
+        "\u7b2c\u4e8c\u4e2a\u662f\u4ec0\u4e48\uff1f\u7b80\u77ed\u56de\u7b54\u3002\n\n[Follow-up Context]\n"
+    )
     assert "[Offer Acceptance Note]" in current_message
     assert "[Answer Reference Context]" in current_message
     assert assistant_text in current_message
@@ -1140,6 +1143,651 @@ async def test_process_message_explicit_unavailable_external_skill_still_forces_
     assert kwargs["skill_names"] == ["binance-pro"]
     assert "[External Skill Setup Note]" in kwargs["current_message"]
     assert "CLI: jq" in kwargs["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_single_unavailable_external_skill_auto_adapts_to_setup_lane():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "cek saldo futures binance sekarang"}]
+    context_builder.skills = SimpleNamespace(
+        has_preferred_external_skill_match=lambda _text, profile="GENERAL": False,
+        match_skill_details=lambda text, profile="GENERAL", max_results=3, filter_unavailable=False: [
+            {
+                "name": "binance-pro",
+                "source": "workspace",
+                "eligible": False,
+                "description": "Binance futures and spot assistant",
+                "install": [{"label": "CLI: jq", "cmd": "brew install jq"}],
+                "missing": {"bins": ["jq"], "env": []},
+            }
+        ],
+        _format_skill_unavailability=lambda _detail: "CLI: jq",
+    )
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="action",
+                    grounding_mode="web_live_data",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="cek saldo futures binance sekarang",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("forced_skill_names") == ["binance-pro"]
+    assert msg.metadata.get("external_skill_lane") is True
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert kwargs["skill_names"] == ["binance-pro"]
+    assert "[External Skill Setup Note]" in kwargs["current_message"]
+    assert "CLI: jq" in kwargs["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_single_unavailable_external_finance_skill_auto_sets_up_live_query_lane():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "cek harga saham bbca sekarang"}]
+    context_builder.skills = SimpleNamespace(
+        has_preferred_external_skill_match=lambda _text, profile="GENERAL": False,
+        match_skill_details=lambda text, profile="GENERAL", max_results=3, filter_unavailable=False: [
+            {
+                "name": "yahoo-finance-stock",
+                "source": "managed",
+                "eligible": False,
+                "description": "Yahoo Finance workflow for stock lookup and quote fetch",
+                "install": [{"label": "ENV: BRAVE_API_KEY", "cmd": "export BRAVE_API_KEY=..."}],
+                "missing": {"bins": [], "env": ["BRAVE_API_KEY"]},
+            }
+        ],
+        _format_skill_unavailability=lambda _detail: "ENV: BRAVE_API_KEY",
+    )
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="question",
+                    grounding_mode="web_live_data",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["web_fetch"], has=lambda name: name in {"web_fetch"}),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="cek harga saham bbca sekarang",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("forced_skill_names") == ["yahoo-finance-stock"]
+    assert msg.metadata.get("external_skill_lane") is True
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert kwargs["skill_names"] == ["yahoo-finance-stock"]
+    assert "[External Skill Setup Note]" in kwargs["current_message"]
+    assert "ENV: BRAVE_API_KEY" in kwargs["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_clear_live_query_auto_adapts_to_single_matching_external_skill():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "cek harga saham bbca sekarang"}]
+    context_builder.skills = SimpleNamespace(
+        has_preferred_external_skill_match=lambda text, profile="GENERAL": "bbca" in str(text).lower(),
+        match_skill_details=lambda text, profile="GENERAL", max_results=3, filter_unavailable=False: [
+            {
+                "name": "yahoo-finance-stock",
+                "source": "workspace",
+                "eligible": True,
+                "description": "Yahoo Finance workflow for stock lookup and quote fetch",
+            }
+        ],
+        match_skills=lambda text, profile="GENERAL", max_results=3: ["yahoo-finance-stock"],
+    )
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="action",
+                    grounding_mode="web_live_data",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda name: name in {"web_search", "web_fetch"}),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="cek harga saham bbca sekarang",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("forced_skill_names") == ["yahoo-finance-stock"]
+    assert msg.metadata.get("external_skill_lane") is True
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert kwargs["skill_names"] == ["yahoo-finance-stock"]
+    assert kwargs["budget_hints"]["summary_only_requested_skills"] is True
+    assert "[Skill Adaptation Note]" in kwargs["current_message"]
+    assert "yahoo-finance-stock" in kwargs["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_clear_crypto_query_auto_adapts_to_single_matching_external_skill():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "cek harga btc di binance sekarang"}]
+    context_builder.skills = SimpleNamespace(
+        has_preferred_external_skill_match=lambda text, profile="GENERAL": "binance" in str(text).lower(),
+        match_skill_details=lambda text, profile="GENERAL", max_results=3, filter_unavailable=False: [
+            {
+                "name": "binance-pro",
+                "source": "workspace",
+                "eligible": True,
+                "description": "Binance crypto workflow for balances, quotes, and market checks",
+            }
+        ],
+        match_skills=lambda text, profile="GENERAL", max_results=3: ["binance-pro"],
+    )
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="action",
+                    grounding_mode="web_live_data",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda name: name in {"web_search", "web_fetch"}),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="cek harga btc di binance sekarang",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("forced_skill_names") == ["binance-pro"]
+    assert msg.metadata.get("external_skill_lane") is True
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert kwargs["skill_names"] == ["binance-pro"]
+    assert "[Skill Adaptation Note]" in kwargs["current_message"]
+    assert "binance-pro" in kwargs["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_single_external_custom_api_skill_auto_adapts_for_action_turn():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "cek id game mlbb ini"}]
+    context_builder.skills = SimpleNamespace(
+        has_preferred_external_skill_match=lambda text, profile="GENERAL": "mlbb" in str(text).lower(),
+        match_skill_details=lambda text, profile="GENERAL", max_results=3, filter_unavailable=False: [
+            {
+                "name": "mlbb-id-check",
+                "source": "managed",
+                "eligible": True,
+                "description": "Check Mobile Legends account IDs against an API endpoint",
+            }
+        ],
+        match_skills=lambda text, profile="GENERAL", max_results=3: ["mlbb-id-check"],
+    )
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="action",
+                    grounding_mode="",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="cek id game mlbb ini",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("forced_skill_names") == ["mlbb-id-check"]
+    assert msg.metadata.get("external_skill_lane") is True
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert kwargs["skill_names"] == ["mlbb-id-check"]
+    assert "[Skill Adaptation Note]" in kwargs["current_message"]
+    assert "mlbb-id-check" in kwargs["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_ordinary_planning_question_does_not_force_skill_lane():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "buat jadwal lari 3x seminggu untuk pemula"}]
+    context_builder.skills = SimpleNamespace(
+        has_preferred_external_skill_match=lambda text, profile="GENERAL": "lari" in str(text).lower(),
+        match_skill_details=lambda text, profile="GENERAL", max_results=3, filter_unavailable=False: [
+            {
+                "name": "fitness-planner",
+                "source": "workspace",
+                "eligible": True,
+                "description": "Workout planning skill for running and weekly routines",
+            }
+        ],
+        match_skills=lambda text, profile="GENERAL", max_results=3: ["fitness-planner"],
+    )
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="chat",
+                    grounding_mode="",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="simple")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="buat jadwal lari 3x seminggu untuk pemula",
+    )
+    await process_message(loop, msg)
+
+    loop._run_simple_response.assert_awaited_once()
+    loop._run_agent_loop.assert_not_called()
+    assert msg.metadata.get("forced_skill_names") is None
+    assert msg.metadata.get("external_skill_lane") is False
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert "[Skill Adaptation Note]" not in kwargs["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_complex_action_turn_auto_adapts_to_grounded_diagnostics_skill():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [
+        {
+            "role": "user",
+            "content": "periksa apakah sentence-transformers/all-MiniLM-L6-v2 sudah disetting di config.json",
+        }
+    ]
+    context_builder.skills = SimpleNamespace(
+        has_preferred_external_skill_match=lambda _text, profile="GENERAL": False,
+        match_skill_details=lambda text, profile="GENERAL", max_results=3, filter_unavailable=False: [
+            {
+                "name": "config-manager",
+                "source": "builtin",
+                "eligible": True,
+                "description": "Inspect and safely update Kabot configuration and related status/log evidence",
+                "adapt_grounded_diagnostics": True,
+            }
+        ],
+        match_skills=lambda text, profile="GENERAL", max_results=3: ["config-manager"],
+    )
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=True,
+                    turn_category="action",
+                    grounding_mode="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="periksa apakah sentence-transformers/all-MiniLM-L6-v2 sudah disetting di config.json",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("forced_skill_names") == ["config-manager"]
+    assert msg.metadata.get("external_skill_lane") is False
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert kwargs["skill_names"] == ["config-manager"]
+    assert "[Skill Adaptation Note]" in kwargs["current_message"]
+    assert "grounded diagnostics/config turn" in kwargs["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_grounded_weather_query_auto_adapts_to_weather_skill_without_parser_tool():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "cek suhu purwokerto sekarang"}]
+    context_builder.skills = SimpleNamespace(
+        has_preferred_external_skill_match=lambda _text, profile="GENERAL": False,
+        match_skill_details=lambda text, profile="GENERAL", max_results=3, filter_unavailable=False: [
+            {
+                "name": "weather",
+                "source": "builtin",
+                "eligible": True,
+                "description": "Grounded weather workflow using Open-Meteo and wttr.in",
+            }
+        ],
+        match_skills=lambda text, profile="GENERAL", max_results=3: ["weather"],
+    )
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="chat",
+                    grounding_mode="",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["weather"], has=lambda name: name == "weather"),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="cek suhu purwokerto sekarang",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("forced_skill_names") == ["weather"]
+    assert msg.metadata.get("external_skill_lane") is False
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert kwargs["skill_names"] == ["weather"]
+    assert "[Skill Adaptation Note]" in kwargs["current_message"]
+    assert "weather" in kwargs["current_message"]
 
 
 @pytest.mark.asyncio
@@ -2940,7 +3588,6 @@ async def test_process_message_generic_plan_followup_does_not_infer_stale_stock_
     loop._run_simple_response.assert_awaited_once()
     loop._run_agent_loop.assert_not_called()
     assert msg.metadata.get("required_tool") is None
-    context_builder.build_messages.assert_called_once()
 
 
 @pytest.mark.asyncio

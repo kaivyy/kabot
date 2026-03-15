@@ -7,7 +7,10 @@ from pathlib import Path
 
 from loguru import logger
 
-from kabot.utils.text_safety import ensure_utf8_text
+from kabot.memory.tool_transcript_guard import (
+    normalize_persisted_message,
+    repair_tool_result_pairs,
+)
 
 
 class SQLiteMetadataStore:
@@ -195,7 +198,12 @@ class SQLiteMetadataStore:
             metadata: Additional metadata
         """
         try:
-            safe_content = ensure_utf8_text(content)
+            safe_content, normalized_tool_calls, normalized_tool_results = normalize_persisted_message(
+                role=role,
+                content=content,
+                tool_calls=tool_calls,
+                tool_results=tool_results,
+            )
             with self._get_connection() as conn:
                 conn.execute(
                     """INSERT INTO messages
@@ -204,8 +212,8 @@ class SQLiteMetadataStore:
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (message_id, session_id, parent_id, role, safe_content,
                      message_type,
-                     json.dumps(tool_calls) if tool_calls else None,
-                     json.dumps(tool_results) if tool_results else None,
+                     json.dumps(normalized_tool_calls) if normalized_tool_calls else None,
+                     json.dumps(normalized_tool_results) if normalized_tool_results else None,
                      json.dumps(metadata) if metadata else None)
                 )
 
@@ -253,7 +261,7 @@ class SQLiteMetadataStore:
 
                 # Reverse to get chronological order
                 messages.reverse()
-                return messages
+                return repair_tool_result_pairs(messages)
 
         except Exception as e:
             logger.error(f"Error getting message chain: {e}")

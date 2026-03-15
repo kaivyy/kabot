@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from contextlib import suppress
 from typing import Any
@@ -35,9 +36,6 @@ from kabot.agent.loop_core.message_runtime_parts.bootstrap_onboarding import (
 from kabot.agent.loop_core.message_runtime_parts.temporal import build_temporal_fast_reply
 from kabot.agent.loop_core.message_runtime_parts.turn_helpers import (
     _build_answer_reference_fast_reply,
-)
-from kabot.agent.loop_core.message_runtime_parts.user_profile import (
-    resolve_self_identity_fast_reply,
 )
 from kabot.bus.events import OutboundMessage
 
@@ -100,7 +98,6 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
             referenced_item=recent_answer_referenced_item,
         )
     temporal_fast_reply = None
-    profile_fast_reply = None
     if (
         not decision.is_complex
         and not required_tool
@@ -108,14 +105,22 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
         and not explicit_file_analysis_note
         and not mcp_context_note
     ):
-        profile_fast_reply = resolve_self_identity_fast_reply(session, effective_content)
         temporal_fast_reply = grounded_followup_fast_reply or build_temporal_fast_reply(
             effective_content,
             locale=runtime_locale,
         )
-        if profile_fast_reply:
-            temporal_fast_reply = profile_fast_reply
 
+    raw_turn_text = str(getattr(msg, "content", "") or "").strip().lower()
+    language_switch_followup = bool(
+        re.fullmatch(r"pakai\s+bahasa\s+inggris|dalam\s+bahasa\s+inggris", raw_turn_text)
+    )
+    knowledge_followup_fast_path = bool(
+        continuity_source == "knowledge_followup"
+        and "[Knowledge-First Note]" in str(effective_content or "")
+        and language_switch_followup
+        and not decision.is_complex
+        and not required_tool
+    )
     fast_simple_context = bool(
         perf_cfg
         and bool(getattr(perf_cfg, "fast_first_response", True))
@@ -127,6 +132,10 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
         and not accuracy_context_required
         and not _looks_like_memory_commit_turn(effective_content)
     )
+    if knowledge_followup_fast_path:
+        fast_simple_context = True
+    if accuracy_context_required:
+        fast_direct_context = False
     if forced_skill_names:
         fast_direct_context = False
         fast_simple_context = False

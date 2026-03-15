@@ -8,6 +8,12 @@ from kabot.agent.cron_fallback_nlp import extract_weather_location
 
 _SPACE_RE = re.compile(r"\s+")
 _NON_WORD_RE = re.compile(r"[^\w\s]+", re.UNICODE)
+_SELF_IDENTITY_RECALL_RE = re.compile(
+    r"(?i)\b("
+    r"who am i|who i am|"
+    r"what do you call me"
+    r")\b"
+)
 _META_FEEDBACK_RE = re.compile(
     r"(?i)\b("
     r"kok|kenapa|why|wrong|ngaco|aneh|lama|slow|bug|error|"
@@ -91,13 +97,31 @@ _HR_ZONE_ACTION_RE = re.compile(
     r"hitung|calculate|calc|tolong|please|berapa|zona|zone|umur|usia|age"
     r")\b"
 )
-_MEMORY_RECALL_RE = re.compile(
+_MEMORY_RECALL_INTERROGATIVE_RE = re.compile(
     r"(?i)\b("
-    r"what do you remember|what did you save|what do you know about me|"
-    r"what was my preference code|what is my preference code|my preference code|"
-    r"what was the code you just remembered|"
-    r"who am i"
-    r"|saved code|memory code"
+    r"who|what|which|when|where|why|how|"
+    r"tell|show|reply|answer"
+    r")\b"
+)
+_MEMORY_RECALL_ACTION_RE = re.compile(
+    r"(?i)\b("
+    r"remember|remembered|save|saved|store|stored|recall|memory|"
+    r"preference|preferences|code|call(?:ed)?|address(?:ed)?"
+    r")\b"
+)
+_MEMORY_RECALL_CONTEXT_RE = re.compile(
+    r"(?i)\b("
+    r"before|earlier|previous(?:ly)?|prior|last|just"
+    r")\b"
+)
+_MEMORY_RECALL_WORK_RE = re.compile(
+    r"(?i)\b("
+    r"decide|decided|decision|agree|agreed|plan|planned|todo|task|deadline|status"
+    r")\b"
+)
+_MEMORY_RECALL_SUBJECT_RE = re.compile(
+    r"(?i)\b("
+    r"i|me|my|mine|myself|we|us|our|ours"
     r")\b"
 )
 _MEMORY_COMMIT_RE = re.compile(
@@ -106,8 +130,6 @@ _MEMORY_COMMIT_RE = re.compile(
     r"save in memory|remember this|remember that"
     r")\b"
 )
-
-
 @dataclass(slots=True)
 class SemanticIntentHint:
     kind: str = "none"
@@ -294,14 +316,29 @@ def _looks_like_memory_recall(text: str) -> bool:
     normalized = _normalize_text(raw)
     if not normalized:
         return False
+    if raw.startswith("/"):
+        return False
+    if _SELF_IDENTITY_RECALL_RE.search(raw):
+        return True
     if len(normalized) > 240:
         return False
-    if _MEMORY_COMMIT_RE.search(normalized) and not re.search(
-        r"(?i)\b(who am i|what do you remember)\b",
-        normalized,
-    ):
+    interrogative_turn = bool(
+        raw.endswith(("?", "？"))
+        or _MEMORY_RECALL_INTERROGATIVE_RE.search(normalized)
+    )
+    if _MEMORY_COMMIT_RE.search(normalized) and not interrogative_turn:
         return False
-    return bool(_MEMORY_RECALL_RE.search(raw) or _MEMORY_RECALL_RE.search(normalized))
+    if not interrogative_turn:
+        return False
+    has_memory_anchor = bool(_MEMORY_RECALL_ACTION_RE.search(normalized))
+    has_context_anchor = bool(_MEMORY_RECALL_CONTEXT_RE.search(normalized))
+    has_work_anchor = bool(_MEMORY_RECALL_WORK_RE.search(normalized))
+    has_subject_anchor = bool(_MEMORY_RECALL_SUBJECT_RE.search(normalized))
+    if has_memory_anchor and (has_subject_anchor or has_work_anchor):
+        return True
+    if has_context_anchor and has_work_anchor:
+        return True
+    return False
 
 
 def arbitrate_semantic_intent(
@@ -343,23 +380,6 @@ def arbitrate_semantic_intent(
             kind="advice_turn",
             reason="hr_zone_not_weather",
         )
-    if (
-        (parser_tool == "weather" or pending_followup_tool == "weather")
-        and _looks_like_weather_source_followup(raw)
-    ):
-        return SemanticIntentHint(
-            kind="weather_source_followup",
-            reason="weather_source_followup",
-        )
-    if (
-        (parser_tool == "weather" or pending_followup_tool == "weather")
-        and _looks_like_weather_commentary_followup(raw)
-    ):
-        return SemanticIntentHint(
-            kind="weather_commentary",
-            reason="weather_commentary_followup",
-        )
-
     stock_context = last_tool_context if isinstance(last_tool_context, dict) else {}
     stock_tool_active = str((stock_context or {}).get("tool") or "").strip() == "stock"
     if (
@@ -437,8 +457,6 @@ def arbitrate_semantic_intent(
         if location:
             return SemanticIntentHint(
                 kind="weather_query",
-                required_tool="weather",
-                required_tool_query=raw,
                 reason="weather_question_with_location",
             )
 

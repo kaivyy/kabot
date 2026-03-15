@@ -9,7 +9,9 @@ from typing import Any
 from kabot.agent.loop_core.tool_enforcement_parts.common import _normalize_text
 from kabot.agent.loop_core.tool_enforcement_parts.filesystem_paths import (
     _FILELIKE_QUERY_RE,
+    _extract_explicit_path_candidate,
     _extract_list_dir_path,
+    _extract_relative_directory_candidate,
     _extract_read_file_path,
     _looks_like_explicit_filesystem_path,
     _looks_like_textual_write_target,
@@ -54,16 +56,14 @@ _FIND_FILE_ACTION_MARKERS = (
     "temukan",
     "telusuri",
 )
-_FIND_FILE_SUBJECT_MARKERS = (
-    "file",
-    "berkas",
-    "dokumen",
-    "document",
+_FIND_FILE_DIR_SUBJECT_MARKERS = (
     "folder",
     "directory",
     "dir",
-    "report",
-    "laporan",
+)
+_FIND_FILE_FILE_SUBJECT_MARKERS = (
+    "file",
+    "document",
     "config",
     "pdf",
     "csv",
@@ -101,10 +101,32 @@ _LIST_DIR_ACTION_MARKERS = (
     "show",
     "display",
     "list",
-    "cek",
-    "check",
     "pakai path",
     "use path",
+)
+_LIST_DIR_WEAK_ACTION_MARKERS = (
+    "cek",
+    "check",
+)
+_LIST_DIR_SUBJECT_MARKERS = (
+    "folder",
+    "directory",
+    "dir",
+    "isi",
+    "content",
+    "contents",
+    "listing",
+    "file/folder",
+    "file folder",
+    "文件夹",
+    "文件夾",
+    "資料夾",
+    "目录",
+    "目錄",
+    "フォルダ",
+    "ディレクトリ",
+    "โฟลเดอร์",
+    "ไดเรกทอรี",
 )
 _IMAGE_ACTION_MARKERS = (
     "gambar",
@@ -163,6 +185,19 @@ _ACTION_TOOL_EXCLUDE_NAMES = {
     "message",
 }
 
+
+def _trim_find_files_query_candidate(value: str) -> str:
+    candidate = str(value or "").strip().strip("\"'`")
+    if not candidate:
+        return ""
+    candidate = re.sub(
+        r"(?i)\s+(?:di|in|inside|within|under|pada|dalam)\s+"
+        r"(?:workspace|current working directory|working directory|current dir|cwd)\b.*$",
+        "",
+        candidate,
+    ).strip()
+    return candidate.rstrip(".,;:!?")
+
 def _tool_name_available(loop: Any, tool_name: str) -> bool:
     tools = getattr(loop, "tools", None)
     has = getattr(tools, "has", None)
@@ -183,6 +218,22 @@ def _iter_tool_names(loop: Any) -> list[str]:
     if isinstance(tool_names, list):
         return [str(name) for name in tool_names if str(name or "").strip()]
     return []
+
+
+def _has_explicit_delivery_intent(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    return bool(
+        any(marker in normalized for marker in _SEND_FILE_ACTION_MARKERS)
+        and (
+            any(marker in normalized for marker in _SEND_FILE_DELIVERY_MARKERS)
+            or "chat" in normalized
+            or "channel" in normalized
+            or "telegram" in normalized
+            or "whatsapp" in normalized
+        )
+    )
 
 
 def _looks_like_write_file_request(text: str, *, explicit_path: str | None = None) -> bool:
@@ -207,16 +258,23 @@ def _looks_like_find_files_request(text: str, *, explicit_path: str | None = Non
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    if not any(marker in normalized for marker in _FIND_FILE_ACTION_MARKERS):
-        return False
-    has_subject = bool(_FILELIKE_QUERY_RE.search(raw)) or any(
-        marker in normalized for marker in _FIND_FILE_SUBJECT_MARKERS
-    )
-    if not has_subject:
+    query = _extract_find_files_query(raw)
+    if not query:
         return False
     if explicit_path and _looks_like_explicit_filesystem_path(explicit_path):
         return False
-    return True
+    dir_kind = _extract_find_files_kind(raw) == "dir"
+    has_delivery_intent = _has_explicit_delivery_intent(raw)
+    has_search_verb = any(marker in normalized for marker in _FIND_FILE_ACTION_MARKERS)
+    if dir_kind and not has_delivery_intent:
+        return False
+    if has_search_verb:
+        return True
+    if any(marker in normalized for marker in _LIST_DIR_ACTION_MARKERS):
+        return False
+    if any(marker in normalized for marker in _LIST_DIR_WEAK_ACTION_MARKERS):
+        return False
+    return False
 
 
 def _looks_like_list_dir_request(text: str) -> bool:
@@ -224,9 +282,24 @@ def _looks_like_list_dir_request(text: str) -> bool:
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    if not any(marker in normalized for marker in _LIST_DIR_ACTION_MARKERS):
+    list_path = _extract_list_dir_path(raw)
+    if not list_path:
         return False
-    return bool(_extract_list_dir_path(raw))
+    if _has_explicit_delivery_intent(raw):
+        return False
+    if any(marker in normalized for marker in _LIST_DIR_ACTION_MARKERS):
+        return True
+    if any(marker in normalized for marker in _LIST_DIR_WEAK_ACTION_MARKERS):
+        return bool(_extract_explicit_path_candidate(raw)) or any(
+            marker in normalized for marker in _LIST_DIR_SUBJECT_MARKERS
+        ) or bool(
+            _extract_read_file_path(raw) or _FILELIKE_QUERY_RE.search(raw)
+        )
+    if _extract_find_files_kind(raw) == "dir":
+        query = _extract_find_files_query(raw) or _extract_relative_directory_candidate(raw)
+        tokens = [token for token in _normalize_text(str(query or "")).split() if token]
+        return 0 < len(tokens) <= 3
+    return False
 
 
 def _looks_like_message_send_file_request(text: str, *, explicit_path: str | None = None) -> bool:
@@ -276,13 +349,19 @@ def _extract_find_files_query(text: str) -> str | None:
 
     quoted = re.findall(r"[\"'`]+([^\"'`]+)[\"'`]+", raw)
     for candidate in quoted:
-        cleaned = str(candidate or "").strip().strip("\"'`").rstrip(".,;:!?")
+        cleaned = _trim_find_files_query_candidate(candidate)
         if cleaned:
             return cleaned
 
+    relative_dir = _extract_relative_directory_candidate(raw)
+    if relative_dir and _extract_find_files_kind(raw) == "dir":
+        cleaned_relative_dir = _trim_find_files_query_candidate(relative_dir)
+        if cleaned_relative_dir:
+            return cleaned_relative_dir
+
     patterns = (
         re.compile(
-            r"(?i)\b(?:file|berkas|dokumen|document|folder|directory|dir|report|laporan)\b\s+([A-Za-z0-9_.*\-]+)"
+            r"(?i)\b(?:file|document|folder|directory|dir|config|pdf|csv|xlsx|docx)\b\s+([A-Za-z0-9_.*\-]+)"
         ),
         re.compile(
             r"(?i)\b(?:cari|carikan|find|search|locate|look for|temukan|telusuri)\b\s+([A-Za-z0-9_.*\-]+)"
@@ -292,9 +371,23 @@ def _extract_find_files_query(text: str) -> str | None:
         match = pattern.search(raw)
         if not match:
             continue
-        candidate = str(match.group(1) or "").strip().strip("\"'`").rstrip(".,;:!?")
+        candidate = _trim_find_files_query_candidate(match.group(1))
         if candidate:
             return candidate
+    return None
+
+
+def _extract_find_files_kind(text: str) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    normalized = _normalize_text(raw)
+    if any(marker in normalized for marker in _FIND_FILE_DIR_SUBJECT_MARKERS):
+        return "dir"
+    if bool(_FILELIKE_QUERY_RE.search(raw)) or any(
+        marker in normalized for marker in _FIND_FILE_FILE_SUBJECT_MARKERS
+    ):
+        return "file"
     return None
 
 
@@ -531,14 +624,14 @@ def infer_action_required_tool_for_loop(loop: Any, text: str) -> tuple[str | Non
     ):
         return "message", raw
 
+    if _tool_name_available(loop, "list_dir") and _looks_like_list_dir_request(raw):
+        return "list_dir", raw
+
     if _tool_name_available(loop, "find_files") and _looks_like_find_files_request(
         raw,
         explicit_path=explicit_path,
     ):
         return "find_files", raw
-
-    if _tool_name_available(loop, "list_dir") and _looks_like_list_dir_request(raw):
-        return "list_dir", raw
 
     if _looks_like_media_action_request(raw, kind="image"):
         image_tool = _select_best_action_tool(loop, raw, kind="image")

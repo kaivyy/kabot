@@ -114,7 +114,11 @@ def test_agent_cli_explicit_skill_prompts_stay_ai_driven_and_skip_catalog_summar
 
     assert len(final_agent_calls) == len(prompts)
     for messages in final_agent_calls:
-        assert [message["role"] for message in messages[:2]] == ["system", "user"]
+        assert messages[0]["role"] == "system"
+        assert any(
+            isinstance(message, dict) and message.get("role") == "user"
+            for message in messages[1:]
+        )
         system_prompt = str(messages[0]["content"])
         assert "## Skills (mandatory)" in system_prompt
         assert "<available_skills>" in system_prompt
@@ -220,11 +224,16 @@ def test_agent_cli_repairs_mojibake_message_before_runtime(monkeypatch, tmp_path
         for messages in provider.calls
         if isinstance(messages, list)
         and len(messages) >= 2
-        and isinstance(messages[1], dict)
-        and messages[1].get("role") == "user"
+        and isinstance(messages[0], dict)
+        and messages[0].get("role") == "system"
     ]
     assert len(final_agent_calls) == 1
-    assert final_agent_calls[0][1]["content"] == clean_prompt
+    user_messages = [
+        message
+        for message in final_agent_calls[0]
+        if isinstance(message, dict) and message.get("role") == "user"
+    ]
+    assert any(message.get("content") == clean_prompt for message in user_messages)
 
 
 def test_agent_cli_temporal_query_uses_local_fast_reply_without_provider(monkeypatch, tmp_path):

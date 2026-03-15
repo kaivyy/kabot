@@ -24,6 +24,7 @@ from kabot.agent.loop_core.execution_runtime_parts.artifacts import (
 )
 from kabot.agent.loop_core.execution_runtime_parts.helpers import _extract_single_result_path
 from kabot.agent.loop_core.execution_runtime_parts.intent import _tool_call_intent_mismatch_reason
+from kabot.agent.loop_core.execution_runtime_parts.intent import _resolve_expected_tool_for_query
 from kabot.bus.events import InboundMessage
 from kabot.providers.base import LLMResponse, ToolCallRequest
 
@@ -41,6 +42,24 @@ def _make_loop() -> SimpleNamespace:
             return_value=(LLMResponse(content="fallback-response"), None)
         ),
     )
+
+
+def test_resolve_expected_tool_for_query_uses_narrow_runtime_wrapper_for_weather_chat():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(has=lambda name: name in {"weather", "web_search", "read_file"}),
+    )
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="cek suhu purwokerto sekarang",
+        metadata={},
+    )
+
+    expected = _resolve_expected_tool_for_query(loop, msg)
+
+    assert expected is None
+    assert msg.metadata.get("_expected_tool_for_guard") is None
 
 @pytest.mark.asyncio
 async def test_run_simple_response_uses_model_chain_fallback():

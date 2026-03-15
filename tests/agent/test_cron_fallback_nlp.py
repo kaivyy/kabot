@@ -156,7 +156,168 @@ def test_required_tool_for_query_does_not_route_indonesian_memory_phrase_without
     assert tool is None
 
 
+def test_required_tool_for_query_does_not_route_call_me_alone_to_save_memory():
+    tool = required_tool_for_query(
+        question='every time you reply, call me "Maha Raja"',
+        has_weather_tool=False,
+        has_cron_tool=False,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_save_memory_tool=True,
+        has_stock_tool=True,
+        has_stock_analysis_tool=True,
+        has_crypto_tool=True,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=False,
+        has_system_update_tool=False,
+    )
+    assert tool is None
+
+
+def test_required_tool_for_query_does_not_route_plain_schedule_planning_to_cron():
+    tool = required_tool_for_query(
+        question="buat jadwal lari 3x seminggu untuk pemula",
+        has_weather_tool=False,
+        has_cron_tool=True,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_save_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=False,
+        has_system_update_tool=False,
+    )
+    assert tool is None
+
+
+def test_required_tool_for_query_keeps_explicit_timed_reminder_creation():
+    tool = required_tool_for_query(
+        question="ingatkan 2 menit lagi untuk minum air",
+        has_weather_tool=False,
+        has_cron_tool=True,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_save_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=False,
+        has_system_update_tool=False,
+    )
+    assert tool == "cron"
+
+
 from kabot.agent.cron_fallback_parts.intent_scoring import score_required_tool_intents
+
+
+def test_required_tool_for_query_does_not_route_generic_schedule_management_to_cron():
+    tool = required_tool_for_query(
+        question="lihat jadwal latihan saya",
+        has_weather_tool=False,
+        has_cron_tool=True,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_save_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=False,
+        has_system_update_tool=False,
+    )
+    assert tool is None
+
+
+def test_required_tool_for_query_keeps_group_schedule_management_for_explicit_group_id():
+    tool = required_tool_for_query(
+        question="hapus jadwal group grp_shift_a",
+        has_weather_tool=False,
+        has_cron_tool=True,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_save_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=False,
+        has_system_update_tool=False,
+    )
+    assert tool == "cron"
+
+
+def test_required_tool_for_query_does_not_route_generic_update_prompt_without_clear_target():
+    tool = required_tool_for_query(
+        question="latest version sekarang",
+        has_weather_tool=False,
+        has_cron_tool=False,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_save_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=True,
+        has_system_update_tool=True,
+    )
+    assert tool is None
+
+
+def test_required_tool_for_query_keeps_update_prompt_for_explicit_kabot_target():
+    tool = required_tool_for_query(
+        question="latest version kabot",
+        has_weather_tool=False,
+        has_cron_tool=False,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_save_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=True,
+        has_system_update_tool=True,
+    )
+    assert tool == "check_update"
 
 
 def test_required_tool_for_query_does_not_force_legacy_stock_for_company_aliases():
@@ -269,3 +430,69 @@ def test_score_required_tool_intents_keeps_legacy_crypto_for_explicit_short_symb
         has_system_update_tool=False,
     )
     assert any(item.tool == "crypto" for item in ranked)
+
+
+def test_score_required_tool_intents_does_not_raise_cron_for_plain_schedule_planning():
+    ranked = score_required_tool_intents(
+        "buat jadwal lari 3x seminggu untuk pemula",
+        has_weather_tool=False,
+        has_cron_tool=True,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=False,
+        has_system_update_tool=False,
+    )
+    assert all(item.tool != "cron" for item in ranked)
+
+
+def test_score_required_tool_intents_does_not_raise_cron_for_generic_schedule_management_chat():
+    ranked = score_required_tool_intents(
+        "lihat jadwal latihan saya",
+        has_weather_tool=False,
+        has_cron_tool=True,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=False,
+        has_system_update_tool=False,
+    )
+    assert all(item.tool != "cron" for item in ranked)
+
+
+def test_score_required_tool_intents_does_not_raise_update_tools_for_generic_update_prompt():
+    ranked = score_required_tool_intents(
+        "ada update sekarang",
+        has_weather_tool=False,
+        has_cron_tool=False,
+        has_system_info_tool=False,
+        has_cleanup_tool=False,
+        has_speedtest_tool=False,
+        has_process_memory_tool=False,
+        has_stock_tool=False,
+        has_stock_analysis_tool=False,
+        has_crypto_tool=False,
+        has_server_monitor_tool=False,
+        has_web_search_tool=False,
+        has_read_file_tool=False,
+        has_list_dir_tool=False,
+        has_check_update_tool=True,
+        has_system_update_tool=True,
+    )
+    assert all(item.tool not in {"check_update", "system_update"} for item in ranked)

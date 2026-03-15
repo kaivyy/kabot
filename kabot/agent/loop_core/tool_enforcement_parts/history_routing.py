@@ -23,26 +23,45 @@ from kabot.agent.loop_core.tool_enforcement_parts.filesystem_paths import (
     _extract_read_file_path,
 )
 
-_CONTEXTUAL_FOLLOWUP_PHRASES = (
-    "ya lanjut",
-    "lanjut rencana",
-    "lanjut analisis",
-    "lanjut yang",
-    "maksudnya",
-    "kenapa",
-    "kok",
-    "yang formal",
-    "yang kedua",
-    "nomor 2",
-    "coba ulang",
-    "jelasin",
-    "jelaskan",
-    "trend nya",
-    "trendnya",
+_OPTION_SELECTION_NUMERIC_RE = re.compile(
+    r"^(?:(?:opsi|option|nomor|number)\s+)?(?P<ref>\d{1,2})$"
 )
-_CONTEXTUAL_FOLLOWUP_EXACT = {
-    "naik ya",
-    "turun ya",
+_OPTION_SELECTION_REFERENCE_RE = re.compile(
+    r"\b(?:(?:opsi|option|nomor|number|yang|the)\s+)?"
+    r"(?P<ref>pertama|kedua|ketiga|keempat|kelima|first|second|third|fourth|fifth|\d{1,2})"
+    r"(?:\s+one)?\b",
+    re.IGNORECASE,
+)
+_OPTION_SELECTION_CJK_ORDINAL_RE = re.compile(
+    r"第(?P<ref>[一二三四五\d]{1,2})(?:个|個|番|つ目)?"
+)
+_OPTION_SELECTION_JA_NUMERIC_RE = re.compile(r"(?P<ref>\d{1,2})番")
+_OPTION_SELECTION_THAI_NUMERIC_RE = re.compile(r"ข้อ\s*(?P<ref>\d{1,2})")
+_OPTION_SELECTION_THAI_ORDINAL_RE = re.compile(
+    r"(?:ข้อ\s*)?(?:ที่)?(?P<ref>แรก|หนึ่ง|สอง|สาม|สี่|ห้า)"
+)
+_OPTION_SELECTION_ORDINAL_MAP = {
+    "pertama": "1",
+    "kedua": "2",
+    "ketiga": "3",
+    "keempat": "4",
+    "kelima": "5",
+    "first": "1",
+    "second": "2",
+    "third": "3",
+    "fourth": "4",
+    "fifth": "5",
+    "一": "1",
+    "二": "2",
+    "三": "3",
+    "四": "4",
+    "五": "5",
+    "แรก": "1",
+    "หนึ่ง": "1",
+    "สอง": "2",
+    "สาม": "3",
+    "สี่": "4",
+    "ห้า": "5",
 }
 _DIRECT_FETCH_VERB_RE = re.compile(
     r"(?i)\b(fetch|open|visit|read|scrape|crawl|ambil|buka|baca|ringkas|summari[sz]e|isi website|isi halaman|konten website|konten halaman)\b"
@@ -51,8 +70,20 @@ _DIRECT_FETCH_URL_RE = re.compile(r"(?i)\bhttps?://[^\s]+")
 _DIRECT_FETCH_DOMAIN_RE = re.compile(
     r"(?i)\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/[^\s]*)?\b"
 )
-
-
+_READ_FILE_VERB_RE = re.compile(
+    r"(?i)\b(read|open|show|display|inspect|view|cat|baca|lihat|lihatkan|tampilkan|periksa|cek)\b"
+)
+_DETERMINISTIC_PARSER_TOOL_WHITELIST = {
+    "save_memory",
+    "cron",
+    "get_system_info",
+    "cleanup_system",
+    "speedtest",
+    "get_process_memory",
+    "server_monitor",
+    "check_update",
+    "system_update",
+}
 def _extract_direct_fetch_url_candidate(text: str) -> str | None:
     raw = str(text or "").strip()
     if not raw:
@@ -84,33 +115,20 @@ def _looks_like_direct_page_fetch_request(text: str) -> bool:
         return False
     return bool(_DIRECT_FETCH_VERB_RE.search(raw))
 
-def existing_schedule_titles(loop: Any) -> list[str]:
-    """Collect existing grouped schedule titles from cron service."""
-    if not getattr(loop, "cron_service", None):
-        return []
-    titles: list[str] = []
-    try:
-        for job in loop.cron_service.list_jobs(include_disabled=True):
-            title = (job.payload.group_title or "").strip()
-            if title:
-                titles.append(title)
-    except Exception:
-        return []
-    return titles
+
+def _looks_like_explicit_read_file_request(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if not _extract_read_file_path(raw):
+        return False
+    if _extract_list_dir_path(raw):
+        return False
+    return bool(_READ_FILE_VERB_RE.search(raw))
 
 
-def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
-    """Resolve required tool for immediate-action query types."""
-    if loop.tools.has("web_fetch") and _looks_like_direct_page_fetch_request(question):
-        return "web_fetch"
-    if (
-        loop.tools.has("list_dir")
-        and not _extract_read_file_path(question)
-        and _extract_list_dir_path(question)
-    ):
-        return "list_dir"
-
-    resolved_tool = required_tool_for_query(
+def _resolve_parser_tool_hint_for_loop(loop: Any, question: str) -> str | None:
+    return required_tool_for_query(
         question=question,
         has_weather_tool=loop.tools.has("weather"),
         has_cron_tool=loop.tools.has("cron"),
@@ -129,16 +147,52 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         has_check_update_tool=loop.tools.has("check_update"),
         has_system_update_tool=loop.tools.has("system_update"),
     )
-    if resolved_tool == "read_file":
-        action_tool, _ = infer_action_required_tool_for_loop(loop, question)
-        if action_tool == "message":
-            return "message"
 
-    if resolved_tool in {"stock", "stock_analysis", "crypto"}:
-        # Keep legacy finance tools available for the model as fallback, but stop
-        # forcing them through deterministic parser routing.
-        return None
-    return resolved_tool
+def existing_schedule_titles(loop: Any) -> list[str]:
+    """Collect existing grouped schedule titles from cron service."""
+    if not getattr(loop, "cron_service", None):
+        return []
+    titles: list[str] = []
+    try:
+        for job in loop.cron_service.list_jobs(include_disabled=True):
+            title = (job.payload.group_title or "").strip()
+            if title:
+                titles.append(title)
+    except Exception:
+        return []
+    return titles
+
+
+def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
+    """Resolve safety-critical or payload-grounded tool routes only.
+
+    OpenClaw-style turns should usually flow through model + skill selection.
+    This wrapper keeps deterministic routing only for explicit payload/action
+    cases (URLs, filesystem targets, reminders, system ops), while leaving
+    generic knowledge/live-data turns to later skill/live-research latches.
+    """
+    if loop.tools.has("web_fetch") and _looks_like_direct_page_fetch_request(question):
+        return "web_fetch"
+    action_tool, _ = infer_action_required_tool_for_loop(loop, question)
+    if action_tool:
+        return action_tool
+    if (
+        loop.tools.has("list_dir")
+        and not _extract_read_file_path(question)
+        and _extract_list_dir_path(question)
+    ):
+        return "list_dir"
+    if loop.tools.has("read_file") and _looks_like_explicit_read_file_request(question):
+        return "read_file"
+
+    resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+    if resolved_tool == "read_file":
+        return "read_file" if loop.tools.has("read_file") and _looks_like_explicit_read_file_request(question) else None
+    if resolved_tool in _DETERMINISTIC_PARSER_TOOL_WHITELIST:
+        return resolved_tool
+    # Keep parser-scored weather/news/finance lookups available as soft signals
+    # inside the runtime, but stop forcing them through deterministic routing.
+    return None
 
 
 def infer_required_tool_from_history_for_loop(
@@ -208,11 +262,25 @@ def _looks_like_contextual_followup_request_for_history(text: str) -> bool:
         return False
     if _PATHLIKE_QUERY_RE.search(raw):
         return False
-    if normalized in _CONTEXTUAL_FOLLOWUP_EXACT:
+    if _OPTION_SELECTION_NUMERIC_RE.fullmatch(normalized):
         return True
-    if "trend" in normalized:
+    if _OPTION_SELECTION_REFERENCE_RE.search(normalized):
         return True
-    return any(phrase in normalized for phrase in _CONTEXTUAL_FOLLOWUP_PHRASES)
+    for pattern in (
+        _OPTION_SELECTION_CJK_ORDINAL_RE,
+        _OPTION_SELECTION_JA_NUMERIC_RE,
+        _OPTION_SELECTION_THAI_NUMERIC_RE,
+        _OPTION_SELECTION_THAI_ORDINAL_RE,
+    ):
+        match = pattern.search(raw)
+        if not match:
+            continue
+        ref = str(match.group("ref") or "").strip()
+        if not ref:
+            continue
+        if ref.isdigit() or _OPTION_SELECTION_ORDINAL_MAP.get(ref):
+            return True
+    return False
 
 
 def make_unique_schedule_title_for_loop(loop: Any, base_title: str) -> str:

@@ -1033,6 +1033,60 @@ async def test_agent_loop_process_direct_opening_sibling_folder_after_delivery_u
 
 
 @pytest.mark.asyncio
+async def test_agent_loop_process_direct_searches_workspace_folder_then_reuses_it_for_file_delivery(tmp_path):
+    workspace = tmp_path / "workspace"
+    nested_dir = workspace / "archive" / "pi-mono"
+    nested_dir.mkdir(parents=True, exist_ok=True)
+    readme_path = nested_dir / "README.md"
+    readme_path.write_text("hello", encoding="utf-8")
+
+    provider = _RecordingLLMProvider()
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=workspace,
+        model="openai-codex/gpt-5.3-codex",
+        cron_service=CronService(tmp_path / "cron_jobs.json"),
+        session_manager=_InMemorySessionManager(),
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    loop.memory = SimpleNamespace(
+        create_session=lambda *args, **kwargs: None,
+        add_message=AsyncMock(return_value=None),
+        get_conversation_context=lambda *args, **kwargs: [],
+        metadata=SimpleNamespace(add_lesson=lambda **kwargs: None),
+    )
+    loop.sentinel = SimpleNamespace(mark_session_active=lambda **kwargs: None)
+    loop._ensure_memory_warmup_task = lambda: None
+    loop.router = SimpleNamespace(route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False)))
+    loop.context.build_messages = MagicMock(
+        side_effect=lambda history, current_message, **kwargs: [
+            {"role": "system", "content": "ctx"},
+            {"role": "user", "content": current_message},
+        ]
+    )
+    loop._resolve_context_for_message = lambda _msg: loop.context
+
+    first = await loop.process_direct(
+        "buka folder pi-mono di workspace",
+        session_key="cli:workspace-folder-search",
+        chat_id="workspace-folder-search",
+    )
+    second = await loop.process_direct(
+        "kirim file README.md ke sini",
+        session_key="cli:workspace-folder-search",
+        chat_id="workspace-folder-search",
+    )
+    session = loop.sessions.get_or_create("cli:workspace-folder-search")
+
+    assert "README.md" in first
+    assert second == "Message sent to cli:workspace-folder-search"
+    assert session.metadata.get("working_directory") == str(nested_dir.resolve())
+    assert session.metadata.get("last_delivery_path") == str(readme_path.resolve())
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
 async def test_agent_loop_process_direct_cross_instance_session_persistence_keeps_navigation_and_delivery_context(
     tmp_path, monkeypatch
 ):

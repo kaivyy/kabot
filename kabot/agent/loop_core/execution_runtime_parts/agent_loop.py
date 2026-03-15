@@ -489,6 +489,16 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             "docker-compose.yml",
             "docker-compose.yaml",
             "mkdocs.yml",
+            "config.json",
+            "config.yaml",
+            "config.yml",
+            "settings.json",
+            "AGENTS.md",
+            "TOOLS.md",
+            "USER.md",
+            "BOOTSTRAP.md",
+            "CHANGELOG.md",
+            "CLAUDE.md",
         )
         chosen: list[str] = []
         seen: set[str] = set()
@@ -501,7 +511,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             if candidate not in seen:
                 seen.add(candidate)
                 chosen.append(candidate)
-            if len(chosen) >= 2:
+            if len(chosen) >= 3:
                 return chosen
         for fallback_name in files:
             candidate = str((root_path / fallback_name).expanduser())
@@ -509,7 +519,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 continue
             seen.add(candidate)
             chosen.append(candidate)
-            if len(chosen) >= 2:
+            if len(chosen) >= 3:
                 break
         return chosen
 
@@ -687,7 +697,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 inspection_context_blocks.extend(
                     (
                         "[Inspection Note]",
-                        "Use the real filesystem evidence above when answering what this local folder, repo, or app is.",
+                        "Use the real filesystem evidence above when answering what this local folder, repo, app, config, or docs say.",
                         "If the evidence is still insufficient, inspect more representative files before concluding.",
                     )
                 )
@@ -1277,7 +1287,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                         "role": "user",
                         "content": (
                             "SYSTEM: This request requires grounded filesystem inspection before you explain "
-                            "the local folder, repo, project, or app. Call list_dir, read_file, find_files, "
+                            "the local folder, repo, project, app, config, or workspace docs. Call list_dir, read_file, find_files, "
                             "or exec to inspect local files first. Do not answer from guesswork or only "
                             "repeat filenames."
                         ),
@@ -1286,7 +1296,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 continue
             return await progress_runtime.return_with_phase(
                 "I couldn't verify a grounded project inspection because no filesystem inspection tool "
-                "was used. I won't describe the local app or repo from guesswork.",
+                "was used. I won't describe the local app, config, or repo from guesswork.",
                 phase="error",
             )
 
@@ -1321,7 +1331,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                             "if no suitable tool or permission exists."
                             + (
                                 " For this turn, inspect the local filesystem first with list_dir, read_file, "
-                                "find_files, or exec before you explain what the project or app is."
+                                "find_files, or exec before you explain what the project, config, docs, or app is."
                                 if requires_grounded_filesystem_inspection
                                 else ""
                             )
@@ -1332,7 +1342,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             if requires_grounded_filesystem_inspection:
                 return await progress_runtime.return_with_phase(
                     "I couldn't verify a grounded project inspection because no filesystem inspection "
-                    "tool execution happened. I won't explain the local app or repo without evidence.",
+                    "tool execution happened. I won't explain the local app, config, docs, or repo without evidence.",
                     phase="error",
                 )
             return await progress_runtime.return_with_phase(

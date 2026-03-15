@@ -247,10 +247,10 @@ def _build_grounded_filesystem_inspection_note(
     lines.extend(context_lines)
     lines.extend(
         (
-            "This turn requires real filesystem inspection before you explain what the local folder, repo, project, or app is.",
+            "This turn requires real filesystem inspection before you explain what the local folder, repo, project, app, config, or workspace docs imply.",
             "Inspect actual evidence first. Start with list_dir, read_file, find_files, or exec on the grounded path above as needed.",
-            "After listing the structure, inspect representative files such as README.md, package.json, pyproject.toml, Dockerfile, mkdocs.yml, or other key entry/config files when they exist.",
-            "Do not answer with a generic technology guess or only restate filenames. Explain the project from the inspected evidence.",
+            "After listing the structure, inspect representative files such as README.md, package.json, pyproject.toml, Dockerfile, mkdocs.yml, AGENTS.md, config.json, or other key entry/config/docs files when they exist.",
+            "Do not answer with a generic technology guess, a guessed config status, or only restate filenames. Explain the project or local behavior from the inspected evidence.",
             "Answer in the user's language unless they explicitly ask for a different language.",
         )
     )
@@ -290,7 +290,7 @@ def _build_explicit_file_analysis_note(path: str) -> str:
         (
             "[System Note: Explicit file reference]",
             f"- The user referenced this concrete file path: {normalized_path}",
-            "- If the user is asking about the file's contents, structure, styling, config, or attributes, call read_file on that path before answering.",
+            "- If the user is asking about the file's contents, structure, styling, config, docs, bootstrap rules, or attributes, call read_file on that path before answering.",
             "- Do not ask the user to resend the file path when it is already present.",
             "- After reading, answer the real question in the user's language unless they explicitly ask for a different language, instead of dumping the file unless they explicitly ask for the raw content.",
         )
@@ -573,6 +573,18 @@ def _looks_like_skill_workflow_followup_detail(text: str) -> bool:
         if stripped.startswith(("- ", "* ", "• ")):
             bullet_lines += 1
     if numbered_lines >= 2 or bullet_lines >= 2:
+        return True
+
+    has_url_sample = bool(re.search(r"(?i)https?://\S+", raw))
+    has_json_shape = bool(
+        re.search(r'(?m)"[A-Za-z0-9_.-]+"\s*:\s*', raw)
+        or (
+            "{" in raw
+            and "}" in raw
+            and ":" in raw
+        )
+    )
+    if (has_url_sample or has_json_shape) and any(mark in raw for mark in ("\n", "{", "}")):
         return True
 
     tokens = [part for part in normalized.split(" ") if part]

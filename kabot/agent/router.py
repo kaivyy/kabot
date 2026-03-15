@@ -32,34 +32,6 @@ _SIMPLE_PATTERNS = [
 ]
 _SIMPLE_RE = [re.compile(p, re.IGNORECASE) for p in _SIMPLE_PATTERNS]
 
-_ENGLISH_REMINDER_KEYWORDS = (
-    "remind me",
-    "set reminder",
-    "reminder",
-    "schedule",
-)
-_ENGLISH_WEATHER_KEYWORDS = (
-    "weather",
-    "forecast",
-    "temperature",
-    "wind",
-)
-
-_TEMPORAL_FAST_RE = re.compile(
-    r"(?i)\b("
-    r"what day|day is it|what date|what time|"
-    r"timezone|time zone|"
-    r"utc\s*[+-]?\s*\d{1,2}(?::?\d{2})?|"
-    r"tomorrow day|yesterday day|next week day"
-    r")\b"
-)
-_MEMORY_RECALL_FAST_RE = re.compile(
-    r"(?i)\b("
-    r"what is my preference code|what was my preference code|my preference code|"
-    r"what was the code you just remembered|what did you save about me|"
-    r"remembered code|saved code|memory code"
-    r")\b"
-)
 _ROUTE_CATEGORY_RE = re.compile(r"\b(CODING|CHAT|RESEARCH|GENERAL)\b", re.IGNORECASE)
 _ROUTE_TURN_CATEGORY_RE = re.compile(r"\b(chat|action|contextual_action|command)\b", re.IGNORECASE)
 _JSON_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
@@ -239,16 +211,6 @@ class IntentRouter:
             if pattern.match(content_stripped):
                 return RouteDecision(profile="CHAT", is_complex=False, turn_category="chat")
 
-        if _TEMPORAL_FAST_RE.search(content_stripped):
-            return RouteDecision(profile="GENERAL", is_complex=False, turn_category="chat")
-        if _MEMORY_RECALL_FAST_RE.search(content_stripped):
-            return RouteDecision(profile="GENERAL", is_complex=False, turn_category="chat")
-        content_lower = content_stripped.lower()
-        if any(keyword in content_lower for keyword in _ENGLISH_REMINDER_KEYWORDS):
-            return RouteDecision(profile="GENERAL", is_complex=True, turn_category="action")
-        if any(keyword in content_lower for keyword in _ENGLISH_WEATHER_KEYWORDS):
-            return RouteDecision(profile="GENERAL", is_complex=True, turn_category="action")
-
         structured_decision = await self.classify_route(content)
         if structured_decision:
             return structured_decision
@@ -285,12 +247,12 @@ Definitions:
 - action: the user wants real work, tool use, file/system/web/message action, or an artifact now.
 - contextual_action: a short follow-up that depends on prior task context and should continue the same work.
 - command: slash or command-style control input.
-- filesystem_inspection: the user wants grounded local filesystem evidence before you explain what a folder, repo, project, app, or codebase contains or what software it is.
+- filesystem_inspection: the user wants grounded local filesystem evidence before you explain what a folder, repo, project, app, codebase, local config, or workspace docs/bootstrap files contain, configure, or imply about behavior.
 
 Important:
 - Understand the user's actual language. Do not rely on fixed English, Indonesian, Japanese, or Chinese keywords.
 - If the user is asking to continue/open/read/send/create/edit/run/check something in any language, prefer action or contextual_action.
-- If the user is asking what a local folder, repo, project, app, or codebase is, how it is structured, or what it contains, prefer grounding_mode=filesystem_inspection.
+- If the user is asking what a local folder, repo, project, app, or codebase is, how it is structured, what it contains, how it is configured, or what local docs/config/bootstrap files say about behavior, prefer grounding_mode=filesystem_inspection.
 - If the user is mainly asking for an explanation or casual answer, prefer chat.
 
 User message:

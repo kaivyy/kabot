@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from kabot.agent.loop_core.message_runtime_parts import process_flow as process_flow_module
 from kabot.agent.loop_core.message_runtime import (
     process_message,
 )
@@ -330,6 +331,89 @@ async def test_process_message_skill_creation_request_forces_skill_creator_conte
     built_message = kwargs.get("current_message", "")
     assert "[Skill Workflow]" in built_message
     assert "Do not create files yet" in built_message
+    assert "concrete trigger/output examples" in built_message
+    assert "endpoint/auth/request/response shape" in built_message
+
+
+@pytest.mark.asyncio
+async def test_process_message_skill_creator_auto_adapts_from_single_matching_workflow_without_creation_parser(
+    monkeypatch,
+):
+    monkeypatch.setattr(process_flow_module, "looks_like_skill_creation_request", lambda _text: False)
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "skill"}]
+    context_builder.skills = SimpleNamespace(
+        match_skill_details=lambda text, profile="GENERAL", max_results=3, filter_unavailable=False: [
+            {
+                "name": "skill-creator",
+                "source": "builtin",
+                "eligible": True,
+                "description": "Create or update Kabot skills from real workflow examples",
+            }
+        ]
+    )
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=None,
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="action",
+                    grounding_mode="",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="bisa bikinin workflow scrape API khusus dari endpoint ini?",
+    )
+    await process_message(loop, msg)
+
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert kwargs.get("skill_names") == ["skill-creator"]
+    built_message = kwargs.get("current_message", "")
+    assert "[Skill Workflow]" in built_message
+    assert "Do not create files yet" in built_message
+    assert session.metadata.get("skill_creation_flow", {}).get("stage") == "discovery"
+    assert msg.metadata.get("skill_creation_guard", {}).get("active") is True
+
 
 @pytest.mark.asyncio
 async def test_process_message_skill_creation_followup_keeps_workflow_note():
@@ -395,6 +479,105 @@ async def test_process_message_skill_creation_followup_keeps_workflow_note():
     built_message = kwargs.get("current_message", "")
     assert "[Skill Workflow]" in built_message
     assert "[Follow-up Context]" in built_message
+
+
+@pytest.mark.asyncio
+async def test_process_message_skill_creation_followup_keeps_workflow_for_explicit_api_samples(
+    monkeypatch,
+):
+    monkeypatch.setattr(process_flow_module, "looks_like_skill_creation_request", lambda _text: False)
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "skill"}]
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": (
+                    "Kalau kamu mau, kirim URL endpoint, contoh JSON, dan format output yang kamu mau. "
+                    "Nanti saya susun skill scrape-nya."
+                ),
+                "profile": "CHAT",
+                "kind": "assistant_offer",
+                "request_text": "bikin skill scrape khusus untuk API game checker",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            },
+            "skill_creation_flow": {
+                "request_text": "bikin skill scrape khusus untuk API game checker",
+                "stage": "discovery",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            },
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=None,
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="CHAT",
+                    is_complex=False,
+                    turn_category="action",
+                    grounding_mode="",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content=(
+            'url: https://arqstorecekid.vercel.app/api/game\n'
+            'json nya:\n'
+            '{ "name": "!Mobile Legends (ArdTopup)", "slug": "mlbb-ard", '
+            '"endpoint": "/api/game/mlbb-ard", "query": "?id=xxxx&zone=xxx", '
+            '"hasZoneId": true, "listZoneId": null }\n'
+            "untuk cek id game mlbb"
+        ),
+    )
+    await process_message(loop, msg)
+
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert "skill-creator" in (kwargs.get("skill_names") or [])
+    built_message = kwargs.get("current_message", "")
+    assert built_message.startswith("url: https://arqstorecekid.vercel.app/api/game")
+    assert "[Follow-up Context]" in built_message
+    assert "bikin skill scrape khusus untuk API game checker" in built_message
+    assert "[Skill Workflow]" in built_message
+    assert session.metadata.get("skill_creation_flow", {}).get("stage") == "discovery"
+    assert msg.metadata.get("skill_creation_guard", {}).get("active") is True
 
 @pytest.mark.asyncio
 async def test_process_message_skill_creation_discovery_answers_keep_workflow_active():
@@ -592,6 +775,8 @@ async def test_process_message_skill_creation_approval_turn_sets_approved_guard(
     kwargs = context_builder.build_messages.call_args.kwargs
     built_message = kwargs.get("current_message", "")
     assert "explicitly approved the plan" in built_message
+    assert "scripts/init_skill.py" in built_message
+    assert "quick_validate.py" in built_message
     assert msg.metadata.get("skill_creation_guard", {}).get("approved") is True
     assert session.metadata.get("skill_creation_flow", {}).get("stage") == "approved"
 
@@ -1048,6 +1233,65 @@ async def test_process_message_skill_install_request_suppresses_conflicting_tool
     assert msg.metadata.get("required_tool") is None
     assert msg.metadata.get("required_tool_query") is None
     assert msg.metadata.get("suppress_required_tool_inference") is True
+
+
+@pytest.mark.asyncio
+async def test_process_message_direct_github_skill_url_forces_skill_installer_workflow():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "skill install"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=None,
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="GENERAL", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="Saya bisa cek repo skill itu dulu."),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="tolong pasang https://github.com/acme/custom-skills/tree/main/skills/mlbb-id-check",
+    )
+    await process_message(loop, msg)
+
+    kwargs = context_builder.build_messages.call_args.kwargs
+    assert "skill-installer" in (kwargs.get("skill_names") or [])
+    built_message = kwargs.get("current_message", "")
+    assert "[Skill Workflow]" in built_message
+    assert "installing or updating an external Kabot skill" in built_message
+    assert session.metadata.get("skill_creation_flow", {}).get("kind") == "install"
+
 
 @pytest.mark.asyncio
 async def test_process_message_skill_install_approval_turn_sets_approved_guard():

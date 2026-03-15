@@ -28,8 +28,8 @@ def test_semantic_intent_detects_japanese_weather_question_with_location():
         parser_tool=None,
     )
 
-    assert hint.required_tool == "weather"
-    assert "東京" in str(hint.required_tool_query)
+    assert hint.kind == "weather_query"
+    assert hint.required_tool is None
 
 
 def test_semantic_intent_reuses_weather_context_for_chinese_wind_followup():
@@ -144,6 +144,32 @@ def test_semantic_intent_keeps_weather_source_followup_ai_driven():
     assert hint.required_tool is None
 
 
+def test_semantic_intent_does_not_use_parser_tool_alone_for_weather_source_followup():
+    hint = arbitrate_semantic_intent(
+        "wttr.in",
+        parser_tool="weather",
+        pending_followup_tool=None,
+        pending_followup_source="",
+        last_tool_context=None,
+    )
+
+    assert hint.kind == "none"
+    assert hint.required_tool is None
+
+
+def test_semantic_intent_does_not_use_parser_tool_alone_for_weather_commentary():
+    hint = arbitrate_semantic_intent(
+        "lumayan hangat ya",
+        parser_tool="weather",
+        pending_followup_tool=None,
+        pending_followup_source="",
+        last_tool_context=None,
+    )
+
+    assert hint.kind == "none"
+    assert hint.required_tool is None
+
+
 def test_semantic_intent_clears_weather_parser_for_quoted_hr_zone_request():
     hint = arbitrate_semantic_intent(
         """Iya, untuk laki-laki saat lari, HR (detak jantung) sering di atas 160 bpm itu belum tentu berbahaya.
@@ -160,8 +186,18 @@ dari sini hitung hr zona saya umur 25 tahun""",
 
 def test_semantic_intent_clears_stale_parser_tool_for_memory_recall_turn():
     hint = arbitrate_semantic_intent(
-        "what is my preference code?",
+        "what name did you store for me?",
         parser_tool="stock",
+    )
+
+    assert hint.kind == "memory_recall"
+    assert hint.required_tool is None
+
+
+def test_semantic_intent_treats_prior_decision_recall_as_memory_recall_turn():
+    hint = arbitrate_semantic_intent(
+        "what did we decide earlier?",
+        parser_tool="weather",
     )
 
     assert hint.kind == "memory_recall"

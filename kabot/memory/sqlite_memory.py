@@ -87,7 +87,25 @@ class SQLiteMemory(MemoryBackend):
         return fact_id
 
     def get_conversation_context(self, session_id, max_messages=20):
-        return self.metadata.get_message_chain(session_id, limit=max_messages)
+        messages = self.metadata.get_message_chain(session_id, limit=max_messages)
+        context: list[dict] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            formatted = dict(msg)
+            if (
+                str(formatted.get("role") or "").strip().lower() == "tool"
+                and "tool_call_id" not in formatted
+                and isinstance(formatted.get("tool_results"), list)
+                and formatted["tool_results"]
+                and isinstance(formatted["tool_results"][0], dict)
+            ):
+                first = formatted["tool_results"][0]
+                formatted["tool_call_id"] = first.get("tool_call_id")
+                if first.get("name") and not formatted.get("name"):
+                    formatted["name"] = first.get("name")
+            context.append(formatted)
+        return context
 
     def create_session(self, session_id, channel, chat_id, user_id=None):
         self.metadata.create_session(session_id, channel, chat_id, user_id=user_id)

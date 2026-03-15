@@ -21,6 +21,7 @@ from kabot.agent.cron_fallback_nlp import (
 from kabot.agent.cron_fallback_nlp import build_cycle_title as nlp_build_cycle_title
 from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.loop_core.tool_enforcement_parts.action_requests import (
+    _extract_find_files_kind,
     _extract_find_files_query,
     _extract_message_delivery_path,
     _extract_write_file_content,
@@ -216,6 +217,56 @@ def _get_session_metadata(loop: Any, msg: InboundMessage) -> dict[str, Any] | No
     if not isinstance(session_meta, dict):
         return None
     return session_meta
+
+
+def _set_last_tool_context_path(
+    loop: Any,
+    msg: InboundMessage,
+    metadata: dict[str, Any],
+    *,
+    tool_name: str,
+    source_text: str,
+    path_value: str,
+) -> str | None:
+    raw = str(path_value or "").strip()
+    if not raw:
+        return None
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except Exception:
+        return None
+    if not resolved.exists():
+        return None
+    normalized = str(resolved)
+    context = {
+        "tool": str(tool_name or "").strip(),
+        "source": str(source_text or "").strip(),
+        "path": normalized,
+        "updated_at": time.time(),
+    }
+    metadata["last_tool_context"] = context
+    session_meta = _get_session_metadata(loop, msg)
+    if isinstance(session_meta, dict):
+        session_meta["last_tool_context"] = dict(context)
+    return normalized
+
+
+def _parse_find_files_matches(result_text: str) -> list[tuple[str, str]]:
+    matches: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for line in str(result_text or "").splitlines():
+        stripped = str(line or "").strip()
+        if stripped.startswith("DIR "):
+            entry = ("dir", stripped.split(" ", 1)[1].strip())
+        elif stripped.startswith("FILE "):
+            entry = ("file", stripped.split(" ", 1)[1].strip())
+        else:
+            continue
+        if not entry[1] or entry in seen:
+            continue
+        seen.add(entry)
+        matches.append(entry)
+    return matches
 
 
 def _normalize_working_directory_path(path_value: str) -> str | None:
@@ -521,8 +572,57 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             payload["limit"] = limit
 
         resolved_list_dir = _resolve_delivery_path(loop, path)
+        if not (resolved_list_dir.exists() and resolved_list_dir.is_dir()):
+            search_query = ""
+            if not _looks_like_absolute_or_rooted_path(path):
+                search_query = (
+                    _extract_find_files_query(source_text)
+                    or
+                    _extract_relative_directory_candidate(source_text)
+                    or Path(str(path).rstrip("\\/")).name
+                )
+                search_query = str(search_query or "").strip()
+            if search_query and _tool_name_available(loop, "find_files"):
+                search_payload: dict[str, Any] = {
+                    "query": search_query,
+                    "context_text": source_text,
+                    "kind": "dir",
+                }
+                search_root = _resolve_find_files_root(loop, source_text, metadata=metadata)
+                if search_root:
+                    search_payload["path"] = search_root
+                search_result = await _exec_tool("find_files", search_payload)
+                search_matches = _parse_find_files_matches(str(search_result or ""))
+                dir_matches = [match_path for match_kind, match_path in search_matches if match_kind == "dir"]
+                if len(dir_matches) == 1:
+                    resolved_candidate = _resolve_delivery_path(loop, dir_matches[0])
+                    if resolved_candidate.exists() and resolved_candidate.is_dir():
+                        payload["path"] = str(resolved_candidate)
+                        _set_last_navigated_path(loop, msg, metadata, str(resolved_candidate))
+                        _set_last_tool_context_path(
+                            loop,
+                            msg,
+                            metadata,
+                            tool_name="list_dir",
+                            source_text=source_text,
+                            path_value=str(resolved_candidate),
+                        )
+                        result = await _exec_tool("list_dir", payload)
+                        return str(result)
+                search_text = str(search_result or "").strip()
+                if search_text:
+                    return search_text
+
         if resolved_list_dir.exists() and resolved_list_dir.is_dir() and isinstance(metadata, dict):
             _set_last_navigated_path(loop, msg, metadata, str(resolved_list_dir))
+            _set_last_tool_context_path(
+                loop,
+                msg,
+                metadata,
+                tool_name="list_dir",
+                source_text=source_text,
+                path_value=str(resolved_list_dir),
+            )
 
         result = await _exec_tool("list_dir", payload)
         return str(result)
@@ -535,10 +635,30 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
             "query": query,
             "context_text": source_text,
         }
+        kind = _extract_find_files_kind(source_text)
+        if kind in {"file", "dir"}:
+            payload["kind"] = kind
         root_path = _resolve_find_files_root(loop, source_text, metadata=metadata)
         if root_path:
             payload["path"] = root_path
         result = await _exec_tool("find_files", payload)
+        search_matches = _parse_find_files_matches(str(result or ""))
+        if len(search_matches) == 1 and isinstance(metadata, dict):
+            match_kind, match_path = search_matches[0]
+            resolved_match = _resolve_delivery_path(loop, match_path)
+            if resolved_match.exists():
+                _set_last_tool_context_path(
+                    loop,
+                    msg,
+                    metadata,
+                    tool_name="find_files",
+                    source_text=source_text,
+                    path_value=str(resolved_match),
+                )
+                if match_kind == "dir" and resolved_match.is_dir():
+                    _set_last_navigated_path(loop, msg, metadata, str(resolved_match))
+                elif match_kind == "file" and resolved_match.is_file():
+                    _set_last_navigated_path(loop, msg, metadata, str(resolved_match.parent))
         return str(result)
 
     if required_tool == "read_file":

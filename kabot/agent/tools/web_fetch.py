@@ -14,6 +14,7 @@ from loguru import logger
 from kabot.agent.fallback_i18n import t as i18n_t
 from kabot.agent.tools.base import Tool
 from kabot.agent.tools.web_cache import TTLCache
+from kabot.utils.external_content import wrap_external_content
 
 MAX_CHARS_DEFAULT = 8000
 MAX_CHARS_CAP = 50000
@@ -68,11 +69,7 @@ class WebFetchTool(Tool):
 
     def _wrap_external_content(self, text: str, source_url: str) -> str:
         """Wrap fetched content to mark it as untrusted external data."""
-        return (
-            "[EXTERNAL_CONTENT]\n"
-            f"{text}\n"
-            f"[/EXTERNAL_CONTENT]"
-        )
+        return wrap_external_content(text, source_label="Web Fetch")
 
     async def _fetch_firecrawl(self, url: str, max_chars: int) -> str | None:
         """Fallback: use FireCrawl to render JS-heavy pages."""

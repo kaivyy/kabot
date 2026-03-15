@@ -35,6 +35,13 @@ If the skill touches an API or service connection, ask only what matters:
 - whether the user already has docs or credentials
 - what the skill should be able to do end-to-end
 
+Whenever possible, ground this step in at least one or two concrete examples:
+- what the user would actually say to trigger the skill
+- what output or side effect they expect back
+- if it is an API skill, which endpoint/request/response example should anchor the first version
+
+If the user already provided an endpoint, payload example, JSON sample, or error response, treat that as the starting source of truth instead of re-asking for abstract requirements.
+
 ### 2. Turn that into a brief build plan
 Once the request is clear enough, present a concise plan covering:
 - skill name
@@ -43,6 +50,19 @@ Once the request is clear enough, present a concise plan covering:
 - logic flow
 - dependencies or env requirements
 - any important API endpoints or auth notes
+
+Also decide which reusable pieces belong where:
+- `SKILL.md` for the trigger guidance and short workflow
+- `references/` for API notes, endpoint docs, sample payloads, schemas, and failure modes
+- `scripts/` for deterministic wrappers, validators, or API helpers that would otherwise be rewritten each time
+- `assets/` for templates or sample files that should be copied into outputs
+
+For API-backed skills, explicitly call out:
+- base URL / endpoint path
+- auth mechanism
+- request parameters/body
+- expected success fields
+- likely error cases and how the skill should explain them
 
 Then ask for approval. If the user adjusts the scope, update the plan and ask again.
 
@@ -63,6 +83,7 @@ After approval:
 At minimum:
 - confirm the new files exist
 - if scripts were added, run a lightweight check such as `python scripts/<script>.py --help`
+- if the skill is API-backed, verify that the endpoint notes, request examples, or script arguments match the real API shape the user provided
 - if the skill is meant to be shared or installed elsewhere, package it and verify the bundle contains the expected files
 - summarize what was created and what still needs user credentials or setup
 

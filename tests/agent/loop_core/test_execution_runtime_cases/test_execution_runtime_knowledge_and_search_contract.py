@@ -91,7 +91,7 @@ def test_live_research_latch_yields_to_explicit_external_skill_request():
     )
 
 
-def test_live_research_latch_stays_enabled_without_explicit_external_skill_request():
+def test_live_research_latch_yields_to_grounded_external_skill_match_even_without_explicit_request():
     loop = SimpleNamespace(
         context=SimpleNamespace(
             skills=SimpleNamespace(
@@ -100,7 +100,7 @@ def test_live_research_latch_stays_enabled_without_explicit_external_skill_reque
         )
     )
 
-    assert not _should_defer_live_research_latch_to_skill(
+    assert _should_defer_live_research_latch_to_skill(
         loop,
         "cek harga saham bbca bri mandiri adaro sekarang",
         profile="GENERAL",

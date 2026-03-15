@@ -150,6 +150,97 @@ _PERSONAL_HR_CALC_RE = re.compile(
     r"karvonen|resting hr|max hr|hr max"
     r")\b"
 )
+_EXPLICIT_REMINDER_MARKERS = (
+    "remind",
+    "reminder",
+    "set reminder",
+    "set a reminder",
+    "add reminder",
+    "add a reminder",
+    "create reminder",
+    "create a reminder",
+    "alarm",
+    "set alarm",
+    "timer",
+    "set timer",
+    "wake me",
+    "ingatkan",
+    "ingatkn",
+    "pengingat",
+    "buat reminder",
+    "buat pengingat",
+    "buat alarm",
+    "buat timer",
+    "jadwalkan pengingat",
+    "jadwalkan reminder",
+    "jadwalkan alarm",
+    "bangunkan",
+    "bangunin",
+    "peringatan",
+    "ตั้งเตือน",
+    "การเตือน",
+    "เตือน",
+    "提醒",
+    "闹钟",
+    "定时提醒",
+)
+_REMINDER_SUBJECT_MARKERS = (
+    "reminder",
+    "alarm",
+    "timer",
+    "wake me",
+    "pengingat",
+    "peringatan",
+    "เตือน",
+    "การเตือน",
+    "提醒",
+    "闹钟",
+)
+_SCHEDULE_PLANNING_MARKERS = (
+    "schedule",
+    "jadwal",
+    "jadual",
+    "日程",
+    "计划",
+    "ตาราง",
+)
+_REMINDER_CREATION_VERBS = (
+    "set",
+    "add",
+    "create",
+    "buat",
+    "bikin",
+    "jadwalkan",
+    "atur",
+    "pasang",
+    "schedule",
+    "tetapkan",
+    "ตั้ง",
+    "设置",
+)
+_CRON_MANAGEMENT_DIRECT_MARKERS = (
+    "cron",
+    "reminder",
+    "pengingat",
+    "peringatan",
+    "เตือน",
+    "การเตือน",
+    "提醒",
+)
+_CRON_GROUP_MARKERS = (
+    "group",
+    "grup",
+    "kelompok",
+    "team",
+    "shift",
+    "jadwal shift",
+)
+_CRON_GROUP_ID_RE = re.compile(r"(?i)\bgrp_[a-z0-9_]+\b")
+_UPDATE_STRONG_TARGET_MARKERS = (
+    "kabot",
+    "bot",
+    "agent",
+)
 
 
 def _extract_primary_intent_text(text: str) -> str:
@@ -541,15 +632,16 @@ def score_required_tool_intents(
         return has_meta_feedback_marker or has_meta_topic_marker
 
     # 1) High-priority deterministic updates.
-    if _contains_any(q_lower, CHECK_UPDATE_KEYWORDS, fuzzy_latin=True):
+    has_strong_update_target = _contains_any(q_lower, _UPDATE_STRONG_TARGET_MARKERS, fuzzy_latin=True)
+    if _contains_any(q_lower, CHECK_UPDATE_KEYWORDS, fuzzy_latin=True) and has_strong_update_target:
         add("check_update", 0.98, "explicit-check-update")
     if _contains_any(q_lower, APPLY_UPDATE_KEYWORDS, fuzzy_latin=True):
         add("system_update", 0.98, "explicit-apply-update")
     has_update_context = _contains_any(q_lower, _UPDATE_CONTEXT_MARKERS, fuzzy_latin=True)
-    has_update_check_intent = has_update_context and _contains_any(
+    has_update_check_intent = has_update_context and has_strong_update_target and _contains_any(
         q_lower, _UPDATE_CHECK_VERBS, fuzzy_latin=True
     )
-    has_update_apply_intent = has_update_context and _contains_any(
+    has_update_apply_intent = has_update_context and has_strong_update_target and _contains_any(
         q_lower, _UPDATE_APPLY_INTENT_MARKERS, fuzzy_latin=True
     )
     if has_update_check_intent:
@@ -573,14 +665,36 @@ def score_required_tool_intents(
         and has_productivity_output_action
         and (has_productivity_doc_marker or has_plan_subject_marker)
     )
-    if _contains_any(q_lower, CRON_MANAGEMENT_OPS, fuzzy_latin=True) and _contains_any(
-        q_lower, CRON_MANAGEMENT_TERMS, fuzzy_latin=True
-    ):
+    has_explicit_reminder_marker = _contains_any(q_lower, _EXPLICIT_REMINDER_MARKERS)
+    has_reminder_subject_marker = _contains_any(q_lower, _REMINDER_SUBJECT_MARKERS)
+    has_schedule_planning_marker = _contains_any(q_lower, _SCHEDULE_PLANNING_MARKERS)
+    has_reminder_creation_verb = _contains_any(q_lower, _REMINDER_CREATION_VERBS)
+    has_schedule_reminder_intent = (
+        has_schedule_planning_marker
+        and has_reminder_subject_marker
+        and (has_reminder_creation_verb or bool(_REMINDER_TIME_RE.search(q_lower)))
+    )
+    has_explicit_cron_creation_intent = has_explicit_reminder_marker or has_schedule_reminder_intent
+    has_cron_management_payload = any(
+        (
+            has_reminder_subject_marker,
+            _contains_any(q_lower, _CRON_MANAGEMENT_DIRECT_MARKERS),
+            _contains_any(q_lower, _CRON_GROUP_MARKERS),
+            bool(_CRON_GROUP_ID_RE.search(text)),
+        )
+    )
+    has_cron_management_intent = (
+        _contains_any(q_lower, CRON_MANAGEMENT_OPS, fuzzy_latin=True)
+        and has_cron_management_payload
+    )
+    if has_cron_management_intent:
         add("cron", 0.96, "cron-management")
-    if _contains_any(q_lower, REMINDER_KEYWORDS, fuzzy_latin=True) and not looks_like_schedule_document_request:
-        add("cron", 0.72, "reminder-lexicon")
-    if _REMINDER_TIME_RE.search(q_lower) and not looks_like_schedule_document_request and _contains_any(
-        q_lower, ("ingat", "remind", "alarm", "timer", "schedule", "jadwal")
+    if has_explicit_cron_creation_intent and not looks_like_schedule_document_request:
+        add("cron", 0.72, "explicit-reminder-lexicon")
+    if (
+        _REMINDER_TIME_RE.search(q_lower)
+        and not looks_like_schedule_document_request
+        and has_explicit_cron_creation_intent
     ):
         add("cron", 0.22, "time-plus-reminder-structure")
     if _REMINDER_TIME_RE.search(q_lower):
@@ -603,7 +717,12 @@ def score_required_tool_intents(
                 _contains_any(q_lower, APPLY_UPDATE_KEYWORDS, fuzzy_latin=True),
             )
         )
-        if not looks_like_question and not has_other_domain_marker and not looks_like_schedule_document_request:
+        if (
+            has_explicit_cron_creation_intent
+            and not looks_like_question
+            and not has_other_domain_marker
+            and not looks_like_schedule_document_request
+        ):
             add("cron", 0.58, "time-action-structure")
 
     # 3) Weather.
@@ -773,7 +892,7 @@ def score_required_tool_intents(
     has_year = bool(re.search(r"\b(19|20)\d{2}\b", q_lower))
     has_local_ops_marker = any(
         (
-            _contains_any(q_lower, REMINDER_KEYWORDS, fuzzy_latin=True),
+            has_explicit_cron_creation_intent or has_cron_management_intent,
             _contains_any(q_lower, WEATHER_KEYWORDS, fuzzy_latin=True),
             _contains_any(q_lower, PROCESS_RAM_KEYWORDS, fuzzy_latin=True),
             _contains_any(q_lower, SYSTEM_INFO_KEYWORDS, fuzzy_latin=True),

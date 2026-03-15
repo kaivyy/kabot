@@ -297,26 +297,28 @@ def test_contextual_followup_request_supports_option_ordinal_references():
     assert message_runtime_module._looks_like_contextual_followup_request(
         "\u0e02\u0e49\u0e2d\u0e17\u0e35\u0e48\u0e2a\u0e2d\u0e07\u0e04\u0e37\u0e2d\u0e2d\u0e30\u0e44\u0e23 \u0e15\u0e2d\u0e1a\u0e2a\u0e31\u0e49\u0e19\u0e46"
     )
+    assert message_runtime_module._looks_like_contextual_followup_request("maksudnya apa itu") is False
+    assert message_runtime_module._looks_like_contextual_followup_request("trend nya naik?") is False
 
 
-def test_answer_reference_followup_detects_referential_clarification_requests():
+def test_answer_reference_followup_only_latches_explicit_answer_item_references():
     assert message_runtime_module._looks_like_answer_reference_followup("yang kedua")
     assert message_runtime_module._looks_like_answer_reference_followup("yang ketiga gimana")
-    assert message_runtime_module._looks_like_answer_reference_followup("coba ulang versi singkat")
-    assert message_runtime_module._looks_like_answer_reference_followup("ulang dari awal")
-    assert message_runtime_module._looks_like_answer_reference_followup("maksudnya apa itu")
     assert message_runtime_module._looks_like_answer_reference_followup(
         "\u7b2c\u4e8c\u4e2a\u662f\u4ec0\u4e48\uff1f\u7b80\u77ed\u56de\u7b54\u3002"
     )
-    assert message_runtime_module._looks_like_answer_reference_followup("\u518d\u7b80\u77ed\u4e00\u70b9")
-    assert message_runtime_module._looks_like_answer_reference_followup("\u8fd9\u662f\u4ec0\u4e48\u610f\u601d")
-    assert message_runtime_module._looks_like_answer_reference_followup("\u3082\u3063\u3068\u77ed\u304f")
-    assert message_runtime_module._looks_like_answer_reference_followup("\u305d\u308c\u3069\u3046\u3044\u3046\u610f\u5473")
-    assert message_runtime_module._looks_like_answer_reference_followup("\u0e2a\u0e31\u0e49\u0e19\u0e01\u0e27\u0e48\u0e32\u0e19\u0e35\u0e49")
-    assert message_runtime_module._looks_like_answer_reference_followup("\u0e2b\u0e21\u0e32\u0e22\u0e04\u0e27\u0e32\u0e21\u0e27\u0e48\u0e32\u0e44\u0e07")
     assert message_runtime_module._looks_like_answer_reference_followup(
         "\u0e02\u0e49\u0e2d\u0e17\u0e35\u0e48\u0e2a\u0e2d\u0e07\u0e04\u0e37\u0e2d\u0e2d\u0e30\u0e44\u0e23 \u0e15\u0e2d\u0e1a\u0e2a\u0e31\u0e49\u0e19\u0e46"
     )
+    assert message_runtime_module._looks_like_answer_reference_followup("coba ulang versi singkat") is False
+    assert message_runtime_module._looks_like_answer_reference_followup("ulang dari awal") is False
+    assert message_runtime_module._looks_like_answer_reference_followup("maksudnya apa itu") is False
+    assert message_runtime_module._looks_like_answer_reference_followup("\u518d\u7b80\u77ed\u4e00\u70b9") is False
+    assert message_runtime_module._looks_like_answer_reference_followup("\u8fd9\u662f\u4ec0\u4e48\u610f\u601d") is False
+    assert message_runtime_module._looks_like_answer_reference_followup("\u3082\u3063\u3068\u77ed\u304f") is False
+    assert message_runtime_module._looks_like_answer_reference_followup("\u305d\u308c\u3069\u3046\u3044\u3046\u610f\u5473") is False
+    assert message_runtime_module._looks_like_answer_reference_followup("\u0e2a\u0e31\u0e49\u0e19\u0e01\u0e27\u0e48\u0e32\u0e19\u0e35\u0e49") is False
+    assert message_runtime_module._looks_like_answer_reference_followup("\u0e2b\u0e21\u0e32\u0e22\u0e04\u0e27\u0e32\u0e21\u0e27\u0e48\u0e32\u0e44\u0e07") is False
     assert message_runtime_module._looks_like_answer_reference_followup("lanjut yang tadi") is False
 
 
@@ -1221,4 +1223,3 @@ def test_temporal_context_query_helper_supports_multilingual_phrases():
     assert message_runtime_module._looks_like_temporal_context_query("\u4eca\u5929\u662f\u4ec0\u4e48\u661f\u671f")
     assert message_runtime_module._looks_like_temporal_context_query("\u4eca\u65e5\u306f\u4f55\u66dc\u65e5\uff1f")
     assert message_runtime_module._looks_like_temporal_context_query("\u0e15\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e27\u0e31\u0e19\u0e2d\u0e30\u0e44\u0e23")
-

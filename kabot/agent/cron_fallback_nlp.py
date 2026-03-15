@@ -52,10 +52,11 @@ __all__ = [
 _SAVE_MEMORY_EXPLICIT_RE = re.compile(
     r"(?i)\b("
     r"save to memory|save this to memory|save that to memory|save this memory|"
-    r"remember this|remember that|commit to memory|"
-    r"call me|"
-    r"if i ask who am i"
+    r"remember this|remember that|commit to memory"
     r")\b"
+)
+_PROFILE_PREFERENCE_RE = re.compile(
+    r"(?i)\b(call me|address me as|refer to me as)\b"
 )
 
 
@@ -85,6 +86,13 @@ def required_tool_for_query(
     if (
         has_save_memory_tool
         and _SAVE_MEMORY_EXPLICIT_RE.search(question)
+        and not _PERSONAL_HR_CALC_RE.search(q_lower)
+    ):
+        return "save_memory"
+    if (
+        has_save_memory_tool
+        and _PROFILE_PREFERENCE_RE.search(question)
+        and re.search(r"(?i)\b(remember|save|note|commit to memory|save to memory)\b", q_lower)
         and not _PERSONAL_HR_CALC_RE.search(q_lower)
     ):
         return "save_memory"

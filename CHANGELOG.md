@@ -10,11 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.6.5-rc1] - 2026-03-15
 
 ### Changed
+- Filesystem action routing is a little closer to OpenClaw's exec/cwd style now:
+  - direct folder-search inference is less dependent on broad Indonesian keyword lists and instead relies more on explicit filesystem payload shape,
+  - explicit folder-search turns now prefer `find_files(kind=dir)` so directory lookups ground the session more reliably before follow-up actions.
+- Missing relative folder opens now auto-search and ground themselves before replying:
+  - when `list_dir` is asked to open a relative folder that is not present in the active cwd/root, Kabot now searches for a matching directory under the grounded root first,
+  - if exactly one directory match is found, Kabot opens that folder immediately, updates `working_directory` / `last_tool_context`, and makes later file-send follow-ups reuse that location naturally.
+- Folder references now prefer an open/list workflow over a search parser:
+  - explicit folder subjects like `folder pi-mono` now prefer the `list_dir` lane so Kabot treats them as cwd/workspace navigation first,
+  - while explicit `search then send` file/folder requests still stay on `find_files` for deterministic delivery workflows.
+- External web content is now wrapped with stronger OpenClaw-style untrusted-content boundaries:
+  - `web_fetch` now emits an explicit security notice, stable external-content markers, and sanitized marker spoofing instead of a minimal `[EXTERNAL_CONTENT]` wrapper,
+  - suspicious prompt-injection-style phrases are surfaced as monitoring hints inside the wrapper without being treated as instructions.
 - Model-first repo/folder inspection turns are now more grounded and closer to OpenClaw behavior:
   - structured routing can mark multilingual turns as `filesystem_inspection` without relying on Indonesian-only parser keywords,
   - the message runtime now injects a grounded filesystem-inspection note with the active project/root context,
-  - the execution loop now performs an initial grounded inspection warmup from the active repo/folder context and can preload representative files like `README.md` or manifest files before the model explains the app,
-  - the execution runtime now refuses to describe a local app/repo from guesswork and requires real `list_dir` / `read_file` / `find_files` / `exec` inspection evidence first.
+  - the execution loop now performs an initial grounded inspection warmup from the active repo/folder context and can preload representative files like `README.md`, manifests, config files, bootstrap docs, or changelogs before the model explains the app,
+  - and the execution runtime now refuses to describe a local app, config, docs, or repo from guesswork and requires real `list_dir` / `read_file` / `find_files` / `exec` inspection evidence first.
 - Headless web lookup is now closer to OpenClaw's `web_search -> web_fetch` contract:
   - web-search follow-ups like `Yahoo Finance`, `Stockbit`, `IDX`, or direct finance/news URLs can now continue from the earlier search context instead of dropping back to generic chat,
   - direct and tool-call web-search lanes now auto-fetch the selected result URL when the query is source-constrained,
@@ -23,11 +35,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - and browser use is now discouraged for live factual lookup turns so VPS/headless runtimes prefer `web_search` / `web_fetch` instead of brittle Playwright paths.
 - External skill execution is now closer to OpenClaw's reference-driven workflow:
   - the system prompt now tells the model to use a selected skill's `references/` and `scripts/` as the primary source of truth,
+  - general runtime guidance is now more docs-first for troubleshooting, telling Kabot to inspect real config/logs/docs/status evidence before speculating about runtime or integration failures,
   - the external-skill lane now explicitly prefers bundled scripts and relevant reference files over ad hoc endpoint guessing,
   - skill-guidance now explicitly tells the model to keep going with `references/`, `scripts/`, grounded `web_fetch`, or `exec` when search setup is unavailable,
+  - when exactly one installed skill is the clearest grounded match for an operational or live-data request, Kabot now adapts to that skill first instead of jumping straight to a generic text answer,
+  - that auto-adaptation now also covers single installed external skills on general action turns, so custom GitHub/workspace/managed skills such as finance, crypto, or API checkers can win automatically without the user having to say `pakai skill ...` every time,
+  - direct GitHub skill URLs and `owner/repo/skills/...` references now route cleanly into the `skill-installer` workflow even when the source path is pasted directly,
+  - and single unavailable external skills can now claim the setup lane for grounded live-data turns too, so finance/crypto/API workflows explain the missing requirement instead of collapsing back to generic chat,
+  - transcript-style runtime regressions now cover the real finance, crypto, GitHub skill-install, custom API skill, and repo-inspection flows that previously drifted away from OpenClaw-like behavior,
+  - and the smoke `--regression-cases` pack now includes finance refresh, direct GitHub skill-install, and grounded repo-inspection transcript cases so parity checks can replay them outside unit tests too,
+  - prompt-building is now closer to OpenClaw too: when memory tools are available, Kabot now injects an explicit `Memory Recall` section that tells the model to use `memory_search` / `get_memory` before answering prior-work or preference questions, and non-compact general prompts now add a stronger documentation/diagnostics-first section for local config/log/runtime questions,
+  - build_messages now also inserts an explicit history-context marker before prior chat messages so the model treats them as context for the latest turn instead of a competing current request,
+  - deterministic parser routing is now narrower and closer to OpenClaw: generic weather/news/live-lookup turns no longer get forced straight into tool execution, while explicit URL/path/system/reminder actions still can,
+  - first-turn weather requests now prefer the weather skill workflow over direct parser forcing, while grounded weather follow-ups still reuse the prior location context,
+  - skill-creation workflow guidance is now more OpenClaw-like: discovery turns now push for concrete trigger/output examples and grounded API endpoint/auth/request/response examples before planning, and approved turns now explicitly encourage scaffold/validate/package verification with the bundled skill-creator helpers,
+  - the builtin `config-manager` skill is now a real evidence-first diagnostics workflow for `config.json`, model/memory/provider settings, channel account policies, and runtime config/log troubleshooting instead of a placeholder stub,
+  - builtin skills can now declare grounded-diagnostics adaptation metadata, and runtime will honor that when the model routes a complex operational troubleshooting turn toward a single matching skill,
+  - parser fallback is now narrower still: low-information follow-up turns no longer revive old weather/web-search style parser guesses from history, while explicit payload routes such as `read_file` can still carry forward when the prior request was concrete,
+  - continuity follow-up parsing is narrower too: generic phrase catalogs like `lanjut yang...`, `maksudnya...`, `trend nya...`, `apa itu`, and similar hardcoded follow-up overrides no longer auto-latch answer/context continuity on their own,
+  - explicit answer-item references such as `yang kedua`, `2番`, `ข้อ 2`, or `第二个...` still keep continuity grounded, but open-ended rewrite/clarification wording now falls back to normal model-plus-history handling instead of a parser shortcut,
+  - web-search demotion follow-ups are less Indonesia-parser-heavy too: broad keyword nudges like `pakai bahasa inggris` or generic explanation phrasing no longer get special-cased as a routing parser, while explicit direct-answer pivots still work,
+  - short confirmations are narrower as well: topic-bearing mini-requests like `lanjut rencana` or `lanjut yang tadi` no longer masquerade as pure confirmation acks that revive stale stock/tool intent from old turns,
+  - generic `pending_followup_intent` state is narrower too: only genuinely short neutral confirmations can continue generic old intent, while broader contextual continuations are now reserved for explicit assistant-offer / committed-action workflows,
+  - execution-runtime tool guards now use the same narrow runtime wrapper as the main message flow instead of consulting the broader cron/parser scorer directly, so generic weather/live-data chat no longer gets re-hardened into a tool expectation behind the scenes,
+  - router fast paths are narrower too: English weather and reminder prompts no longer skip straight through lexical shortcuts, and now rely on the structured route classifier like other multilingual action turns,
+  - temporal and memory-recall prompts no longer short-circuit through regex routing either, so even `what time is it` and `what did you save about me` now go through the same structured route classifier instead of a dedicated parser path,
+  - memory-recall handling itself is less hardcoded now: instead of matching only a few exact recall sentences, Kabot now treats broader reflective queries like “what name did you store for me?” or “what did we decide earlier?” as memory-recall turns using structural cues about prior saved facts or prior decisions,
+  - self-identity recall is less parser-driven too: turns like `who am I` or `what do you call me` no longer short-circuit through a dedicated fast reply and now go through the normal memory/user-profile context path instead,
+  - explicit `save_memory` routing is narrower as well: profile-preference turns like `call me "..."` no longer trigger `save_memory` on their own, while truly explicit memory commits like `remember that` still do,
+  - weak filesystem triggers are narrower too: `check/cek` only forces `list_dir` when there is a real filesystem payload or clear folder/listing wording, so generic desktop-topic chat no longer gets hijacked into a directory listing,
+  - special-directory extraction is narrower too: mentions like `desktop`, `downloads`, or `documents` now resolve only when they appear in real filesystem/search/delivery payload context, so topical phrases like `desktop app design` no longer get misread as a folder path while explicit turns like `open desktop` still work,
+  - reminder/cron fallback is narrower too: bare schedule/jadwal wording no longer routes ordinary planning requests like workout schedules into the reminder tool, while explicit timed reminder creation still does,
+  - reminder management routing is narrower too: generic schedule-management chat like `lihat jadwal latihan saya` no longer falls into cron, while explicit reminder/group operations such as `tolong list jadwal reminder saya` or `hapus jadwal group grp_shift_a` still do,
+  - update routing is narrower too: generic phrases like `latest version` or `ada update sekarang` no longer force Kabot's update tools unless the target is clearly Kabot/agent-related, while explicit requests like `cek update kabot sekarang` still work,
+  - web-search demotion follow-ups are less phrase-list-driven too: direct-answer, no-web-search, and language-switch follow-ups now use more structural detection, while Indonesian language-switch replies like `pakai bahasa inggris` still keep the lighter direct-answer path,
+  - the Linux/macOS one-command installer now bootstraps browser/runtime extras automatically by ensuring `beautifulsoup4`, installing the Python `playwright` package when missing, and running `python -m playwright install chromium` unless `KABOT_SKIP_BROWSER_BOOTSTRAP=1` is set,
+  - semantic weather follow-ups are more context-first too: `wttr.in` / provider mentions and commentary like `lumayan hangat ya` now require real weather follow-up context instead of firing merely because an earlier parser guess happened to say `weather`,
+  - ordinary conversational/planning requests still stay on natural text replies unless they genuinely need a grounded skill or tool workflow,
   - explicit `pakai/use skill ...` turns are no longer mistaken for meta workflow discussion, so named external skills reliably force the intended execution or setup lane,
   - external-skill turns now stay summary-first at prompt-build time instead of eagerly inlining full `SKILL.md` content, which is closer to OpenClaw's "select skill -> read SKILL.md -> follow it" contract,
-  - runtime defers to external skills for live/web turns only when the user explicitly requests that skill or the skill lane is already active, instead of hard-blocking legacy finance/web paths just because a matching external skill exists,
+  - builtin `skill-creator` is now closer to OpenClaw too: when it is the single clearest workflow match for an action turn, Kabot can enter skill-creation workflow mode from the skill match itself instead of relying only on creation-keyword parsing,
+  - skill-creation continuity is more state-first too: follow-up turns that provide explicit API detail samples such as URLs, JSON payloads, or endpoint schemas now stay inside the active skill workflow instead of being treated as a fresh unrelated request,
+  - runtime now defers to external skills for live/web turns when the user explicitly requests that skill, when the skill lane is already active, or when a grounded external skill clearly matches the request,
+  - live-research latches now also yield when a grounded external skill already matches the turn, so finance-like requests can stay on their skill workflow without the user having to say `pakai skill` first,
   - runtime now detects active external-skill lanes from message/session metadata consistently across message routing, tool-call guards, and execution fallback paths,
   - external-skill lane state and forced skill names are now persisted into session metadata for follow-up continuity instead of living only on the active turn,
   - short contextual follow-ups can now rehydrate the previously active external skill lane from session state, so source-switch turns like `Yahoo Finance` stay on the same skill workflow,
@@ -36,8 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - and finance-oriented skill auto-matching now requires grounded lexical/name overlap instead of promoting generic market skills solely from broad domain classification.
 - Live data and grounded follow-up replies are less hallucination-prone:
   - stock/market quote turns like `saham BBCA berapa` now get a live-data safety latch even on general routes, preferring `web_search` first and falling back to legacy `stock`/`crypto` tools only when search is unavailable but the symbol is explicit,
+  - live-data continuity is narrower but smarter too: short follow-ups like `pakai data terbaru` now stay grounded on the earlier quote/live topic and continue through `web_search` or finance-tool fallback instead of collapsing into a generic text reply,
   - live finance/news turns are no longer suppressed just because they contain words like `today` or `sekarang`, so `latest news ... today` and quote requests still route to live lookup instead of falling back to generic chat,
   - when no live source is available, Kabot now injects an honesty note so the model explains the limitation instead of inventing a current quote or fresh date,
+  - short contextual follow-ups can still recover recent live-intent continuity like `web_search` or weather from prior grounded user turns, even though first-turn parser forcing is now much narrower,
   - weather follow-up commentary like `lumayan hangat ya` or `suhu Purwokerto lumayan hangat ya` now stays AI-driven chat instead of re-triggering a new weather fetch,
   - and weather source/provider follow-ups like `wttr.in`, `open-meteo`, or `sumber darimana` no longer get misread as new weather-location fetches.
 - The dashboard shell is more polished and operator-friendly:
@@ -49,6 +101,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - and the chat panel now behaves more like a proper operator workspace with active-session chips, a cleaner transcript surface, a better composer, and more mobile-friendly layout behavior.
 
 ### Fixed
+- Tool-call history is more robust against orphaned transcript state:
+  - persisted assistant tool envelopes are now normalized before storage,
+  - large persisted tool-result content is capped before it can bloat future history context,
+  - and session history repair now synthesizes a clear warning tool-result entry when an earlier assistant tool call was persisted without any matching tool result.
 - Bare `read_file` follow-ups now honor the active filesystem context:
   - filename-only requests like `buka config.json` now resolve against the current `working_directory` or session-persisted navigated folder before falling back to generic workspace/cwd resolution,
   - deterministic read-file fallback now keeps `.kabot/config.json`-style continuity stable after opening a folder,

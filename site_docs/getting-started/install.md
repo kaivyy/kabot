@@ -56,6 +56,17 @@ Tips:
 - On Debian/Ubuntu, make sure `python3-venv` is available if you want a virtual environment.
 - For long-running installs, use a dedicated user rather than root.
 
+For a fuller Linux/macOS bootstrap, prefer the one-command installer from the README. It now:
+- ensures `beautifulsoup4` is present in Kabot's venv,
+- installs the Python `playwright` package when missing,
+- runs `python -m playwright install chromium` automatically.
+
+If you need a lighter install without browser bootstrap:
+
+```bash
+KABOT_SKIP_BROWSER_BOOTSTRAP=1 curl -fsSL https://raw.githubusercontent.com/kaivyy/kabot/main/install.sh | bash
+```
+
 ## Termux
 
 ```bash

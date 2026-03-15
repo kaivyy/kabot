@@ -6,8 +6,12 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from kabot.agent.cron_fallback_nlp import required_tool_for_query
 from kabot.agent.skills_matching import looks_like_explicit_skill_use_request
+from kabot.agent.loop_core.tool_enforcement_parts.action_requests import (
+    _extract_find_files_kind,
+    _extract_find_files_query,
+    _looks_like_list_dir_request,
+)
 from kabot.agent.tools.stock import (
     extract_crypto_ids,
     extract_stock_symbols,
@@ -126,6 +130,15 @@ _LIVE_FINANCE_VALUE_RE = re.compile(
     r"berapa|how much|what(?:'s| is)|harga(?:nya)?|price|quote|nilai|value|"
     r"kurs|rate|last|latest|current|now|today|hari ini|sekarang|saat ini|"
     r"terbaru|terkini|real[\s-]?time|live|open|close|closing|high|low"
+    r")\b"
+)
+_LIVE_DATA_REFRESH_MARKER_RE = re.compile(
+    r"(?i)\b("
+    r"latest|current|newest|up[\s-]?to[\s-]?date|fresh(?:est)?|"
+    r"terbaru|terkini|paling baru|real[\s-]?time|live|"
+    r"use latest data|use current data|use real[\s-]?time data|"
+    r"pakai data terbaru|pakai data terkini|gunakan data terbaru|gunakan data terkini|"
+    r"pakai yang terbaru|pakai yang terkini"
     r")\b"
 )
 
@@ -304,7 +317,7 @@ def _should_defer_live_research_latch_to_skill(
     message_metadata: dict[str, Any] | None = None,
     session_metadata: dict[str, Any] | None = None,
 ) -> bool:
-    """Return True when an active or explicitly requested external skill should outrank live-search forcing."""
+    """Return True when a grounded external skill should outrank live-search forcing."""
     active_metadata = getattr(loop, "_active_message_metadata", None)
     current_turn_skill_lane = any(
         isinstance(metadata, dict) and metadata.get("external_skill_lane")
@@ -318,8 +331,6 @@ def _should_defer_live_research_latch_to_skill(
     )
 
     explicit_skill_request = looks_like_explicit_skill_use_request(text)
-    if not explicit_skill_request and not prior_session_skill_lane:
-        return False
 
     context_builder = getattr(loop, "context", None)
     skills_loader = getattr(context_builder, "skills", None)
@@ -333,9 +344,12 @@ def _should_defer_live_research_latch_to_skill(
     external_match = getattr(skills_loader, "has_preferred_external_skill_match", None)
     if callable(external_match):
         try:
-            return bool(external_match(text, profile=profile))
+            if bool(external_match(text, profile=profile)):
+                return True
         except Exception:
             return False
+    if not explicit_skill_request and not prior_session_skill_lane:
+        return False
     return False
 
 
@@ -537,6 +551,25 @@ def _looks_like_web_source_selection_followup(text: str) -> bool:
     return _is_low_information_turn(raw, max_tokens=8, max_chars=96)
 
 
+def _looks_like_live_data_refresh_followup(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if raw.startswith("/"):
+        return False
+    explicit_url = _extract_direct_fetch_url_candidate(raw)
+    if (_PATHLIKE_QUERY_RE.search(raw) or _FILELIKE_QUERY_RE.search(raw)) and not explicit_url:
+        return False
+    if explicit_url:
+        return False
+    if len(normalized) > 120:
+        return False
+    if not _LIVE_DATA_REFRESH_MARKER_RE.search(normalized):
+        return False
+    return _is_low_information_turn(raw, max_tokens=8, max_chars=120)
+
+
 def _looks_like_browser_interaction_request(text: str) -> bool:
     raw = str(text or "").strip()
     if not raw:
@@ -704,26 +737,12 @@ def _resolve_expected_tool_for_query(loop: Any, msg: InboundMessage) -> str | No
         metadata["_expected_tool_for_guard"] = action_tool
         return action_tool
 
-    expected = required_tool_for_query(
-        question=query_text,
-        has_weather_tool=_tools_has(loop, "weather"),
-        has_cron_tool=_tools_has(loop, "cron"),
-        has_system_info_tool=_tools_has(loop, "get_system_info"),
-        has_cleanup_tool=_tools_has(loop, "cleanup_system"),
-        has_speedtest_tool=_tools_has(loop, "speedtest"),
-        has_process_memory_tool=_tools_has(loop, "get_process_memory"),
-        has_save_memory_tool=_tools_has(loop, "save_memory"),
-        has_stock_tool=_tools_has(loop, "stock"),
-        has_stock_analysis_tool=_tools_has(loop, "stock_analysis"),
-        has_crypto_tool=_tools_has(loop, "crypto"),
-        has_server_monitor_tool=_tools_has(loop, "server_monitor"),
-        has_web_search_tool=_tools_has(loop, "web_search"),
-        has_read_file_tool=_tools_has(loop, "read_file"),
-        has_check_update_tool=_tools_has(loop, "check_update"),
-        has_system_update_tool=_tools_has(loop, "system_update"),
-    )
-    if expected in {"stock", "stock_analysis", "crypto"}:
-        return None
+    try:
+        from kabot.agent.loop_core.tool_enforcement import required_tool_for_query_for_loop
+
+        expected = required_tool_for_query_for_loop(loop, query_text)
+    except Exception:
+        expected = None
     if expected:
         metadata["_expected_tool_for_guard"] = expected
     return expected
@@ -755,11 +774,12 @@ def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> boo
     if normalized_tool == "read_file":
         return bool(_FILELIKE_QUERY_RE.search(text) or _PATHLIKE_QUERY_RE.search(text))
     if normalized_tool == "find_files":
-        normalized = _normalize_text(text)
-        has_subject = bool(_FILELIKE_QUERY_RE.search(text)) or any(
-            marker in normalized for marker in ("file", "folder", "berkas", "dokumen", "document", "report", "pdf", "xlsx", "csv")
-        )
-        return bool(_FIND_FILE_MARKER_RE.search(text) and has_subject)
+        query = _extract_find_files_query(text)
+        if not query:
+            return False
+        if _extract_find_files_kind(text) == "dir":
+            return not _looks_like_list_dir_request(text)
+        return bool(_FIND_FILE_MARKER_RE.search(text) or _FILELIKE_QUERY_RE.search(text))
     if normalized_tool == "message":
         normalized = _normalize_text(text)
         has_target = bool(_FILELIKE_QUERY_RE.search(text) or _PATHLIKE_QUERY_RE.search(text))

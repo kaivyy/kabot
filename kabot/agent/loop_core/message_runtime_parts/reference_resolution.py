@@ -15,10 +15,7 @@ from kabot.agent.loop_core.message_runtime_parts.followup import (
     _WEATHER_CONTEXT_FOLLOWUP_MARKERS,
 )
 from kabot.agent.loop_core.message_runtime_parts.helpers import (
-    _ANSWER_REFERENCE_FOLLOWUP_PHRASES,
     _ASSISTANT_OFFER_CONTEXT_STOPWORDS,
-    _CONTEXTUAL_FOLLOWUP_EXACT,
-    _CONTEXTUAL_FOLLOWUP_PHRASES,
     _extract_read_file_path_proxy,
     _is_low_information_turn,
     _looks_like_short_confirmation,
@@ -229,10 +226,6 @@ def _looks_like_answer_reference_followup(text: str) -> bool:
         return False
     if _extract_option_selection_reference(raw):
         return True
-    if any(phrase in normalized for phrase in _ANSWER_REFERENCE_FOLLOWUP_PHRASES):
-        return True
-    if not _is_low_information_turn(raw, max_tokens=10, max_chars=120):
-        return False
     return False
 
 
@@ -249,13 +242,22 @@ def _looks_like_contextual_followup_request(text: str) -> bool:
         return False
     if _PATHLIKE_TEXT_RE.search(raw):
         return False
-    if normalized in _CONTEXTUAL_FOLLOWUP_EXACT:
-        return True
-    if "trend" in normalized:
-        return True
-    if re.search(r"\b(untuk|buat|for)\b.+\b(bagaimana|gimana|how)\b", normalized):
-        return True
-    return any(phrase in normalized for phrase in _CONTEXTUAL_FOLLOWUP_PHRASES)
+    return False
+
+
+_WEB_SEARCH_DISABLE_RE = re.compile(
+    r"(?i)\b(?:dont|don't|do not|without|tanpa|jangan(?:\s+\w+)?|ga usah|gak usah|nggak usah|no)\b"
+    r"(?:[^\n]{0,48})\bweb search\b"
+)
+_WEB_SEARCH_DIRECT_ANSWER_RE = re.compile(
+    r"(?i)(?:\b(?:just|langsung|direct(?:ly)?)\s+(?:answer|explain|jelaskan|jelasin)\b)"
+    r"|(?:\b(?:answer|explain|jelaskan|jelasin)\s+(?:direct(?:ly)?|langsung)\b)"
+)
+_WEB_SEARCH_LANGUAGE_SWITCH_RE = re.compile(
+    r"(?i)^(?:(?:use|in)\s+|pakai\s+(?:bahasa\s+)?|dalam bahasa\s+)"
+    r"(?:english|inggris|indonesia|indonesian|japanese|jepang|chinese|cina|mandarin|thai)"
+    r"(?:\s+please)?$"
+)
 
 
 def _looks_like_web_search_demotion_followup(text: str) -> bool:
@@ -271,7 +273,13 @@ def _looks_like_web_search_demotion_followup(text: str) -> bool:
         return False
     if len(normalized) > 120:
         return False
-    if normalized in {"english", "use english", "in english", "explain", "just explain"}:
+    if _WEB_SEARCH_DISABLE_RE.search(raw):
+        return True
+    if _WEB_SEARCH_LANGUAGE_SWITCH_RE.fullmatch(normalized):
+        return True
+    if _WEB_SEARCH_DIRECT_ANSWER_RE.search(raw):
+        return True
+    if normalized in {"jelaskan", "answer directly"}:
         return True
     return any(marker in normalized for marker in _WEB_SEARCH_DEMOTION_FOLLOWUP_MARKERS)
 
@@ -346,11 +354,7 @@ _ASSISTANT_FOLLOWUP_OFFER_CAPABILITY_MARKERS = (
 
 _WEB_SEARCH_DEMOTION_FOLLOWUP_MARKERS = (
     "just explain",
-    "explain",
-    "jelaskan",
     "jelasin",
-    "terangkan",
-    "langsung jelasin",
     "just answer",
     "answer directly",
     "tanpa web search",
@@ -365,8 +369,6 @@ _WEB_SEARCH_DEMOTION_FOLLOWUP_MARKERS = (
     "without web search",
     "use english",
     "in english",
-    "pakai bahasa inggris",
-    "pake bahasa inggris",
     "english please",
 )
 
@@ -958,6 +960,53 @@ def _looks_like_side_effect_request(text: str) -> bool:
         _normalized_contains_marker(normalized, marker)
         for marker in _SIDE_EFFECT_DELIVERY_MARKERS
     )
+    planning_markers = (
+        "jadwal",
+        "schedule",
+        "plan",
+        "rencana",
+        "routine",
+        "rutinitas",
+        "program latihan",
+        "workout plan",
+        "meal plan",
+        "study plan",
+    )
+    planning_output_markers = (
+        "file",
+        "berkas",
+        "document",
+        "dokumen",
+        "pdf",
+        "doc",
+        "docx",
+        "xlsx",
+        "csv",
+        "workspace",
+        "path",
+        "folder",
+        "directory",
+        "save",
+        "simpan",
+        "send",
+        "kirim",
+        "attach",
+        "lampirkan",
+        "upload",
+        "download",
+        "export",
+    )
+    is_lightweight_planning_request = bool(
+        any(_normalized_contains_marker(normalized, marker) for marker in planning_markers)
+        and not has_provider
+        and not has_delivery
+        and not any(
+            _normalized_contains_marker(normalized, marker)
+            for marker in planning_output_markers
+        )
+    )
+    if is_lightweight_planning_request:
+        return False
     return bool(has_provider or (has_artifact and (has_delivery or has_action)))
 
 
@@ -1131,5 +1180,3 @@ def _looks_like_file_context_followup(text: str) -> bool:
     if _extract_read_file_path_proxy(raw):
         return False
     return any(marker in normalized for marker in _FILE_CONTEXT_FOLLOWUP_MARKERS)
-
-

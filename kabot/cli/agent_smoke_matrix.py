@@ -12,7 +12,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
@@ -275,7 +275,20 @@ def build_memory_smoke_cases() -> list[SmokeCase]:
     ]
 
 
-def build_workflow_smoke_cases() -> list[SmokeCase]:
+def build_workflow_smoke_cases(
+    *,
+    cwd: Path | None = None,
+    os_profile: str = "auto",
+) -> list[SmokeCase]:
+    base_dir = Path(cwd or Path.cwd())
+    profile = _normalize_os_profile(os_profile)
+    path_text = str(base_dir) if profile == "windows" else base_dir.as_posix()
+    repo_name = (
+        str(PureWindowsPath(path_text).name or "repo")
+        if profile == "windows"
+        else str(base_dir.name or "repo")
+    )
+
     return [
         SmokeCase(
             label="workflow-pingpong-upgrade",
@@ -314,6 +327,49 @@ def build_workflow_smoke_cases() -> list[SmokeCase]:
                 "I couldn't fetch weather for Prediksi",
             ),
         ),
+        SmokeCase(
+            label="workflow-finance-refresh-followup",
+            prompt="saham bbca berapa",
+            followup_prompts=("pakai data terbaru",),
+            category="workflow",
+            expected_any_contains=(
+                "bbca",
+                "yahoo",
+                "idx",
+                "stockbit",
+                "web_search needs a search api key",
+                "search api key",
+            ),
+            expected_turn_category="action",
+            forbidden_contains=(
+                "hingga tahun 2023",
+                "tidak bisa mengakses informasi real-time atau memprediksi tanggal di masa depan",
+                "menurut data dari yahoo finance, harga saham bbca pada tanggal",
+            ),
+        ),
+        SmokeCase(
+            label="workflow-skill-install-github-url",
+            prompt="tolong pasang https://github.com/acme/custom-skills/tree/main/skills/mlbb-id-check",
+            category="workflow",
+            expected_any_contains=("github", "skill", "repo", "install"),
+            forbidden_contains=(
+                "source: open-meteo",
+                "weather report",
+                "harga saham bbca pada tanggal",
+            ),
+        ),
+        SmokeCase(
+            label="workflow-repo-inspection-grounded",
+            prompt=f"periksa repo di folder {path_text} dengan hati hati, aplikasi apa ini",
+            category="workflow",
+            expected_any_contains=(repo_name, "readme", "pyproject", "package", "repo", "project"),
+            expected_turn_category="action",
+            forbidden_contains=(
+                "without more information",
+                "tanpa informasi lebih lanjut",
+                "tidak dapat menentukan fungsi utama proyek",
+            ),
+        ),
     ]
 
 
@@ -326,7 +382,7 @@ def build_regression_smoke_cases(
     cases.extend(build_continuity_smoke_cases(cwd=cwd, os_profile=os_profile))
     cases.extend(build_delivery_smoke_cases(cwd=cwd, os_profile=os_profile))
     cases.extend(build_memory_smoke_cases())
-    cases.extend(build_workflow_smoke_cases())
+    cases.extend(build_workflow_smoke_cases(cwd=cwd, os_profile=os_profile))
     return cases
 
 

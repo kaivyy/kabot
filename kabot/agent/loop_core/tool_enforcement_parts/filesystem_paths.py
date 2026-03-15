@@ -112,6 +112,47 @@ _SPECIAL_DIR_PATH_HINT_RE = re.compile(
 _SPECIAL_DIR_PREFIX_RE = re.compile(
     r"(?i)^\s*(?:desktop|downloads?|documents?|docs|pictures?|photos?|music|videos?|home)\b"
 )
+_CURRENT_DIR_REQUEST_RE = re.compile(
+    r"(?i)\b(current (?:working )?(?:directory|folder)|working directory|current dir|cwd|this folder|this directory)\b|"
+    r"folder kerja saat ini|direktori kerja saat ini|folder saat ini|direktori saat ini|folder ini|direktori ini"
+)
+_SPECIAL_DIR_DESKTOP_RE = re.compile(
+    r"(?i)\bdesktop\b|\u684c\u9762|\u30c7\u30b9\u30af\u30c8\u30c3\u30d7|\u0e40\u0e14\u0e2a\u0e01\u0e4c\u0e17\u0e47\u0e2d\u0e1b"
+)
+_SPECIAL_DIR_DOWNLOADS_RE = re.compile(
+    r"(?i)\bdownloads?\b|\u4e0b\u8f7d|\u4e0b\u8f09|\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9|\u0e14\u0e32\u0e27\u0e19\u0e4c\u0e42\u0e2b\u0e25\u0e14"
+)
+_SPECIAL_DIR_DOCUMENTS_RE = re.compile(
+    r"(?i)\bdocuments?\b|\bdocs\b|\u6587\u6863|\u6587\u4ef6\u6863\u6848|\u6587\u4ef6\u6a94\u6848|\u66f8\u985e|\u30c9\u30ad\u30e5\u30e1\u30f3\u30c8|\u0e40\u0e2d\u0e01\u0e2a\u0e32\u0e23"
+)
+_SPECIAL_DIR_PICTURES_RE = re.compile(r"(?i)\bpictures?\b|\bphotos?\b")
+_SPECIAL_DIR_MUSIC_RE = re.compile(r"(?i)\bmusic\b")
+_SPECIAL_DIR_VIDEOS_RE = re.compile(r"(?i)\bvideos?\b")
+_SPECIAL_DIR_HOME_RE = re.compile(r"(?i)\bhome\b")
+_SPECIAL_DIR_CONTEXT_NOUN_RE = re.compile(
+    r"(?i)\b(?:folder|directory|dir|path|file(?:/folder)?|files?|contents?|content|listing)\b|"
+    r"文件夹|文件夾|資料夾|目录|目錄|文件|檔案|内容|內容|フォルダ|ディレクトリ|ファイル|内容|中|โฟลเดอร์|ไดเรกทอรี|ไฟล์|เนื้อหา"
+)
+_SPECIAL_DIR_ACTION_RE = re.compile(
+    r"(?i)\b(?:open|buka|masuk|enter|show|display|list|lihat|lihatkan|tampilkan|cek|check|inspect|view|read|baca|"
+    r"kirim|send|share|attach|upload|lampirkan|cari|find|search|locate|telusuri|pakai\s+path|use\s+path)\b|"
+    r"\u663e\u793a|\u6253\u5f00|\u958b\u555f|\u8868\u793a|\u958b\u3044\u3066|\u958b\u304f|\u898b\u305b\u3066|\u958b\u3051\u3066|"
+    r"\u0e40\u0e1b\u0e34\u0e14|\u0e14\u0e39|\u0e41\u0e2a\u0e14\u0e07"
+)
+_SPECIAL_DIR_PREPOSITION_RE = re.compile(
+    r"(?i)\b(?:in|inside|from|to|under|within|di|dalam|dari|ke|pada)\b|"
+    r"\u5185|\u91cc|\u88e1|\u4e2d|\u306e|\u306b|\u304b\u3089|\u3078|\u0e43\u0e19|\u0e08\u0e32\u0e01|\u0e44\u0e1b\u0e17\u0e35\u0e48"
+)
+_SPECIAL_DIR_TERMINAL_TAIL_RE = re.compile(
+    r"(?i)^\s*(?:folder|directory|dir|path|files?|contents?|content|listing|pc|komputer|computer|laptop|"
+    r"please|tolong|dong|ya|aja|saja|doang|now|sekarang|here|sini|"
+    r"ke\s+sini|kesini|ke\s+chat\s+ini|chat\s+ini|chat\s+here|to\s+(?:this\s+)?chat|"
+    r"to\s+(?:this\s+)?channel|channel\s+here|channel\s+ini|"
+    r"\u6587\u4ef6\u5939|\u6587\u4ef6\u593e|\u8cc7\u6599\u593e|\u76ee\u5f55|\u76ee\u9304|\u30d5\u30a9\u30eb\u30c0|"
+    r"\u30c7\u30a3\u30ec\u30af\u30c8\u30ea|\u30d5\u30a1\u30a4\u30eb|\u30d1\u30b9|\u0e42\u0e1f\u0e25\u0e40\u0e14\u0e2d\u0e23\u0e4c|"
+    r"\u0e44\u0e14\u0e40\u0e23\u0e01\u0e17\u0e2d\u0e23\u0e35|\u0e44\u0e1f\u0e25\u0e4c|\u0e17\u0e35\u0e48\u0e19\u0e35\u0e48|"
+    r"\u6700\u521d.*|\u4ef6\u3060\u3051.*|\u5217\u8868.*|\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23.*)?\s*$"
+)
 
 
 def _filesystem_home_dir() -> Path:
@@ -364,29 +405,62 @@ def _resolve_delivery_path(loop: Any, path: str) -> Path:
 
 
 def _resolve_special_directory_path(text: str) -> str | None:
-    normalized = _normalize_text(text)
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
     if not normalized:
         return None
-    if re.search(
-        r"(?i)\b(current (?:working )?(?:directory|folder)|working directory|current dir|cwd|this folder|this directory)\b|folder kerja saat ini|direktori kerja saat ini|folder saat ini|direktori saat ini|folder ini|direktori ini",
-        normalized,
-    ):
+    if _CURRENT_DIR_REQUEST_RE.search(normalized):
         return str(Path.cwd().expanduser().resolve())
-    if re.search(r"(?i)\bdesktop\b|\u684c\u9762|\u30c7\u30b9\u30af\u30c8\u30c3\u30d7|\u0e40\u0e14\u0e2a\u0e01\u0e4c\u0e17\u0e47\u0e2d\u0e1b", normalized):
+    if _special_directory_match_has_payload_context(raw, normalized, _SPECIAL_DIR_DESKTOP_RE):
         return str(_resolve_special_directory_home_child("desktop", "Desktop"))
-    if re.search(r"(?i)\bdownloads?\b|\u4e0b\u8f7d|\u4e0b\u8f09|\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9|\u0e14\u0e32\u0e27\u0e19\u0e4c\u0e42\u0e2b\u0e25\u0e14", normalized):
+    if _special_directory_match_has_payload_context(raw, normalized, _SPECIAL_DIR_DOWNLOADS_RE):
         return str(_resolve_special_directory_home_child("downloads", "Downloads"))
-    if re.search(r"(?i)\bdocuments?\b|\bdocs\b|\u6587\u6863|\u6587\u4ef6\u6863\u6848|\u6587\u4ef6\u6a94\u6848|\u66f8\u985e|\u30c9\u30ad\u30e5\u30e1\u30f3\u30c8|\u0e40\u0e2d\u0e01\u0e2a\u0e32\u0e23", normalized):
+    if _special_directory_match_has_payload_context(raw, normalized, _SPECIAL_DIR_DOCUMENTS_RE):
         return str(_resolve_special_directory_home_child("documents", "Documents"))
-    if re.search(r"(?i)\bpictures?\b|\bphotos?\b", normalized):
+    if _special_directory_match_has_payload_context(raw, normalized, _SPECIAL_DIR_PICTURES_RE):
         return str(_resolve_special_directory_home_child("pictures", "Pictures"))
-    if re.search(r"(?i)\bmusic\b", normalized):
+    if _special_directory_match_has_payload_context(raw, normalized, _SPECIAL_DIR_MUSIC_RE):
         return str(_resolve_special_directory_home_child("music", "Music"))
-    if re.search(r"(?i)\bvideos?\b", normalized):
+    if _special_directory_match_has_payload_context(raw, normalized, _SPECIAL_DIR_VIDEOS_RE):
         return str(_resolve_special_directory_home_child("videos", "Videos"))
-    if re.search(r"(?i)\bhome\b", normalized):
+    if _special_directory_match_has_payload_context(raw, normalized, _SPECIAL_DIR_HOME_RE):
         return str(_filesystem_home_dir())
     return None
+
+
+def _special_directory_match_has_payload_context(
+    raw: str,
+    normalized_raw: str,
+    token_re: re.Pattern[str],
+) -> bool:
+    match = token_re.search(normalized_raw)
+    if not match:
+        return False
+    if _SPECIAL_DIR_PATH_HINT_RE.search(normalized_raw):
+        return True
+    if any(pattern.search(raw) for pattern in _SPECIAL_DIR_SUBFOLDER_PATTERNS):
+        return True
+    if _SPECIAL_DIR_NORMALIZED_SUBFOLDER_RE.search(normalized_raw):
+        return True
+
+    window_start = max(0, match.start() - 32)
+    window_end = min(len(raw), match.end() + 48)
+    local_window = raw[window_start:window_end]
+    if _SPECIAL_DIR_CONTEXT_NOUN_RE.search(local_window):
+        return True
+
+    before = raw[max(0, match.start() - 24) : match.start()]
+    if _SPECIAL_DIR_PREPOSITION_RE.search(before) and _SPECIAL_DIR_ACTION_RE.search(normalized_raw):
+        return True
+
+    if _SPECIAL_DIR_ACTION_RE.search(normalized_raw):
+        tail = raw[match.end() :]
+        tail = _FILESYSTEM_TRAILING_TAIL_RE.sub("", tail).strip()
+        if not tail:
+            return True
+        if _SPECIAL_DIR_TERMINAL_TAIL_RE.fullmatch(tail):
+            return True
+    return False
 
 
 def _extract_relative_directory_candidate(text: str) -> str | None:
@@ -403,6 +477,8 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
                 return None
             if re.search(r"(?i)\.(?:com|net|org|io|ai|co|id|app|dev)$", command_candidate):
                 return None
+            if _normalize_text(command_candidate) in _FILESYSTEM_TARGET_MARKERS:
+                return None
             if not command_candidate.isdigit():
                 return command_candidate
 
@@ -414,12 +490,38 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
         return None
     candidate = _RELATIVE_DIRECTORY_SUFFIX_RE.sub("", candidate).strip(" ,.;:!?")
     candidate = candidate.rstrip("\\/").strip()
+    candidate = re.sub(
+        r"(?i)\s+(?:di|in|inside|within|under|pada|dalam)\s+"
+        r"(?:workspace|current working directory|working directory|current dir|cwd)\b.*$",
+        "",
+        candidate,
+    ).strip()
     if not candidate:
         return None
     if any(sep in candidate for sep in ("/", "\\")):
         return None
     normalized = _normalize_text(candidate)
     if normalized.startswith(("di ", "in ", "inside ", "pada ", "dalam ")):
+        return None
+    tokens = [token for token in normalized.split() if token]
+    if len(tokens) > 3:
+        return None
+    if any(
+        token in {
+            "yang",
+            "apa",
+            "what",
+            "which",
+            "coba",
+            "please",
+            "tolong",
+            "periksa",
+            "check",
+            "show",
+            "lihat",
+        }
+        for token in tokens
+    ):
         return None
     if re.match(
         r"(?i)^\d+\s*(?:item|items|entry|entries|hasil|baris|line|file|files|folder|folders)\b",
@@ -555,6 +657,8 @@ def _extract_list_dir_path(text: str, *, last_tool_context: dict[str, Any] | Non
         if fallback_name and fallback_name == relative_dir.strip().lower():
             return fallback_dir_path
         return _join_context_path(fallback_dir_path, relative_dir)
+    if relative_dir:
+        return relative_dir
 
     if fallback_dir_path and _is_low_information_followup(raw):
         return fallback_dir_path

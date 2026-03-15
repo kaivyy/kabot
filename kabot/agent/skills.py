@@ -869,6 +869,7 @@ class SkillsLoader:
             meta = self._get_skill_meta(name)
             invocation_policy = self._resolve_skill_invocation_policy(frontmatter)
             install_specs = self._normalize_install_specs(meta.get("install", {}))
+            adapt_meta = meta.get("adapt", {}) if isinstance(meta.get("adapt"), dict) else {}
             desc = self._get_skill_description(name)
             skill_key = str(meta.get("skillKey") or name).strip() or name
             skill_cfg = self._skill_entries.get(skill_key, {})
@@ -942,6 +943,9 @@ class SkillsLoader:
                 },
                 "install": install_specs,
                 "description": desc,
+                "adapt_grounded_diagnostics": bool(
+                    adapt_meta.get("groundedDiagnostics")
+                ),
                 "user_invocable": bool(invocation_policy.get("user_invocable", True)),
                 "disable_model_invocation": bool(
                     invocation_policy.get("disable_model_invocation", False)

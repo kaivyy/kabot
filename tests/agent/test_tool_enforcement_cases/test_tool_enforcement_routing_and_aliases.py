@@ -103,41 +103,41 @@ def agent_loop(tmp_path):
         cron_service=CronService(tmp_path / "cron_jobs.json"),
     )
 
-def test_required_tool_for_query_detects_weather_and_reminder(agent_loop):
-    assert agent_loop._required_tool_for_query("tolong cek suhu cilacap hari ini") == "weather"
-    assert agent_loop._required_tool_for_query("purwokerto berapa derajat sekarang") == "weather"
-    assert agent_loop._required_tool_for_query("dibandung berangin apa ga") == "weather"
+def test_required_tool_for_query_keeps_weather_and_live_news_ai_driven_but_preserves_explicit_ops(agent_loop):
+    assert agent_loop._required_tool_for_query("tolong cek suhu cilacap hari ini") is None
+    assert agent_loop._required_tool_for_query("purwokerto berapa derajat sekarang") is None
+    assert agent_loop._required_tool_for_query("dibandung berangin apa ga") is None
     assert (
         agent_loop._required_tool_for_query(
             "ya itu cek update real time kondisi cuaca, kecepatan angin, arah angin di bandung"
         )
-        == "weather"
+        is None
     )
     assert agent_loop._required_tool_for_query("ingatkan 2 menit lagi makan") == "cron"
     assert agent_loop._required_tool_for_query("tolong list jadwal reminder saya") == "cron"
     assert agent_loop._required_tool_for_query("cek update kabot sekarang") == "check_update"
     assert agent_loop._required_tool_for_query("update kabot sekarang") == "system_update"
     assert agent_loop._required_tool_for_query("kirim file tes.md") == "message"
-    assert agent_loop._required_tool_for_query("cari file report.pdf lalu kirim ke chat ini") == "read_file"
+    assert agent_loop._required_tool_for_query("cari file report.pdf lalu kirim ke chat ini") == "find_files"
     assert agent_loop._required_tool_for_query("kapasitas ram berapa") == "get_system_info"
     assert agent_loop._required_tool_for_query("cek ram proses sekarang") == "get_process_memory"
-    assert agent_loop._required_tool_for_query("carikan berita perang us israel vs iran terbaru") == "web_search"
-    assert agent_loop._required_tool_for_query("berita terbaru 2026 sekarang") == "web_search"
-    assert agent_loop._required_tool_for_query("latest israel iran war 2026 now") == "web_search"
+    assert agent_loop._required_tool_for_query("carikan berita perang us israel vs iran terbaru") is None
+    assert agent_loop._required_tool_for_query("berita terbaru 2026 sekarang") is None
+    assert agent_loop._required_tool_for_query("latest israel iran war 2026 now") is None
     assert (
         agent_loop._required_tool_for_query(
             "adakah gejolak politik sekarang? saya dengar ada perang iran vs us israel ya"
         )
-        == "web_search"
+        is None
     )
     assert agent_loop._required_tool_for_query("kenapa jawabnya gitu? kan saya cari berita") is None
     assert agent_loop._required_tool_for_query("hai") is None
 
 def test_required_tool_for_query_detects_multilingual_weather_and_reminder(agent_loop):
     assert agent_loop._required_tool_for_query("เตือนฉันอีก 2 นาทีให้กินข้าว") == "cron"
-    assert agent_loop._required_tool_for_query("อากาศกรุงเทพวันนี้") == "weather"
+    assert agent_loop._required_tool_for_query("อากาศกรุงเทพวันนี้") is None
     assert agent_loop._required_tool_for_query("两分钟后提醒我吃饭") == "cron"
-    assert agent_loop._required_tool_for_query("北京今天天气怎么样") == "weather"
+    assert agent_loop._required_tool_for_query("北京今天天气怎么样") is None
 
 def test_required_tool_for_query_keeps_meta_skill_and_workflow_prompts_ai_driven(agent_loop):
     assert agent_loop._required_tool_for_query("follow the weather workflow for this task") is None
@@ -235,13 +235,13 @@ def test_required_tool_for_query_chat_mix_matrix(agent_loop):
     cases = [
         (
             "adakah gejolak politik sekarang? saya dengar ada perang iran vs us israel ya",
-            "web_search",
+            None,
         ),
-        ("cek suhu purwokerto jawa tengah sekarang", "weather"),
+        ("cek suhu purwokerto jawa tengah sekarang", None),
         ("cek harga saham bbri bbca bmri adaro", None),
         ("harga btc terbaru", None),
-        # Image/TTS should not be forced into deterministic stock/weather/cron paths.
-        ("buatkan gambar mobil di hutan", None),
+        # Explicit generation requests can still use deterministic action routing.
+        ("buatkan gambar mobil di hutan", "image_gen"),
         ("tolong bacakan teks ini jadi suara", None),
         ("halo apa kabar", None),
     ]
@@ -386,7 +386,7 @@ def test_required_tool_for_query_does_not_force_cleanup_or_sysinfo_for_large_fil
         agent_loop._required_tool_for_query(
             "cari file/folder yang ukurannya besar, karena ssd 256gb sisanya cuma 18gb an"
         )
-        is None
+        == "find_files"
     )
     assert (
         agent_loop._required_tool_for_query(
@@ -487,7 +487,7 @@ def test_query_has_tool_payload_requires_exact_symbols_for_legacy_stock_tools():
 
 def test_required_tool_for_query_tolerates_common_typos_for_core_intents(agent_loop):
     assert agent_loop._required_tool_for_query("ingatkn 2 menit lagi makan") == "cron"
-    assert agent_loop._required_tool_for_query("temprature cilacap today") == "weather"
+    assert agent_loop._required_tool_for_query("temprature cilacap today") is None
     assert agent_loop._required_tool_for_query("bersihkn cache ssd skrg") == "cleanup_system"
     assert agent_loop._required_tool_for_query("cek updat kabot sekarang") == "check_update"
     assert agent_loop._required_tool_for_query("disk cleenup now") == "cleanup_system"
@@ -508,6 +508,23 @@ def test_infer_action_required_tool_for_loop_infers_find_files_for_search_reques
 
     assert tool_name == "find_files"
     assert source == "cari file report.pdf di server ini"
+
+
+def test_infer_action_required_tool_for_loop_prefers_list_dir_for_explicit_folder_subject():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name in {"list_dir", "find_files"},
+            tool_names=["list_dir", "find_files"],
+        )
+    )
+
+    tool_name, source = infer_action_required_tool_for_loop(
+        loop,
+        "folder pi-mono",
+    )
+
+    assert tool_name == "list_dir"
+    assert source == "folder pi-mono"
 
 
 def test_infer_action_required_tool_for_loop_infers_message_for_explicit_send_file_request():
@@ -615,19 +632,33 @@ def test_required_tool_for_query_detects_reminder_from_time_plus_action_without_
     assert agent_loop._required_tool_for_query("2 menit lagi makan") == "cron"
     assert agent_loop._required_tool_for_query("in 10 minutes stretch") == "cron"
 
-def test_infer_required_tool_from_history_prefers_recent_substantive_user_intent(agent_loop):
+def test_infer_required_tool_from_history_no_longer_revives_soft_live_search_parser():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name in {"web_search", "weather", "cron", "read_file", "list_dir"}
+        )
+    )
     history = [
         {"role": "user", "content": "berita terbaru 2026 sekarang"},
         {"role": "assistant", "content": "balas ya kalau lanjut"},
         {"role": "user", "content": "bbri bbca bmri sekarang berapa"},
     ]
 
-    tool, source = agent_loop._infer_required_tool_from_history("lanjut", history)
+    tool, source = tool_enforcement_module.infer_required_tool_from_history_for_loop(
+        loop,
+        "lanjut",
+        history,
+    )
 
-    assert tool == "web_search"
-    assert source == "berita terbaru 2026 sekarang"
+    assert tool is None
+    assert source is None
 
-def test_infer_required_tool_from_history_skips_low_information_user_turns(agent_loop):
+def test_infer_required_tool_from_history_skips_low_information_user_turns_without_soft_parser():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name in {"web_search", "weather", "cron", "read_file", "list_dir"}
+        )
+    )
     history = [
         {"role": "user", "content": "berita terbaru 2026 sekarang"},
         {"role": "assistant", "content": "balas ya kalau lanjut"},
@@ -635,12 +666,42 @@ def test_infer_required_tool_from_history_skips_low_information_user_turns(agent
         {"role": "user", "content": "oke"},
     ]
 
-    tool, source = agent_loop._infer_required_tool_from_history("lanjut", history)
+    tool, source = tool_enforcement_module.infer_required_tool_from_history_for_loop(
+        loop,
+        "lanjut",
+        history,
+    )
 
-    assert tool == "web_search"
-    assert source == "berita terbaru 2026 sekarang"
+    assert tool is None
+    assert source is None
 
-def test_infer_required_tool_from_history_skips_generic_contextual_plan_followup(agent_loop):
+
+def test_infer_required_tool_from_history_keeps_explicit_payload_routes():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name in {"web_search", "weather", "cron", "read_file", "list_dir"}
+        )
+    )
+    history = [
+        {"role": "user", "content": "tolong baca file config.json"},
+        {"role": "assistant", "content": "balas ya kalau lanjut"},
+    ]
+
+    tool, source = tool_enforcement_module.infer_required_tool_from_history_for_loop(
+        loop,
+        "lanjut",
+        history,
+    )
+
+    assert tool == "read_file"
+    assert source == "tolong baca file config.json"
+
+def test_infer_required_tool_from_history_skips_generic_contextual_plan_followup():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            has=lambda name: name in {"web_search", "weather", "cron", "read_file", "list_dir"}
+        )
+    )
     history = [
         {"role": "user", "content": "kalau saham apple berapa sekarang"},
         {
@@ -652,7 +713,11 @@ def test_infer_required_tool_from_history_skips_generic_contextual_plan_followup
         },
     ]
 
-    tool, source = agent_loop._infer_required_tool_from_history("lanjut rencana", history)
+    tool, source = tool_enforcement_module.infer_required_tool_from_history_for_loop(
+        loop,
+        "lanjut rencana",
+        history,
+    )
 
     assert tool is None
     assert source is None
@@ -1020,6 +1085,74 @@ async def test_execute_required_tool_fallback_find_files_prefers_working_directo
     assert tool_name == "find_files"
     assert params["query"] == "tes.md"
     assert params["path"] == str(working_dir.resolve())
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_find_files_sets_dir_kind_for_folder_queries(agent_loop):
+    execute_mock = AsyncMock(return_value="DIR C:/Users/Arvy Kairi/Desktop/bot/pi-mono")
+    agent_loop.tools.execute = execute_mock
+    search_root = agent_loop.workspace
+    search_root.mkdir(parents=True, exist_ok=True)
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="cari folder pi-mono di workspace",
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("find_files", msg)
+
+    assert "pi-mono" in result
+    execute_mock.assert_awaited_once()
+    tool_name, params = execute_mock.await_args.args
+    assert tool_name == "find_files"
+    assert params["query"] == "pi-mono"
+    assert params["kind"] == "dir"
+    assert params["path"] == str(search_root.resolve())
+
+
+@pytest.mark.asyncio
+async def test_execute_required_tool_fallback_list_dir_searches_missing_relative_folder_and_opens_match(
+    agent_loop,
+):
+    nested_dir = agent_loop.workspace / "projects" / "pi-mono"
+    nested_dir.mkdir(parents=True, exist_ok=True)
+    (nested_dir / "README.md").write_text("hello", encoding="utf-8")
+    execute_mock = AsyncMock(
+        side_effect=[
+            f"DIR {nested_dir.resolve()}",
+            "📄 README.md",
+        ]
+    )
+    agent_loop.tools.execute = execute_mock
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="buka folder pi-mono di workspace",
+        metadata={},
+        timestamp=datetime.now(),
+    )
+
+    result = await agent_loop._execute_required_tool_fallback("list_dir", msg)
+
+    assert result == "📄 README.md"
+    assert execute_mock.await_count == 2
+    first_tool_name, first_params = execute_mock.await_args_list[0].args
+    assert first_tool_name == "find_files"
+    assert first_params["query"] == "pi-mono"
+    assert first_params["kind"] == "dir"
+    assert first_params["path"] == str(agent_loop.workspace.resolve())
+    second_tool_name, second_params = execute_mock.await_args_list[1].args
+    assert second_tool_name == "list_dir"
+    assert second_params["path"] == str(nested_dir.resolve())
+    assert msg.metadata.get("working_directory") == str(nested_dir.resolve())
+    last_tool_context = msg.metadata.get("last_tool_context")
+    assert isinstance(last_tool_context, dict)
+    assert last_tool_context.get("path") == str(nested_dir.resolve())
 
 
 def test_resolve_find_files_root_prefers_last_tool_context_path_over_stale_last_navigated_path(agent_loop):
@@ -2247,6 +2380,44 @@ def test_infer_action_required_tool_for_loop_prefers_list_dir_for_natural_path_h
         "list_dir",
         "ya pakai path desktop bot",
     )
+
+
+def test_infer_action_required_tool_for_loop_keeps_weak_check_for_explicit_path_but_not_desktop_topic(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+    loop = SimpleNamespace(tools=SimpleNamespace(tool_names=["list_dir"]))
+
+    assert infer_action_required_tool_for_loop(loop, "check /var/log") == (
+        "list_dir",
+        "check /var/log",
+    )
+    assert infer_action_required_tool_for_loop(loop, "check desktop app design") == (
+        None,
+        None,
+    )
+
+
+def test_extract_list_dir_path_does_not_treat_desktop_topic_as_special_directory_payload(monkeypatch):
+    monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
+
+    assert _extract_list_dir_path("desktop app design") is None
+    assert _extract_list_dir_path("check desktop app design") is None
+    assert _extract_list_dir_path("open desktop") == str(
+        tool_enforcement_module.Path("/Users/Arvy Kairi/Desktop")
+    )
+
+
+def test_resolve_find_files_root_does_not_treat_desktop_topic_as_search_root(tmp_path, monkeypatch):
+    from kabot.agent.loop_core.tool_enforcement_parts import filesystem_paths as filesystem_paths_module
+
+    monkeypatch.setattr(filesystem_paths_module, "_filesystem_home_dir", lambda: filesystem_paths_module.Path("/Users/Arvy Kairi"))
+
+    resolved = filesystem_paths_module._resolve_find_files_root(
+        loop=SimpleNamespace(workspace=tmp_path),
+        text="find desktop app design references",
+        metadata={},
+    )
+
+    assert resolved is None
 
 
 def test_extract_message_delivery_path_uses_monkeypatched_special_directory_home(monkeypatch):

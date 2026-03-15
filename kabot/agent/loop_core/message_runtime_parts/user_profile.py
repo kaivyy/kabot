@@ -10,11 +10,15 @@ from typing import Any
 from kabot.utils.workspace_templates import get_bootstrap_templates
 
 _SPACE_RE = re.compile(r"\s+")
-_SELF_IDENTITY_QUERY_RE = re.compile(
+_SELF_IDENTITY_INTERROGATIVE_RE = re.compile(
     r"(?i)\b("
-    r"who am i|who i am|"
-    r"what do you call me"
+    r"who|what|call|address|name|am"
     r")\b"
+)
+_SELF_IDENTITY_SUBJECT_RE = re.compile(r"(?i)\b(i|me|my|mine|myself)\b")
+_SELF_IDENTITY_CALL_RE = re.compile(r"(?i)\b(call|address|name)\b")
+_SELF_IDENTITY_EXISTENTIAL_RE = re.compile(
+    r"(?i)(\bwho\b.*\bi\b.*\bam\b|\bwho\b.*\bam\b.*\bi\b)"
 )
 _CALL_ME_RE = re.compile(
     r"(?i)\b("
@@ -96,25 +100,19 @@ def infer_user_profile_updates(text: str, *, existing_profile: dict[str, Any] | 
 
 def looks_like_self_identity_recall(text: str) -> bool:
     raw = str(text or "").strip()
-    if not raw:
+    normalized = _normalize_text(raw)
+    if not normalized:
         return False
-    return bool(_SELF_IDENTITY_QUERY_RE.search(raw))
-
-
-def resolve_self_identity_fast_reply(session: Any, text: str) -> str | None:
-    if not looks_like_self_identity_recall(text):
-        return None
-    metadata = getattr(session, "metadata", None)
-    if not isinstance(metadata, dict):
-        return None
-    profile = metadata.get("user_profile")
-    if not isinstance(profile, dict):
-        return None
-    for key in ("self_identity_answer", "address", "name"):
-        value = _clean_profile_value(str(profile.get(key) or ""))
-        if value:
-            return value
-    return None
+    if raw.startswith("/"):
+        return False
+    if len(normalized) > 120:
+        return False
+    interrogative_turn = bool(raw.endswith(("?", "？")) or _SELF_IDENTITY_INTERROGATIVE_RE.search(normalized))
+    if not interrogative_turn:
+        return False
+    if _SELF_IDENTITY_EXISTENTIAL_RE.search(normalized):
+        return True
+    return bool(_SELF_IDENTITY_CALL_RE.search(normalized) and _SELF_IDENTITY_SUBJECT_RE.search(normalized))
 
 
 def build_user_profile_memory_facts(session: Any, *, limit: int = 3) -> list[str]:
