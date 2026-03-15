@@ -273,7 +273,7 @@ async def test_run_agent_loop_action_request_skips_planning_when_tool_inference_
         ]
     )
 
-    content = "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+    content = "create file .smoke_tmp/smoke_action_request.txt in the workspace containing HALO_KABOT"
     msg = InboundMessage(
         channel="telegram",
         chat_id="chat-1",
@@ -573,7 +573,7 @@ async def test_run_agent_loop_action_request_retries_and_rejects_text_only_compl
         ]
     )
 
-    content = "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+    content = "create file .smoke_tmp/smoke_action_request.txt in the workspace containing HALO_KABOT"
     msg = InboundMessage(
         channel="telegram",
         chat_id="chat-1",
@@ -712,7 +712,7 @@ async def test_run_agent_loop_action_request_retries_when_explicit_artifact_path
         ]
     )
 
-    content = "buat file .smoke_tmp/smoke_action_request.txt di workspace berisi HALO_KABOT"
+    content = "create file .smoke_tmp/smoke_action_request.txt in the workspace containing HALO_KABOT"
     msg = InboundMessage(
         channel="telegram",
         chat_id="chat-1",
@@ -1144,7 +1144,7 @@ async def test_process_tool_calls_marks_message_delivery_evidence(tmp_path):
         channel="telegram",
         chat_id="8086",
         sender_id="user",
-        content=r"kirim file C:\Users\Arvy Kairi\Desktop\report.pdf ke chat ini",
+        content=r"send file C:\Users\Arvy Kairi\Desktop\report.pdf to this chat",
         metadata={},
     )
     response = LLMResponse(
@@ -1153,7 +1153,7 @@ async def test_process_tool_calls_marks_message_delivery_evidence(tmp_path):
             ToolCallRequest(
                 id="call_message",
                 name="message",
-                arguments={"content": "Ini file-nya.", "files": [r"C:\Users\Arvy Kairi\Desktop\report.pdf"]},
+                arguments={"content": "Here is the file.", "files": [r"C:\Users\Arvy Kairi\Desktop\report.pdf"]},
             )
         ],
     )
@@ -1724,7 +1724,7 @@ async def test_process_tool_calls_emits_tool_phase_status_metadata(tmp_path):
         exec_auto_approve=False,
     )
 
-    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek cuaca")
+    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="check weather")
     response = LLMResponse(
         content="tool-run",
         tool_calls=[ToolCallRequest(id="call_weather", name="weather", arguments={"location": "Jakarta"})],
@@ -2161,7 +2161,7 @@ async def test_process_tool_calls_keeps_valid_web_search_execution(tmp_path):
         channel="telegram",
         chat_id="8086",
         sender_id="user",
-        content="carikan berita perang iran terbaru 2026 sekarang",
+        content="find latest Iran war news 2026 now",
     )
     response = LLMResponse(
         content="tool-run",
@@ -2421,7 +2421,7 @@ def test_tool_call_intent_mismatch_allows_message_send_without_explicit_path_whe
         chat_id="chat-1",
         sender_id="user-1",
         _session_key="telegram:chat-1",
-        content="kirim langsung",
+        content="send it now",
         metadata={},
     )
 
@@ -2508,7 +2508,7 @@ def test_tool_call_intent_mismatch_blocks_browser_for_headless_live_lookup():
         chat_id="chat-1",
         sender_id="user-1",
         _session_key="telegram:chat-1",
-        content="cek harga saham bbca sekarang",
+        content="check bbca stock price now",
         metadata={},
     )
 
