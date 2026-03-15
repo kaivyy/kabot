@@ -23,27 +23,27 @@ _WEEKDAY_NAMES = {
 }
 
 _DAY_QUERY_RE = re.compile(
-    r"(?i)\b(hari apa sekarang|hari apa|what day|day is it)\b|"
+    r"(?i)\b(what day|day is it)\b|"
     r"星期几|星期幾|周几|周幾|何曜日|ตอนนี้วันอะไร|วันนี้วันอะไร"
 )
 _TOMORROW_DAY_RE = re.compile(
-    r"(?i)\b(besok hari apa|tomorrow.*day|what day.*tomorrow)\b|明天星期|明日.*曜日|พรุ่งนี้.*วัน"
+    r"(?i)\b(tomorrow.*day|what day.*tomorrow)\b|明天星期|明日.*曜日|พรุ่งนี้.*วัน"
 )
 _YESTERDAY_DAY_RE = re.compile(
-    r"(?i)\b(kemarin hari apa|yesterday.*day|what day.*yesterday)\b|昨天星期|昨日.*曜日|เมื่อวาน.*วัน"
+    r"(?i)\b(yesterday.*day|what day.*yesterday)\b|昨天星期|昨日.*曜日|เมื่อวาน.*วัน"
 )
 _NEXT_WEEK_DAY_RE = re.compile(
-    r"(?i)\b(seminggu dari sekarang|satu minggu lagi|what day.*next week|next week.*day)\b|"
+    r"(?i)\b(what day.*next week|next week.*day)\b|"
     r"一周后|一週後|一週間|สัปดาห์หน้า.*วัน"
 )
 _TIME_QUERY_RE = re.compile(
-    r"(?i)\b(jam berapa|what time)\b|现在几点|現在幾點|何時|กี่โมง"
+    r"(?i)\b(what time)\b|现在几点|現在幾點|何時|กี่โมง"
 )
 _DATE_QUERY_RE = re.compile(
-    r"(?i)\b(tanggal berapa|what date|date today)\b|今天几号|今天幾號|何日|วันที่เท่าไร"
+    r"(?i)\b(what date|date today)\b|今天几号|今天幾號|何日|วันที่เท่าไร"
 )
 _TIMEZONE_QUERY_RE = re.compile(
-    r"(?i)\b(timezone|time zone|zona waktu|utc\s*[+-]?\s*\d{1,2}(?::?\d{2})?|wib|wita|wit)\b|"
+    r"(?i)\b(timezone|time zone|utc\s*[+-]?\s*\d{1,2}(?::?\d{2})?)\b|"
     r"时区|時區|タイムゾーン|เขตเวลา|โซนเวลา"
 )
 
@@ -81,14 +81,6 @@ def _timezone_label(dt: datetime) -> str:
 
 def _render_weekday_reply(locale: str, relation: str, target: datetime) -> str:
     weekday = _weekday_name(target, locale)
-    if locale == "id":
-        templates = {
-            "today": f"Sekarang hari {weekday}.",
-            "tomorrow": f"Besok hari {weekday}.",
-            "yesterday": f"Kemarin hari {weekday}.",
-            "next_week": f"Seminggu dari sekarang hari {weekday}.",
-        }
-        return templates[relation]
     if locale == "zh":
         templates = {
             "today": f"今天是{weekday}。",
@@ -125,8 +117,6 @@ def _render_weekday_reply(locale: str, relation: str, target: datetime) -> str:
 def _render_time_reply(locale: str, current: datetime) -> str:
     clock = current.strftime("%H:%M")
     timezone_label = _timezone_label(current)
-    if locale == "id":
-        return f"Sekarang pukul {clock} ({timezone_label})."
     if locale == "zh":
         return f"现在时间是 {clock}（{timezone_label}）。"
     if locale == "ja":
@@ -138,8 +128,6 @@ def _render_time_reply(locale: str, current: datetime) -> str:
 
 def _render_date_reply(locale: str, current: datetime) -> str:
     date_text = current.strftime("%Y-%m-%d")
-    if locale == "id":
-        return f"Tanggal lokal sekarang {date_text}."
     if locale == "zh":
         return f"今天的本地日期是 {date_text}。"
     if locale == "ja":
@@ -151,8 +139,6 @@ def _render_date_reply(locale: str, current: datetime) -> str:
 
 def _render_timezone_reply(locale: str, current: datetime) -> str:
     timezone_label = _timezone_label(current)
-    if locale == "id":
-        return f"Zona waktu lokal saya {timezone_label}."
     if locale == "zh":
         return f"我当前使用的本地时区是 {timezone_label}。"
     if locale == "ja":
@@ -189,7 +175,7 @@ def build_temporal_fast_reply(
         return _render_time_reply(resolved_locale, current)
     if _DATE_QUERY_RE.search(raw):
         return _render_date_reply(resolved_locale, current)
-    if _TIMEZONE_QUERY_RE.search(raw) and ("?" in raw or "？" in raw or "berapa" in normalized or "what" in normalized):
+    if _TIMEZONE_QUERY_RE.search(raw) and ("?" in raw or "？" in raw or "what" in normalized):
         return _render_timezone_reply(resolved_locale, current)
     return None
 from kabot.i18n.locale import detect_locale

@@ -14,9 +14,9 @@ _EXPLICIT_MCP_PROMPT_ALIAS_RE = re.compile(
     re.IGNORECASE,
 )
 _EXPLICIT_MCP_PROMPT_NATURAL_RE = re.compile(
-    r"\b(?:gunakan|pakai|use|render|apply|lihat|show)\s+"
+    r"\b(?:use|render|apply|show)\s+"
     r"(?:prompt\s+)?(?P<prompt>[A-Za-z0-9_.-]+)\s+"
-    r"(?:dari|from)\s+(?:server\s+)?(?P<server>[A-Za-z0-9_-]+)\b",
+    r"(?:from)\s+(?:server\s+)?(?P<server>[A-Za-z0-9_-]+)\b",
     re.IGNORECASE,
 )
 _EXPLICIT_MCP_RESOURCE_ALIAS_RE = re.compile(
@@ -24,9 +24,9 @@ _EXPLICIT_MCP_RESOURCE_ALIAS_RE = re.compile(
     re.IGNORECASE,
 )
 _EXPLICIT_MCP_RESOURCE_NATURAL_RE = re.compile(
-    r"\b(?:baca|read|gunakan|pakai|use|lihat|show)\s+"
+    r"\b(?:read|use|show)\s+"
     r"(?:resource\s+)?(?P<resource>(?:[A-Za-z][A-Za-z0-9+.-]*://[^\s]+|[A-Za-z0-9_.-]+))\s+"
-    r"(?:dari|from)\s+(?:server\s+)?(?P<server>[A-Za-z0-9_-]+)\b",
+    r"(?:from)\s+(?:server\s+)?(?P<server>[A-Za-z0-9_-]+)\b",
     re.IGNORECASE,
 )
 

@@ -20,18 +20,6 @@ IntentType = Literal["CODING", "CHAT", "RESEARCH", "GENERAL"]
 TurnCategory = Literal["chat", "action", "contextual_action", "command"]
 GroundingMode = Literal["none", "filesystem_inspection"]
 
-# English-first fast paths. Non-English turns should fall through to the model
-# instead of being pre-routed by lexical parser shortcuts.
-_SIMPLE_PATTERNS = [
-    r"^(h[ae]llo|hi|hey|yo)\b",
-    r"^(good\s+(morning|afternoon|evening|night))",
-    r"^(thanks?|thx|ty|ok[e]?|okay|yep|yup|nope|sure|cool|nice|great)\b",
-    r"^(who\s+are\s+you|what(?:'s| is)\s+your\s+name)",
-    r"^(how\s+are\s+you)",
-    r"^(yes|no)$",
-]
-_SIMPLE_RE = [re.compile(p, re.IGNORECASE) for p in _SIMPLE_PATTERNS]
-
 _ROUTE_CATEGORY_RE = re.compile(r"\b(CODING|CHAT|RESEARCH|GENERAL)\b", re.IGNORECASE)
 _ROUTE_TURN_CATEGORY_RE = re.compile(r"\b(chat|action|contextual_action|command)\b", re.IGNORECASE)
 _JSON_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
@@ -206,10 +194,6 @@ class IntentRouter:
         content_stripped = content.strip()
         if content_stripped.startswith("/"):
             return RouteDecision(profile="GENERAL", is_complex=True, turn_category="command")
-
-        for pattern in _SIMPLE_RE:
-            if pattern.match(content_stripped):
-                return RouteDecision(profile="CHAT", is_complex=False, turn_category="chat")
 
         structured_decision = await self.classify_route(content)
         if structured_decision:

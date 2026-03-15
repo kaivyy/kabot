@@ -15,9 +15,7 @@ from loguru import logger
 from kabot.agent.skills_matching import normalize_skill_reference_name
 from kabot.agent.loop_core.message_runtime_parts.followup import (
     _FILELIKE_EXTENSION_RE,
-    _FILESYSTEM_LOCATION_QUERY_PATTERNS,
     _PATHLIKE_TEXT_RE,
-    _SKILL_CREATION_APPROVAL_MARKERS,
     _SKILL_CREATION_FLOW_KEY,
     _SKILL_CREATION_FLOW_TTL_SECONDS,
 )
@@ -40,29 +38,26 @@ _RECENT_CREATED_SKILL_PATH_RE = re.compile(
     r"(?:^|[\\/])skills[\\/]+([^\\/]+)[\\/]SKILL\.md$",
     re.IGNORECASE,
 )
-_EXISTING_SKILL_USE_MARKERS = (
-    "pakai skill",
-    "gunakan skill",
-    "use skill",
-    "use the skill",
-    "use that skill",
-    "run the skill",
-    "run that skill",
-    "jalankan skill",
-    "lanjut pakai skill",
-    "lanjutkan pakai skill",
-    "pakai skillnya",
-    "gunakan skillnya",
-    "jalankan skillnya",
+_FILESYSTEM_LOCATION_DIRECT_RE = re.compile(
+    r"(?i)(?:\b(?:where\s+are\s+you\s+now|"
+    r"current\s+(?:working\s+)?(?:folder|directory)|"
+    r"working\s+directory|"
+    r"what\s+(?:folder|directory)\s+are\s+you\s+in)\b|"
+    r"(?:你现在在|你現在在).*(?:文件夹|文件夾|資料夾|目录|目錄)|"
+    r"(?:今|現在).*(?:フォルダ|ディレクトリ).*(?:いる|です)|"
+    r"ตอนนี้(?:คุณ)?อยู่(?:โฟลเดอร์|ไดเรกทอรี)ไหน)"
 )
-_ASSISTANT_EXISTING_SKILL_OFFER_MARKERS = (
-    "pakai skill ini",
-    "gunakan skill ini",
-    "use this skill",
-    "use that skill",
-    "run this skill",
-    "run that skill",
+_FILESYSTEM_LOCATION_QUERY_WORDS = frozenset({"where", "current"})
+_FILESYSTEM_LOCATION_SUBJECT_PREFIXES = ("folder", "directory", "path")
+_SKILL_APPROVAL_ACTION_RE = re.compile(
+    r"(?i)\b(?:approve(?:d)?|go\s+ahead|continue|proceed|"
+    r"run|execute|implement)\b"
 )
+_EXISTING_SKILL_REFERENCE_RE = re.compile(r"(?i)\bskill\b")
+_EXISTING_SKILL_ACTION_RE = re.compile(
+    r"(?i)\b(?:use|run|continue)\b"
+)
+_EXISTING_SKILL_DEICTIC_RE = re.compile(r"(?i)\b(?:this|that)\b")
 
 
 def _looks_like_filesystem_location_query(text: str) -> bool:
@@ -72,7 +67,14 @@ def _looks_like_filesystem_location_query(text: str) -> bool:
         return False
     if len(normalized) > 120:
         return False
-    return any(re.search(pattern, normalized) for pattern in _FILESYSTEM_LOCATION_QUERY_PATTERNS)
+    if normalized in {"cwd", "pwd"}:
+        return True
+    if _FILESYSTEM_LOCATION_DIRECT_RE.search(raw):
+        return True
+    tokens = {token for token in normalized.split() if token}
+    has_query_word = bool(tokens & _FILESYSTEM_LOCATION_QUERY_WORDS)
+    has_subject = any(token.startswith(prefix) for token in tokens for prefix in _FILESYSTEM_LOCATION_SUBJECT_PREFIXES)
+    return has_query_word and has_subject
 
 
 def _build_filesystem_location_context_note(loop: Any, session: Any, last_tool_context: dict[str, Any] | None) -> str:
@@ -328,7 +330,7 @@ def _looks_like_explicit_new_request(text: str) -> bool:
     """
     Detect short-but-substantive turns that should not inherit pending follow-up tool state.
 
-    This keeps continuation UX for lightweight confirms ("ya", "gas"), while
+    This keeps continuation UX for lightweight confirms, while
     preventing stale tool carry-over for fresh asks like file/config operations.
     """
     raw = str(text or "").strip()
@@ -348,10 +350,10 @@ def _looks_like_explicit_new_request(text: str) -> bool:
 
     tokens = [part for part in normalized.split(" ") if part]
     has_file_action_marker = any(
-        marker in normalized for marker in ("baca", "read", "open", "buka", "lihat", "show", "display", "print", "cat")
+        marker in normalized for marker in ("read", "open", "show", "display", "print", "cat")
     )
     has_file_subject_marker = any(
-        marker in normalized for marker in ("config", "settings", "setting", "file", "berkas", "folder", "direktori", "path")
+        marker in normalized for marker in ("config", "settings", "setting", "file", "folder", "directory", "path")
     )
     if has_file_subject_marker and (has_file_action_marker or len(tokens) >= 3):
         return True
@@ -376,14 +378,6 @@ def _looks_like_explicit_new_request(text: str) -> bool:
             "where",
             "which",
             "who",
-            "apa",
-            "kenapa",
-            "gimana",
-            "bagaimana",
-            "kapan",
-            "mana",
-            "siapa",
-            "berapa",
         )
     ):
         return True
@@ -428,14 +422,20 @@ def _looks_like_existing_skill_use_followup(
         return False
     if normalized.startswith("/"):
         return False
-    if any(marker in normalized for marker in _EXISTING_SKILL_USE_MARKERS):
+    if _EXISTING_SKILL_REFERENCE_RE.search(normalized) and (
+        _EXISTING_SKILL_ACTION_RE.search(normalized)
+        or _EXISTING_SKILL_DEICTIC_RE.search(normalized)
+    ):
         return True
     if not (_looks_like_short_confirmation(raw) or _looks_like_contextual_followup_request(raw)):
         return False
     offer_normalized = _normalize_text(assistant_offer_text)
     if not offer_normalized:
         return False
-    return any(marker in offer_normalized for marker in _ASSISTANT_EXISTING_SKILL_OFFER_MARKERS)
+    return bool(
+        _EXISTING_SKILL_REFERENCE_RE.search(offer_normalized)
+        and _EXISTING_SKILL_ACTION_RE.search(offer_normalized)
+    )
 
 
 def _infer_recent_assistant_option_prompt_from_history(history: list[dict[str, Any]]) -> str:
@@ -535,7 +535,9 @@ def _looks_like_skill_creation_approval(text: str) -> bool:
         return False
     if _looks_like_short_confirmation(raw):
         return True
-    return any(marker in normalized for marker in _SKILL_CREATION_APPROVAL_MARKERS)
+    if len(normalized.split()) > 6:
+        return False
+    return bool(_SKILL_APPROVAL_ACTION_RE.search(normalized))
 
 
 def _looks_like_skill_workflow_followup_detail(text: str) -> bool:
@@ -556,7 +558,7 @@ def _looks_like_skill_workflow_followup_detail(text: str) -> bool:
         r")\b",
         normalized,
     ) and re.search(
-        r"(?i)\b(skill|skills|skillnya|skillsnya)\b|skill\.?md|references?/|scripts?/|assets?/",
+        r"(?i)\b(skill|skills)\b|skill\.?md|references?/|scripts?/|assets?/",
         normalized,
     ):
         return True
@@ -612,7 +614,7 @@ def _assistant_response_looks_like_skill_plan(text: str) -> bool:
             bullet_lines += 1
     if bullet_lines >= 2 and any(
         marker in normalized
-        for marker in ("plan", "rencana", "approval", "approve", "setuju", "langkah", "workflow", "implement")
+        for marker in ("plan", "approval", "approve", "workflow", "implement")
     ):
         return True
     return False
@@ -667,7 +669,7 @@ def _should_store_followup_intent(
     if required_tool:
         return True
     # Keep live/current-fact intent even when prompt is short, so
-    # confirmations like "ya/gas/ambil sekarang" can continue deterministically.
+    # confirmations can continue deterministically when the session is grounded.
     if _looks_like_live_research_query(normalized):
         return True
     if _looks_like_short_confirmation(normalized):

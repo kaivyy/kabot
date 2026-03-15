@@ -192,11 +192,8 @@ def extract_weather_location(question: str) -> str | None:
         cleaned = value
         prefix_pattern = (
             r"(?i)^(?:"
-            r"ya|iya|ok|oke|sip|"
-            r"tolong|please|coba|cek|check|semak|"
-            r"gimana|bagaimana|kenapa|kok|kalau|kalo|"
-            r"bisakah|bisa|could|can|why|what(?:'s| is)|"
-            r"dong|deh|nih"
+            r"ok|please|check|"
+            r"could|can|why|what(?:'s| is)"
             r")\b[\s,.:;-]*"
         )
         while True:
@@ -209,12 +206,12 @@ def extract_weather_location(question: str) -> str | None:
     def _normalize_location_candidate(value: str) -> str:
         cleaned = _strip_conversational_prefix(value)
         cleaned = re.split(
-            r"(?i)[?!\n]|(?:\s+-\s+)|\b(?:kan|karena|soalnya|but|tapi|however)\b",
+            r"(?i)[?!\n]|(?:\s+-\s+)|\b(?:but|however)\b",
             cleaned,
             maxsplit=1,
         )[0]
         cleaned = re.sub(
-            r"(?i)\b(?:right now|hari ini|today|saat ini|sekarang|now|right|berapa|how much|what(?:'s| is)|derajat|degree|degrees|celsius|fahrenheit)\b",
+            r"(?i)\b(?:right now|today|now|right|how much|what(?:'s| is)|degree|degrees|celsius|fahrenheit)\b",
             " ",
             cleaned,
         )
@@ -243,11 +240,11 @@ def extract_weather_location(question: str) -> str | None:
         for marker in multilingual_fillers:
             cleaned = cleaned.replace(marker, " ")
         cleaned = re.sub(
-            r"(?i)\b\d+(?:[-–]\d+)?\s*(?:jam|hours?|hari|days?|minggu|weeks?)\b(?:\s+(?:ke|depan|ahead))?",
+            r"(?i)\b\d+(?:[-–]\d+)?\s*(?:hours?|days?|weeks?)\b(?:\s+(?:ahead))?",
             " ",
             cleaned,
         )
-        cleaned = re.sub(r"(?i)\b(?:ke depan|ahead|per jam|hourly)\b", " ", cleaned)
+        cleaned = re.sub(r"(?i)\b(?:ahead|hourly)\b", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,!?:;")
         cleaned = re.sub(
             r"(?i)\b(?:kota|city|kabupaten|regency|district|county|municipality|province|provinsi)\b$",
@@ -257,43 +254,27 @@ def extract_weather_location(question: str) -> str | None:
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,!?:;")
 
         edge_fillers = {
-            "ya", "iya", "ok", "oke", "sip", "tolong", "please", "coba", "cek", "check",
-            "semak", "gimana", "bagaimana", "kenapa", "kok", "kalau", "kalo", "bisa", "bisakah",
-            "can", "could", "why", "dong", "deh", "nih", "kan", "udah", "sudah", "pasti",
-            "itu", "yang", "di", "in", "apa", "ga", "gak", "ngga", "nggak", "enggak", "tidak",
+            "ok", "please", "check",
+            "can", "could", "why", "in", "what",
             "天", "气", "風", "风",
         }
         relational_non_locations = {
-            "atas",
-            "bawah",
-            "dalam",
-            "luar",
-            "sini",
-            "situ",
-            "sana",
+            "inside",
+            "outside",
+            "here",
+            "there",
         }
         forecast_non_locations = {
-            "prediksi",
             "forecast",
-            "prakiraan",
-            "ramalan",
-            "jam",
             "hour",
             "hours",
-            "hari",
             "day",
             "days",
-            "minggu",
             "week",
             "weeks",
-            "ke",
-            "depan",
             "ahead",
             "per",
-            "besok",
             "tomorrow",
-            "lusa",
-            "nanti",
         }
         tokens = [tok for tok in cleaned.split() if tok]
         while tokens and tokens[0].lower() in edge_fillers:
@@ -302,7 +283,7 @@ def extract_weather_location(question: str) -> str | None:
             tokens.pop()
         if tokens and tokens[0].lower() in relational_non_locations:
             return ""
-        if tokens and tokens[0].lower() in {"prediksi", "forecast", "prakiraan", "ramalan"}:
+        if tokens and tokens[0].lower() in {"forecast"}:
             return ""
         if tokens and all(
             token.lower() in forecast_non_locations
@@ -339,7 +320,7 @@ def extract_weather_location(question: str) -> str | None:
 
     patterns = (
         r"(?i)\b(?:di|in)\s+([^\W\d_][\w\s\-,'\.]{1,120})",
-        r"(?i)\b(?:cuaca|weather|suhu|temperature|forecast|prakiraan|ramalan|prediksi|derajat|degree|degrees|celsius|fahrenheit)\b(?:\s+(?:di|in))?\s+([^\W\d_][\w\s\-,'\.]{1,120})",
+        r"(?i)\b(?:weather|temperature|forecast|degree|degrees|celsius|fahrenheit)\b(?:\s+(?:in))?\s+([^\W\d_][\w\s\-,'\.]{1,120})",
     )
 
     for pattern in patterns:
@@ -351,7 +332,7 @@ def extract_weather_location(question: str) -> str | None:
             return _format_location(candidate)
 
     candidate = re.sub(
-        r"(?i)\b(tolong|please|cek|check|semak|cuaca|weather|suhu|temperature|forecast|prakiraan|ramalan|prediksi|derajat|degree|degrees|celsius|fahrenheit|hari ini|today|right now|sekarang|now|dong|ya|esok|berapa|how much|what is|what's|saat ini|right|gimana|bagaimana|kenapa|kok|kalau|kalo|coba|can|could|why|bisa|bisakah)\b",
+        r"(?i)\b(please|check|weather|temperature|forecast|degree|degrees|celsius|fahrenheit|today|right now|now|how much|what is|what's|right|can|could|why)\b",
         " ",
         text,
     )
@@ -369,33 +350,33 @@ def extract_reminder_message(question: str) -> str:
     if not text:
         return "Reminder"
 
-    text = re.sub(r"(?i)^(tolong|please)\s+", "", text)
+    text = re.sub(r"(?i)^(please)\s+", "", text)
     text = re.sub(
-        r"(?i)\b(remind(?: me)?(?: to)?|ingatkan(?: saya)?(?: untuk)?|buat(?:kan)? pengingat|pengingat|set(?: sekarang)?)\b",
+        r"(?i)\b(remind(?: me)?(?: to)?|create reminder|set)\b",
         " ",
         text,
     )
     text = re.sub(
-        r"(?i)\b(?:dalam|in)?\s*\d+\s*(menit|jam|detik|hari|min(?:ute)?s?|hours?|sec(?:ond)?s?|days?)\b(?:\s+lagi)?",
+        r"(?i)\b(?:in)?\s*\d+\s*(min(?:ute)?s?|hours?|sec(?:ond)?s?|days?)\b",
         " ",
         text,
     )
     text = re.sub(
-        r"(?i)\b(?:setiap|tiap|every)\s+\d+\s*(detik|menit|jam|hari|sec(?:ond)?s?|min(?:ute)?s?|hours?|days?)\b(?:\s+sekali)?",
+        r"(?i)\b(?:every)\s+\d+\s*(sec(?:ond)?s?|min(?:ute)?s?|hours?|days?)\b",
         " ",
         text,
     )
     text = re.sub(
-        r"(?i)\b(?:setiap\s+hari|tiap\s+hari|every\s+day|daily)\b(?:\s*(?:jam|pukul|at))?\s*\d{1,2}(?::\d{2})?",
+        r"(?i)\b(?:every\s+day|daily)\b(?:\s*(?:at))?\s*\d{1,2}(?::\d{2})?",
         " ",
         text,
     )
     text = re.sub(
-        r"(?i)\b(?:setiap|tiap|every)\s+(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b(?:\s*(?:jam|pukul|at))?\s*\d{1,2}(?::\d{2})?",
+        r"(?i)\b(?:every)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b(?:\s*(?:at))?\s*\d{1,2}(?::\d{2})?",
         " ",
         text,
     )
-    text = re.sub(r"(?i)\b(lagi|from now|sekarang|now)\b", " ", text)
+    text = re.sub(r"(?i)\b(from now|now)\b", " ", text)
     text = re.sub(r"\s+", " ", text).strip(" .,!?:;")
 
     if not text:
@@ -472,21 +453,19 @@ def extract_cycle_anchor_date(question: str) -> datetime:
         except ValueError:
             pass
 
-    if "lusa" in q_lower:
-        return (now_local + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
-    if "besok" in q_lower or "tomorrow" in q_lower:
+    if "tomorrow" in q_lower:
         return (now_local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     return now_local.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def extract_explicit_schedule_title(question: str) -> str | None:
-    """Extract explicit schedule title from phrases like 'judul ...' or 'title ...'."""
+    """Extract explicit schedule title from phrases like 'title ...'."""
     text = (question or "").strip()
     if not text:
         return None
 
     match = re.search(
-        r'(?i)\b(?:judul|title|nama jadwal|schedule name)\b\s*[:=]?\s*[\"\']?([^\"\',;\n]+)',
+        r'(?i)\b(?:title|schedule name)\b\s*[:=]?\s*[\"\']?([^\"\',;\n]+)',
         text,
     )
     if not match:
@@ -496,17 +475,17 @@ def extract_explicit_schedule_title(question: str) -> str | None:
 
 
 def extract_new_schedule_title(question: str) -> str | None:
-    """Extract rename target from phrases like 'ubah judul jadi ...'."""
+    """Extract rename target from phrases like 'rename to ...'."""
     text = (question or "").strip()
     if not text:
         return None
     match = re.search(
-        r'(?i)\b(?:ubah judul|rename|rename to|judul baru|new title)\b(?:\s+grp_[a-z0-9_-]+)?\s*(?:jadi|to)\s*[\"\']?([^\"\',;\n]+)',
+        r'(?i)\b(?:rename|rename to|new title)\b(?:\s+grp_[a-z0-9_-]+)?\s*(?:to)\s*[\"\']?([^\"\',;\n]+)',
         text,
     )
     if not match:
         match = re.search(
-            r'(?i)\b(?:ubah judul|rename|rename to|judul baru|new title)\b\s*[:=]\s*[\"\']?([^\"\',;\n]+)',
+            r'(?i)\b(?:rename|rename to|new title)\b\s*[:=]\s*[\"\']?([^\"\',;\n]+)',
             text,
         )
     if not match:
@@ -550,15 +529,15 @@ def extract_cycle_schedule(question: str) -> dict[str, Any] | None:
         return None
 
     lowered = text.lower()
-    if "selama" not in lowered:
+    if "for" not in lowered:
         return None
-    if not any(k in lowered for k in ("libur", "berulang", "repeat", "cycle", "siklus")):
+    if not any(k in lowered for k in ("repeat", "cycle")):
         return None
 
     chunks = [
         chunk.strip(" .,!?:;")
         for chunk in re.split(
-            r"(?i)\b(?:setelah itu|setelahnya|lalu|kemudian|dan besoknya|besoknya|terus)\b|[,;]",
+            r"(?i)\b(?:after that|then|next)\b|[,;]",
             text,
         )
         if chunk and chunk.strip(" .,!?:;")
@@ -569,14 +548,14 @@ def extract_cycle_schedule(question: str) -> dict[str, Any] | None:
     segments: list[dict[str, Any]] = []
     for chunk in chunks:
         chunk_lower = chunk.lower()
-        if "libur" in chunk_lower:
-            off_match = re.search(r"(?i)\b(\d+)\s*hari\b", chunk)
+        if "off" in chunk_lower:
+            off_match = re.search(r"(?i)\b(\d+)\s*day\b", chunk)
             off_days = int(off_match.group(1)) if off_match else 1
             if off_days > 0:
                 segments.append({"type": "off", "days": off_days})
             continue
 
-        days_match = re.search(r"(?i)\b(\d+)\s*hari\b", chunk)
+        days_match = re.search(r"(?i)\b(\d+)\s*day\b", chunk)
         if not days_match:
             continue
         days = int(days_match.group(1))
@@ -613,7 +592,7 @@ def extract_cycle_schedule(question: str) -> dict[str, Any] | None:
         label = re.sub(r"(?i)\b(?:jam|pukul|at)\s*\d{1,2}(?:[:.]\d{2})?\b", " ", label)
         label = re.sub(r"(?i)\b(?:selama|for)\s*\d+\s*hari\b", " ", label)
         label = re.sub(
-            r"(?i)\b(?:ingatkan|ingatkan saya|jadwalkan|masuk|shift|kerja|hari ini|besok|tomorrow|lusa|berulang|repeat|terus)\b",
+            r"(?i)\b(?:remind|remind me|schedule|shift|work|today|tomorrow|repeat)\b",
             " ",
             label,
         )
@@ -698,7 +677,7 @@ def extract_recurring_schedule(question: str) -> dict[str, Any] | None:
         return None
 
     interval_match = re.search(
-        r"(?i)\b(?:setiap|tiap|every)\s+(\d+)\s*(detik|menit|jam|hari|sec(?:ond)?s?|min(?:ute)?s?|hours?|days?)\b",
+        r"(?i)\b(?:every)\s+(\d+)\s*(sec(?:ond)?s?|min(?:ute)?s?|hours?|days?)\b",
         text,
     )
     if interval_match:
@@ -706,20 +685,20 @@ def extract_recurring_schedule(question: str) -> dict[str, Any] | None:
         unit = interval_match.group(2).lower()
         if amount > 0:
             multiplier = 0
-            if unit.startswith(("detik", "sec")):
+            if unit.startswith(("sec",)):
                 multiplier = 1
-            elif unit.startswith(("menit", "min")):
+            elif unit.startswith(("min",)):
                 multiplier = 60
-            elif unit.startswith(("jam", "hour")):
+            elif unit.startswith(("hour",)):
                 multiplier = 3600
-            elif unit.startswith(("hari", "day")):
+            elif unit.startswith(("day",)):
                 multiplier = 86400
 
             if multiplier > 0:
                 return {"every_seconds": amount * multiplier, "one_shot": False}
 
     daily_match = re.search(
-        r"(?i)\b(?:setiap\s+hari|tiap\s+hari|every\s+day|daily)\b(?:\s*(?:jam|pukul|at))?\s*(\d{1,2})(?::(\d{2}))?",
+        r"(?i)\b(?:every\s+day|daily)\b(?:\s*(?:at))?\s*(\d{1,2})(?::(\d{2}))?",
         text,
     )
     if daily_match:

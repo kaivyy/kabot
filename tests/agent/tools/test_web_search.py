@@ -160,8 +160,8 @@ async def test_web_search_no_keys_falls_back_to_google_news_rss(monkeypatch):
 
     monkeypatch.setattr(tool, "_search_google_news_rss", _rss)
 
-    result = await tool.execute("berita terbaru 2026 sekarang", count=5)
-    assert "rss-fallback-ok:berita terbaru 2026 sekarang:5" in result
+    result = await tool.execute("latest news 2026 now", count=5)
+    assert "rss-fallback-ok:latest news 2026 now:5" in result
 
 
 @pytest.mark.asyncio
@@ -217,7 +217,7 @@ async def test_web_search_google_news_rss_filters_irrelevant_items(monkeypatch):
         kimi_api_key="",
     )
 
-    result = await tool._search_google_news_rss("carikan berita perang iran", count=5)
+    result = await tool._search_google_news_rss("find news about iran war", count=5)
     assert "US-Iran war risk rises after new strikes" in result
     assert "100 Lagu tentang Persahabatan Bahasa Inggris" not in result
 
@@ -252,7 +252,7 @@ async def test_web_search_google_news_rss_compacts_conversational_geopolitical_q
         async def get(self, url, timeout=10.0):  # type: ignore[no-untyped-def]
             requested_urls.append(str(url))
             lowered = str(url).lower()
-            if "iran" in lowered and "israel" in lowered and "conflict" in lowered and "tolong" not in lowered:
+            if "iran" in lowered and "israel" in lowered and "conflict" in lowered and "please" not in lowered:
                 return _DummyTextResponse(compact_xml)
             return _DummyTextResponse(raw_xml)
 
@@ -270,10 +270,10 @@ async def test_web_search_google_news_rss_compacts_conversational_geopolitical_q
     )
 
     result = await tool._search_google_news_rss(
-        "Adakah gejolak politik sekarang? Saya dengar ada konflik Iran vs US/Israel, tolong jawab singkat dan natural.",
+        "Is there political turmoil right now? I heard there is conflict between Iran and the US/Israel, please answer briefly and naturally.",
         count=5,
     )
 
     assert "Iran war live: US and Israeli strikes widen conflict" in result
-    assert any("tolong" in item.lower() for item in requested_urls)
-    assert any("conflict" in item.lower() and "tolong" not in item.lower() for item in requested_urls)
+    assert any("please" in item.lower() for item in requested_urls)
+    assert any("conflict" in item.lower() and "please" not in item.lower() for item in requested_urls)

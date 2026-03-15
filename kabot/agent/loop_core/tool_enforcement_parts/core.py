@@ -534,7 +534,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         stale_metadata_dropped = True
 
     # If user sends a short follow-up that contains a concrete tool payload
-    # (e.g., "adaro mana", "ethereum berapa", "cuaca di 東京"), prefer it over
+    # (e.g., "adaro price", "ethereum now", "weather in 東京"), prefer it over
     # stale carried query metadata.
     if resolved_query and raw_text and _query_has_tool_payload(required_tool, raw_text):
         source_text = raw_text
@@ -754,7 +754,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         )
 
         normalized_source = _normalize_text(source_text)
-        has_send_verb = bool(re.search(r"(?i)\b(kirim|send|share|attach|lampirkan|upload)\b", source_text))
+        has_send_verb = bool(re.search(r"(?i)\b(send|share|attach|upload)\b", source_text))
         has_explicit_target = bool(_FILELIKE_QUERY_RE.search(source_text) or _PATHLIKE_QUERY_RE.search(source_text))
         send_without_target = bool(has_send_verb and not has_explicit_target)
 
@@ -872,10 +872,10 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
 
     if required_tool == "image_gen":
         prompt = raw_text or source_text
-        prompt = re.sub(r"(?i)^(?:tolong|please|mohon|bisa|could you)\s+", "", prompt).strip()
-        prompt = re.sub(r"(?i)^(?:buat(?:kan)?|generate|create|render)\s+", "", prompt).strip()
+        prompt = re.sub(r"(?i)^(?:please|could you)\s+", "", prompt).strip()
+        prompt = re.sub(r"(?i)^(?:generate|create|render)\s+", "", prompt).strip()
         prompt = re.sub(
-            r"(?i)\s+(?:dan|lalu|kemudian|then)\s+(?:simpan|save|kirim|send|attach|lampirkan|upload|export)\b.*$",
+            r"(?i)\s+(?:then)\s+(?:save|send|attach|upload|export)\b.*$",
             "",
             prompt,
         ).strip(" .,:;")
@@ -909,7 +909,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         short_weather_followup = bool(
             raw_text
             and len(str(raw_text).strip()) <= 24
-            and re.search(r"(?i)(wind|angin|weather|cuaca)", str(raw_text))
+            and re.search(r"(?i)(wind|weather)", str(raw_text))
         )
         if (
             raw_text
@@ -1128,11 +1128,11 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
         term in q_lower for term in CRON_MANAGEMENT_TERMS
     )
 
-    if is_management and any(k in q_lower for k in ("list", "lihat", "show")):
+    if is_management and any(k in q_lower for k in ("list", "show")):
         result = await _exec_cron({"action": "list_groups"})
         return str(result)
 
-    if is_management and any(k in q_lower for k in ("hapus", "delete", "remove")):
+    if is_management and any(k in q_lower for k in ("delete", "remove")):
         group_id_match = re.search(r"\bgrp_[a-z0-9_-]+\b", q_lower)
         if group_id_match:
             result = await _exec_cron({"action": "remove_group", "group_id": group_id_match.group(0)})
@@ -1150,7 +1150,7 @@ async def execute_required_tool_fallback(loop: Any, required_tool: str, msg: Inb
 
         return i18n_t("cron.remove.need_selector", source_text)
 
-    if is_management and any(k in q_lower for k in ("edit", "ubah", "update")):
+    if is_management and any(k in q_lower for k in ("edit", "update")):
         selector_payload: dict[str, Any] = {}
         group_id_match = re.search(r"\bgrp_[a-z0-9_-]+\b", q_lower)
         if group_id_match:

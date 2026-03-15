@@ -12,7 +12,7 @@ from kabot.agent.skills_matching import (
     normalize_skill_reference_name,
 )
 
-_EXPLICIT_SKILL_FAST_PATH_FILLERS = {"request", "task", "permintaan", "tolong", "please", "ini", "that", "this"}
+_EXPLICIT_SKILL_FAST_PATH_FILLERS = {"request", "task", "please", "that", "this"}
 
 
 def iter_skill_roots_with_source(loader: Any) -> list[tuple[Path, str]]:

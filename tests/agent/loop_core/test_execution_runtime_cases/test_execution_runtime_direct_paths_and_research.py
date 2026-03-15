@@ -51,7 +51,7 @@ async def test_run_agent_loop_direct_read_file_analysis_returns_summary_via_prov
         chat_id="8086",
         sender_id="user",
         content="font di file ini",
-        metadata={"file_analysis_mode": True},
+        metadata={"file_analysis_mode": True, "required_tool": "read_file", "required_tool_query": "font di file ini"},
     )
     session = SimpleNamespace(metadata={})
 
@@ -76,7 +76,13 @@ async def test_run_agent_loop_direct_list_dir_returns_raw_without_summary_chat()
         bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
     )
 
-    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek isi desktop")
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="cek isi desktop",
+        metadata={"required_tool": "list_dir", "required_tool_query": "cek isi desktop"},
+    )
     session = SimpleNamespace(metadata={})
 
     result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
@@ -101,7 +107,13 @@ async def test_run_agent_loop_direct_find_files_returns_raw_without_summary_chat
         bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
     )
 
-    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cari file report.pdf")
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="cari file report.pdf",
+        metadata={"required_tool": "find_files", "required_tool_query": "cari file report.pdf"},
+    )
     session = SimpleNamespace(metadata={})
 
     result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
@@ -409,7 +421,13 @@ async def test_run_agent_loop_direct_list_dir_error_is_rephrased_by_model():
         bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
     )
 
-    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="buka folder pi-mono")
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="buka folder pi-mono",
+        metadata={"required_tool": "list_dir", "required_tool_query": "buka folder pi-mono"},
+    )
     session = SimpleNamespace(metadata={})
 
     result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
@@ -744,7 +762,13 @@ async def test_run_agent_loop_direct_read_only_tool_returns_summary_via_provider
         provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content=summarized))),
     )
 
-    msg = InboundMessage(channel="cli", chat_id="direct", sender_id="user", content="cek system info")
+    msg = InboundMessage(
+        channel="cli",
+        chat_id="direct",
+        sender_id="user",
+        content="cek system info",
+        metadata={"required_tool": "get_system_info", "required_tool_query": "cek system info"},
+    )
     session = SimpleNamespace(metadata={})
 
     result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
@@ -769,7 +793,13 @@ async def test_run_agent_loop_direct_web_search_returns_raw_without_summary_chat
         bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
     )
 
-    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="carikan berita perang us israel vs iran")
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="carikan berita perang us israel vs iran",
+        metadata={"required_tool": "web_search", "required_tool_query": "carikan berita perang us israel vs iran"},
+    )
     session = SimpleNamespace(metadata={})
 
     result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
@@ -794,7 +824,13 @@ async def test_run_agent_loop_direct_system_update_returns_raw_without_summary_c
         bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
     )
 
-    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="update kabot sekarang")
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="update kabot sekarang",
+        metadata={"required_tool": "system_update", "required_tool_query": "update kabot sekarang"},
+    )
     session = SimpleNamespace(metadata={})
 
     result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
@@ -819,7 +855,13 @@ async def test_run_agent_loop_direct_weather_returns_raw_without_summary_chat():
         bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
     )
 
-    msg = InboundMessage(channel="telegram", chat_id="8086", sender_id="user", content="cek suhu purwokerto sekarang")
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="8086",
+        sender_id="user",
+        content="cek suhu purwokerto sekarang",
+        metadata={"required_tool": "weather", "required_tool_query": "cek suhu purwokerto sekarang"},
+    )
     session = SimpleNamespace(metadata={})
 
     result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
@@ -1272,7 +1314,7 @@ async def test_call_llm_with_fallback_warns_when_quota_warn_limit_exceeded(monke
     assert any("quota" in item.lower() and "warn" in item.lower() for item in warnings)
 
 @pytest.mark.asyncio
-async def test_run_agent_loop_forces_web_search_for_live_query_even_without_research_route():
+async def test_run_agent_loop_does_not_force_web_search_for_live_query_without_grounded_metadata():
     loop = SimpleNamespace(
         max_iterations=1,
         _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
@@ -1307,9 +1349,9 @@ async def test_run_agent_loop_forces_web_search_for_live_query_even_without_rese
 
     result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
 
-    assert result == "live-result"
-    loop._execute_required_tool_fallback.assert_awaited_once_with("web_search", msg)
-    loop._call_llm_with_fallback.assert_not_awaited()
+    assert result == "should-not-run"
+    loop._execute_required_tool_fallback.assert_not_awaited()
+    loop._call_llm_with_fallback.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_run_agent_loop_research_route_does_not_force_web_search_for_general_advice_query():

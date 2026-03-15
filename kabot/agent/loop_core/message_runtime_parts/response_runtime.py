@@ -139,6 +139,21 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
     if forced_skill_names:
         fast_direct_context = False
         fast_simple_context = False
+    if (
+        continuity_source in {"coding_request", "committed_coding_action"}
+        and str(decision.profile).upper() == "CODING"
+        and "[Coding Build Note]" not in llm_current_message
+    ):
+        llm_current_message = (
+            f"{llm_current_message}\n\n"
+            "[Coding Build Note]\n"
+            "The user is asking for real software build work now. Treat this as a coding task: "
+            "understand the existing chat context, plan briefly when needed, then execute with "
+            "real tools or approved skills. If the request already gives a concrete brand/theme/"
+            "deliverable, do not bounce back into a separate discovery or approval round unless "
+            "a real blocker remains. Do not stop at a mockup, placeholder, or guessed completion "
+            "message, and do not claim delivery unless the result was actually sent."
+        )
 
     queue_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
     queue_info = queue_meta.get("queue") if isinstance(queue_meta.get("queue"), dict) else {}

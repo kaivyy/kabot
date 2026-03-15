@@ -15,11 +15,8 @@ IMMEDIATE_ACTION_PATTERNS = [
     # Quick lookups
     "stock",
     "crypto",
-    "saham",
-    "harga",
     # Time queries
     "what time",
-    "jam berapa",
 ]
 
 _HINT_TOKEN_RE = re.compile(r"[^\w\s]+", re.UNICODE)
@@ -129,11 +126,6 @@ def self_evaluate(loop: Any, question: str, answer: str) -> tuple[bool, str | No
         "i am unable to",
         "cannot access",
         "i'm not able to",
-        # Indonesian
-        "saya tidak bisa",
-        "saya tidak dapat",
-        "saya tidak memiliki akses",
-        "tidak dapat mengakses",
         # Spanish
         "no puedo",
         "no tengo acceso",

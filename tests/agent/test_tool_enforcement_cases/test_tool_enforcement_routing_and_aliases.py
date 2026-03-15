@@ -104,25 +104,25 @@ def agent_loop(tmp_path):
     )
 
 def test_required_tool_for_query_keeps_weather_and_live_news_ai_driven_but_preserves_explicit_ops(agent_loop):
-    assert agent_loop._required_tool_for_query("tolong cek suhu cilacap hari ini") is None
-    assert agent_loop._required_tool_for_query("purwokerto berapa derajat sekarang") is None
-    assert agent_loop._required_tool_for_query("dibandung berangin apa ga") is None
+    assert agent_loop._required_tool_for_query("please check the weather in cilacap today") is None
+    assert agent_loop._required_tool_for_query("what is the temperature in purwokerto now") is None
+    assert agent_loop._required_tool_for_query("is it windy in bandung") is None
     assert (
         agent_loop._required_tool_for_query(
-            "ya itu cek update real time kondisi cuaca, kecepatan angin, arah angin di bandung"
+            "check update real time weather wind speed wind direction in bandung"
         )
         is None
     )
-    assert agent_loop._required_tool_for_query("ingatkan 2 menit lagi makan") == "cron"
-    assert agent_loop._required_tool_for_query("tolong list jadwal reminder saya") == "cron"
-    assert agent_loop._required_tool_for_query("cek update kabot sekarang") == "check_update"
-    assert agent_loop._required_tool_for_query("update kabot sekarang") == "system_update"
-    assert agent_loop._required_tool_for_query("kirim file tes.md") == "message"
-    assert agent_loop._required_tool_for_query("cari file report.pdf lalu kirim ke chat ini") == "find_files"
-    assert agent_loop._required_tool_for_query("kapasitas ram berapa") == "get_system_info"
-    assert agent_loop._required_tool_for_query("cek ram proses sekarang") == "get_process_memory"
-    assert agent_loop._required_tool_for_query("carikan berita perang us israel vs iran terbaru") is None
-    assert agent_loop._required_tool_for_query("berita terbaru 2026 sekarang") is None
+    assert agent_loop._required_tool_for_query("remind me in 2 minutes to eat") == "cron"
+    assert agent_loop._required_tool_for_query("please list my reminder schedule") == "cron"
+    assert agent_loop._required_tool_for_query("check kabot update now") == "check_update"
+    assert agent_loop._required_tool_for_query("update kabot now") == "system_update"
+    assert agent_loop._required_tool_for_query("send file tes.md") == "message"
+    assert agent_loop._required_tool_for_query("find file report.pdf then send it here") == "find_files"
+    assert agent_loop._required_tool_for_query("show system info") == "get_system_info"
+    assert agent_loop._required_tool_for_query("check process ram usage now") == "get_process_memory"
+    assert agent_loop._required_tool_for_query("find the latest israel us iran war news") is None
+    assert agent_loop._required_tool_for_query("latest 2026 news now") is None
     assert agent_loop._required_tool_for_query("latest israel iran war 2026 now") is None
     assert (
         agent_loop._required_tool_for_query(

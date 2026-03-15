@@ -95,36 +95,25 @@ _LOCATION_ALIAS_VARIANTS: dict[str, tuple[str, ...]] = {
 _WEATHER_ALIAS_ENV_PATH = "KABOT_WEATHER_ALIASES_PATH"
 _WEATHER_ALIAS_FILENAME = "weather_aliases.json"
 _WEATHER_HOURLY_WINDOW_RE = re.compile(
-    r"(?i)\b(?:next\s+)?(\d{1,2})\s*(?:-|to|until|sampai|hingga)\s*(\d{1,2})\s*(?:hours?|jam)\b"
+    r"(?i)\b(?:next\s+)?(\d{1,2})\s*(?:-|to|until)\s*(\d{1,2})\s*(?:hours?)\b"
 )
 _WEATHER_SINGLE_HOURS_RE = re.compile(
-    r"(?i)\b(?:next|for the next|dalam|selama)\s*(\d{1,2})\s*(?:hours?|jam)\b"
+    r"(?i)\b(?:next|for the next)\s*(\d{1,2})\s*(?:hours?)\b"
 )
 _WEATHER_DAILY_MARKERS = (
     "tomorrow",
-    "besok",
-    "lusa",
-    "minggu",
     "week",
     "weekly",
     "7 day",
     "7-day",
-    "harian",
-    "per hari",
     "daily",
 )
 _WEATHER_FORECAST_MARKERS = (
     "forecast",
-    "prediksi",
-    "prakiraan",
-    "ramalan",
     "hourly",
-    "jam ke depan",
     "next few hours",
     "next hours",
     "will it rain",
-    "bakal hujan",
-    "akan hujan",
 )
 
 
@@ -226,12 +215,12 @@ def normalize_location(location: str) -> str:
 
     candidate = extract_weather_location(raw) or raw
     candidate = re.sub(
-        r"(?i)\b(?:right now|saat ini|hari ini|today|sekarang|now|berapa|how much)\b",
+        r"(?i)\b(?:right now|today|now|how much)\b",
         " ",
         candidate,
     )
     candidate = re.sub(
-        r"(?i)\b(?:kota|city|kabupaten|regency|district|county|municipality|province|provinsi)\b$",
+        r"(?i)\b(?:city|regency|district|county|municipality|province)\b$",
         " ",
         candidate,
     )

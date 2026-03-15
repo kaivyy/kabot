@@ -29,7 +29,7 @@ async def test_process_message_file_context_followup_uses_recent_history_when_se
     history = [
         {
             "role": "user",
-            "content": r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html font pada web ini",
+            "content": r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html font on this page",
         }
     ]
 
@@ -73,7 +73,7 @@ async def test_process_message_file_context_followup_uses_recent_history_when_se
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="buka html ini",
+        content="open this html",
     )
     await process_message(loop, msg)
 
@@ -162,12 +162,12 @@ async def test_process_message_multilingual_file_context_followup_uses_recent_hi
 @pytest.mark.asyncio
 async def test_process_message_short_weather_followup_question_uses_pending_weather_context():
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "berangin apa ga?"}]
+    context_builder.build_messages.return_value = [{"role": "user", "content": "is it windy?"}]
     session = SimpleNamespace(
         metadata={
             "pending_followup_tool": {
                 "tool": "weather",
-                "source": "suhu bandung sekarang berapa",
+                    "source": "weather in bandung now",
                 "updated_at": time.time(),
                 "expires_at": time.time() + 300,
             }
@@ -213,24 +213,24 @@ async def test_process_message_short_weather_followup_question_uses_pending_weat
         runtime_observability=None,
     )
 
-    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="berangin apa ga?")
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="is it windy?")
     await process_message(loop, msg)
 
     loop._run_agent_loop.assert_awaited_once()
     loop._run_simple_response.assert_not_called()
     assert msg.metadata.get("required_tool") == "weather"
     assert "bandung" in str(msg.metadata.get("required_tool_query", "")).lower()
-    assert "berangin" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "windy" in str(msg.metadata.get("required_tool_query", "")).lower()
 
 @pytest.mark.asyncio
 async def test_process_message_weather_tool_detected_from_raw_followup_still_enriches_pending_location_context():
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "berangin apa ga?"}]
+    context_builder.build_messages.return_value = [{"role": "user", "content": "is it windy?"}]
     session = SimpleNamespace(
         metadata={
             "pending_followup_tool": {
                 "tool": "weather",
-                "source": "suhu bandung sekarang berapa",
+                    "source": "weather in bandung now",
                 "updated_at": time.time(),
                 "expires_at": time.time() + 300,
             }
@@ -266,7 +266,7 @@ async def test_process_message_weather_tool_detected_from_raw_followup_still_enr
             tool_names=["weather"],
             has=lambda name: name == "weather",
         ),
-        _required_tool_for_query=lambda text: "weather" if "berangin" in str(text or "").lower() else None,
+        _required_tool_for_query=lambda text: "weather" if "windy" in str(text or "").lower() else None,
         _run_simple_response=AsyncMock(return_value="simple"),
         _run_agent_loop=AsyncMock(return_value="agent"),
         _finalize_session=AsyncMock(
@@ -276,31 +276,31 @@ async def test_process_message_weather_tool_detected_from_raw_followup_still_enr
         runtime_observability=None,
     )
 
-    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="berangin apa ga?")
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="is it windy?")
     await process_message(loop, msg)
 
     loop._run_agent_loop.assert_awaited_once()
     assert msg.metadata.get("required_tool") == "weather"
     assert "bandung" in str(msg.metadata.get("required_tool_query", "")).lower()
-    assert "berangin" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "windy" in str(msg.metadata.get("required_tool_query", "")).lower()
 
 
 @pytest.mark.asyncio
 async def test_process_message_weather_forecast_followup_reuses_recent_weather_location():
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "prediksi 3-6 jam ke depan"}]
+    context_builder.build_messages.return_value = [{"role": "user", "content": "forecast for the next 3-6 hours"}]
     session = SimpleNamespace(
         metadata={
             "pending_followup_tool": {
                 "tool": "weather",
-                "source": "cuaca cilacap sekarang",
+                "source": "weather in cilacap now",
                 "updated_at": time.time(),
                 "expires_at": time.time() + 300,
             },
             "last_tool_context": {
                 "tool": "weather",
                 "location": "Cilacap",
-                "source": "cuaca cilacap sekarang",
+                "source": "weather in cilacap now",
                 "updated_at": time.time(),
             },
         }
@@ -346,33 +346,33 @@ async def test_process_message_weather_forecast_followup_reuses_recent_weather_l
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="prediksi 3-6 jam ke depan",
+        content="forecast for the next 3-6 hours",
     )
     await process_message(loop, msg)
 
     loop._run_agent_loop.assert_awaited_once()
     assert msg.metadata.get("required_tool") == "weather"
     assert "cilacap" in str(msg.metadata.get("required_tool_query", "")).lower()
-    assert "prediksi" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "forecast" in str(msg.metadata.get("required_tool_query", "")).lower()
 
 
 @pytest.mark.asyncio
 async def test_process_message_weather_forecast_followup_survives_recent_answer_reference_when_last_tool_context_is_weather():
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "prediksi 3-6 jam ke depan"}]
+    context_builder.build_messages.return_value = [{"role": "user", "content": "forecast for the next 3-6 hours"}]
     session = SimpleNamespace(
         metadata={
             "last_tool_context": {
                 "tool": "weather",
                 "location": "Cilacap",
-                "source": "cuaca cilacap sekarang",
+                "source": "weather in cilacap now",
                 "updated_at": time.time(),
             },
         }
     )
 
     conversation_history = [
-        {"role": "assistant", "content": "Iya, 27.6C di Cilacap itu termasuk lumayan panas buat aktivitas luar rumah."}
+        {"role": "assistant", "content": "Yes, 27.6C in Cilacap is already pretty warm for outdoor activity."}
     ]
 
     loop = SimpleNamespace(
@@ -401,7 +401,7 @@ async def test_process_message_weather_forecast_followup_survives_recent_answer_
         _resolve_context_for_message=lambda _msg: context_builder,
         context=context_builder,
         tools=SimpleNamespace(tool_names=["weather"]),
-        _required_tool_for_query=lambda text: "weather" if "prediksi" in str(text or "").lower() else None,
+        _required_tool_for_query=lambda text: "weather" if "forecast" in str(text or "").lower() else None,
         _run_simple_response=AsyncMock(return_value="simple"),
         _run_agent_loop=AsyncMock(return_value="agent"),
         _finalize_session=AsyncMock(
@@ -415,27 +415,27 @@ async def test_process_message_weather_forecast_followup_survives_recent_answer_
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="prediksi 3-6 jam ke depan",
+        content="forecast for the next 3-6 hours",
     )
     await process_message(loop, msg)
 
     loop._run_agent_loop.assert_awaited_once()
     assert msg.metadata.get("required_tool") == "weather"
     assert "cilacap" in str(msg.metadata.get("required_tool_query", "")).lower()
-    assert "prediksi" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "forecast" in str(msg.metadata.get("required_tool_query", "")).lower()
     assert msg.metadata.get("continuity_source") != "answer_reference"
 
 
 @pytest.mark.asyncio
 async def test_process_message_weather_forecast_followup_beats_cron_parser_when_weather_context_is_grounded():
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "prediksi 3-6 jam ke depan"}]
+    context_builder.build_messages.return_value = [{"role": "user", "content": "forecast for the next 3-6 hours"}]
     session = SimpleNamespace(
         metadata={
             "last_tool_context": {
                 "tool": "weather",
                 "location": "Cilacap",
-                "source": "cuaca cilacap sekarang",
+                "source": "weather in cilacap now",
                 "updated_at": time.time(),
             },
         }
@@ -467,7 +467,7 @@ async def test_process_message_weather_forecast_followup_beats_cron_parser_when_
         _resolve_context_for_message=lambda _msg: context_builder,
         context=context_builder,
         tools=SimpleNamespace(tool_names=["weather"]),
-        _required_tool_for_query=lambda text: "cron" if "prediksi" in str(text or "").lower() else None,
+        _required_tool_for_query=lambda text: "cron" if "forecast" in str(text or "").lower() else None,
         _run_simple_response=AsyncMock(return_value="simple"),
         _run_agent_loop=AsyncMock(return_value="agent"),
         _finalize_session=AsyncMock(
@@ -481,19 +481,19 @@ async def test_process_message_weather_forecast_followup_beats_cron_parser_when_
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="prediksi 3-6 jam ke depan",
+        content="forecast for the next 3-6 hours",
     )
     await process_message(loop, msg)
 
     loop._run_agent_loop.assert_awaited_once()
     assert msg.metadata.get("required_tool") == "weather"
     assert "cilacap" in str(msg.metadata.get("required_tool_query", "")).lower()
-    assert "prediksi" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "forecast" in str(msg.metadata.get("required_tool_query", "")).lower()
 
 @pytest.mark.asyncio
 async def test_process_message_stock_tool_detected_from_raw_followup_still_enriches_pending_symbol_context():
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "jadikan idr harganya"}]
+    context_builder.build_messages.return_value = [{"role": "user", "content": "convert the quote to idr"}]
     session = SimpleNamespace(
         metadata={
             "pending_followup_tool": {
@@ -544,7 +544,7 @@ async def test_process_message_stock_tool_detected_from_raw_followup_still_enric
         runtime_observability=None,
     )
 
-    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="jadikan idr harganya")
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="convert the quote to idr")
     await process_message(loop, msg)
 
     loop._run_agent_loop.assert_awaited_once()
@@ -556,12 +556,12 @@ async def test_process_message_stock_tool_detected_from_raw_followup_still_enric
 @pytest.mark.asyncio
 async def test_process_message_stock_trend_followup_uses_recent_stock_context_for_analysis():
     context_builder = MagicMock()
-    context_builder.build_messages.return_value = [{"role": "user", "content": "trend nya naik?"}]
+    context_builder.build_messages.return_value = [{"role": "user", "content": "bullish or bearish?"}]
     session = SimpleNamespace(
         metadata={
             "pending_followup_tool": {
                 "tool": "stock",
-                "source": "kalau saham apple berapa sekarang",
+                "source": "what is apple stock now",
                 "updated_at": time.time(),
                 "expires_at": time.time() + 300,
             },
@@ -613,13 +613,13 @@ async def test_process_message_stock_trend_followup_uses_recent_stock_context_fo
         runtime_observability=None,
     )
 
-    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="trend nya naik?")
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="bullish or bearish?")
     await process_message(loop, msg)
 
     loop._run_agent_loop.assert_awaited_once()
     assert msg.metadata.get("required_tool") == "stock_analysis"
     assert "apple" in str(msg.metadata.get("required_tool_query", "")).lower()
-    assert "trend" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "bullish" in str(msg.metadata.get("required_tool_query", "")).lower()
 
 
 @pytest.mark.asyncio
@@ -754,15 +754,13 @@ async def test_process_message_referential_stock_followup_uses_context_instead_o
         runtime_observability=None,
     )
 
-    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="yang kedua")
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="the second one")
     await process_message(loop, msg)
 
-    loop._run_agent_loop.assert_awaited_once()
-    loop._run_simple_response.assert_not_called()
+    loop._run_simple_response.assert_awaited_once()
+    loop._run_agent_loop.assert_not_called()
     assert msg.metadata.get("required_tool") is None
-    effective_content = str(msg.metadata.get("effective_content") or "")
-    assert effective_content.startswith("yang kedua\n\n[Follow-up Context]\n")
-    assert "breakout, pullback, invalidation" in effective_content.lower()
+    assert msg.metadata.get("continuity_source") != "pending_followup_intent"
 
 
 @pytest.mark.asyncio
@@ -824,7 +822,7 @@ async def test_process_message_hostile_feedback_does_not_reuse_stale_stock_follo
         runtime_observability=None,
     )
 
-    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="tolol")
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="stupid")
     await process_message(loop, msg)
 
     loop._run_simple_response.assert_awaited_once()
@@ -832,7 +830,7 @@ async def test_process_message_hostile_feedback_does_not_reuse_stale_stock_follo
     assert msg.metadata.get("required_tool") is None
     assert "pending_followup_tool" not in session.metadata
     current_message = context_builder.build_messages.call_args.kwargs["current_message"]
-    assert current_message.startswith("tolol")
+    assert current_message.startswith("stupid")
     assert "[Feedback Note]" in current_message
     assert "do not joke" in current_message.lower()
 
@@ -1321,7 +1319,7 @@ async def test_process_message_weather_context_beats_update_keyword_overlap():
             "last_tool_context": {
                 "tool": "weather",
                 "location": "bandung",
-                "source": "suhu bandung sekarang berapa",
+                "source": "weather in bandung now",
                 "updated_at": time.time(),
             }
         }
@@ -1370,7 +1368,7 @@ async def test_process_message_weather_context_beats_update_keyword_overlap():
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="cek update real time kondisi cuaca kecepatan angin arah angin di bandung",
+        content="check update real time weather wind speed wind direction in bandung",
     )
     await process_message(loop, msg)
 
@@ -1378,7 +1376,7 @@ async def test_process_message_weather_context_beats_update_keyword_overlap():
     loop._run_simple_response.assert_not_called()
     assert msg.metadata.get("required_tool") == "weather"
     assert "bandung" in str(msg.metadata.get("required_tool_query", "")).lower()
-    assert "angin" in str(msg.metadata.get("required_tool_query", "")).lower()
+    assert "wind" in str(msg.metadata.get("required_tool_query", "")).lower()
 
 @pytest.mark.asyncio
 async def test_process_message_multilingual_weather_followup_uses_last_location_context():
@@ -2141,7 +2139,7 @@ async def test_process_message_short_contextual_followup_does_not_reuse_last_sto
 
 
 @pytest.mark.asyncio
-async def test_process_message_recent_user_intent_beats_weak_parser_guess_on_low_information_followup():
+async def test_process_message_low_information_followup_no_longer_forces_weather_from_plain_history_text():
     captured = {}
 
     def _build_messages(**kwargs):
@@ -2151,15 +2149,7 @@ async def test_process_message_recent_user_intent_beats_weak_parser_guess_on_low
     context_builder = MagicMock()
     context_builder.build_messages.side_effect = _build_messages
     session = SimpleNamespace(metadata={})
-    history = [{"role": "user", "content": "cek suhu cilacap sekarang"}]
-
-    def _required_tool(text: str) -> str | None:
-        normalized = str(text or "").lower()
-        if "update" in normalized:
-            return "check_update"
-        if "suhu" in normalized or "cuaca" in normalized:
-            return "weather"
-        return None
+    history = [{"role": "user", "content": "check weather in cilacap now"}]
 
     loop = SimpleNamespace(
         _active_turn_id=None,
@@ -2187,7 +2177,7 @@ async def test_process_message_recent_user_intent_beats_weak_parser_guess_on_low
         _resolve_context_for_message=lambda _msg: context_builder,
         context=context_builder,
         tools=SimpleNamespace(tool_names=["weather", "check_update"], has=lambda name: name in {"weather", "check_update"}),
-        _required_tool_for_query=_required_tool,
+        _required_tool_for_query=lambda _text: None,
         _run_simple_response=AsyncMock(return_value="simple"),
         _run_agent_loop=AsyncMock(return_value="agent"),
         _finalize_session=AsyncMock(
@@ -2200,23 +2190,22 @@ async def test_process_message_recent_user_intent_beats_weak_parser_guess_on_low
     msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="update dong")
     await process_message(loop, msg)
 
-    loop._run_agent_loop.assert_awaited_once()
-    loop._run_simple_response.assert_not_called()
-    assert msg.metadata.get("required_tool") == "weather"
-    assert msg.metadata.get("required_tool_query") == "cek suhu cilacap sekarang"
-    assert msg.metadata.get("continuity_source") == "user_intent"
-    assert msg.metadata.get("forced_skill_names") == ["weather"]
-    assert msg.metadata.get("suppress_required_tool_inference") is True
-    assert captured.get("skill_names") == ["weather"]
+    loop._run_simple_response.assert_awaited_once()
+    loop._run_agent_loop.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    assert msg.metadata.get("continuity_source") in {None, "none"}
+    assert msg.metadata.get("forced_skill_names") is None
+    assert msg.metadata.get("suppress_required_tool_inference") is not True
+    assert captured.get("skill_names") is None or captured.get("skill_names") == []
 
 
 @pytest.mark.asyncio
-async def test_process_message_explicit_weather_query_marks_parser_continuity_source():
+async def test_process_message_explicit_weather_query_uses_grounded_weather_lane():
     captured = {}
 
     def _build_messages(**kwargs):
         captured["skill_names"] = kwargs.get("skill_names")
-        return [{"role": "user", "content": "cek suhu cilacap sekarang"}]
+        return [{"role": "user", "content": "check weather in cilacap now"}]
 
     context_builder = MagicMock()
     context_builder.build_messages.side_effect = _build_messages
@@ -2224,7 +2213,7 @@ async def test_process_message_explicit_weather_query_marks_parser_continuity_so
 
     def _required_tool(text: str) -> str | None:
         normalized = str(text or "").lower()
-        if "suhu" in normalized or "cuaca" in normalized:
+        if "weather" in normalized or "temperature" in normalized:
             return "weather"
         return None
 
@@ -2268,14 +2257,14 @@ async def test_process_message_explicit_weather_query_marks_parser_continuity_so
         channel="telegram",
         sender_id="u1",
         chat_id="chat-1",
-        content="cek suhu cilacap sekarang",
+        content="check weather in cilacap now",
     )
     await process_message(loop, msg)
 
     loop._run_agent_loop.assert_awaited_once()
     loop._run_simple_response.assert_not_called()
     assert msg.metadata.get("required_tool") == "weather"
-    assert msg.metadata.get("continuity_source") == "parser"
+    assert msg.metadata.get("continuity_source") == "weather_request"
     assert msg.metadata.get("forced_skill_names") == ["weather"]
     assert msg.metadata.get("suppress_required_tool_inference") is True
     assert captured.get("skill_names") == ["weather"]

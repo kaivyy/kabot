@@ -9,6 +9,7 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _normalize_text,
     _tool_registry_has,
 )
+from kabot.agent.loop_core.tool_enforcement import required_tool_for_query_for_loop
 
 _BRIEF_ANSWER_REQUEST_MARKERS = (
     "singkat",
@@ -191,12 +192,29 @@ def _infer_required_tool_from_recent_user_intent(
                 continue
             if _is_low_information_turn(candidate, max_tokens=3, max_chars=24):
                 continue
-            inferred = loop._required_tool_for_query(candidate)
+            inferred = _resolve_grounded_required_tool(loop, candidate)
+            if not inferred:
+                parser_hint = getattr(loop, "_required_tool_for_query", None)
+                if callable(parser_hint):
+                    try:
+                        inferred = parser_hint(candidate)
+                    except Exception:
+                        inferred = None
             if inferred:
                 inferred_tool = inferred
                 inferred_source = candidate
                 break
     return inferred_tool, inferred_source
+
+
+def _resolve_grounded_required_tool(loop: Any, text: str) -> str | None:
+    candidate = str(text or "").strip()
+    if not candidate:
+        return None
+    try:
+        return required_tool_for_query_for_loop(loop, candidate)
+    except Exception:
+        return None
 
 
 def _extract_reusable_last_tool_execution(
@@ -210,7 +228,7 @@ def _extract_reusable_last_tool_execution(
         return None, None
 
     # Finance quote tools are high-risk for stale follow-up reuse (e.g. generic
-    # "kenapa?" turns accidentally re-trigger stock prompts). Require fresh
+    # "why?" turns accidentally re-trigger stock prompts). Require fresh
     # intent/payload instead of blindly inheriting prior execution context.
     if execution_tool in {"stock", "stock_analysis", "crypto"}:
         return None, None

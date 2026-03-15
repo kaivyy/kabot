@@ -144,7 +144,7 @@ def _finalize_turn_metadata(state: Any) -> None:
             state.msg.metadata.pop("continuity_source", None)
         state.msg.metadata["suppress_required_tool_inference"] = bool(
             state.semantic_hint.kind
-            in {"advice_turn", "meta_feedback", "weather_metric_interpretation"}
+            in {"advice_turn", "meta_feedback"}
             or state.meta_skill_reference_turn
             or state.skill_creation_intent
             or state.skill_install_intent

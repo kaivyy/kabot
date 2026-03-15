@@ -52,8 +52,6 @@ def _should_persist_probe_history(msg: InboundMessage) -> bool:
 from kabot.agent.loop_core.message_runtime_parts.followup import (  # noqa: E402,I001
     _ABORT_REQUEST_TRIGGERS,
     _FILELIKE_EXTENSION_RE,
-    _FILESYSTEM_LOCATION_QUERY_PATTERNS,
-    _FILE_CONTEXT_FOLLOWUP_MARKERS,
     _KEEPALIVE_INTERVAL_SECONDS,
     _KEEPALIVE_INITIAL_DELAY_SECONDS,
     _KEEPALIVE_PASSTHROUGH_CHANNELS,
@@ -63,11 +61,9 @@ from kabot.agent.loop_core.message_runtime_parts.followup import (  # noqa: E402
     _PATHLIKE_TEXT_RE,
     _RUNTIME_META_FEEDBACK_MARKERS,
     _SHORT_INTERROGATIVE_RE,
-    _SKILL_CREATION_APPROVAL_MARKERS,
     _SKILL_CREATION_FLOW_KEY,
     _SKILL_CREATION_FLOW_TTL_SECONDS,
     _TRAILING_ABORT_PUNCT_RE,
-    _WEATHER_CONTEXT_FOLLOWUP_MARKERS,
     _clear_pending_followup_intent,
     _clear_pending_followup_tool,
     _get_last_tool_execution,
@@ -377,9 +373,6 @@ def _channel_uses_mutable_status_lane(loop: Any, channel_name: str) -> bool:
 
 
 _PRIMARY_INTENT_TAIL_MARKERS = (
-    "dari sini",
-    "dari jawaban ini",
-    "berdasarkan ini",
     "from this",
     "based on this",
     "from here",
@@ -387,14 +380,14 @@ _PRIMARY_INTENT_TAIL_MARKERS = (
 )
 _PRIMARY_INTENT_ACTION_RE = re.compile(
     r"(?i)\b("
-    r"hitung|calculate|calc|jelaskan|explain|ringkas|summarize|buat|bikin|lanjut|"
-    r"tolong|please|berapa|apa|kenapa|bagaimana|gimana|bisa|bisakah|"
-    r"hr|heart rate|detak jantung|zona|zone|karvonen"
+    r"calculate|calc|explain|summarize|continue|"
+    r"please|how much|what|why|how|can|could|"
+    r"hr|heart rate|zone|karvonen"
     r")\b"
 )
 _PERSONAL_HR_CALC_RE = re.compile(
     r"(?i)\b("
-    r"zona hr|hr zona|hr zone|heart rate zone|detak jantung|"
+    r"hr zone|heart rate zone|"
     r"karvonen|resting hr|max hr|hr max"
     r")\b"
 )
@@ -451,9 +444,9 @@ def _looks_like_live_research_query(text: str) -> bool:
         or has_crypto_symbol
         or re.search(
             r"(?i)\b("
-            r"stock|stocks|saham|ticker|tickers|quote|quotes|market|markets|"
-            r"harga|price|crypto|bitcoin|btc|ethereum|eth|coin|coins|token|tokens|"
-            r"forex|fx|kurs|rate|exchange(?:\s+rate)?|usd|idr|rupiah|ihsg|idx|jkse|nasdaq|dow|nikkei"
+            r"stock|stocks|ticker|tickers|quote|quotes|market|markets|"
+            r"price|crypto|bitcoin|btc|ethereum|eth|coin|coins|token|tokens|"
+            r"forex|fx|rate|exchange(?:\s+rate)?|usd|idr|idx|jkse|nasdaq|dow|nikkei"
             r")\b",
             normalized,
         )
@@ -461,9 +454,9 @@ def _looks_like_live_research_query(text: str) -> bool:
     has_finance_value_request = bool(
         re.search(
             r"(?i)\b("
-            r"berapa|how much|what(?:'s| is)|harga(?:nya)?|price|quote|nilai|value|"
-            r"kurs|rate|last|latest|current|now|today|hari ini|sekarang|saat ini|"
-            r"terbaru|terkini|real[\s-]?time|live|open|close|closing|high|low"
+            r"how much|what(?:'s| is)|price|quote|value|"
+            r"rate|last|latest|current|now|today|"
+            r"real[\s-]?time|live|open|close|closing|high|low"
             r")\b",
             normalized,
         )
@@ -507,17 +500,9 @@ def _looks_like_live_research_query(text: str) -> bool:
 _EXPLICIT_TOOL_USE_PATTERNS = (
     r"\buse the tool\b",
     r"\buse tool\b",
-    r"\bgunakan tool\b",
-    r"\bpake tool\b",
-    r"\bpakai tool\b",
     r"\btool mcp\b",
     r"\bmcp tool\b",
-    r"\bgunakan mcp\b",
-    r"\bpakai mcp\b",
     r"\bcall the tool\b",
-    r"\bjalankan tool\b",
-    r"\bpakai alat\b",
-    r"\bgunakan alat\b",
     r"使用工具",
     r"用这个工具",
     r"このツールを使",
@@ -539,9 +524,9 @@ def _looks_like_explicit_tool_use_request(text: str) -> bool:
 
 _TEMPORAL_CONTEXT_RE = re.compile(
     r"(?i)\b("
-    r"hari apa|what day|day is it|tanggal berapa|what date|jam berapa|what time|"
-    r"hari ini|today|besok|tomorrow|kemarin|yesterday|lusa|seminggu|next week|"
-    r"timezone|time zone|zona waktu|utc\s*[+-]?\s*\d{1,2}|wib|sekarang hari|hari sekarang"
+    r"what day|day is it|what date|what time|"
+    r"today|tomorrow|yesterday|next week|"
+    r"timezone|time zone|utc\s*[+-]?\s*\d{1,2}"
     r")\b"
 )
 _TEMPORAL_CONTEXT_NON_LATIN_PHRASES = (
@@ -726,7 +711,7 @@ def _looks_like_short_confirmation(text: str) -> bool:
     if not _is_low_information_turn(text, max_tokens=4, max_chars=40):
         return False
     normalized = _normalize_text(text)
-    # Short interrogatives like "saranmu apa" should open a new turn,
+    # Short interrogatives should open a new turn,
     # not continue stale pending tool/intent context.
     if _SHORT_INTERROGATIVE_RE.search(normalized):
         return False
@@ -744,50 +729,24 @@ _ASSISTANT_OFFER_CONTEXT_STOPWORDS = {
     "a",
     "an",
     "and",
-    "apa",
     "are",
-    "bagaimana",
-    "berikan",
-    "bisa",
-    "buat",
-    "deh",
     "do",
-    "dong",
-    "gimana",
-    "hadeh",
     "how",
     "i",
-    "ini",
     "is",
-    "itu",
-    "kah",
-    "kalau",
-    "kalo",
-    "kamu",
-    "ke",
-    "lah",
-    "mau",
     "me",
     "my",
-    "nomor",
     "number",
     "oke",
     "ok",
-    "opsi",
     "option",
     "or",
     "please",
-    "pilihan",
-    "saya",
-    "sih",
     "that",
     "the",
     "this",
     "to",
-    "tolong",
     "what",
-    "yang",
-    "ya",
     "yeah",
 }
 

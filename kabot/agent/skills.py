@@ -61,7 +61,6 @@ _LEGACY_EXTERNAL_METADATA_KEY = "".join(
 _FINANCE_SKILL_MARKERS = {
     "stock",
     "stocks",
-    "saham",
     "crypto",
     "market",
     "markets",
@@ -77,7 +76,6 @@ _FINANCE_SKILL_MARKERS = {
 _STOCK_DOMAIN_MARKERS = {
     "stock",
     "stocks",
-    "saham",
     "equity",
     "equities",
     "ihsg",
@@ -111,11 +109,9 @@ _GENERIC_FINANCE_DOMAIN_MARKERS = {
 }
 _FINANCE_QUERY_MARKERS = (
     "stock",
-    "saham",
     "crypto",
     "btc",
     "eth",
-    "harga",
     "price",
     "ticker",
     "market",
@@ -237,7 +233,7 @@ def _finance_skill_name_is_grounded(skill_name: str, text: str) -> bool:
         return any(marker in normalized_name for marker in crypto_markers)
     if request_kind == "mixed":
         return any(marker in normalized_name for marker in stock_markers | crypto_markers)
-    return any(marker in normalized_name for marker in ("stock", "stocks", "saham", "crypto", "ticker", "quote"))
+    return any(marker in normalized_name for marker in ("stock", "stocks", "crypto", "ticker", "quote"))
 
 
 def _coerce_frontmatter_bool(value: Any, default: bool) -> bool:

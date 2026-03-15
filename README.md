@@ -26,12 +26,12 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
-## What's New In v0.6.5-rc1
+## What's New In v0.6.6-rc1
 
-- **Session-first continuity** so file navigation, delivery reuse, and one-shot CLI follow-ups stay grounded in `working_directory`, `delivery_route`, and transcript state instead of stale breadcrumbs.
-- **Multilingual, user-language replies** with English internal guidance, lighter parser dependence, and stronger continuity for profile, memory, weather, and research turns.
-- **External skill lifecycle and registry flow** with install/search/info/list/update/pack/publish/sync support for folders, bundles, git repos, URLs, and JSON catalogs.
-- **Cross-platform runtime hardening** across browser screenshots, media ingress, cleanup, daemon/service setup, special directories, and system info on Windows, macOS, and Linux.
+- **OpenClaw-style routing** with model-first, skill-first, workspace/cwd-first, and session continuity-first behavior across ordinary chat, skill workflows, and file navigation.
+- **Much lighter parser dependence** in active runtime paths, especially around follow-up reuse, live research, filesystem grounding, temporal fast paths, and Indonesian keyword buckets.
+- **Stronger external skill and workflow grounding** for skill creation, GitHub skill install, repo inspection, and API/script-based execution flows.
+- **Release-ready runtime extras** with Linux/macOS installer bootstrap for `beautifulsoup4` and Playwright Chromium.
 
 If you are upgrading from `0.6.4`, the two most important changes are:
 - Kabot now treats session/runtime state as the primary anchor for file work, so separate chat turns and one-shot CLI runs stay much more coherent.
@@ -73,7 +73,7 @@ If you are new, follow this exact flow:
 
 No need to clone repo for normal usage.
 
-Recommended optional step for `v0.6.5-rc1`:
+Recommended optional step for `v0.6.6-rc1`:
 
 5. **Inspect MCP availability** (`kabot mcp status`)
 
@@ -160,7 +160,7 @@ kabot mcp status   # inspect configured MCP servers
 
 ### Python-Native MCP Quickstart
 
-Kabot `0.6.5-rc1` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
+Kabot `0.6.6-rc1` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
 
 Useful commands:
 

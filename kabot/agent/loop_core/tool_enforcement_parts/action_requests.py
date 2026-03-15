@@ -18,159 +18,51 @@ from kabot.agent.loop_core.tool_enforcement_parts.filesystem_paths import (
     _resolve_special_directory_path,
 )
 
-_WRITE_FILE_ACTION_MARKERS = (
-    "buat file",
-    "bikinkan file",
-    "bikin file",
-    "generate file",
-    "create file",
-    "write file",
-    "save file",
-    "simpan file",
-    "tulis file",
-    "buatkan file",
+_WRITE_FILE_ACTION_RE = re.compile(
+    r"(?i)\b(?:generate|create|write|save)\s+file\b"
 )
-_WRITE_FILE_CONTENT_MARKERS = (
-    "berisi",
-    "isi",
-    "isinya",
-    "content",
-    "contents",
-    "containing",
-    "with content",
-    "dengan isi",
+_WRITE_FILE_CONTENT_RE = re.compile(
+    r"(?i)\b(?:content(?:s)?|containing|with\s+content)\b"
 )
-_WRITE_FILE_EMPTY_MARKERS = (
-    "blank",
-    "empty",
-    "kosong",
+_WRITE_FILE_EMPTY_RE = re.compile(r"(?i)\b(?:blank|empty)\b")
+_FIND_FILE_ACTION_RE = re.compile(
+    r"(?i)\b(?:find|search(?:\s+for)?|locate|look\s+for)\b"
 )
-_FIND_FILE_ACTION_MARKERS = (
-    "cari",
-    "carikan",
-    "find",
-    "search",
-    "search for",
-    "locate",
-    "look for",
-    "temukan",
-    "telusuri",
+_FIND_FILE_DIR_SUBJECT_RE = re.compile(r"(?i)\b(?:folder|directory|dir)\b")
+_FIND_FILE_FILE_SUBJECT_RE = re.compile(
+    r"(?i)\b(?:file|document|config|pdf|csv|xlsx|docx)\b"
 )
-_FIND_FILE_DIR_SUBJECT_MARKERS = (
-    "folder",
-    "directory",
-    "dir",
+_SEND_FILE_ACTION_RE = re.compile(
+    r"(?i)\b(?:send|share|attach|upload)\b"
 )
-_FIND_FILE_FILE_SUBJECT_MARKERS = (
-    "file",
-    "document",
-    "config",
-    "pdf",
-    "csv",
-    "xlsx",
-    "docx",
+_SEND_FILE_DELIVERY_RE = re.compile(
+    r"(?i)(?:\b(?:chat|channel)\s+(?:here|this)\b|"
+    r"\bto\s+this\s+chat\b|"
+    r"\bsend\s+it\s+here\b|"
+    r"\bhere\b)"
 )
-_SEND_FILE_ACTION_MARKERS = (
-    "kirim",
-    "send",
-    "share",
-    "attach",
-    "lampirkan",
-    "upload",
+_LIST_DIR_ACTION_RE = re.compile(
+    r"(?i)(?:\b(?:open|enter|show|display|list)\b|\buse\s+path\b)"
 )
-_SEND_FILE_DELIVERY_MARKERS = (
-    "chat ini",
-    "chat here",
-    "chat this",
-    "to this chat",
-    "kirim ke chat",
-    "send it here",
-    "ke sini",
-    "kesini",
-    "channel ini",
-    "channel here",
+_LIST_DIR_WEAK_ACTION_RE = re.compile(r"(?i)\b(?:check)\b")
+_LIST_DIR_SUBJECT_RE = re.compile(
+    r"(?i)\b(?:folder|directory|dir|content(?:s)?|listing|file/?folder)\b|"
+    r"文件(?:夹|夾)|資料夾|目?录|フォルダ|ディレクトリ|โฟลเดอร์|ไดเรกทอรี"
 )
-_LIST_DIR_ACTION_MARKERS = (
-    "buka",
-    "open",
-    "masuk",
-    "enter",
-    "lihat",
-    "lihatkan",
-    "tampilkan",
-    "show",
-    "display",
-    "list",
-    "pakai path",
-    "use path",
+_IMAGE_ACTION_RE = re.compile(
+    r"(?i)\b(?:image|poster|banner|logo|thumbnail|cover\s+art|illustration|render)\b"
 )
-_LIST_DIR_WEAK_ACTION_MARKERS = (
-    "cek",
-    "check",
+_VIDEO_ACTION_RE = re.compile(
+    r"(?i)\b(?:video|mp4|gif|clip|reel|animation)\b"
 )
-_LIST_DIR_SUBJECT_MARKERS = (
-    "folder",
-    "directory",
-    "dir",
-    "isi",
-    "content",
-    "contents",
-    "listing",
-    "file/folder",
-    "file folder",
-    "文件夹",
-    "文件夾",
-    "資料夾",
-    "目录",
-    "目錄",
-    "フォルダ",
-    "ディレクトリ",
-    "โฟลเดอร์",
-    "ไดเรกทอรี",
+_AUDIO_ACTION_RE = re.compile(
+    r"(?i)\b(?:audio|voice|speech|music|sound|mp3|wav)\b"
 )
-_IMAGE_ACTION_MARKERS = (
-    "gambar",
-    "image",
-    "poster",
-    "banner",
-    "logo",
-    "thumbnail",
-    "cover art",
-    "illustration",
-    "render",
-)
-_VIDEO_ACTION_MARKERS = (
-    "video",
-    "mp4",
-    "gif",
-    "clip",
-    "reel",
-    "animation",
-)
-_AUDIO_ACTION_MARKERS = (
-    "audio",
-    "voice",
-    "speech",
-    "music",
-    "sound",
-    "mp3",
-    "wav",
-)
-_ACTION_PROVIDER_MARKERS = (
-    "imagen",
-    "nanobanana",
-    "dall-e",
-    "dalle",
-    "gemini",
-    "midjourney",
-    "stable diffusion",
-    "sora",
-    "veo",
-    "runway",
-    "pika",
+_ACTION_PROVIDER_RE = re.compile(
+    r"(?i)\b(?:imagen|nanobanana|dall-?e|gemini|midjourney|stable\s+diffusion|sora|veo|runway|pika)\b"
 )
 _WRITE_FILE_CONTENT_INLINE_RE = re.compile(
-    r"(?i)\b(?:berisi|isi(?:nya)?|content(?:s)?|containing|with content|dengan isi)\b\s*(?:[:=-]\s*)?(?:(?P<double>\"[^\"]+\")|(?P<single>'[^']+')|(?P<backtick>`[^`]+`)|(?P<plain>.+))"
+    r"(?i)\b(?:content(?:s)?|containing|with content)\b\s*(?:[:=-]\s*)?(?:(?P<double>\"[^\"]+\")|(?P<single>'[^']+')|(?P<backtick>`[^`]+`)|(?P<plain>.+))"
 )
 _ACTION_TOOL_EXCLUDE_NAMES = {
     "read_file",
@@ -191,7 +83,7 @@ def _trim_find_files_query_candidate(value: str) -> str:
     if not candidate:
         return ""
     candidate = re.sub(
-        r"(?i)\s+(?:di|in|inside|within|under|pada|dalam)\s+"
+        r"(?i)\s+(?:in|inside|within|under)\s+"
         r"(?:workspace|current working directory|working directory|current dir|cwd)\b.*$",
         "",
         candidate,
@@ -225,9 +117,9 @@ def _has_explicit_delivery_intent(text: str) -> bool:
     if not normalized:
         return False
     return bool(
-        any(marker in normalized for marker in _SEND_FILE_ACTION_MARKERS)
+        _SEND_FILE_ACTION_RE.search(normalized)
         and (
-            any(marker in normalized for marker in _SEND_FILE_DELIVERY_MARKERS)
+            _SEND_FILE_DELIVERY_RE.search(normalized)
             or "chat" in normalized
             or "channel" in normalized
             or "telegram" in normalized
@@ -245,12 +137,12 @@ def _looks_like_write_file_request(text: str, *, explicit_path: str | None = Non
         explicit_path = _extract_read_file_path(raw)
     if not explicit_path:
         return False
-    if not any(marker in normalized for marker in _WRITE_FILE_ACTION_MARKERS):
+    if not _WRITE_FILE_ACTION_RE.search(normalized):
         return False
     has_inline_content = bool(_extract_write_file_content(raw))
     if _looks_like_textual_write_target(explicit_path):
-        return has_inline_content or any(marker in normalized for marker in _WRITE_FILE_EMPTY_MARKERS)
-    return has_inline_content or any(marker in normalized for marker in _WRITE_FILE_CONTENT_MARKERS)
+        return has_inline_content or bool(_WRITE_FILE_EMPTY_RE.search(normalized))
+    return has_inline_content or bool(_WRITE_FILE_CONTENT_RE.search(normalized))
 
 
 def _looks_like_find_files_request(text: str, *, explicit_path: str | None = None) -> bool:
@@ -265,14 +157,20 @@ def _looks_like_find_files_request(text: str, *, explicit_path: str | None = Non
         return False
     dir_kind = _extract_find_files_kind(raw) == "dir"
     has_delivery_intent = _has_explicit_delivery_intent(raw)
-    has_search_verb = any(marker in normalized for marker in _FIND_FILE_ACTION_MARKERS)
+    has_search_verb = bool(_FIND_FILE_ACTION_RE.search(normalized))
+    has_explicit_filesystem_subject = bool(
+        dir_kind
+        or _FILELIKE_QUERY_RE.search(raw)
+        or _FIND_FILE_FILE_SUBJECT_RE.search(normalized)
+        or (explicit_path and _looks_like_explicit_filesystem_path(explicit_path))
+    )
     if dir_kind and not has_delivery_intent:
         return False
     if has_search_verb:
-        return True
-    if any(marker in normalized for marker in _LIST_DIR_ACTION_MARKERS):
+        return bool(has_delivery_intent or has_explicit_filesystem_subject)
+    if _LIST_DIR_ACTION_RE.search(normalized):
         return False
-    if any(marker in normalized for marker in _LIST_DIR_WEAK_ACTION_MARKERS):
+    if _LIST_DIR_WEAK_ACTION_RE.search(normalized):
         return False
     return False
 
@@ -287,11 +185,11 @@ def _looks_like_list_dir_request(text: str) -> bool:
         return False
     if _has_explicit_delivery_intent(raw):
         return False
-    if any(marker in normalized for marker in _LIST_DIR_ACTION_MARKERS):
+    if _LIST_DIR_ACTION_RE.search(normalized):
         return True
-    if any(marker in normalized for marker in _LIST_DIR_WEAK_ACTION_MARKERS):
-        return bool(_extract_explicit_path_candidate(raw)) or any(
-            marker in normalized for marker in _LIST_DIR_SUBJECT_MARKERS
+    if _LIST_DIR_WEAK_ACTION_RE.search(normalized):
+        return bool(_extract_explicit_path_candidate(raw)) or bool(
+            _LIST_DIR_SUBJECT_RE.search(normalized)
         ) or bool(
             _extract_read_file_path(raw) or _FILELIKE_QUERY_RE.search(raw)
         )
@@ -307,33 +205,33 @@ def _looks_like_message_send_file_request(text: str, *, explicit_path: str | Non
     normalized = _normalize_text(raw)
     if not normalized or not explicit_path:
         return False
-    if not any(marker in normalized for marker in _SEND_FILE_ACTION_MARKERS):
+    if not _SEND_FILE_ACTION_RE.search(normalized):
         return False
 
     # Avoid hijacking explanatory/help-style turns.
-    if re.match(r"(?i)^\s*(?:cara|bagaimana|how\s+to)\b", raw):
+    if re.match(r"(?i)^\s*(?:how\s+to)\b", raw):
         return False
 
-    has_find_intent = any(marker in normalized for marker in _FIND_FILE_ACTION_MARKERS)
+    has_find_intent = bool(_FIND_FILE_ACTION_RE.search(normalized))
     explicit_is_pathlike = _looks_like_explicit_filesystem_path(explicit_path)
 
     # Keep search-first phrasing on the find_files lane when the user asks to
-    # search first (e.g. "cari file report.pdf lalu kirim").
+    # search first (e.g. "find file report.pdf then send").
     if has_find_intent and not explicit_is_pathlike:
         return False
 
     if not explicit_is_pathlike:
-        # Bare filenames (e.g. "kirim file TELEGRAM_DEMO.md kesini") are valid
+        # Bare filenames (e.g. "send file TELEGRAM_DEMO.md here") are valid
         # send intents; resolution will use recent folder context when available.
         if not _FILELIKE_QUERY_RE.search(str(explicit_path)):
             return False
 
     delivery_marker = bool(
-        any(marker in normalized for marker in _SEND_FILE_DELIVERY_MARKERS)
+        _SEND_FILE_DELIVERY_RE.search(normalized)
         or "chat" in normalized
         or "channel" in normalized
     )
-    imperative_send = bool(re.match(r"(?i)^\s*(?:tolong\s+)?(?:kirim|send|share|attach|lampirkan|upload)\b", raw))
+    imperative_send = bool(re.match(r"(?i)^\s*(?:send|share|attach|upload)\b", raw))
     return delivery_marker or imperative_send
 
 
@@ -364,7 +262,7 @@ def _extract_find_files_query(text: str) -> str | None:
             r"(?i)\b(?:file|document|folder|directory|dir|config|pdf|csv|xlsx|docx)\b\s+([A-Za-z0-9_.*\-]+)"
         ),
         re.compile(
-            r"(?i)\b(?:cari|carikan|find|search|locate|look for|temukan|telusuri)\b\s+([A-Za-z0-9_.*\-]+)"
+            r"(?i)\b(?:find|search|locate|look for)\b\s+([A-Za-z0-9_.*\-]+)"
         ),
     )
     for pattern in patterns:
@@ -382,11 +280,9 @@ def _extract_find_files_kind(text: str) -> str | None:
     if not raw:
         return None
     normalized = _normalize_text(raw)
-    if any(marker in normalized for marker in _FIND_FILE_DIR_SUBJECT_MARKERS):
+    if _FIND_FILE_DIR_SUBJECT_RE.search(normalized):
         return "dir"
-    if bool(_FILELIKE_QUERY_RE.search(raw)) or any(
-        marker in normalized for marker in _FIND_FILE_FILE_SUBJECT_MARKERS
-    ):
+    if bool(_FILELIKE_QUERY_RE.search(raw)) or _FIND_FILE_FILE_SUBJECT_RE.search(normalized):
         return "file"
     return None
 
@@ -528,11 +424,11 @@ def _trim_write_content_candidate(value: str) -> str:
     if not candidate:
         return ""
     candidate = re.split(
-        r"(?i)\s+(?:lalu|kemudian|terus|dan|then|afterwards?)\s+(?:kirim|send|attach|lampirkan|upload|export|simpan|save)\b",
+        r"(?i)\s+(?:then|afterwards?)\s+(?:send|attach|upload|export|save)\b",
         candidate,
         maxsplit=1,
     )[0].strip()
-    candidate = re.split(r"(?i)\s+(?:lalu|kemudian|terus|then|afterwards?)\b", candidate, maxsplit=1)[0].strip()
+    candidate = re.split(r"(?i)\s+(?:then|afterwards?)\b", candidate, maxsplit=1)[0].strip()
     return candidate.rstrip(" .,:;")
 
 
@@ -552,12 +448,12 @@ def _looks_like_media_action_request(text: str, *, kind: str) -> bool:
     normalized = _normalize_text(text)
     if not normalized:
         return False
-    markers = _IMAGE_ACTION_MARKERS
+    pattern = _IMAGE_ACTION_RE
     if kind == "video":
-        markers = _VIDEO_ACTION_MARKERS
+        pattern = _VIDEO_ACTION_RE
     elif kind == "audio":
-        markers = _AUDIO_ACTION_MARKERS
-    return any(marker in normalized for marker in markers)
+        pattern = _AUDIO_ACTION_RE
+    return bool(pattern.search(normalized))
 
 
 def _select_best_action_tool(loop: Any, text: str, *, kind: str) -> str | None:
@@ -570,13 +466,17 @@ def _select_best_action_tool(loop: Any, text: str, *, kind: str) -> str | None:
     if kind == "image" and _tool_name_available(loop, "image_gen"):
         return "image_gen"
 
-    media_markers = _IMAGE_ACTION_MARKERS
+    media_pattern = _IMAGE_ACTION_RE
     if kind == "video":
-        media_markers = _VIDEO_ACTION_MARKERS
+        media_pattern = _VIDEO_ACTION_RE
     elif kind == "audio":
-        media_markers = _AUDIO_ACTION_MARKERS
+        media_pattern = _AUDIO_ACTION_RE
 
-    provider_hits = [marker for marker in _ACTION_PROVIDER_MARKERS if marker in normalized]
+    provider_hits = {
+        str(hit).lower()
+        for hit in _ACTION_PROVIDER_RE.findall(normalized)
+        if str(hit or "").strip()
+    }
     best_name = None
     best_score = 0
     for name in tool_names:
@@ -587,7 +487,7 @@ def _select_best_action_tool(loop: Any, text: str, *, kind: str) -> str | None:
         score = 0
         if tool_name.startswith("mcp__"):
             score += 1
-        if any(marker in tool_norm for marker in media_markers):
+        if media_pattern.search(tool_norm):
             score += 5
         if any(marker in tool_norm for marker in provider_hits):
             score += 6
@@ -648,7 +548,7 @@ def infer_action_required_tool_for_loop(loop: Any, text: str) -> tuple[str | Non
         if audio_tool:
             return audio_tool, raw
 
-    if any(marker in normalized for marker in _ACTION_PROVIDER_MARKERS):
+    if _ACTION_PROVIDER_RE.search(normalized):
         for kind in ("image", "video", "audio"):
             provider_tool = _select_best_action_tool(loop, raw, kind=kind)
             if provider_tool:

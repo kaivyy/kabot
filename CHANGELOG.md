@@ -7,12 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6-rc1] - 2026-03-15
+
 ### Changed
 - Reduced marker-heavy routing in the skill and follow-up layers so Kabot behaves more like OpenClaw's state-first flow:
   - `skills_matching` no longer relies on large multilingual regex buckets for skill creation/install/catalog/use detection and now prefers smaller structural signals such as skill-domain overlap, source grounding, and explicit action intent,
   - semantic weather/memory follow-up detection now uses lighter token/fragment signals instead of several dedicated phrase-list regex buckets,
   - live quote refresh follow-ups such as `pakai data terbaru` now use compact freshness signals instead of a large hardcoded phrase matcher,
-  - and web-search demotion follow-ups like `just explain`, `don't use web search`, or `pakai bahasa inggris` now use smaller structural checks instead of dedicated regex phrase buckets.
+  - web-search demotion follow-ups like `just explain`, `don't use web search`, or `pakai bahasa inggris` now use smaller structural checks instead of dedicated regex phrase buckets,
+  - filesystem-location and skill-approval follow-ups now use lighter structural checks instead of multilingual marker buckets,
+  - the message/runtime pipeline now treats parser tool detection as a soft signal instead of eagerly seeding `required_tool` for ordinary turns, so execution starts from grounded metadata, skill continuity, workspace/cwd context, and later explicit action inference rather than parser-first routing,
+  - history/continuity inference now reuses the same grounded explicit-tool resolver instead of calling the legacy parser wrapper directly, so vague follow-ups stay aligned with workspace/session context rather than reviving broader parser heuristics,
+  - router chat fast paths have been removed so ordinary turns go through structured model routing instead of lexical shortcuts,
+  - grounded continuity now treats genuinely low-information follow-ups as session continuations even when they do not match older confirmation markers,
+  - existing-skill follow-up detection now prefers structural skill/action cues and assistant-offer context over explicit phrase buckets,
+  - weather/file context follow-up detection now uses smaller structural patterns instead of large multilingual marker lists,
+  - semantic intent weather-source plus memory-recall detection now rely more on compact structural regexes than on broad keyword buckets,
+  - and side-effect / coding-build / delivery inference now use smaller category regexes instead of several very large marker tuples, while keeping those paths deterministic only for artifact-producing workflows.
+  - Assistant follow-up offer extraction is now less marker-bucket driven too:
+    - offer / promise / option-prompt detection now relies on smaller structural regexes for offer lead, capability, promise, action, and choice-shape signals instead of large multilingual phrase tuples,
+    - multiline choice blocks now prefer structural shape (choice lines plus intro/selection form) instead of broad intro marker lists,
+    - and assistant-offer acceptance without stored `request_text` can now reuse the most recent user intent through session continuity before falling back to generic chat, so follow-ups like `gas` or `terus` still continue the earlier live/tool request without reviving a larger parser lane.
+  - Weather routing is also more grounded:
+    - explicit weather turns now enter a dedicated grounded weather lane when the weather tool exists and the request carries clear weather/location structure,
+    - while short weather follow-ups like `berangin apa ga?` keep reusing pending grounded weather context instead of dropping back to generic chat.
+  - Context/workflow helpers are less bucket-driven too:
+    - filesystem-location queries now use smaller structural patterns instead of direct multilingual phrase lists,
+    - skill-creation approval and existing-skill follow-up detection now rely on compact regex cues rather than separate ack/action/deictic token buckets,
+    - and legacy weather/file follow-up marker constants have been removed from the shared follow-up helper layer where they were no longer used.
+  - Deterministic action-request inference is narrower and more structural:
+    - write/find/send/list-directory/media routing in `action_requests` now uses smaller category regexes for action, subject, delivery, and provider signals instead of many marker tuples,
+    - keeping the deterministic layer focused on explicit filesystem/delivery/media payloads while leaving broader conversational turns to model/skill/session routing.
+  - Semantic-vs-contextual follow-up arbitration is now cleaner:
+    - `semantic_intent` is narrowed toward memory-recall, meta-feedback, and advice/parser-clearing turns,
+    - while weather and stock follow-up routing now lives in a separate contextual continuity helper that depends on grounded session tool context instead of the semantic module doubling as a general router.
+  - Deterministic fallback routing is now more dormant on ordinary turns:
+    - `required_tool_for_query_for_loop` only consults cron/update/system fallback scoring for explicit sensitive operations,
+    - and `find_files` no longer wins just because a message contains a search verb, so prompts like `carikan berita ...` stay model/skill-driven instead of being hijacked into filesystem search.
+  - Active routing and fallback layers now rely less on Indonesian marker buckets:
+    - cron fallback constants, intent scoring, reminder/location extractors, semantic intent, action requests, delivery helpers, and filesystem routing no longer depend on Indonesian keyword lists for their active English-first deterministic paths,
+    - temporal fast-reply tests and active temporal matching now reflect the narrower local fast-path contract instead of assuming Indonesian parser shortcuts,
+    - skill/runtime matching and execution guardrails have also dropped Indonesian finance/action filler markers so skill selection and delivery/search continuation lean more on structural payloads, workspace/cwd context, and session continuity.
 
 ## [0.6.5-rc1] - 2026-03-15
 

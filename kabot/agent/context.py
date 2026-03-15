@@ -36,8 +36,8 @@ _EXPLICIT_SKILL_TURN_RE = re.compile(
 )
 _LIGHT_PROBE_GENERAL_RE = re.compile(
     r"(?i)\b("
-    r"hari|day|tanggal|date|jam|time|waktu|timezone|utc|wib|wita|wit|"
-    r"today|tomorrow|yesterday|besok|kemarin|sekarang|now|seminggu|week"
+    r"day|date|time|timezone|utc|"
+    r"today|tomorrow|yesterday|now|week"
     r")\b|星期|วันนี้|เมื่อวาน|พรุ่งนี้|เวลา|今日|明日|昨日"
 )
 
@@ -718,9 +718,9 @@ This text is sent to the user immediately while the tool runs in the background.
 
 REMINDERS & SCHEDULING:
 - When user asks to be reminded or to schedule something, ALWAYS use the 'cron' tool.
-- NEVER fake a countdown, write "(1 menit kemudian...)" or pretend time has passed.
+- NEVER fake a countdown, write "(1 minute later...)" or pretend time has passed.
 - Flow: call cron tool â†’ confirm it's set â†’ the cron service will deliver the message automatically when the time comes.
-- For "ingatkan X menit lagi", calculate the target time = current time + X minutes, then use cron with at_time.
+- For "remind me in X minutes", calculate the target time = current time + X minutes, then use cron with at_time.
 - After the reminder fires, the cron job auto-deletes (one_shot/delete_after_run).
 - COMPLEX SCHEDULES (e.g., "3 days work, 1 day off", rotating shifts): Standard cron expressions CANNOT handle modulus-day rotation. If a user asks for this, DO NOT guess a random cron_expr. Instead, use 'at_time' to schedule just the NEXT shift/alarm, and politely explain that you can't build native infinite rotating shifts, but you'll remind them for the next one, OR suggest setting up a daily script (via 'exec' or 'write_file') to calculate shifts mathematically.
 

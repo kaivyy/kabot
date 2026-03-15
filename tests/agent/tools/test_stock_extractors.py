@@ -29,7 +29,7 @@ def test_extract_stock_symbols_supports_bren_alias_queries():
 
 
 def test_extract_stock_name_candidates_trim_fx_conversion_filler_words():
-    query = "how much is Apple stock now in rupiah?"
+    query = "how much is Apple stock now in indonesian rupiah?"
     assert extract_stock_name_candidates(query) == ["Apple"]
 
 
@@ -46,23 +46,23 @@ def test_extract_stock_name_candidates_supports_non_latin_queries():
 
 
 def test_extract_stock_name_candidates_ignores_generic_trend_phrase():
-    assert extract_stock_name_candidates("cenderung naik atau turun?") == []
+    assert extract_stock_name_candidates("is it trending up or down?") == []
 
 
 def test_extract_stock_name_candidates_ignores_generic_advice_phrase():
-    assert extract_stock_name_candidates("saranmu apa") == []
+    assert extract_stock_name_candidates("what is your advice") == []
 
 
 def test_extract_stock_name_candidates_ignores_non_market_topic_phrase():
-    assert extract_stock_name_candidates("adakah gejolak politik sekarang") == []
+    assert extract_stock_name_candidates("is there political turmoil right now") == []
 
 
 def test_extract_stock_name_candidates_ignores_fx_wording_without_asset():
-    assert extract_stock_name_candidates("kalau dirupiahkan dengan harga sekarang berapa") == []
+    assert extract_stock_name_candidates("if you convert it to indonesian rupiah at the current price, how much is it") == []
 
 
 def test_extract_stock_name_candidates_ignores_generic_product_advice_phrase():
-    assert extract_stock_name_candidates("sunscreen nya apa yang bagus") == []
+    assert extract_stock_name_candidates("what sunscreen is good") == []
 
 
 def test_extract_stock_name_candidates_trims_trailing_question_noise_from_company_name():
@@ -70,9 +70,9 @@ def test_extract_stock_name_candidates_trims_trailing_question_noise_from_compan
 
 
 def test_extract_stock_name_candidates_ignores_general_knowledge_questions():
-    assert extract_stock_name_candidates("JAM BERAPA") == []
-    assert extract_stock_name_candidates("jam berapa sekarang") == []
-    assert extract_stock_name_candidates("IQ MANUSIA BERAPA") == []
-    assert extract_stock_name_candidates("iq manusia berapa") == []
-    assert extract_stock_name_candidates("IQ MANUSIA RATA RATA BERAPA") == []
-    assert extract_stock_name_candidates("KALAU EQ MANUSIA BERAPA") == []
+    assert extract_stock_name_candidates("WHAT TIME IS IT") == []
+    assert extract_stock_name_candidates("what time is it now") == []
+    assert extract_stock_name_candidates("WHAT IS HUMAN IQ") == []
+    assert extract_stock_name_candidates("what is human iq") == []
+    assert extract_stock_name_candidates("WHAT IS AVERAGE HUMAN IQ") == []
+    assert extract_stock_name_candidates("what is human eq") == []

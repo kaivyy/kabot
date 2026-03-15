@@ -16,7 +16,9 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _normalize_text,
 )
 from kabot.agent.loop_core.message_runtime_parts.turn_helpers import (
+    _infer_required_tool_from_recent_user_intent,
     _looks_like_brief_answer_request,
+    _resolve_grounded_required_tool,
     _select_answer_reference_target,
 )
 from kabot.agent.loop_core.tool_enforcement import infer_action_required_tool_for_loop
@@ -213,7 +215,7 @@ def _apply_continuity_runtime(state: Any) -> None:
             and intent_kind not in {"assistant_offer", "assistant_committed_action"}
             and not answer_reference_followup
         ):
-            inferred_tool = state.loop._required_tool_for_query(intent_text)
+            inferred_tool = _resolve_grounded_required_tool(state.loop, intent_text)
         if intent_kind == "assistant_committed_action":
             committed_task_text = intent_request_text or intent_text
             state.committed_action_request_text = (
@@ -251,11 +253,9 @@ def _apply_continuity_runtime(state: Any) -> None:
             if committed_task_text and (
                 not state.required_tool or state.required_tool == "list_dir"
             ):
-                required_tool_for_query = getattr(state.loop, "_required_tool_for_query", None)
-                inferred_committed_tool = (
-                    required_tool_for_query(committed_task_text)
-                    if callable(required_tool_for_query)
-                    else None
+                inferred_committed_tool = _resolve_grounded_required_tool(
+                    state.loop,
+                    committed_task_text,
                 )
                 inferred_committed_query = committed_task_text
                 if not inferred_committed_tool:
@@ -370,10 +370,12 @@ def _apply_continuity_runtime(state: Any) -> None:
                         merged_offer_action_context
                         and not state.required_tool
                     ):
-                        required_tool_for_query = getattr(state.loop, "_required_tool_for_query", None)
                         offer_intent_action_tool = (
-                            required_tool_for_query(merged_offer_action_context)
-                            if offer_request_text and callable(required_tool_for_query)
+                            _resolve_grounded_required_tool(
+                                state.loop,
+                                merged_offer_action_context,
+                            )
+                            if offer_request_text
                             else None
                         )
                         offer_intent_action_query = (
@@ -416,6 +418,23 @@ def _apply_continuity_runtime(state: Any) -> None:
                         ):
                             state.continuity_source = state.continuity_source or "action_request"
                             state.decision.is_complex = True
+                if (
+                    not state.required_tool
+                    and not offer_request_text
+                    and getattr(state, "conversation_history", None)
+                ):
+                    inferred_offer_tool, inferred_offer_source = _infer_required_tool_from_recent_user_intent(
+                        state.loop,
+                        state.effective_content,
+                        state.conversation_history,
+                    )
+                    if inferred_offer_tool:
+                        state.required_tool = inferred_offer_tool
+                        state.required_tool_query = str(
+                            inferred_offer_source or state.effective_content
+                        ).strip()
+                        state.continuity_source = "user_intent"
+                        state.decision.is_complex = True
                 state.effective_content = (
                     f"{state.effective_content}\n\n"
                     "[Offer Acceptance Note]\n"

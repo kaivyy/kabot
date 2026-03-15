@@ -1,6 +1,6 @@
 # Releases
 
-## v0.6.5-rc1
+## v0.6.6-rc1
 
 Release date: 2026-03-15
 
@@ -8,21 +8,23 @@ Status: Release candidate
 
 ### Highlights
 
-- Makes Kabot more OpenClaw-like in multilingual, model-first routing and follow-up continuity without leaning on Indonesian-only parser paths.
-- Strengthens grounded repo/folder inspection, live web fallback behavior, and external skill continuity for headless or VPS-style runtimes.
-- Polishes the gateway dashboard shell and chat workspace into a more operator-friendly control console.
+- Moves Kabot closer to OpenClaw-style execution with model-first, skill-first, workspace/cwd-first, and session continuity-first routing.
+- Shrinks parser and keyword-heavy fallback behavior across follow-up reuse, live research, filesystem grounding, and temporal fast paths.
+- Keeps external skill workflows, repo inspection, and API/script execution more grounded while installer/docs stay release-ready.
 
 ### Notable fixes
 
-- `buka config.json` and similar bare filename follow-ups now resolve against the active folder context instead of falling back to a stale or generic path.
-- Weather commentary and source/provider follow-ups like `lumayan hangat ya`, `wttr.in`, or `open-meteo` no longer misfire as fresh weather fetches.
-- Live finance/news turns are more honest about missing live sources and now prefer grounded `web_search -> web_fetch -> skill/reference/script` fallback behavior.
+- Bare filename follow-ups such as `open config.json` now resolve against the active folder context instead of falling back to stale or generic paths.
+- Weather commentary and provider/source follow-ups stay grounded to the existing weather context instead of misfiring as fresh fetches.
+- Live finance/news turns are more honest about missing sources and prefer grounded `web_search -> web_fetch -> skill/reference/script` fallback behavior.
 
 ### Validation snapshot
 
-- Syntax checks passed for updated runtime, dashboard, and regression test files.
+- `python3 -m py_compile` passed for the updated runtime, routing, skill, and regression files.
+- Targeted OpenClaw-style regression slices passed across semantic intent, skill matching, context building, reminder fallback, follow-up reuse, temporal fast replies, direct delivery reuse, stock extraction, and web-search fallback.
+- `python -m build --no-isolation` produced `kabot-0.6.6rc1.tar.gz` and `kabot-0.6.6rc1-py3-none-any.whl`.
+- `mkdocs build --strict` succeeded.
 - `git diff --check` is clean.
-- Release build/test automation still depends on environment packages such as `pytest` and docs/build tooling.
 
 See full details in root `CHANGELOG.md`.
 

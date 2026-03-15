@@ -232,6 +232,8 @@ _STOCK_NAME_STOPWORDS = {
     "an",
     "this",
     "that",
+    "it",
+    "you",
     "is",
     "are",
     "to",
@@ -241,45 +243,25 @@ _STOCK_NAME_STOPWORDS = {
     "on",
     "of",
     "from",
-    "dengan",
-    "apa",
-    "nya",
-    "bagus",
-    "dari",
-    "yang",
-    "itu",
-    "ini",
-    "saya",
-    "anda",
-    "kita",
-    "kami",
     "bro",
     "sis",
     "broh",
-    "cenderung",
-    "naik",
-    "turun",
     "trend",
     "trending",
     "movement",
-    "pergerakan",
     "bullish",
     "bearish",
     "sideways",
-    "dirupiahkan",
-    "rupiahkan",
     "if",
     "around",
     "about",
     "roughly",
     "approximately",
     "approx",
-    "kira-kira",
     "dollar",
     "dollars",
     "usd",
     "idr",
-    "rupiah",
     "indonesian",
     "today",
     "current",
@@ -295,20 +277,14 @@ _STOCK_NAME_STOPWORDS = {
     "right",
     "currently",
     "latest",
-    "umur",
     "age",
     "old",
-    "tahun",
     "year",
-    "jam",
     "iq",
     "eq",
-    "manusia",
     "human",
     "average",
     "avg",
-    "rata",
-    "rata-rata",
 }
 _COMPANY_HINT_TOKENS = {
     "bank",
@@ -329,34 +305,32 @@ _COMPANY_HINT_TOKENS = {
     "ag",
 }
 _COMPANY_SPLIT_RE = re.compile(
-    r"(?i)[,;]|(?:\b(?:and|dan|atau|or|plus|serta|with|vs)\b)"
+    r"(?i)[,;]|(?:\b(?:and|or|plus|with|vs)\b)"
 )
 _COMPANY_TOKEN_RE = re.compile(r"[^\W_][^\s,;:!?]{0,31}", re.UNICODE)
 _PERSONAL_CHAT_MARKERS = {
-    "umur",
     "age",
     "old",
     "years old",
-    "berapa umur",
     "how old",
 }
 _ADVICE_CHAT_MARKERS_RE = re.compile(
-    r"\b(saran(?:mu)?|advice|suggest(?:ion)?|recommend(?:ation)?)\b",
+    r"\b(advice|suggest(?:ion)?|recommend(?:ation)?)\b",
     re.IGNORECASE,
 )
 _MARKET_CONTEXT_MARKERS_RE = re.compile(
-    r"\b(stock|saham|ticker|symbol|quote|market|harga|price|kurs|exchange)\b",
+    r"\b(stock|ticker|symbol|quote|market|price|exchange)\b",
     re.IGNORECASE,
 )
 _VALUE_QUERY_HINT_RE = re.compile(
-    r"\b(price|harga|quote|berapa|how much|rate|kurs)\b",
+    r"\b(price|quote|how much|rate)\b",
     re.IGNORECASE,
 )
 _USD_AMOUNT_RE = re.compile(
-    r"(?i)\b(?:around|about|roughly|sekitar|kurang lebih|kira-kira)?\s*(\d+(?:[.,]\d+)?)\s*(usd|dollar|dollars)\b"
+    r"(?i)\b(?:around|about|roughly)?\s*(\d+(?:[.,]\d+)?)\s*(usd|dollar|dollars)\b"
 )
 _USD_MARKER_RE = re.compile(r"(?i)\b(usd|dollar|dollars)\b")
-_IDR_MARKER_RE = re.compile(r"(?i)\b(idr|rupiah|indonesian rupiah|dirupiahkan|rupiahkan)\b")
+_IDR_MARKER_RE = re.compile(r"(?i)\b(idr|indonesian rupiah)\b")
 _NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
 
 _CRYPTO_ALIAS_TO_ID = {
@@ -592,6 +566,7 @@ def extract_stock_name_candidates(raw: str) -> list[str]:
         return []
 
     cleaned = re.sub(r"[\(\)\[\]\{\}\"'`]+", " ", text)
+    cleaned = _IDR_MARKER_RE.sub(" ", cleaned)
     chunks = [part.strip() for part in _COMPANY_SPLIT_RE.split(cleaned) if part.strip()]
     has_market_hint = bool(_MARKET_CONTEXT_MARKERS_RE.search(text))
     has_value_hint = bool(_VALUE_QUERY_HINT_RE.search(text))

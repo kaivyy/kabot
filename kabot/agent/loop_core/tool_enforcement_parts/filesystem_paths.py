@@ -77,23 +77,22 @@ _FILESYSTEM_TARGET_MARKERS = (
     "เอกสาร",
 )
 _FILESYSTEM_TRAILING_TAIL_RE = re.compile(
-    r"(?i)\s+(?:sekarang|now|please|tolong|tampilkan|tampilin|show|display|list|lihat|lihatkan|"
-    r"buka|open|masuk|enter|read|baca|dong|ya|lagi|again|pc|"
-    r"ke\s+sini|kesini|ke\s+chat\s+ini|chat\s+ini|chat\s+here|"
-    r"to\s+(?:this\s+)?chat|to\s+(?:this\s+)?channel|channel\s+here|channel\s+ini)$"
+    r"(?i)\s+(?:now|please|show|display|list|"
+    r"open|enter|read|again|pc|"
+    r"chat\s+here|to\s+(?:this\s+)?chat|to\s+(?:this\s+)?channel|channel\s+here)$"
 )
 _RELATIVE_DIRECTORY_QUERY_RE = re.compile(
-    r"(?i)(?:\b(?:subfolder|folder|direktori|directory|dir)\b|文件夹|文件夾|资料夹|資料夾|目录|目錄|フォルダ|ディレクトリ|โฟลเดอร์|ไดเรกทอรี)\s+(.+)$"
+    r"(?i)(?:\b(?:subfolder|folder|directory|dir)\b|文件夹|文件夾|资料夹|資料夾|目录|目錄|フォルダ|ディレクトリ|โฟลเดอร์|ไดเรกทอรี)\s+(.+)$"
 )
 _RELATIVE_DIRECTORY_COMMAND_RE = re.compile(
-    r"(?i)^\s*(?:buka|open|masuk|enter|cd|chdir|goto|go\s+to|lihat|list|tampilkan|show)\s+([A-Za-z0-9._\\/-]+)\s*$"
+    r"(?i)^\s*(?:open|enter|cd|chdir|goto|go\s+to|list|show)\s+([A-Za-z0-9._\\/-]+)\s*$"
 )
 _RELATIVE_DIRECTORY_SUFFIX_RE = re.compile(
-    r"(?i)\s+(?:ada\b.*|isinya\b.*|isi\b.*|apa\b.*|what\b.*|which\b.*|show\b.*|display\b.*|list\b.*|lihat\b.*|lihatkan\b.*|tampilkan\b.*|open\b.*|buka\b.*|please\b.*|tolong\b.*|ke\s+chat\s+ini\b.*|ke\s+channel\s+ini\b.*|ke\s+sini\b.*|kesini\b.*|to\s+(?:this\s+)?chat\b.*|chat\s+here\b.*|channel\s+here\b.*|最初.*|件だけ.*|รายการ.*)$"
+    r"(?i)\s+(?:what\b.*|which\b.*|show\b.*|display\b.*|list\b.*|open\b.*|please\b.*|to\s+(?:this\s+)?chat\b.*|chat\s+here\b.*|channel\s+here\b.*|最初.*|件だけ.*|รายการ.*)$"
 )
 _SPECIAL_DIR_SUBFOLDER_PATTERNS = (
     re.compile(r"(?i)desktop(?:の|的)\s*([A-Za-z0-9._-]+)\s*(?:folder|directory|dir)\b"),
-    re.compile(r"(?i)\bdesktop\b(?:\s+|[/\\]|-|\u2014|\u2013|of|inside|in|di|pada|dalam|ke|の|的)?\s*([A-Za-z0-9._-]+)\s*(?:folder|directory|dir)\b"),
+    re.compile(r"(?i)\bdesktop\b(?:\s+|[/\\]|-|\u2014|\u2013|of|inside|in|の|的)?\s*([A-Za-z0-9._-]+)\s*(?:folder|directory|dir)\b"),
     re.compile(r"桌面(?:的|内|裡|里|中)?\s*([A-Za-z0-9._-]+)\s*(?:文件夹|文件夾|資料夾|目录|目錄)"),
     re.compile(r"デスクトップ(?:の|内の)?\s*([A-Za-z0-9._-]+)\s*(?:フォルダ|ディレクトリ)"),
     re.compile(r"เดสก์ท็อป(?:ของ|ใน)?\s*([A-Za-z0-9._-]+)\s*(?:โฟลเดอร์|ไดเรกทอรี)"),
@@ -106,15 +105,14 @@ _SPECIAL_DIR_ASCII_SUBFOLDER_RE = re.compile(
     r"(?i)\b([A-Za-z0-9._-]+)\s*(?:folder|directory|dir)\b"
 )
 _SPECIAL_DIR_PATH_HINT_RE = re.compile(
-    r"(?i)\b(?:(?:ya|yes)\s+)?(?:(?:pakai|gunakan|use|with|via)\s+)?path\s+"
+    r"(?i)\b(?:(?:yes)\s+)?(?:(?:use|with|via)\s+)?path\s+"
     r"(?:desktop|downloads?|documents?|docs|pictures?|photos?|music|videos?|home)\b\s+([A-Za-z0-9._-]+)\b"
 )
 _SPECIAL_DIR_PREFIX_RE = re.compile(
     r"(?i)^\s*(?:desktop|downloads?|documents?|docs|pictures?|photos?|music|videos?|home)\b"
 )
 _CURRENT_DIR_REQUEST_RE = re.compile(
-    r"(?i)\b(current (?:working )?(?:directory|folder)|working directory|current dir|cwd|this folder|this directory)\b|"
-    r"folder kerja saat ini|direktori kerja saat ini|folder saat ini|direktori saat ini|folder ini|direktori ini"
+    r"(?i)\b(current (?:working )?(?:directory|folder)|working directory|current dir|cwd|this folder|this directory)\b"
 )
 _SPECIAL_DIR_DESKTOP_RE = re.compile(
     r"(?i)\bdesktop\b|\u684c\u9762|\u30c7\u30b9\u30af\u30c8\u30c3\u30d7|\u0e40\u0e14\u0e2a\u0e01\u0e4c\u0e17\u0e47\u0e2d\u0e1b"
@@ -134,20 +132,19 @@ _SPECIAL_DIR_CONTEXT_NOUN_RE = re.compile(
     r"文件夹|文件夾|資料夾|目录|目錄|文件|檔案|内容|內容|フォルダ|ディレクトリ|ファイル|内容|中|โฟลเดอร์|ไดเรกทอรี|ไฟล์|เนื้อหา"
 )
 _SPECIAL_DIR_ACTION_RE = re.compile(
-    r"(?i)\b(?:open|buka|masuk|enter|show|display|list|lihat|lihatkan|tampilkan|cek|check|inspect|view|read|baca|"
-    r"kirim|send|share|attach|upload|lampirkan|cari|find|search|locate|telusuri|pakai\s+path|use\s+path)\b|"
+    r"(?i)\b(?:open|enter|show|display|list|check|inspect|view|read|"
+    r"send|share|attach|upload|find|search|locate|use\s+path)\b|"
     r"\u663e\u793a|\u6253\u5f00|\u958b\u555f|\u8868\u793a|\u958b\u3044\u3066|\u958b\u304f|\u898b\u305b\u3066|\u958b\u3051\u3066|"
     r"\u0e40\u0e1b\u0e34\u0e14|\u0e14\u0e39|\u0e41\u0e2a\u0e14\u0e07"
 )
 _SPECIAL_DIR_PREPOSITION_RE = re.compile(
-    r"(?i)\b(?:in|inside|from|to|under|within|di|dalam|dari|ke|pada)\b|"
+    r"(?i)\b(?:in|inside|from|to|under|within)\b|"
     r"\u5185|\u91cc|\u88e1|\u4e2d|\u306e|\u306b|\u304b\u3089|\u3078|\u0e43\u0e19|\u0e08\u0e32\u0e01|\u0e44\u0e1b\u0e17\u0e35\u0e48"
 )
 _SPECIAL_DIR_TERMINAL_TAIL_RE = re.compile(
-    r"(?i)^\s*(?:folder|directory|dir|path|files?|contents?|content|listing|pc|komputer|computer|laptop|"
-    r"please|tolong|dong|ya|aja|saja|doang|now|sekarang|here|sini|"
-    r"ke\s+sini|kesini|ke\s+chat\s+ini|chat\s+ini|chat\s+here|to\s+(?:this\s+)?chat|"
-    r"to\s+(?:this\s+)?channel|channel\s+here|channel\s+ini|"
+    r"(?i)^\s*(?:folder|directory|dir|path|files?|contents?|content|listing|pc|computer|laptop|"
+    r"please|now|here|chat\s+here|to\s+(?:this\s+)?chat|"
+    r"to\s+(?:this\s+)?channel|channel\s+here|"
     r"\u6587\u4ef6\u5939|\u6587\u4ef6\u593e|\u8cc7\u6599\u593e|\u76ee\u5f55|\u76ee\u9304|\u30d5\u30a9\u30eb\u30c0|"
     r"\u30c7\u30a3\u30ec\u30af\u30c8\u30ea|\u30d5\u30a1\u30a4\u30eb|\u30d1\u30b9|\u0e42\u0e1f\u0e25\u0e40\u0e14\u0e2d\u0e23\u0e4c|"
     r"\u0e44\u0e14\u0e40\u0e23\u0e01\u0e17\u0e2d\u0e23\u0e35|\u0e44\u0e1f\u0e25\u0e4c|\u0e17\u0e35\u0e48\u0e19\u0e35\u0e48|"
@@ -491,7 +488,7 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
     candidate = _RELATIVE_DIRECTORY_SUFFIX_RE.sub("", candidate).strip(" ,.;:!?")
     candidate = candidate.rstrip("\\/").strip()
     candidate = re.sub(
-        r"(?i)\s+(?:di|in|inside|within|under|pada|dalam)\s+"
+        r"(?i)\s+(?:in|inside|within|under)\s+"
         r"(?:workspace|current working directory|working directory|current dir|cwd)\b.*$",
         "",
         candidate,
@@ -501,7 +498,7 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
     if any(sep in candidate for sep in ("/", "\\")):
         return None
     normalized = _normalize_text(candidate)
-    if normalized.startswith(("di ", "in ", "inside ", "pada ", "dalam ")):
+    if normalized.startswith(("in ", "inside ")):
         return None
     tokens = [token for token in normalized.split() if token]
     if len(tokens) > 3:
@@ -512,19 +509,15 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
             "apa",
             "what",
             "which",
-            "coba",
             "please",
-            "tolong",
-            "periksa",
             "check",
             "show",
-            "lihat",
         }
         for token in tokens
     ):
         return None
     if re.match(
-        r"(?i)^\d+\s*(?:item|items|entry|entries|hasil|baris|line|file|files|folder|folders)\b",
+        r"(?i)^\d+\s*(?:item|items|entry|entries|line|file|files|folder|folders)\b",
         candidate,
     ):
         return None
@@ -544,8 +537,8 @@ def _extract_read_file_path(text: str) -> str | None:
         explicit_suffix = Path(str(explicit_path).rstrip("\\/")).suffix.lower()
         # When the extracted explicit path is directory-shaped but the sentence
         # also includes an explicit filename token, prefer the filename token.
-        # This avoids cases like: "kirim file X di folder bot\\ kesini"
-        # being interpreted as path "bot\\ kesini".
+        # This avoids cases like: "send file X in folder bot\\ here"
+        # being interpreted as path "bot\\ here".
         if not explicit_suffix and file_match:
             cleaned_file = _normalize_filesystem_candidate(file_match.group(0))
             if cleaned_file:

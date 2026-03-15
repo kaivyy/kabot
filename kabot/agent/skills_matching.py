@@ -25,43 +25,35 @@ _STOP_WORDS = frozenset({
     "or", "and", "not", "no", "it", "its", "this", "that",
     "use", "using", "when", "you", "your", "via", "can", "do",
     "tool", "tools", "skill", "skills",
-    "yang", "dan", "di", "ke", "dari", "ini", "itu", "untuk",
-    "pakai", "pake", "pakaiin",
 })
 
 _SKILL_DOMAIN_KEYWORDS = frozenset({
     "skill", "skills", "plugin", "plugins", "capability", "capabilities",
     "integration", "integrations", "connector", "workflow", "automation",
-    "fitur", "feature", "kemampuan", "kapabilitas", "integrasi", "otomasi",
+    "feature",
 })
 
 _SKILL_CREATE_UPDATE_KEYWORDS = frozenset({
     "create", "build", "make", "add", "design", "draft", "generate", "new",
     "update", "edit", "modify", "revise", "improve", "patch", "refactor",
-    "buat", "bikin", "buatkan", "tambahkan", "tambah", "kembangkan", "rancang",
-    "desain", "baru", "ubah", "perbarui", "modif", "modifikasi", "revisi",
-    "rapikan",
 })
 
 _SKILL_INSTALL_KEYWORDS = frozenset({
     "install", "add", "download", "fetch", "sync", "upgrade", "update",
-    "pasang", "tambahkan", "unduh", "sinkron",
 })
 
 _SKILL_DISCOVERY_KEYWORDS = frozenset({
     "list", "show", "what", "which", "available", "installable", "catalog",
-    "catalogue", "curated", "experimental", "recommend", "rekomendasi",
-    "daftar", "tampilkan", "lihat", "tersedia", "cocok", "apa", "mana",
+    "catalogue", "curated", "experimental", "recommend",
 })
 
 _SKILL_SOURCE_KEYWORDS = frozenset({
     "github", "repo", "repository", "url", "catalog", "catalogue",
-    "curated", "kurasi", "openai/skills",
+    "curated", "openai/skills",
 })
 
 _SKILL_USE_KEYWORDS = frozenset({
-    "use", "run", "follow", "apply", "gunakan", "pakai", "pake",
-    "jalankan", "ikuti",
+    "use", "run", "follow", "apply",
 })
 
 _COMPACT_SKILL_DOMAIN_FRAGMENTS = (
@@ -102,8 +94,8 @@ _DIRECT_GITHUB_SKILL_PATH_RE = re.compile(
 )
 _SKILL_INSTALL_ACTION_RE = re.compile(
     r"\b("
-    r"install|pasang|tambahkan|unduh|download|sinkron|sync|upgrade|update|"
-    r"use|gunakan|pakai|pake|follow|ikuti"
+    r"install|add|download|sync|upgrade|update|"
+    r"use|follow"
     r")\b",
     re.IGNORECASE,
 )

@@ -204,7 +204,7 @@ def test_required_tool_for_query_does_not_route_plain_schedule_planning_to_cron(
 
 def test_required_tool_for_query_keeps_explicit_timed_reminder_creation():
     tool = required_tool_for_query(
-        question="ingatkan 2 menit lagi untuk minum air",
+        question="remind me in 2 minutes to drink water",
         has_weather_tool=False,
         has_cron_tool=True,
         has_system_info_tool=False,

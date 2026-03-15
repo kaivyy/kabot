@@ -24,11 +24,11 @@ from kabot.agent.loop_core.tool_enforcement_parts.filesystem_paths import (
 )
 
 _OPTION_SELECTION_NUMERIC_RE = re.compile(
-    r"^(?:(?:opsi|option|nomor|number)\s+)?(?P<ref>\d{1,2})$"
+    r"^(?:(?:option|number)\s+)?(?P<ref>\d{1,2})$"
 )
 _OPTION_SELECTION_REFERENCE_RE = re.compile(
-    r"\b(?:(?:opsi|option|nomor|number|yang|the)\s+)?"
-    r"(?P<ref>pertama|kedua|ketiga|keempat|kelima|first|second|third|fourth|fifth|\d{1,2})"
+    r"\b(?:(?:option|number|the)\s+)?"
+    r"(?P<ref>first|second|third|fourth|fifth|\d{1,2})"
     r"(?:\s+one)?\b",
     re.IGNORECASE,
 )
@@ -41,11 +41,6 @@ _OPTION_SELECTION_THAI_ORDINAL_RE = re.compile(
     r"(?:ข้อ\s*)?(?:ที่)?(?P<ref>แรก|หนึ่ง|สอง|สาม|สี่|ห้า)"
 )
 _OPTION_SELECTION_ORDINAL_MAP = {
-    "pertama": "1",
-    "kedua": "2",
-    "ketiga": "3",
-    "keempat": "4",
-    "kelima": "5",
     "first": "1",
     "second": "2",
     "third": "3",
@@ -64,15 +59,61 @@ _OPTION_SELECTION_ORDINAL_MAP = {
     "ห้า": "5",
 }
 _DIRECT_FETCH_VERB_RE = re.compile(
-    r"(?i)\b(fetch|open|visit|read|scrape|crawl|ambil|buka|baca|ringkas|summari[sz]e|isi website|isi halaman|konten website|konten halaman)\b"
+    r"(?i)\b(fetch|open|visit|read|scrape|crawl|summari[sz]e)\b"
 )
 _DIRECT_FETCH_URL_RE = re.compile(r"(?i)\bhttps?://[^\s]+")
 _DIRECT_FETCH_DOMAIN_RE = re.compile(
     r"(?i)\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/[^\s]*)?\b"
 )
 _READ_FILE_VERB_RE = re.compile(
-    r"(?i)\b(read|open|show|display|inspect|view|cat|baca|lihat|lihatkan|tampilkan|periksa|cek)\b"
+    r"(?i)\b(read|open|show|display|inspect|view|cat|check)\b"
 )
+_EXPLICIT_CRON_RE = re.compile(
+    r"(?i)\b("
+    r"remind(?:er)?|set\s+(?:a\s+)?reminder|add\s+(?:a\s+)?reminder|create\s+(?:a\s+)?reminder|"
+    r"alarm|timer|wake me|"
+    r"cron|เตือน|การเตือน|ตั้งเตือน|提醒|闹钟|定时提醒"
+    r")\b"
+)
+_EXPLICIT_CRON_MANAGEMENT_RE = re.compile(
+    r"(?i)(?:\b(?:list|show|delete|remove|edit|update|manage)\b.*\b"
+    r"(?:reminder|alarm|cron|เตือน|提醒)\b)|(?:\bgrp_[a-z0-9_]+\b)"
+)
+_EXPLICIT_SYSTEM_INFO_RE = re.compile(
+    r"(?i)\b("
+    r"system info|sysinfo|specs?|specification|hardware|cpu|gpu"
+    r")\b"
+)
+_EXPLICIT_PROCESS_MEMORY_RE = re.compile(
+    r"(?i)\b("
+    r"ram usage|memory usage|process memory|process ram|process list|top memory|top ram|"
+    r"内存使用|メモリ使用|메모리 사용"
+    r")\b"
+)
+_EXPLICIT_SERVER_MONITOR_RE = re.compile(
+    r"(?i)\b("
+    r"server status|server health|server monitor|runtime server|"
+    r"server runtime|uptime|ตรวจสอบเซิร์ฟเวอร์|服务器状态"
+    r")\b"
+)
+_EXPLICIT_SPEEDTEST_RE = re.compile(
+    r"(?i)\b("
+    r"speedtest|speed test|internet speed|connection speed|network speed"
+    r")\b"
+)
+_EXPLICIT_CLEANUP_RE = re.compile(
+    r"(?i)\b("
+    r"cleanup|clean up|clear cache|clear temp|"
+    r"disk cleanup|disk clean|optimize|optimise|free up|清理|ล้าง"
+    r")\b"
+)
+_EXPLICIT_UPDATE_RE = re.compile(
+    r"(?i)\b("
+    r"check update|check for updates?|latest version|"
+    r"is there an update|update|upgrade|install update"
+    r")\b"
+)
+_EXPLICIT_UPDATE_TARGET_RE = re.compile(r"(?i)\b(?:kabot|bot|agent)\b")
 _DETERMINISTIC_PARSER_TOOL_WHITELIST = {
     "save_memory",
     "cron",
@@ -84,6 +125,46 @@ _DETERMINISTIC_PARSER_TOOL_WHITELIST = {
     "check_update",
     "system_update",
 }
+
+
+def _looks_like_explicit_cron_request(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    return bool(
+        _EXPLICIT_CRON_RE.search(raw)
+        or _EXPLICIT_CRON_MANAGEMENT_RE.search(raw)
+        or any(fragment in raw for fragment in ("เตือน", "提醒", "闹钟", "定时提醒"))
+    )
+
+
+def _looks_like_explicit_system_info_request(text: str) -> bool:
+    return bool(_EXPLICIT_SYSTEM_INFO_RE.search(str(text or "").strip()))
+
+
+def _looks_like_explicit_process_memory_request(text: str) -> bool:
+    return bool(_EXPLICIT_PROCESS_MEMORY_RE.search(str(text or "").strip()))
+
+
+def _looks_like_explicit_server_monitor_request(text: str) -> bool:
+    return bool(_EXPLICIT_SERVER_MONITOR_RE.search(str(text or "").strip()))
+
+
+def _looks_like_explicit_speedtest_request(text: str) -> bool:
+    return bool(_EXPLICIT_SPEEDTEST_RE.search(str(text or "").strip()))
+
+
+def _looks_like_explicit_cleanup_request(text: str) -> bool:
+    return bool(_EXPLICIT_CLEANUP_RE.search(str(text or "").strip()))
+
+
+def _looks_like_explicit_update_request(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    return bool(_EXPLICIT_UPDATE_RE.search(raw) and _EXPLICIT_UPDATE_TARGET_RE.search(raw))
+
+
 def _extract_direct_fetch_url_candidate(text: str) -> str | None:
     raw = str(text or "").strip()
     if not raw:
@@ -185,7 +266,21 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
     if loop.tools.has("read_file") and _looks_like_explicit_read_file_request(question):
         return "read_file"
 
-    resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+    resolved_tool = None
+    if _looks_like_explicit_cron_request(question):
+        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+    elif _looks_like_explicit_system_info_request(question):
+        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+    elif _looks_like_explicit_process_memory_request(question):
+        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+    elif _looks_like_explicit_server_monitor_request(question):
+        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+    elif _looks_like_explicit_speedtest_request(question):
+        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+    elif _looks_like_explicit_cleanup_request(question):
+        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+    elif _looks_like_explicit_update_request(question):
+        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
     if resolved_tool == "read_file":
         return "read_file" if loop.tools.has("read_file") and _looks_like_explicit_read_file_request(question) else None
     if resolved_tool in _DETERMINISTIC_PARSER_TOOL_WHITELIST:
@@ -221,13 +316,6 @@ def infer_required_tool_from_history_for_loop(
     if not isinstance(history, list) or not history:
         return None, None
 
-    resolver = getattr(loop, "_required_tool_for_query", None)
-    if not callable(resolver):
-        def _resolver(candidate: str) -> str | None:
-            return required_tool_for_query_for_loop(loop, candidate)
-
-        resolver = _resolver
-
     for item in reversed(history[-max_scan:]):
         if not isinstance(item, dict):
             continue
@@ -244,7 +332,7 @@ def infer_required_tool_from_history_for_loop(
         if _is_low_information_followup(candidate, max_tokens=3, max_chars=24):
             continue
 
-        inferred = resolver(candidate)
+        inferred = required_tool_for_query_for_loop(loop, candidate)
         if inferred:
             return inferred, candidate
 

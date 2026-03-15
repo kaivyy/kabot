@@ -221,7 +221,7 @@ def test_match_skills_understands_create_new_skill_intent_for_skill_creator(tmp_
     )
 
     loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
-    matches = loader.match_skills("saya mau buat skill baru untuk telegram", profile="GENERAL")
+    matches = loader.match_skills("i want to create a new skill for telegram", profile="GENERAL")
 
     assert matches
     assert matches[0].startswith("skill-creator")
@@ -250,7 +250,7 @@ def test_match_skills_understands_capability_creation_intent_for_skill_creator(t
 
     loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
 
-    assert loader.match_skills("buat kemampuan baru buat kabot", profile="GENERAL")[0].startswith("skill-creator")
+    assert loader.match_skills("create a new capability for kabot", profile="GENERAL")[0].startswith("skill-creator")
     assert loader.match_skills(
         "create a capability for posting to threads",
         profile="GENERAL",
@@ -280,7 +280,7 @@ def test_match_skills_understands_skill_update_intent_for_skill_creator(tmp_path
 
     loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
 
-    assert loader.match_skills("tolong update skill threads yang sudah ada", profile="GENERAL")[0].startswith("skill-creator")
+    assert loader.match_skills("please update the existing threads skill", profile="GENERAL")[0].startswith("skill-creator")
     assert loader.match_skills(
         "please edit the existing threads skill",
         profile="GENERAL",
@@ -311,7 +311,7 @@ def test_match_skills_understands_external_skill_install_intent_for_skill_instal
     loader = SkillsLoader(workspace=workspace, builtin_skills_dir=builtin)
 
     assert loader.match_skills(
-        "tolong install skill dari github repo owner/repo",
+        "please install a skill from github repo owner/repo",
         profile="GENERAL",
     )[0].startswith("skill-installer")
     assert loader.match_skills(
@@ -319,7 +319,7 @@ def test_match_skills_understands_external_skill_install_intent_for_skill_instal
         profile="GENERAL",
     )[0].startswith("skill-installer")
     assert loader.match_skills(
-        "tolong pasang https://github.com/acme/custom-skills/tree/main/skills/mlbb-id-check",
+        "please install https://github.com/acme/custom-skills/tree/main/skills/mlbb-id-check",
         profile="GENERAL",
     )[0].startswith("skill-installer")
     assert loader.match_skills(

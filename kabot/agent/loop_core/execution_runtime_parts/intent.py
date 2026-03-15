@@ -120,35 +120,28 @@ def _normalize_text(text: str) -> str:
 
 _LIVE_FINANCE_DOMAIN_RE = re.compile(
     r"(?i)\b("
-    r"stock|stocks|saham|ticker|tickers|quote|quotes|market|markets|"
-    r"harga|price|crypto|bitcoin|btc|ethereum|eth|coin|coins|token|tokens|"
-    r"forex|fx|kurs|rate|exchange(?:\s+rate)?|usd|idr|rupiah|ihsg|idx|jkse|nasdaq|dow|nikkei"
+    r"stock|stocks|ticker|tickers|quote|quotes|market|markets|"
+    r"price|crypto|bitcoin|btc|ethereum|eth|coin|coins|token|tokens|"
+    r"forex|fx|rate|exchange(?:\s+rate)?|usd|idr|idx|jkse|nasdaq|dow|nikkei"
     r")\b"
 )
 _LIVE_FINANCE_VALUE_RE = re.compile(
     r"(?i)\b("
-    r"berapa|how much|what(?:'s| is)|harga(?:nya)?|price|quote|nilai|value|"
-    r"kurs|rate|last|latest|current|now|today|hari ini|sekarang|saat ini|"
-    r"terbaru|terkini|real[\s-]?time|live|open|close|closing|high|low"
+    r"how much|what(?:'s| is)|price|quote|value|"
+    r"rate|last|latest|current|now|today|"
+    r"real[\s-]?time|live|open|close|closing|high|low"
     r")\b"
 )
 _LIVE_DATA_REFRESH_KEYWORDS = frozenset({
     "latest", "current", "newest", "fresh", "freshest",
-    "terbaru", "terkini", "live",
+    "live",
 })
 _LIVE_DATA_REFRESH_PHRASES = (
     "up to date",
     "real time",
-    "paling baru",
     "use latest data",
     "use current data",
     "use real time data",
-    "pakai data terbaru",
-    "pakai data terkini",
-    "gunakan data terbaru",
-    "gunakan data terkini",
-    "pakai yang terbaru",
-    "pakai yang terkini",
 )
 
 
@@ -186,9 +179,6 @@ def _looks_like_short_confirmation(text: str) -> bool:
 
 
 _PRIMARY_INTENT_TAIL_MARKERS = (
-    "dari sini",
-    "dari jawaban ini",
-    "berdasarkan ini",
     "from this",
     "based on this",
     "from here",
@@ -196,21 +186,20 @@ _PRIMARY_INTENT_TAIL_MARKERS = (
 )
 _PRIMARY_INTENT_ACTION_RE = re.compile(
     r"(?i)\b("
-    r"hitung|calculate|calc|jelaskan|explain|ringkas|summarize|buat|bikin|lanjut|"
-    r"tolong|please|berapa|apa|kenapa|bagaimana|gimana|bisa|bisakah|"
-    r"hr|heart rate|detak jantung|zona|zone|karvonen"
+    r"calculate|calc|explain|summarize|continue|"
+    r"please|how much|what|why|how|can|could|"
+    r"hr|heart rate|zone|karvonen"
     r")\b"
 )
 _MEMORY_COMMIT_INTENT_RE = re.compile(
     r"(?i)\b("
-    r"simpan|save(?: it| this| that)?|ingat(?:kan)?|remember(?: it| this| that)?|"
-    r"catat(?:kan)?|note(?: it| this| that)?|save to memory|simpan ke memory|"
-    r"commit ke memory|masukkan ke memory"
+    r"save(?: it| this| that)?|remember(?: it| this| that)?|"
+    r"note(?: it| this| that)?|save to memory|commit to memory"
     r")\b"
 )
 _PERSONAL_HR_CALC_RE = re.compile(
     r"(?i)\b("
-    r"zona hr|hr zona|hr zone|heart rate zone|detak jantung|"
+    r"hr zone|heart rate zone|"
     r"karvonen|resting hr|max hr|hr max"
     r")\b"
 )
@@ -387,10 +376,10 @@ _TTS_TOOL_NAME_RE = re.compile(
     r"(?i)(^|_)(tts|text_to_speech|speech|voice|speak|narrat|audio|say)(_|$)"
 )
 _REMINDER_MARKER_RE = re.compile(
-    r"(?i)\b(remind|reminder|ingat|ingatkan|pengingat|jadwal|schedule|alarm|timer|cron)\b"
+    r"(?i)\b(remind|reminder|schedule|alarm|timer|cron)\b"
 )
 _REMINDER_STRUCTURE_RE = re.compile(
-    r"(?i)(\b\d+\s*(menit|jam|detik|hari|min(?:ute)?s?|hour(?:s)?|sec(?:ond)?s?|day(?:s)?)\b|\b\d{1,2}(?::\d{2})\b)"
+    r"(?i)(\b\d+\s*(min(?:ute)?s?|hour(?:s)?|sec(?:ond)?s?|day(?:s)?)\b|\b\d{1,2}(?::\d{2})\b)"
 )
 _FILELIKE_QUERY_RE = re.compile(
     r"\b[\w\-]+\.(json|ya?ml|toml|ini|cfg|conf|env|md|txt|csv|log|pdf|docx?|xlsx?|py|js|ts|tsx|jsx|html|css|xml)\b",
@@ -398,19 +387,19 @@ _FILELIKE_QUERY_RE = re.compile(
 )
 _PATHLIKE_QUERY_RE = re.compile(r"([a-zA-Z]:\\|\\\\|/[\w\-./]+|[\w\-./]+\\[\w\-./]+)")
 _FIND_FILE_MARKER_RE = re.compile(
-    r"(?i)\b(cari|carikan|find|search|locate|look for|temukan|telusuri)\b"
+    r"(?i)\b(find|search|locate|look for)\b"
 )
 _SEND_FILE_MARKER_RE = re.compile(
-    r"(?i)\b(kirim|send|share|attach|lampirkan|upload)\b"
+    r"(?i)\b(send|share|attach|upload)\b"
 )
 _WEATHER_MARKER_RE = re.compile(
-    r"(?i)\b(weather|temperature|forecast|cuaca|suhu|temperatur|prakiraan|ramalan)\b"
+    r"(?i)\b(weather|temperature|forecast)\b"
 )
 _IMAGE_MARKER_RE = re.compile(
-    r"(?i)\b(image|gambar|photo|foto|picture|draw|sketch|illustrat(?:e|ion)|render|generate\s+image|buat(?:kan)?\s+gambar)\b"
+    r"(?i)\b(image|photo|picture|draw|sketch|illustrat(?:e|ion)|render|generate\s+image)\b"
 )
 _TTS_MARKER_RE = re.compile(
-    r"(?i)\b(tts|text\s*to\s*speech|voice|suara|audio|narrat(?:e|ion)|bacakan|read\s+aloud|speak|ucapkan)\b"
+    r"(?i)\b(tts|text\s*to\s*speech|voice|audio|narrat(?:e|ion)|read\s+aloud|speak)\b"
 )
 _BROWSER_INTERACTION_MARKER_RE = re.compile(
     r"(?i)\b("
@@ -421,7 +410,7 @@ _BROWSER_INTERACTION_MARKER_RE = re.compile(
     r")\b"
 )
 _DIRECT_FETCH_VERB_RE = re.compile(
-    r"(?i)\b(fetch|open|visit|read|scrape|crawl|ambil|buka|baca|ringkas|summari[sz]e|isi website|isi halaman|konten website|konten halaman)\b"
+    r"(?i)\b(fetch|open|visit|read|scrape|crawl|summari[sz]e)\b"
 )
 _DIRECT_FETCH_URL_RE = re.compile(r"(?i)\bhttps?://[^\s]+")
 _DIRECT_FETCH_DOMAIN_RE = re.compile(
@@ -430,13 +419,13 @@ _DIRECT_FETCH_DOMAIN_RE = re.compile(
 _DIRECT_FETCH_SITE_RE = re.compile(r"(?i)\bsite:(?P<domain>[a-z0-9.-]+\.[a-z]{2,})\b")
 _WEB_RESULT_URL_RE = re.compile(r"(?i)\bhttps?://[^\s<>()\[\]\"']+")
 _WEB_SOURCE_SELECTION_LEAD_RE = re.compile(
-    r"(?i)\b(use|pakai|pake|gunakan|via|from|source|sumber|provider|coba|try)\b"
+    r"(?i)\b(use|via|from|source|provider|try)\b"
 )
 _NON_ACTION_MARKER_RE = re.compile(
-    r"(?i)\b(stop|hentikan|berhenti|jangan|bukan|dont|don't|do not|cancel|batalkan|ga usah|gak usah|nggak usah|tidak usah|no need)\b"
+    r"(?i)\b(stop|dont|don't|do not|cancel|no need)\b"
 )
 _NON_ACTION_STOCK_TOPIC_RE = re.compile(
-    r"(?i)\b(stock|saham|ticker|market|harga|price|idx|ihsg)\b"
+    r"(?i)\b(stock|ticker|market|price|idx)\b"
 )
 _SKILL_CREATION_GUARDED_TOOLS = {"write_file", "edit_file", "exec"}
 _WEB_SOURCE_ALIAS_DOMAINS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -797,7 +786,7 @@ def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> boo
         normalized = _normalize_text(text)
         has_target = bool(_FILELIKE_QUERY_RE.search(text) or _PATHLIKE_QUERY_RE.search(text))
         has_delivery_target = any(
-            marker in normalized for marker in ("chat ini", "chat here", "kirim ke chat", "send it here", "channel ini", "channel")
+            marker in normalized for marker in ("chat here", "send it here", "channel")
         )
         has_imperative_send = bool(_SEND_FILE_MARKER_RE.search(text) and has_target)
         return bool(has_imperative_send and (has_delivery_target or has_target))
@@ -812,18 +801,13 @@ def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> boo
             "find",
             "look up",
             "lookup",
-            "cari",
-            "carikan",
-            "telusuri",
             "googling",
             "google",
             "browse",
-            "berita",
             "news",
             "headline",
             "headlines",
             "latest",
-            "terbaru",
             "update",
         )
         return any(marker in normalized for marker in search_markers)
@@ -865,7 +849,7 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
         return None
 
     if normalized_tool == "message":
-        has_send_verb = bool(re.search(r"(?i)\b(kirim|send|share|attach|lampirkan|upload)\b", query_text))
+        has_send_verb = bool(re.search(r"(?i)\b(send|share|attach|upload)\b", query_text))
         has_explicit_target = bool(_FILELIKE_QUERY_RE.search(query_text) or _PATHLIKE_QUERY_RE.search(query_text))
         if has_send_verb and not has_explicit_target:
             working_directory = str(metadata.get("working_directory") or "").strip()
@@ -907,7 +891,7 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
         if not has_file_subject:
             has_file_subject = any(
                 marker in normalized_query
-                for marker in ("file", "folder", "directory", "dir", "berkas", "dokumen", "document", "report", "pdf", "xlsx", "csv")
+                for marker in ("file", "folder", "directory", "dir", "document", "report", "pdf", "xlsx", "csv")
             )
         if delivery_required and has_find_action and has_file_subject and _tools_has(loop, "find_files"):
             allowed_workflow_tools.add("find_files")

@@ -52,17 +52,17 @@ _COMPLETE_STAGE_MARKERS = (
 )
 _BOOTSTRAP_ACTION_VERB_RE = re.compile(
     r"(?i)\b("
-    r"buka|open|masuk|enter|cd|goto|go\s+to|lihat|list|tampilkan|show|display|"
-    r"kirim|send|share|attach|lampirkan|upload|"
-    r"cari|find|search|locate|"
-    r"buat|create|generate|write|tulis|save|simpan|"
-    r"cek|check|periksa|inspect|read|baca"
+    r"open|enter|cd|goto|go\s+to|list|show|display|"
+    r"send|share|attach|upload|"
+    r"find|search|locate|"
+    r"create|generate|write|save|"
+    r"check|inspect|read"
     r")\b"
 )
 _BOOTSTRAP_ACTION_HINT_RE = re.compile(
     r"(?i)\b("
     r"file|folder|directory|dir|path|desktop|downloads?|documents?|docs|"
-    r"workspace|chat|channel|screenshot|gambar|image|report|pdf|xlsx|csv"
+    r"workspace|chat|channel|screenshot|image|report|pdf|xlsx|csv"
     r")\b"
 )
 
@@ -105,7 +105,7 @@ def _display_name(value: str) -> str:
 def _clean_answer_value(value: str) -> str:
     cleaned = str(value or "").strip()
     cleaned = cleaned.strip(" ,")
-    cleaned = re.sub(r"^(?:ya|yes|iya)\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^(?:yes)\s+", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
 
 

@@ -39,9 +39,6 @@ from kabot.agent.loop_core.execution_runtime_parts.helpers import (
     _update_followup_context_from_tool_execution,
     _verify_completion_artifact_path,
 )
-from kabot.agent.loop_core.execution_runtime_parts.intent import (
-    _should_defer_live_research_latch_to_skill,
-)
 from kabot.agent.loop_core.execution_runtime_parts.llm import (
     _active_llm_request_overrides,
     call_llm_with_fallback,
@@ -98,7 +95,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     immediate_action_retried = False
     grounded_filesystem_inspection_retried = False
     suppress_required_tool_inference = bool(message_metadata.get("suppress_required_tool_inference", False))
-    required_tool = None if suppress_required_tool_inference else loop._required_tool_for_query(msg.content)
+    required_tool = None
     raw_user_text = str(msg.content or "").strip()
     raw_user_word_count = len([part for part in raw_user_text.split() if part])
     effective_content = str(message_metadata.get("effective_content") or "").strip()
@@ -129,6 +126,9 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     artifact_verification_retried = False
     delivery_verification_retried = False
     delivery_required = bool(message_metadata.get("requires_message_delivery", False))
+    session_metadata = getattr(session, "metadata", None)
+    if not isinstance(session_metadata, dict):
+        session_metadata = {}
     tools_registry = getattr(loop, "tools", None)
     has_tool = getattr(tools_registry, "has", None)
     resolved_required_tool = str(message_metadata.get("required_tool") or "").strip()
@@ -151,20 +151,68 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         not required_tool
         and delivery_required
         and not suppress_required_tool_inference
-        and _query_has_explicit_payload_for_tool("message", question_text)
-        and not _query_has_explicit_payload_for_tool("find_files", question_text)
     ):
-        message_tool_available = True
+        requested_delivery_file = str(_extract_read_file_path(question_text) or "").strip()
+        explicit_find_search_request = bool(
+            _query_has_explicit_payload_for_tool("find_files", question_text)
+            and re.search(r"(?i)\b(find|search|locate|look for)\b", question_text)
+        )
+        explicit_delivery_action_tool = None
+        try:
+            explicit_delivery_action_tool, _delivery_action_query = infer_action_required_tool_for_loop(
+                loop,
+                question_text,
+            )
+        except Exception:
+            explicit_delivery_action_tool = None
+        delivery_context_available = bool(
+            str(message_metadata.get("working_directory") or session_metadata.get("working_directory") or "").strip()
+            or str(message_metadata.get("last_navigated_path") or session_metadata.get("last_navigated_path") or "").strip()
+            or isinstance(message_metadata.get("delivery_route"), dict)
+            or isinstance(session_metadata.get("delivery_route"), dict)
+            or (
+                isinstance(message_metadata.get("last_tool_context"), dict)
+                and str((message_metadata.get("last_tool_context") or {}).get("path") or "").strip()
+            )
+            or (
+                isinstance(session_metadata.get("last_tool_context"), dict)
+                and str((session_metadata.get("last_tool_context") or {}).get("path") or "").strip()
+            )
+        )
+        direct_delivery_candidate = bool(
+            requested_delivery_file
+            and (
+                delivery_context_available
+                or bool(re.match(r"(?i)^(?:[a-z]:[\\/]|\\\\|/|~[\\/])", requested_delivery_file))
+                or "/" in requested_delivery_file
+                or "\\" in requested_delivery_file
+            )
+        )
+        message_payload_available = bool(
+            _query_has_explicit_payload_for_tool("message", question_text)
+            or direct_delivery_candidate
+        )
+        if (
+            explicit_delivery_action_tool == "find_files"
+            or explicit_find_search_request
+            or (
+                _query_has_explicit_payload_for_tool("find_files", question_text)
+                and not delivery_context_available
+            )
+        ):
+            message_tool_available = False
+        else:
+            message_tool_available = message_payload_available
         if callable(has_tool):
             try:
-                message_tool_available = bool(has_tool("message"))
+                message_tool_available = bool(message_tool_available and has_tool("message"))
             except Exception:
-                message_tool_available = True
-        if message_tool_available:
-            required_tool = "message"
-            if isinstance(message_metadata, dict):
-                message_metadata.setdefault("required_tool", "message")
-                message_metadata.setdefault("required_tool_query", question_text)
+                message_tool_available = bool(message_tool_available)
+            if message_tool_available:
+                required_tool = "message"
+                if isinstance(message_metadata, dict):
+                    message_metadata.setdefault("required_tool", "message")
+                    message_metadata.setdefault("required_tool_query", question_text)
     if skill_command_dispatch == "tool" and skill_command_tool:
         tool_available = True
         if callable(has_tool):
@@ -204,12 +252,6 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             tool_result=result_text,
         )
         return result_text
-    has_web_search_tool = False
-    if callable(has_tool):
-        try:
-            has_web_search_tool = bool(has_tool("web_search"))
-        except Exception:
-            has_web_search_tool = False
     if enforce_toolbacked_action and not required_tool:
         inferred_action_tool, inferred_action_query = infer_action_required_tool_for_loop(loop, question_text)
         if inferred_action_tool:
@@ -223,36 +265,6 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 "Execution action-tool inference: "
                 f"'{question_text[:120]}' -> required_tool={required_tool}"
             )
-    if (
-        not suppress_required_tool_inference
-        and not required_tool
-        and has_web_search_tool
-        and _looks_like_live_research_query(raw_user_text)
-        and not _should_defer_live_research_latch_to_skill(
-            loop,
-            raw_user_text,
-            profile=route_profile or "GENERAL",
-            message_metadata=message_metadata,
-        )
-    ):
-        required_tool = "web_search"
-        logger.info("Live-research safety latch: forcing required_tool=web_search")
-    if (
-        not suppress_required_tool_inference
-        and
-        not required_tool
-        and route_profile == "RESEARCH"
-        and has_web_search_tool
-        and _looks_like_live_research_query(question_text)
-        and not _should_defer_live_research_latch_to_skill(
-            loop,
-            question_text,
-            profile=route_profile or "RESEARCH",
-            message_metadata=message_metadata,
-        )
-    ):
-        required_tool = "web_search"
-        logger.info("Research route safety latch: forcing required_tool=web_search")
     artifact_required_tool = str(required_tool or message_metadata.get("required_tool") or "").strip()
     if not artifact_required_tool and enforce_toolbacked_action:
         inferred_artifact_tool, _ = infer_action_required_tool_for_loop(loop, question_text)

@@ -277,8 +277,8 @@ class ExecTool(Tool):
                             "Error: Command requires approval by security policy.\n"
                             f"Command: {command}\n"
                             f"Approval ID: {approval_id}\n"
-                            "Reply naturally to approve, for example: 'ya jalankan sekarang' or 'oke lanjut eksekusi'.\n"
-                            "Reply 'jangan jalankan' to deny."
+                            "Reply naturally to approve, for example: 'yes, run it now' or 'okay, continue'.\n"
+                            "Reply 'do not run it' to deny."
                         )
 
                     logger.info(f"Command requires approval: {command}")

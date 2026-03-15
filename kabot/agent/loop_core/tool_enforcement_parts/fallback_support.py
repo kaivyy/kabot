@@ -10,52 +10,35 @@ from kabot.agent.fallback_i18n import t as i18n_t
 
 _STOCK_TRACKING_MARKER_RE = re.compile(
     r"(?i)\b("
-    r"track(?:ing)?|trend|movement|history|historical|chart|grafik|"
-    r"pergerakan|riwayat|naik turun|kinerja|performance|"
-    r"bulan terakhir|hari terakhir|minggu terakhir|"
-    r"\d+\s*(?:day|days|hari|week|weeks|minggu|month|months|bulan)|"
+    r"track(?:ing)?|trend|movement|history|historical|chart|"
+    r"performance|"
+    r"\d+\s*(?:day|days|week|weeks|month|months)|"
     r"1m|3m|6m|1y"
     r")\b"
 )
-_STOCK_DAYS_DAY_RE = re.compile(r"(?i)\b(\d{1,3})\s*(day|days|hari)\b")
-_STOCK_DAYS_WEEK_RE = re.compile(r"(?i)\b(\d{1,3})\s*(week|weeks|minggu)\b")
-_STOCK_DAYS_MONTH_RE = re.compile(r"(?i)\b(\d{1,2})\s*(month|months|bulan)\b")
+_STOCK_DAYS_DAY_RE = re.compile(r"(?i)\b(\d{1,3})\s*(day|days)\b")
+_STOCK_DAYS_WEEK_RE = re.compile(r"(?i)\b(\d{1,3})\s*(week|weeks)\b")
+_STOCK_DAYS_MONTH_RE = re.compile(r"(?i)\b(\d{1,2})\s*(month|months)\b")
 _STOCK_IDR_CONVERSION_MARKER_RE = re.compile(
-    r"(?i)\b(idr|rupiah|dirupiahkan|rupiahkan|konversi|convert(?:ed|ion)?)\b"
+    r"(?i)\b(idr|convert(?:ed|ion)?)\b"
 )
 _GENERIC_STOCK_NAME_NOISE_WORDS = {
-    "harga",
     "price",
-    "sekarang",
     "today",
     "now",
-    "berapa",
     "how",
     "much",
-    "dengan",
-    "dalam",
-    "untuk",
-    "kalau",
-    "jika",
-    "pakai",
-    "gunakan",
-    "dirupiahkan",
-    "rupiah",
-    "rupiahkan",
-    "kurs",
-    "konversi",
     "convert",
     "usd",
     "idr",
     "dollar",
-    "ke",
     "to",
 }
 _WEB_SEARCH_TAIL_INSTRUCTION_RE = re.compile(
-    r"(?i)(?:[,:;.!?]\s*|\s+)(?:tolong|please)\s+(?:jawab|answer|respond)\b.*$"
+    r"(?i)(?:[,:;.!?]\s*|\s+)please\s+(?:answer|respond)\b.*$"
 )
 _WEB_SEARCH_STYLE_CLAUSE_RE = re.compile(
-    r"(?i)\b(?:jawab|answer|respond)\s+(?:seperti|like|as)\b.*$"
+    r"(?i)\b(?:answer|respond)\s+(?:like|as)\b.*$"
 )
 _WEB_SEARCH_EXTRA_SPACE_RE = re.compile(r"\s+")
 

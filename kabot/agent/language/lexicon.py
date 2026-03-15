@@ -1,4 +1,4 @@
-"""Shared multilingual keyword lexicon for routing and fallback logic."""
+"""Shared keyword lexicon for routing and fallback logic."""
 
 from __future__ import annotations
 
@@ -10,13 +10,6 @@ REMINDER_TERMS = (
     "alarm",
     "timer",
     "wake me",
-    # Indonesian
-    "ingatkan",
-    "pengingat",
-    "jadwalkan",
-    "bangunkan",
-    "set sekarang",
-    "jadwal",
     "cron",
     "shift",
     # Malay
@@ -45,12 +38,6 @@ WEATHER_TERMS = (
     "degrees",
     "celsius",
     "fahrenheit",
-    # Indonesian
-    "cuaca",
-    "suhu",
-    "temperatur",
-    "prakiraan",
-    "derajat",
     # Malay
     "ramalan",
     # Thai
@@ -65,15 +52,12 @@ WEATHER_TERMS = (
 )
 
 CRON_MANAGEMENT_OPS = (
-    # English + Indonesian
+    # English
     "list",
-    "lihat",
     "show",
-    "hapus",
     "delete",
     "remove",
     "edit",
-    "ubah",
     "update",
     # Malay
     "senarai",
@@ -98,8 +82,6 @@ CRON_MANAGEMENT_OPS = (
 
 CRON_MANAGEMENT_TERMS = (
     "reminder",
-    "pengingat",
-    "jadwal",
     "cron",
     "shift",
     "peringatan",
@@ -112,9 +94,8 @@ CRON_MANAGEMENT_TERMS = (
 )
 
 STOCK_TERMS = (
-    "stock", "saham", "ticker", "ihsg", "idx",
+    "stock", "ticker", "ihsg", "idx",
     "market cap", "dividend", "yield", "ratio", "pe ratio",
-    "bursa", "efek", "obligasi", "surat berharga",
     # Multilingual anchors
     "stocks", "equity", "shares",
     "หุ้น", "ราคา หุ้น",
@@ -124,6 +105,6 @@ STOCK_TERMS = (
 )
 
 CRYPTO_TERMS = (
-    "crypto", "cryptocurrency", "kripto", "bitcoin", "ethereum", "btc", "eth",
+    "crypto", "cryptocurrency", "bitcoin", "ethereum", "btc", "eth",
     "token", "coin", "blockchain", "wallet", "staking", "mining",
 )

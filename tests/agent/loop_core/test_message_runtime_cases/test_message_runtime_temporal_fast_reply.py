@@ -17,8 +17,8 @@ def _fixed_wib_now() -> datetime:
 @pytest.mark.parametrize(
     ("query", "expected_fragment"),
     [
-        ("hari apa sekarang?", "Senin"),
-        ("besok hari apa", "Selasa"),
+        ("what day is it?", "Monday"),
+        ("what day is it tomorrow?", "Tuesday"),
         ("今天星期几？", "星期一"),
         ("今日は何曜日？", "月曜日"),
         ("ตอนนี้วันอะไร", "วันจันทร์"),
@@ -33,7 +33,7 @@ def test_build_temporal_fast_reply_handles_multilingual_queries(query, expected_
 
 def test_build_temporal_fast_reply_ignores_non_question_feedback():
     reply = build_temporal_fast_reply(
-        "sekarang senin woi astaga kenapa ga disimpan di memory mu",
+        "it's monday already, why was this not stored in memory",
         now_local=_fixed_wib_now(),
     )
 
@@ -42,11 +42,11 @@ def test_build_temporal_fast_reply_ignores_non_question_feedback():
 
 def test_build_temporal_fast_reply_prioritizes_day_query_over_timezone_hint():
     reply = build_temporal_fast_reply(
-        "hari apa sekarang? jawab singkat, pakai WIB ya.",
+        "what day is it? answer briefly and use WIB.",
         now_local=_fixed_wib_now(),
     )
 
-    assert reply == "Sekarang hari Senin."
+    assert reply == "Today is Monday."
 
 
 @pytest.mark.asyncio
@@ -85,7 +85,7 @@ async def test_process_message_temporal_fast_reply_skips_context_and_llm(monkeyp
         _run_simple_response=AsyncMock(return_value="llm-should-not-run"),
         _run_agent_loop=AsyncMock(return_value="agent-should-not-run"),
         _finalize_session=AsyncMock(
-            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="Sekarang hari Senin.")
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="Today is Monday.")
         ),
         sessions=SimpleNamespace(save=lambda _session: None),
         runtime_observability=None,
@@ -96,14 +96,14 @@ async def test_process_message_temporal_fast_reply_skips_context_and_llm(monkeyp
     monkeypatch.setattr(
         message_runtime_module,
         "build_temporal_fast_reply",
-        lambda text, *, locale=None, now_local=None: "Sekarang hari Senin.",
+        lambda text, *, locale=None, now_local=None: "Today is Monday.",
     )
 
-    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="hari apa sekarang")
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="what day is it?")
     response = await process_message(loop, msg)
 
     assert response is not None
-    assert response.content == "Sekarang hari Senin."
+    assert response.content == "Today is Monday."
     routed_context.build_messages.assert_not_called()
     loop._run_simple_response.assert_not_awaited()
     loop._run_agent_loop.assert_not_awaited()

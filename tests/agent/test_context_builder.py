@@ -575,7 +575,7 @@ def test_context_builder_probe_mode_keeps_temporal_system_note_turns_lean(tmp_pa
 
     prompt = builder.build_messages(
         history=[],
-        current_message=f"hari apa sekarang?\n\n{_build_temporal_context_note()}",
+        current_message=f"what day is it?\n\n{_build_temporal_context_note()}",
         profile="GENERAL",
         budget_hints={"probe_mode": True},
     )[0]["content"]

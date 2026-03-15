@@ -122,9 +122,6 @@ def _looks_like_verbose_non_query_blob(value: str) -> bool:
 
 
 _PRIMARY_INTENT_TAIL_MARKERS = (
-    "dari sini",
-    "dari jawaban ini",
-    "berdasarkan ini",
     "from this",
     "based on this",
     "from here",
@@ -132,21 +129,20 @@ _PRIMARY_INTENT_TAIL_MARKERS = (
 )
 _PRIMARY_INTENT_ACTION_RE = re.compile(
     r"(?i)\b("
-    r"hitung|calculate|calc|jelaskan|explain|ringkas|summarize|buat|bikin|lanjut|"
-    r"tolong|please|berapa|apa|kenapa|bagaimana|gimana|bisa|bisakah|"
-    r"hr|heart rate|detak jantung|zona|zone|karvonen"
+    r"calculate|calc|explain|summarize|continue|"
+    r"please|how much|what|why|how|can|could|"
+    r"hr|heart rate|zone|karvonen"
     r")\b"
 )
 _MEMORY_COMMIT_INTENT_RE = re.compile(
     r"(?i)\b("
-    r"simpan|save(?: it| this| that)?|ingat(?:kan)?|remember(?: it| this| that)?|"
-    r"catat(?:kan)?|note(?: it| this| that)?|save to memory|simpan ke memory|"
-    r"commit ke memory|masukkan ke memory"
+    r"save(?: it| this| that)?|remember(?: it| this| that)?|"
+    r"note(?: it| this| that)?|save to memory|commit to memory"
     r")\b"
 )
 _PERSONAL_HR_CALC_RE = re.compile(
     r"(?i)\b("
-    r"zona hr|hr zona|hr zone|heart rate zone|detak jantung|"
+    r"hr zone|heart rate zone|"
     r"karvonen|resting hr|max hr|hr max"
     r")\b"
 )
@@ -164,19 +160,6 @@ _EXPLICIT_REMINDER_MARKERS = (
     "timer",
     "set timer",
     "wake me",
-    "ingatkan",
-    "ingatkn",
-    "pengingat",
-    "buat reminder",
-    "buat pengingat",
-    "buat alarm",
-    "buat timer",
-    "jadwalkan pengingat",
-    "jadwalkan reminder",
-    "jadwalkan alarm",
-    "bangunkan",
-    "bangunin",
-    "peringatan",
     "ตั้งเตือน",
     "การเตือน",
     "เตือน",
@@ -189,8 +172,6 @@ _REMINDER_SUBJECT_MARKERS = (
     "alarm",
     "timer",
     "wake me",
-    "pengingat",
-    "peringatan",
     "เตือน",
     "การเตือน",
     "提醒",
@@ -198,8 +179,6 @@ _REMINDER_SUBJECT_MARKERS = (
 )
 _SCHEDULE_PLANNING_MARKERS = (
     "schedule",
-    "jadwal",
-    "jadual",
     "日程",
     "计划",
     "ตาราง",
@@ -208,32 +187,21 @@ _REMINDER_CREATION_VERBS = (
     "set",
     "add",
     "create",
-    "buat",
-    "bikin",
-    "jadwalkan",
-    "atur",
-    "pasang",
     "schedule",
-    "tetapkan",
     "ตั้ง",
     "设置",
 )
 _CRON_MANAGEMENT_DIRECT_MARKERS = (
     "cron",
     "reminder",
-    "pengingat",
-    "peringatan",
     "เตือน",
     "การเตือน",
     "提醒",
 )
 _CRON_GROUP_MARKERS = (
     "group",
-    "grup",
-    "kelompok",
     "team",
     "shift",
-    "jadwal shift",
 )
 _CRON_GROUP_ID_RE = re.compile(r"(?i)\bgrp_[a-z0-9_]+\b")
 _UPDATE_STRONG_TARGET_MARKERS = (
@@ -371,8 +339,6 @@ _LARGE_FILE_SCAN_SUBJECT_MARKERS = (
     "files",
     "folder",
     "folders",
-    "berkas",
-    "direktori",
     "directory",
 )
 _LARGE_FILE_SCAN_SIZE_MARKERS = (
@@ -380,12 +346,6 @@ _LARGE_FILE_SCAN_SIZE_MARKERS = (
     "largest",
     "big",
     "biggest",
-    "ukuran besar",
-    "yang ukurannya besar",
-    "paling besar",
-    "besar",
-    "makan ruang",
-    "memakan ruang",
     "space hog",
     "space hogs",
     "folder size",
@@ -700,7 +660,7 @@ def score_required_tool_intents(
     if _REMINDER_TIME_RE.search(q_lower):
         looks_like_question = ("?" in text) or bool(
             re.match(
-                r"(?i)^(what|why|how|when|where|who|berapa|kenapa|kapan|gimana|bagaimana|siapa|mana)\b",
+                r"(?i)^(what|why|how|when|where|who)\b",
                 q_lower,
             )
         )
@@ -746,7 +706,7 @@ def score_required_tool_intents(
         add("weather", 0.64, "weather-lexicon")
     if has_weather_marker and has_weather_structural_payload:
         add("weather", 0.24, "weather-location")
-    if has_weather_marker and _contains_any(q_lower, ("today", "hari ini", "now", "sekarang")):
+    if has_weather_marker and _contains_any(q_lower, ("today", "now")):
         add("weather", 0.08, "weather-live-time")
     if (
         has_weather_marker
@@ -840,8 +800,8 @@ def score_required_tool_intents(
     has_stock_tracking_marker = _contains_any(q_lower, _STOCK_TRACKING_MARKERS, fuzzy_latin=True)
     has_fx_pair_marker = (
         _contains_any(q_lower, _FX_PAIR_MARKERS, fuzzy_latin=True)
-        or bool(re.search(r"\busd\s*(?:/|to|ke|-)?\s*(?:idr|rupiah)\b", q_lower))
-        or bool(re.search(r"\b(?:idr|rupiah)\s*(?:/|to|ke|-)?\s*usd\b", q_lower))
+        or bool(re.search(r"\busd\s*(?:/|to|-)?\s*(?:idr)\b", q_lower))
+        or bool(re.search(r"\b(?:idr)\s*(?:/|to|-)?\s*usd\b", q_lower))
     )
     has_fx_rate_marker = _contains_any(q_lower, _FX_RATE_MARKERS, fuzzy_latin=True)
     has_fx_conversion_amount = bool(_FX_CONVERSION_AMOUNT_RE.search(text))

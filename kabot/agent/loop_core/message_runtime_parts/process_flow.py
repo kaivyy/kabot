@@ -94,6 +94,9 @@ from kabot.agent.loop_core.message_runtime_parts.mcp_context import (
 from kabot.agent.loop_core.message_runtime_parts.continuity_runtime import (
     _apply_continuity_runtime,
 )
+from kabot.agent.loop_core.message_runtime_parts.contextual_followups import (
+    arbitrate_contextual_followup,
+)
 from kabot.agent.loop_core.directive_pipeline import (
     apply_directive_overrides,
     format_active_directives,
@@ -313,10 +316,16 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         parser_required_tool = preseeded_required_tool
         continuity_source = str(incoming_metadata.get("continuity_source") or "action_request").strip() or "action_request"
     else:
-        required_tool = loop._required_tool_for_query(effective_content)
+        # OpenClaw-style turns should start model/skill/session-first.
+        # Keep parser-required-tool as a soft signal for arbitration and safety
+        # checks, but do not immediately lock the turn onto a tool lane.
+        required_tool = None
         required_tool_query = effective_content
-        parser_required_tool = required_tool
-        continuity_source = "parser" if parser_required_tool else None
+        try:
+            parser_required_tool = loop._required_tool_for_query(effective_content)
+        except Exception:
+            parser_required_tool = None
+        continuity_source = None
     explicit_mcp_prompt_ref = _extract_explicit_mcp_prompt_reference(effective_content)
     explicit_mcp_resource_ref = _extract_explicit_mcp_resource_reference(effective_content)
     now_ts = time.time()
@@ -575,11 +584,18 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     explicit_skill_use_request = looks_like_explicit_skill_use_request(effective_content)
     semantic_hint = arbitrate_semantic_intent(
         effective_content,
-        parser_tool=required_tool,
+        parser_tool=parser_required_tool,
         pending_followup_tool=pending_followup_tool,
         pending_followup_source=pending_followup_source,
         last_tool_context=last_tool_context,
         payload_checker=_query_has_tool_payload,
+    )
+    contextual_hint = arbitrate_contextual_followup(
+        effective_content,
+        parser_tool=parser_required_tool,
+        pending_followup_tool=pending_followup_tool,
+        pending_followup_source=pending_followup_source,
+        last_tool_context=last_tool_context,
     )
     meta_skill_reference_turn = (
         looks_like_meta_skill_or_workflow_prompt(effective_content)
@@ -588,9 +604,6 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     if semantic_hint.kind in {
         "advice_turn",
         "meta_feedback",
-        "weather_metric_interpretation",
-        "weather_commentary",
-        "weather_source_followup",
         "memory_recall",
     }:
         required_tool = None
@@ -601,10 +614,39 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         required_tool_query = str(semantic_hint.required_tool_query or effective_content).strip()
         semantic_tool_override = True
         continuity_source = "semantic_hint"
+    if contextual_hint.kind in {
+        "weather_metric_interpretation",
+        "weather_commentary",
+        "weather_source_followup",
+    }:
+        required_tool = None
+        required_tool_query = effective_content
+        continuity_source = None
+        semantic_tool_override = True
+    elif contextual_hint.required_tool:
+        required_tool = contextual_hint.required_tool
+        required_tool_query = str(contextual_hint.required_tool_query or effective_content).strip()
+        semantic_tool_override = True
+        continuity_source = "contextual_followup"
     if meta_skill_reference_turn:
         required_tool = None
         required_tool_query = effective_content
         continuity_source = None
+    explicit_weather_request = bool(
+        not required_tool
+        and not meta_skill_reference_turn
+        and not is_weather_context_followup
+        and _tool_registry_has(loop, "weather")
+        and _looks_like_weather_context_followup(effective_content)
+        and (
+            bool(extract_weather_location(effective_content))
+            or parser_required_tool == "weather"
+        )
+    )
+    if explicit_weather_request:
+        required_tool = "weather"
+        required_tool_query = effective_content
+        continuity_source = "weather_request"
     if (
         is_weather_context_followup
         and _tool_registry_has(loop, "weather")
@@ -726,6 +768,10 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and (
             raw_is_answer_reference_followup
             or raw_is_short_confirmation
+            or (
+                _is_short_context_followup(effective_content)
+                and not _looks_like_meaning_followup(effective_content)
+            )
             or raw_is_contextual_followup_request
         )
     )
@@ -1156,7 +1202,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             required_tool_query = f"{grounded_weather_location} {effective_content}".strip()
 
     # Infer required tool for short follow-ups before context building, so
-    # confirmations like "gas"/"ambil sekarang" can take the direct fast path.
+    # confirmations like "go ahead"/"do it now" can take the direct fast path.
     if (
         not decision.is_complex
         and not required_tool
@@ -1232,6 +1278,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         recent_answer_target=None,
         recent_answer_option_selection_reference=None,
         recent_answer_referenced_item=None,
+        conversation_history=conversation_history,
     )
     _apply_continuity_runtime(continuity_state)
     effective_content = continuity_state.effective_content
@@ -1359,22 +1406,11 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             or str(pending_followup_intent_request_text or "").strip()
             or str(effective_content or "").strip()
         )
-        inferred_existing_skill_tool = None
-        if existing_skill_required_tool_query:
-            try:
-                inferred_existing_skill_tool = loop._required_tool_for_query(
-                    existing_skill_required_tool_query
-                )
-            except Exception:
-                inferred_existing_skill_tool = None
         required_tool = None
         required_tool_query = ""
         skill_creation_intent = False
         skill_install_intent = False
         forced_skill_names = [recent_created_skill_name]
-        if inferred_existing_skill_tool:
-            required_tool = str(inferred_existing_skill_tool).strip() or None
-            required_tool_query = existing_skill_required_tool_query
         if existing_skill_required_tool_query:
             intent_source_for_followup = existing_skill_required_tool_query
             pending_followup_intent_request_text = existing_skill_required_tool_query
@@ -2000,7 +2036,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 "success, and do not stop at a plan, placeholder, or guessed completion message."
             )
         elif (
-            continuity_source in {"coding_request", "committed_coding_action"}
+            (
+                continuity_source in {"coding_request", "committed_coding_action"}
+                or (
+                    str(decision.profile).upper() == "CODING"
+                    and pending_followup_intent_kind == "assistant_committed_action"
+                )
+            )
             and "[Coding Build Note]" not in llm_current_message
         ):
             llm_current_message = (

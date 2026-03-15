@@ -2,58 +2,34 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Callable
-
-from kabot.agent.cron_fallback_nlp import extract_weather_location
+from typing import Callable
 
 _SPACE_RE = re.compile(r"\s+")
 _NON_WORD_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 _META_FEEDBACK_RE = re.compile(
     r"(?i)\b("
-    r"kok|kenapa|why|wrong|ngaco|aneh|lama|slow|bug|error|"
-    r"bukan (?:itu|saham|stock|cuaca|weather|web\s*search|websearch|brows(?:e|ing))|"
+    r"why|wrong|slow|bug|error|"
+    r"not (?:that|stock|weather|web\s*search|websearch|brows(?:e|ing))|"
     r"no web\s*search|not web\s*search|"
-    r"koreksi (?:chat|percakapan)|correct(?:ing|ion)? (?:the )?(?:chat|conversation)|"
-    r"stop bahas|jangan bahas|not about|that's not what i asked"
+    r"correct(?:ing|ion)? (?:the )?(?:chat|conversation)|"
+    r"not about|that's not what i asked"
     r")\b"
 )
 _ADVICE_RE = re.compile(
     r"(?i)\b("
-    r"saran(?:mu)?|advice|recommend(?:ation)?|recommend|bagus|bagusan|"
-    r"which one|mana yang|apa ya|what should i use|should i use"
-    r")\b"
-)
-_WEATHER_METRIC_VALUE_RE = re.compile(
-    r"(?i)\b\d+(?:[.,]\d+)?\s*(?:km/?h|kph|m/?s|mph|kt|kts|knots?)\b"
-)
-_WEATHER_METRIC_QUERY_RE = re.compile(
-    r"(?i)\b("
-    r"berapa|kenapa|gimana|bagaimana|maksudnya|artinya|normal|"
-    r"how|what|why|is that|too fast|too slow|strong|weak"
-    r")\b"
-)
-_IDR_CONVERSION_RE = re.compile(
-    r"(?i)\b("
-    r"idr|rupiah|dirupiahkan|rupiahkan|konversi|convert(?:ed|ion)?|"
-    r"dirupiahkan|indonesian rupiah"
-    r")\b"
-)
-_CURRENCY_RE = re.compile(r"(?i)\b(usd|dollar|idr|rupiah|yen|eur|euro|gbp)\b")
-_STOCK_TREND_RE = re.compile(
-    r"(?i)\b("
-    r"trend(?:nya)?|naik|turun|bullish|bearish|support|resistance|"
-    r"analisis|analysis|breakout|pullback|entry|exit|stop\s*loss|take\s*profit|tp|sl"
+    r"advice|recommend(?:ation)?|recommend|"
+    r"which one|what should i use|should i use"
     r")\b"
 )
 _HR_ZONE_RE = re.compile(
     r"(?i)\b("
-    r"hr|heart rate|detak jantung|zona hr|hr zona|hr zone|heart rate zone|"
+    r"hr|heart rate|hr zone|heart rate zone|"
     r"karvonen|max hr|hr max|resting hr"
     r")\b"
 )
 _HR_ZONE_ACTION_RE = re.compile(
     r"(?i)\b("
-    r"hitung|calculate|calc|tolong|please|berapa|zona|zone|umur|usia|age"
+    r"calculate|calc|please|zone|age"
     r")\b"
 )
 _MEMORY_COMMIT_RE = re.compile(
@@ -62,54 +38,26 @@ _MEMORY_COMMIT_RE = re.compile(
     r"save in memory|remember this|remember that"
     r")\b"
 )
-_WEATHER_KEYWORDS = frozenset({
-    "weather", "cuaca", "suhu", "temperature", "temperatur", "forecast",
-    "angin", "wind", "humid", "kelembapan", "rain", "hujan", "berawan",
-    "cloudy", "sunny",
-})
-_WEATHER_FRAGMENTS = ("風", "风", "ลม", "天気", "天气", "อากาศ")
-_WEATHER_COMMENTARY_KEYWORDS = frozenset({
-    "lumayan", "cukup", "agak", "ternyata", "terasa", "rasanya",
-    "kayaknya", "kayak", "pretty", "quite", "kind", "feels", "feel", "seems",
-})
-_WEATHER_TEMPERATURE_FEEL_KEYWORDS = frozenset({
-    "hangat", "panas", "dingin", "sejuk", "adem", "gerah", "lembap",
-    "humid", "warm", "hot", "cold", "cool", "chilly",
-})
-_WEATHER_FRESH_QUERY_KEYWORDS = frozenset({
-    "forecast", "prakiraan", "prediksi", "ramalan", "besok", "lusa",
-    "tomorrow", "later", "next", "hujan", "rain", "angin", "wind",
-    "humidity", "kelembapan", "derajat", "degree", "degrees", "berapa",
-    "gimana", "bagaimana", "kenapa", "why", "how", "what", "when",
-})
-_WEATHER_SOURCE_KEYWORDS = frozenset({"source", "sumber", "provider"})
-_WEATHER_SOURCE_PHRASES = (
-    "dari mana", "darimana", "pakai apa", "source nya", "source-nya", "sumbernya dari mana",
+_MEMORY_SELF_IDENTITY_RE = re.compile(
+    r"(?i)\b(?:who am i|who i am|what do you call me)\b"
 )
-_WEATHER_PROVIDER_FRAGMENTS = (
-    "wttr.in", "wttrin", "open-meteo", "open meteo", "openweather",
-    "weatherapi", "weather.com", "accuweather",
+_MEMORY_RECALL_QUERY_RE = re.compile(
+    r"(?i)\b(?:who|what|which|when|where|why|how|tell|show|reply|answer)\b"
 )
-_MEMORY_SELF_IDENTITY_PHRASES = ("who am i", "who i am", "what do you call me")
-_MEMORY_RECALL_INTERROGATIVE_KEYWORDS = frozenset({
-    "who", "what", "which", "when", "where", "why", "how",
-    "tell", "show", "reply", "answer",
-})
-_MEMORY_RECALL_ACTION_KEYWORDS = frozenset({
-    "remember", "remembered", "save", "saved", "store", "stored", "recall",
-    "memory", "preference", "preferences", "code", "call", "called",
-    "address", "addressed",
-})
-_MEMORY_RECALL_CONTEXT_KEYWORDS = frozenset({
-    "before", "earlier", "previous", "previously", "prior", "last", "just",
-})
-_MEMORY_RECALL_WORK_KEYWORDS = frozenset({
-    "decide", "decided", "decision", "agree", "agreed", "plan", "planned",
-    "todo", "task", "deadline", "status",
-})
-_MEMORY_RECALL_SUBJECT_KEYWORDS = frozenset({
-    "i", "me", "my", "mine", "myself", "we", "us", "our", "ours",
-})
+_MEMORY_RECALL_VERB_RE = re.compile(
+    r"(?i)\b(?:remember(?:ed)?|save(?:d)?|store(?:d)?|recall|memory|preference(?:s)?|call(?:ed)?|address(?:ed)?)\b"
+)
+_MEMORY_RECALL_CONTEXT_RE = re.compile(
+    r"(?i)\b(?:before|earlier|previous(?:ly)?|prior|last|just)\b"
+)
+_MEMORY_RECALL_WORK_RE = re.compile(
+    r"(?i)\b(?:decide(?:d|s|ion)?|agree(?:d)?|plan(?:ned)?|todo|task|deadline|status)\b"
+)
+_MEMORY_RECALL_SUBJECT_RE = re.compile(
+    r"(?i)\b(?:i|me|my|mine|myself|we|us|our|ours)\b"
+)
+
+
 @dataclass(slots=True)
 class SemanticIntentHint:
     kind: str = "none"
@@ -125,27 +73,6 @@ def _normalize_text(text: str) -> str:
         return ""
     compact = _NON_WORD_RE.sub(" ", raw)
     return _SPACE_RE.sub(" ", compact).strip()
-
-
-def _normalized_keywords(normalized: str) -> set[str]:
-    if not normalized:
-        return set()
-    return {token for token in normalized.split(" ") if token}
-
-
-def _contains_any_keyword(normalized: str, keywords: frozenset[str]) -> bool:
-    return bool(_normalized_keywords(normalized) & keywords)
-
-
-def _contains_any_fragment(raw: str, fragments: tuple[str, ...]) -> bool:
-    lowered = str(raw or "").lower()
-    return any(fragment.lower() in lowered for fragment in fragments)
-
-
-def _has_weather_signal(raw: str, normalized: str) -> bool:
-    return _contains_any_keyword(normalized, _WEATHER_KEYWORDS) or _contains_any_fragment(
-        raw, _WEATHER_FRAGMENTS
-    )
 
 
 def _is_cjk_or_unspaced_substantive(raw: str) -> bool:
@@ -189,120 +116,13 @@ def _looks_like_advice_request(text: str) -> bool:
         return False
     if len(normalized) > 180:
         return False
-    if not ("?" in raw or normalized.startswith(("apa ", "what ", "which ", "mana ", "should "))) and not _ADVICE_RE.search(normalized):
+    if not (
+        "?" in raw
+        or normalized.startswith(("what ", "which ", "should "))
+        or _ADVICE_RE.search(normalized)
+    ):
         return False
     return bool(_ADVICE_RE.search(normalized))
-
-
-def _looks_like_weather_followup(text: str) -> bool:
-    raw = str(text or "").strip()
-    normalized = _normalize_text(raw)
-    if not normalized or raw.startswith("/"):
-        return False
-    if len(normalized) > 96:
-        return False
-    return _has_weather_signal(raw, normalized)
-
-
-def _looks_like_weather_metric_interpretation_followup(text: str) -> bool:
-    raw = str(text or "").strip()
-    normalized = _normalize_text(raw)
-    if not normalized or raw.startswith("/"):
-        return False
-    if len(normalized) > 120:
-        return False
-    if not _has_weather_signal(raw, normalized):
-        return False
-    if not _WEATHER_METRIC_VALUE_RE.search(raw):
-        return False
-    if extract_weather_location(raw):
-        return False
-    if "?" in raw:
-        return True
-    return bool(_WEATHER_METRIC_QUERY_RE.search(normalized))
-
-
-def _looks_like_weather_commentary_followup(text: str) -> bool:
-    raw = str(text or "").strip()
-    normalized = _normalize_text(raw)
-    if not normalized or raw.startswith("/"):
-        return False
-    if len(normalized) > 140:
-        return False
-    if _WEATHER_METRIC_VALUE_RE.search(raw):
-        return False
-    if "?" in raw:
-        return False
-    if _contains_any_keyword(normalized, _WEATHER_FRESH_QUERY_KEYWORDS):
-        return False
-    has_temp_feel = _contains_any_keyword(normalized, _WEATHER_TEMPERATURE_FEEL_KEYWORDS)
-    if not has_temp_feel:
-        return False
-    has_commentary_marker = bool(
-        _contains_any_keyword(normalized, _WEATHER_COMMENTARY_KEYWORDS)
-        or normalized.endswith((" ya", " yah", " kan", " juga"))
-        or normalized.startswith(("lumayan ", "cukup ", "agak ", "pretty ", "quite "))
-    )
-    has_weather_anchor = bool(
-        _has_weather_signal(raw, normalized)
-        or extract_weather_location(raw)
-    )
-    return bool(has_commentary_marker or has_weather_anchor)
-
-
-def _looks_like_weather_source_followup(text: str) -> bool:
-    raw = str(text or "").strip()
-    normalized = _normalize_text(raw)
-    if not normalized or raw.startswith("/"):
-        return False
-    if len(normalized) > 140:
-        return False
-    if _WEATHER_METRIC_VALUE_RE.search(raw):
-        return False
-    has_source_marker = bool(
-        _contains_any_keyword(normalized, _WEATHER_SOURCE_KEYWORDS)
-        or any(phrase in normalized for phrase in _WEATHER_SOURCE_PHRASES)
-    )
-    has_provider_marker = bool(
-        _contains_any_fragment(raw, _WEATHER_PROVIDER_FRAGMENTS)
-        or _contains_any_fragment(normalized, _WEATHER_PROVIDER_FRAGMENTS)
-        or re.fullmatch(r"(?i)(?:https?://)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+/?", raw)
-    )
-    if not has_source_marker and not has_provider_marker:
-        return False
-    if extract_weather_location(raw):
-        return False
-    return True
-
-
-def _looks_like_quote_conversion_followup(text: str) -> bool:
-    raw = str(text or "").strip()
-    normalized = _normalize_text(raw)
-    if not normalized:
-        return False
-    if not _IDR_CONVERSION_RE.search(normalized):
-        return False
-    if _is_low_information_turn(raw, max_tokens=8, max_chars=96):
-        return True
-    return bool(
-        _CURRENCY_RE.search(normalized)
-        or "jadikan" in normalized
-        or "roughly in" in normalized
-        or "berapa kalau" in normalized
-        or "ubah jadi" in normalized
-    )
-
-
-def _looks_like_stock_trend_followup(text: str) -> bool:
-    raw = str(text or "").strip()
-    normalized = _normalize_text(raw)
-    if not normalized:
-        return False
-    if raw.startswith("/"):
-        return False
-    if len(normalized) > 120:
-        return False
-    return bool(_STOCK_TREND_RE.search(normalized))
 
 
 def _looks_like_hr_zone_or_fitness_calculation(text: str) -> bool:
@@ -310,7 +130,7 @@ def _looks_like_hr_zone_or_fitness_calculation(text: str) -> bool:
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    if len(normalized) > 320 and "dari sini" not in normalized and "from this" not in normalized:
+    if len(normalized) > 320 and "from this" not in normalized:
         return False
     return bool(_HR_ZONE_RE.search(normalized) and _HR_ZONE_ACTION_RE.search(normalized))
 
@@ -318,26 +138,24 @@ def _looks_like_hr_zone_or_fitness_calculation(text: str) -> bool:
 def _looks_like_memory_recall(text: str) -> bool:
     raw = str(text or "").strip()
     normalized = _normalize_text(raw)
-    if not normalized:
+    if not normalized or raw.startswith("/"):
         return False
-    if raw.startswith("/"):
-        return False
-    if any(phrase in normalized for phrase in _MEMORY_SELF_IDENTITY_PHRASES):
+    if _MEMORY_SELF_IDENTITY_RE.search(normalized):
         return True
     if len(normalized) > 240:
         return False
     interrogative_turn = bool(
         raw.endswith(("?", "？"))
-        or _contains_any_keyword(normalized, _MEMORY_RECALL_INTERROGATIVE_KEYWORDS)
+        or _MEMORY_RECALL_QUERY_RE.search(normalized)
     )
     if _MEMORY_COMMIT_RE.search(normalized) and not interrogative_turn:
         return False
     if not interrogative_turn:
         return False
-    has_memory_anchor = _contains_any_keyword(normalized, _MEMORY_RECALL_ACTION_KEYWORDS)
-    has_context_anchor = _contains_any_keyword(normalized, _MEMORY_RECALL_CONTEXT_KEYWORDS)
-    has_work_anchor = _contains_any_keyword(normalized, _MEMORY_RECALL_WORK_KEYWORDS)
-    has_subject_anchor = _contains_any_keyword(normalized, _MEMORY_RECALL_SUBJECT_KEYWORDS)
+    has_memory_anchor = bool(_MEMORY_RECALL_VERB_RE.search(normalized))
+    has_context_anchor = bool(_MEMORY_RECALL_CONTEXT_RE.search(normalized))
+    has_work_anchor = bool(_MEMORY_RECALL_WORK_RE.search(normalized))
+    has_subject_anchor = bool(_MEMORY_RECALL_SUBJECT_RE.search(normalized))
     if has_memory_anchor and (has_subject_anchor or has_work_anchor):
         return True
     if has_context_anchor and has_work_anchor:
@@ -351,9 +169,11 @@ def arbitrate_semantic_intent(
     parser_tool: str | None,
     pending_followup_tool: str | None = None,
     pending_followup_source: str = "",
-    last_tool_context: dict[str, Any] | None = None,
+    last_tool_context: dict[str, object] | None = None,
     payload_checker: Callable[[str, str], bool] | None = None,
 ) -> SemanticIntentHint:
+    del pending_followup_tool, pending_followup_source, last_tool_context
+
     raw = str(text or "").strip()
     normalized = _normalize_text(raw)
     if not normalized:
@@ -384,101 +204,11 @@ def arbitrate_semantic_intent(
             kind="advice_turn",
             reason="hr_zone_not_weather",
         )
-    stock_context = last_tool_context if isinstance(last_tool_context, dict) else {}
-    stock_tool_active = str((stock_context or {}).get("tool") or "").strip() == "stock"
-    if (
-        _looks_like_stock_trend_followup(raw)
-        and (pending_followup_tool == "stock" or stock_tool_active)
-    ):
-        base_source = str(pending_followup_source or stock_context.get("source") or stock_context.get("symbol") or "").strip()
-        if base_source:
-            return SemanticIntentHint(
-                kind="stock_context_followup",
-                required_tool="stock_analysis",
-                required_tool_query=f"{base_source} {raw}".strip(),
-                reason="stock_context_followup",
-            )
 
     if parser_tool and _looks_like_advice_request(raw):
         return SemanticIntentHint(
             kind="advice_turn",
             reason="advice_without_tool_payload",
         )
-
-    context = last_tool_context if isinstance(last_tool_context, dict) else {}
-    context_tool = str(context.get("tool") or pending_followup_tool or "").strip().lower()
-    if context_tool == "weather":
-        context_source = str(
-            context.get("location")
-            or context.get("source")
-            or pending_followup_source
-            or ""
-        ).strip()
-    elif context_tool == "stock":
-        context_source = str(
-            context.get("symbol")
-            or context.get("source")
-            or context.get("location")
-            or pending_followup_source
-            or ""
-        ).strip()
-    else:
-        context_source = str(
-            context.get("source")
-            or context.get("symbol")
-            or context.get("location")
-            or pending_followup_source
-            or ""
-        ).strip()
-
-    if context_tool == "weather" and _looks_like_weather_commentary_followup(raw):
-        return SemanticIntentHint(
-            kind="weather_commentary",
-            reason="weather_commentary_followup",
-        )
-
-    if context_tool == "weather" and _looks_like_weather_source_followup(raw):
-        return SemanticIntentHint(
-            kind="weather_source_followup",
-            reason="weather_source_followup",
-        )
-
-    if context_tool == "weather" and context_source and _looks_like_weather_followup(raw):
-        if _looks_like_weather_metric_interpretation_followup(raw):
-            return SemanticIntentHint(
-                kind="weather_metric_interpretation",
-                reason="weather_metric_interpretation",
-            )
-        return SemanticIntentHint(
-            kind="weather_followup",
-            required_tool="weather",
-            required_tool_query=f"{context_source} {raw}".strip(),
-            reason="weather_context_followup",
-        )
-
-    if not parser_tool and _looks_like_weather_followup(raw):
-        location = extract_weather_location(raw)
-        if location:
-            return SemanticIntentHint(
-                kind="weather_query",
-                reason="weather_question_with_location",
-            )
-
-    if context_tool == "stock" and context_source and _looks_like_quote_conversion_followup(raw):
-        return SemanticIntentHint(
-            kind="stock_quote_followup",
-            required_tool="stock",
-            required_tool_query=f"{context_source} {raw}".strip(),
-            reason="stock_quote_followup",
-        )
-
-    if parser_tool in {"check_update", "system_update"} and context_tool == "weather" and context_source:
-        if _looks_like_weather_followup(raw):
-            return SemanticIntentHint(
-                kind="weather_update_conflict",
-                required_tool="weather",
-                required_tool_query=f"{context_source} {raw}".strip(),
-                reason="weather_context_beats_update_keyword",
-            )
 
     return SemanticIntentHint()
