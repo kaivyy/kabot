@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Action-request continuity no longer falls into false "no tools executed" failures on short follow-up turns:
+  - when a turn is in enforced tool-backed continuity mode (`continuity_source=action_request`) and parser inference is suppressed, runtime now reuses the committed required tool and committed query persisted in message/session metadata,
+  - this allows short follow-ups such as `ya` / `lanjut` to continue real execution from prior committed action state instead of hard-failing with a no-execution verification error.
 - Exec safety guard no longer false-positives relative script paths that contain `/` separators:
   - commands like `python3 skills/stock-guardrail/scripts/fetch_price.py TLKM.JK --json` are now treated as workspace-relative paths instead of being misread as absolute `/stock-guardrail/...` paths,
   - absolute paths outside the active working directory are still blocked as before.

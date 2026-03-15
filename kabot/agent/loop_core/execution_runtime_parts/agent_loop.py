@@ -152,6 +152,39 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             required_tool = resolved_required_tool
     elif suppress_required_tool_inference:
         required_tool = None
+
+    committed_required_tool = str(
+        message_metadata.get("committed_required_tool")
+        or session_metadata.get("committed_required_tool")
+        or ""
+    ).strip()
+    committed_required_tool_query = str(
+        message_metadata.get("committed_required_tool_query")
+        or session_metadata.get("committed_required_tool_query")
+        or ""
+    ).strip()
+
+    if (
+        not required_tool
+        and suppress_required_tool_inference
+        and enforce_toolbacked_action
+        and committed_required_tool
+    ):
+        committed_tool_available = True
+        if callable(has_tool):
+            try:
+                committed_tool_available = bool(has_tool(committed_required_tool))
+            except Exception:
+                committed_tool_available = True
+        if committed_tool_available:
+            required_tool = committed_required_tool
+            if isinstance(message_metadata, dict):
+                message_metadata.setdefault("required_tool", committed_required_tool)
+                if committed_required_tool_query:
+                    message_metadata.setdefault("required_tool_query", committed_required_tool_query)
+            if committed_required_tool_query and question_word_count <= 4:
+                question_text = committed_required_tool_query
+                question_word_count = len([part for part in question_text.split() if part])
     if (
         not required_tool
         and delivery_required

@@ -301,6 +301,59 @@ async def test_run_agent_loop_action_request_skips_planning_when_tool_inference_
 
 
 @pytest.mark.asyncio
+async def test_run_agent_loop_action_request_reuses_committed_required_tool_from_state():
+    loop = _make_loop()
+    loop._required_tool_for_query = lambda _text: "read_file"
+    loop._plan_task = AsyncMock(return_value=None)
+    loop._apply_think_mode = lambda messages, _session: messages
+    loop._is_weak_model = lambda _model: False
+    loop._execute_required_tool_fallback = AsyncMock(return_value="read-result")
+    loop._self_evaluate = lambda _question, _response: (True, None)
+    loop._critic_evaluate = AsyncMock(return_value=(True, ""))
+    loop._review_tool_output = AsyncMock(return_value=None)
+    loop._get_last_tool_context = lambda _session: None
+    loop.tools = SimpleNamespace(has=lambda name: name == "read_file")
+    loop.max_iterations = 1
+    loop._call_llm_with_fallback = AsyncMock(return_value=(LLMResponse(content="unused"), None))
+    loop.context = SimpleNamespace(
+        add_assistant_message=lambda messages, content, reasoning_content=None: [
+            *messages,
+            {"role": "assistant", "content": content},
+        ]
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user-1",
+        content="lanjut",
+        metadata={
+            "effective_content": "lanjut",
+            "route_profile": "GENERAL",
+            "runtime_locale": "id",
+            "continuity_source": "action_request",
+            "suppress_required_tool_inference": True,
+        },
+    )
+    session = SimpleNamespace(
+        metadata={
+            "committed_required_tool": "read_file",
+            "committed_required_tool_query": "baca file README.md",
+        }
+    )
+
+    result = await run_agent_loop(
+        loop,
+        msg,
+        [{"role": "user", "content": msg.content}],
+        session=session,
+    )
+
+    assert result == "read-result"
+    loop._execute_required_tool_fallback.assert_awaited_once_with("read_file", msg)
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_grounded_project_inspection_retries_when_model_answers_without_filesystem_tools():
     loop = _make_loop()
     loop._required_tool_for_query = lambda _text: None
