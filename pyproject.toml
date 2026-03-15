@@ -1,6 +1,6 @@
 [project]
 name = "kabot"
-version = "0.6.6-rc1"
+version = "0.6.6-rc2"
 description = "A lightweight personal AI assistant framework"
 requires-python = ">=3.11"
 license = {text = "MIT"}

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6-rc2] - 2026-03-15
+
+### Fixed
+- Cross-platform regression CI is aligned with the parser-light OpenClaw-style runtime contract again:
+  - stale tests in `test_execution_runtime_simple_and_guards` no longer assume Indonesian parser keywords for action requests, message delivery, weather status, web search, or browser headless-live guards,
+  - the exact `.github/workflows/ci-matrix.yml` regression slice now passes again after replaying the same test set locally and on `main`.
+
 ## [0.6.6-rc1] - 2026-03-15
 
 ### Changed

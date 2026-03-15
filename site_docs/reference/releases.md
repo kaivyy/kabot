@@ -1,5 +1,30 @@
 # Releases
 
+## v0.6.6-rc2
+
+Release date: 2026-03-15
+
+Status: Release candidate
+
+### Highlights
+
+- Keeps the `v0.6.6` OpenClaw-style runtime direction intact while fixing the release-follow-up cross-platform regression slice.
+- Aligns the CI guard/runtime tests with the parser-light, state-first contract now used by Kabot's active routing layers.
+- Confirms the macOS and Ubuntu matrix passes again on `main`.
+
+### Notable fixes
+
+- The cross-platform regression slice no longer expects Indonesian parser-era prompts for action requests, delivery reuse, weather status, web search, or browser headless-live guards.
+- The exact workflow slice in `.github/workflows/ci-matrix.yml` was replayed locally and brought back to green before cutting this RC.
+
+### Validation snapshot
+
+- Exact cross-platform regression slice from `.github/workflows/ci-matrix.yml`: `122 passed`.
+- `python -m build --no-isolation` will normalize artifacts as `kabot-0.6.6rc2.tar.gz` and `kabot-0.6.6rc2-py3-none-any.whl`.
+- `mkdocs build --strict` succeeded for the updated release docs.
+
+See full details in root `CHANGELOG.md`.
+
 ## v0.6.6-rc1
 
 Release date: 2026-03-15
