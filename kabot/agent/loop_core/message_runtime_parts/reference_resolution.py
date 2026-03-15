@@ -245,19 +245,48 @@ def _looks_like_contextual_followup_request(text: str) -> bool:
     return False
 
 
-_WEB_SEARCH_DISABLE_RE = re.compile(
-    r"(?i)\b(?:dont|don't|do not|without|tanpa|jangan(?:\s+\w+)?|ga usah|gak usah|nggak usah|no)\b"
-    r"(?:[^\n]{0,48})\bweb search\b"
+_WEB_SEARCH_DISABLE_PHRASES = (
+    "dont", "don't", "do not", "without", "tanpa", "jangan",
+    "ga usah", "gak usah", "nggak usah", "no",
 )
-_WEB_SEARCH_DIRECT_ANSWER_RE = re.compile(
-    r"(?i)(?:\b(?:just|langsung|direct(?:ly)?)\s+(?:answer|explain|jelaskan|jelasin)\b)"
-    r"|(?:\b(?:answer|explain|jelaskan|jelasin)\s+(?:direct(?:ly)?|langsung)\b)"
-)
-_WEB_SEARCH_LANGUAGE_SWITCH_RE = re.compile(
-    r"(?i)^(?:(?:use|in)\s+|pakai\s+(?:bahasa\s+)?|dalam bahasa\s+)"
-    r"(?:english|inggris|indonesia|indonesian|japanese|jepang|chinese|cina|mandarin|thai)"
-    r"(?:\s+please)?$"
-)
+_WEB_SEARCH_DIRECT_ANSWER_WORDS = frozenset({
+    "just", "langsung", "direct", "directly", "answer", "explain",
+    "jelaskan", "jelasin",
+})
+_WEB_SEARCH_LANGUAGE_WORDS = frozenset({
+    "english", "inggris", "indonesia", "indonesian",
+    "japanese", "jepang", "chinese", "cina", "mandarin", "thai",
+})
+_WEB_SEARCH_LANGUAGE_LEAD_WORDS = frozenset({"use", "in", "pakai", "bahasa", "dalam", "please"})
+
+
+def _looks_like_web_search_disable_request(normalized: str) -> bool:
+    if "web search" not in normalized:
+        return False
+    return any(phrase in normalized for phrase in _WEB_SEARCH_DISABLE_PHRASES)
+
+
+def _looks_like_web_search_direct_answer_request(normalized: str) -> bool:
+    tokens = {token for token in normalized.split() if token}
+    if not tokens:
+        return False
+    if normalized in {"jelaskan", "answer directly"}:
+        return True
+    has_directness = bool(tokens & {"just", "langsung", "direct", "directly"})
+    has_answering = bool(tokens & {"answer", "explain", "jelaskan", "jelasin"})
+    return has_directness and has_answering
+
+
+def _looks_like_web_search_language_switch(normalized: str) -> bool:
+    tokens = [token for token in normalized.split() if token]
+    if not tokens:
+        return False
+    token_set = set(tokens)
+    if not (token_set & _WEB_SEARCH_LANGUAGE_WORDS):
+        return False
+    if not token_set <= (_WEB_SEARCH_LANGUAGE_WORDS | _WEB_SEARCH_LANGUAGE_LEAD_WORDS):
+        return False
+    return bool(token_set & {"use", "in", "pakai", "bahasa", "dalam"})
 
 
 def _looks_like_web_search_demotion_followup(text: str) -> bool:
@@ -273,15 +302,13 @@ def _looks_like_web_search_demotion_followup(text: str) -> bool:
         return False
     if len(normalized) > 120:
         return False
-    if _WEB_SEARCH_DISABLE_RE.search(raw):
+    if _looks_like_web_search_disable_request(normalized):
         return True
-    if _WEB_SEARCH_LANGUAGE_SWITCH_RE.fullmatch(normalized):
+    if _looks_like_web_search_language_switch(normalized):
         return True
-    if _WEB_SEARCH_DIRECT_ANSWER_RE.search(raw):
+    if _looks_like_web_search_direct_answer_request(normalized):
         return True
-    if normalized in {"jelaskan", "answer directly"}:
-        return True
-    return any(marker in normalized for marker in _WEB_SEARCH_DEMOTION_FOLLOWUP_MARKERS)
+    return False
 
 
 _ASSISTANT_FOLLOWUP_OFFER_LEAD_MARKERS = (
@@ -350,26 +377,6 @@ _ASSISTANT_FOLLOWUP_OFFER_CAPABILITY_MARKERS = (
     "お伝えできます",
     "ช่วยได้",
     "ช่วยคุณได้",
-)
-
-_WEB_SEARCH_DEMOTION_FOLLOWUP_MARKERS = (
-    "just explain",
-    "jelasin",
-    "just answer",
-    "answer directly",
-    "tanpa web search",
-    "jangan pakai web search",
-    "jangan pake web search",
-    "ga usah web search",
-    "gak usah web search",
-    "nggak usah web search",
-    "dont use web search",
-    "don't use web search",
-    "no web search",
-    "without web search",
-    "use english",
-    "in english",
-    "english please",
 )
 
 _ASSISTANT_FOLLOWUP_OFFER_PROMISE_MARKERS = (
