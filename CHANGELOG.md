@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Reduced marker-heavy routing in the skill and follow-up layers so Kabot behaves more like OpenClaw's state-first flow:
+  - `skills_matching` no longer relies on large multilingual regex buckets for skill creation/install/catalog/use detection and now prefers smaller structural signals such as skill-domain overlap, source grounding, and explicit action intent,
+  - semantic weather/memory follow-up detection now uses lighter token/fragment signals instead of several dedicated phrase-list regex buckets,
+  - and live quote refresh follow-ups such as `pakai data terbaru` now use compact freshness signals instead of a large hardcoded phrase matcher.
+
 ## [0.6.5-rc1] - 2026-03-15
 
 ### Changed

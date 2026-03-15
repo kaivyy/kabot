@@ -8,12 +8,6 @@ from kabot.agent.cron_fallback_nlp import extract_weather_location
 
 _SPACE_RE = re.compile(r"\s+")
 _NON_WORD_RE = re.compile(r"[^\w\s]+", re.UNICODE)
-_SELF_IDENTITY_RECALL_RE = re.compile(
-    r"(?i)\b("
-    r"who am i|who i am|"
-    r"what do you call me"
-    r")\b"
-)
 _META_FEEDBACK_RE = re.compile(
     r"(?i)\b("
     r"kok|kenapa|why|wrong|ngaco|aneh|lama|slow|bug|error|"
@@ -29,12 +23,6 @@ _ADVICE_RE = re.compile(
     r"which one|mana yang|apa ya|what should i use|should i use"
     r")\b"
 )
-_WEATHER_MARKER_RE = re.compile(
-    r"(?i)\b("
-    r"weather|cuaca|suhu|temperature|temperatur|forecast|angin|wind|"
-    r"humid|kelembapan|rain|hujan|berawan|cloudy|sunny"
-    r")\b|[風风]|ลม|天気|天气|อากาศ"
-)
 _WEATHER_METRIC_VALUE_RE = re.compile(
     r"(?i)\b\d+(?:[.,]\d+)?\s*(?:km/?h|kph|m/?s|mph|kt|kts|knots?)\b"
 )
@@ -42,35 +30,6 @@ _WEATHER_METRIC_QUERY_RE = re.compile(
     r"(?i)\b("
     r"berapa|kenapa|gimana|bagaimana|maksudnya|artinya|normal|"
     r"how|what|why|is that|too fast|too slow|strong|weak"
-    r")\b"
-)
-_WEATHER_COMMENTARY_MARKER_RE = re.compile(
-    r"(?i)\b("
-    r"lumayan|cukup|agak|ternyata|terasa|rasanya|kayaknya|kayak|"
-    r"pretty|quite|kind of|feels?|seems?"
-    r")\b"
-)
-_WEATHER_TEMPERATURE_FEEL_RE = re.compile(
-    r"(?i)\b("
-    r"hangat|panas|dingin|sejuk|adem|gerah|lembap|humid|warm|hot|cold|cool|chilly|humid"
-    r")\b"
-)
-_WEATHER_FRESH_QUERY_MARKER_RE = re.compile(
-    r"(?i)\b("
-    r"forecast|prakiraan|prediksi|ramalan|besok|lusa|tomorrow|later|next|"
-    r"hujan|rain|angin|wind|humidity|kelembapan|derajat|degree|degrees|"
-    r"berapa|gimana|bagaimana|kenapa|why|how|what|when"
-    r")\b"
-)
-_WEATHER_SOURCE_MARKER_RE = re.compile(
-    r"(?i)\b("
-    r"source|sumber(?:nya)?|provider|dari mana|darimana|pakai apa|"
-    r"source nya|source-nya|sumbernya dari mana"
-    r")\b"
-)
-_WEATHER_PROVIDER_MARKER_RE = re.compile(
-    r"(?i)\b("
-    r"wttr(?:[.\s]?in)?|open[\s-]?meteo|openweather|weatherapi|weather\.com|accuweather"
     r")\b"
 )
 _IDR_CONVERSION_RE = re.compile(
@@ -97,39 +56,60 @@ _HR_ZONE_ACTION_RE = re.compile(
     r"hitung|calculate|calc|tolong|please|berapa|zona|zone|umur|usia|age"
     r")\b"
 )
-_MEMORY_RECALL_INTERROGATIVE_RE = re.compile(
-    r"(?i)\b("
-    r"who|what|which|when|where|why|how|"
-    r"tell|show|reply|answer"
-    r")\b"
-)
-_MEMORY_RECALL_ACTION_RE = re.compile(
-    r"(?i)\b("
-    r"remember|remembered|save|saved|store|stored|recall|memory|"
-    r"preference|preferences|code|call(?:ed)?|address(?:ed)?"
-    r")\b"
-)
-_MEMORY_RECALL_CONTEXT_RE = re.compile(
-    r"(?i)\b("
-    r"before|earlier|previous(?:ly)?|prior|last|just"
-    r")\b"
-)
-_MEMORY_RECALL_WORK_RE = re.compile(
-    r"(?i)\b("
-    r"decide|decided|decision|agree|agreed|plan|planned|todo|task|deadline|status"
-    r")\b"
-)
-_MEMORY_RECALL_SUBJECT_RE = re.compile(
-    r"(?i)\b("
-    r"i|me|my|mine|myself|we|us|our|ours"
-    r")\b"
-)
 _MEMORY_COMMIT_RE = re.compile(
     r"(?i)\b("
     r"save to memory|save this to memory|save that to memory|save this memory|commit to memory|"
     r"save in memory|remember this|remember that"
     r")\b"
 )
+_WEATHER_KEYWORDS = frozenset({
+    "weather", "cuaca", "suhu", "temperature", "temperatur", "forecast",
+    "angin", "wind", "humid", "kelembapan", "rain", "hujan", "berawan",
+    "cloudy", "sunny",
+})
+_WEATHER_FRAGMENTS = ("風", "风", "ลม", "天気", "天气", "อากาศ")
+_WEATHER_COMMENTARY_KEYWORDS = frozenset({
+    "lumayan", "cukup", "agak", "ternyata", "terasa", "rasanya",
+    "kayaknya", "kayak", "pretty", "quite", "kind", "feels", "feel", "seems",
+})
+_WEATHER_TEMPERATURE_FEEL_KEYWORDS = frozenset({
+    "hangat", "panas", "dingin", "sejuk", "adem", "gerah", "lembap",
+    "humid", "warm", "hot", "cold", "cool", "chilly",
+})
+_WEATHER_FRESH_QUERY_KEYWORDS = frozenset({
+    "forecast", "prakiraan", "prediksi", "ramalan", "besok", "lusa",
+    "tomorrow", "later", "next", "hujan", "rain", "angin", "wind",
+    "humidity", "kelembapan", "derajat", "degree", "degrees", "berapa",
+    "gimana", "bagaimana", "kenapa", "why", "how", "what", "when",
+})
+_WEATHER_SOURCE_KEYWORDS = frozenset({"source", "sumber", "provider"})
+_WEATHER_SOURCE_PHRASES = (
+    "dari mana", "darimana", "pakai apa", "source nya", "source-nya", "sumbernya dari mana",
+)
+_WEATHER_PROVIDER_FRAGMENTS = (
+    "wttr.in", "wttrin", "open-meteo", "open meteo", "openweather",
+    "weatherapi", "weather.com", "accuweather",
+)
+_MEMORY_SELF_IDENTITY_PHRASES = ("who am i", "who i am", "what do you call me")
+_MEMORY_RECALL_INTERROGATIVE_KEYWORDS = frozenset({
+    "who", "what", "which", "when", "where", "why", "how",
+    "tell", "show", "reply", "answer",
+})
+_MEMORY_RECALL_ACTION_KEYWORDS = frozenset({
+    "remember", "remembered", "save", "saved", "store", "stored", "recall",
+    "memory", "preference", "preferences", "code", "call", "called",
+    "address", "addressed",
+})
+_MEMORY_RECALL_CONTEXT_KEYWORDS = frozenset({
+    "before", "earlier", "previous", "previously", "prior", "last", "just",
+})
+_MEMORY_RECALL_WORK_KEYWORDS = frozenset({
+    "decide", "decided", "decision", "agree", "agreed", "plan", "planned",
+    "todo", "task", "deadline", "status",
+})
+_MEMORY_RECALL_SUBJECT_KEYWORDS = frozenset({
+    "i", "me", "my", "mine", "myself", "we", "us", "our", "ours",
+})
 @dataclass(slots=True)
 class SemanticIntentHint:
     kind: str = "none"
@@ -145,6 +125,27 @@ def _normalize_text(text: str) -> str:
         return ""
     compact = _NON_WORD_RE.sub(" ", raw)
     return _SPACE_RE.sub(" ", compact).strip()
+
+
+def _normalized_keywords(normalized: str) -> set[str]:
+    if not normalized:
+        return set()
+    return {token for token in normalized.split(" ") if token}
+
+
+def _contains_any_keyword(normalized: str, keywords: frozenset[str]) -> bool:
+    return bool(_normalized_keywords(normalized) & keywords)
+
+
+def _contains_any_fragment(raw: str, fragments: tuple[str, ...]) -> bool:
+    lowered = str(raw or "").lower()
+    return any(fragment.lower() in lowered for fragment in fragments)
+
+
+def _has_weather_signal(raw: str, normalized: str) -> bool:
+    return _contains_any_keyword(normalized, _WEATHER_KEYWORDS) or _contains_any_fragment(
+        raw, _WEATHER_FRAGMENTS
+    )
 
 
 def _is_cjk_or_unspaced_substantive(raw: str) -> bool:
@@ -200,7 +201,7 @@ def _looks_like_weather_followup(text: str) -> bool:
         return False
     if len(normalized) > 96:
         return False
-    return bool(_WEATHER_MARKER_RE.search(normalized))
+    return _has_weather_signal(raw, normalized)
 
 
 def _looks_like_weather_metric_interpretation_followup(text: str) -> bool:
@@ -210,7 +211,7 @@ def _looks_like_weather_metric_interpretation_followup(text: str) -> bool:
         return False
     if len(normalized) > 120:
         return False
-    if not _WEATHER_MARKER_RE.search(normalized):
+    if not _has_weather_signal(raw, normalized):
         return False
     if not _WEATHER_METRIC_VALUE_RE.search(raw):
         return False
@@ -232,18 +233,18 @@ def _looks_like_weather_commentary_followup(text: str) -> bool:
         return False
     if "?" in raw:
         return False
-    if _WEATHER_FRESH_QUERY_MARKER_RE.search(normalized):
+    if _contains_any_keyword(normalized, _WEATHER_FRESH_QUERY_KEYWORDS):
         return False
-    has_temp_feel = bool(_WEATHER_TEMPERATURE_FEEL_RE.search(normalized))
+    has_temp_feel = _contains_any_keyword(normalized, _WEATHER_TEMPERATURE_FEEL_KEYWORDS)
     if not has_temp_feel:
         return False
     has_commentary_marker = bool(
-        _WEATHER_COMMENTARY_MARKER_RE.search(normalized)
+        _contains_any_keyword(normalized, _WEATHER_COMMENTARY_KEYWORDS)
         or normalized.endswith((" ya", " yah", " kan", " juga"))
         or normalized.startswith(("lumayan ", "cukup ", "agak ", "pretty ", "quite "))
     )
     has_weather_anchor = bool(
-        _WEATHER_MARKER_RE.search(normalized)
+        _has_weather_signal(raw, normalized)
         or extract_weather_location(raw)
     )
     return bool(has_commentary_marker or has_weather_anchor)
@@ -258,10 +259,13 @@ def _looks_like_weather_source_followup(text: str) -> bool:
         return False
     if _WEATHER_METRIC_VALUE_RE.search(raw):
         return False
-    has_source_marker = bool(_WEATHER_SOURCE_MARKER_RE.search(normalized))
+    has_source_marker = bool(
+        _contains_any_keyword(normalized, _WEATHER_SOURCE_KEYWORDS)
+        or any(phrase in normalized for phrase in _WEATHER_SOURCE_PHRASES)
+    )
     has_provider_marker = bool(
-        _WEATHER_PROVIDER_MARKER_RE.search(raw)
-        or _WEATHER_PROVIDER_MARKER_RE.search(normalized)
+        _contains_any_fragment(raw, _WEATHER_PROVIDER_FRAGMENTS)
+        or _contains_any_fragment(normalized, _WEATHER_PROVIDER_FRAGMENTS)
         or re.fullmatch(r"(?i)(?:https?://)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+/?", raw)
     )
     if not has_source_marker and not has_provider_marker:
@@ -318,22 +322,22 @@ def _looks_like_memory_recall(text: str) -> bool:
         return False
     if raw.startswith("/"):
         return False
-    if _SELF_IDENTITY_RECALL_RE.search(raw):
+    if any(phrase in normalized for phrase in _MEMORY_SELF_IDENTITY_PHRASES):
         return True
     if len(normalized) > 240:
         return False
     interrogative_turn = bool(
         raw.endswith(("?", "？"))
-        or _MEMORY_RECALL_INTERROGATIVE_RE.search(normalized)
+        or _contains_any_keyword(normalized, _MEMORY_RECALL_INTERROGATIVE_KEYWORDS)
     )
     if _MEMORY_COMMIT_RE.search(normalized) and not interrogative_turn:
         return False
     if not interrogative_turn:
         return False
-    has_memory_anchor = bool(_MEMORY_RECALL_ACTION_RE.search(normalized))
-    has_context_anchor = bool(_MEMORY_RECALL_CONTEXT_RE.search(normalized))
-    has_work_anchor = bool(_MEMORY_RECALL_WORK_RE.search(normalized))
-    has_subject_anchor = bool(_MEMORY_RECALL_SUBJECT_RE.search(normalized))
+    has_memory_anchor = _contains_any_keyword(normalized, _MEMORY_RECALL_ACTION_KEYWORDS)
+    has_context_anchor = _contains_any_keyword(normalized, _MEMORY_RECALL_CONTEXT_KEYWORDS)
+    has_work_anchor = _contains_any_keyword(normalized, _MEMORY_RECALL_WORK_KEYWORDS)
+    has_subject_anchor = _contains_any_keyword(normalized, _MEMORY_RECALL_SUBJECT_KEYWORDS)
     if has_memory_anchor and (has_subject_anchor or has_work_anchor):
         return True
     if has_context_anchor and has_work_anchor:

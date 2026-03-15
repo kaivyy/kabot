@@ -29,142 +29,65 @@ _STOP_WORDS = frozenset({
     "pakai", "pake", "pakaiin",
 })
 
-_SKILL_CREATION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # English
-    re.compile(
-        r"\b(create|build|make|add|design|draft|generate)\b.{0,40}\b"
-        r"(skill|skills|plugin|plugins|capability|capabilities|integration|integrations|connector|workflow|automation)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|plugins|capability|capabilities|integration|integrations|connector|workflow|automation)\b.{0,40}\b"
-        r"(new|create|build|make|add|design)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(update|edit|modify|revise|improve|patch|refactor)\b.{0,40}\b"
-        r"(skill|skills|plugin|plugins|capability|capabilities|integration|integrations|connector|workflow|automation)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|plugins|capability|capabilities|integration|integrations|connector|workflow|automation)\b.{0,40}\b"
-        r"(update|edit|modify|revise|improve|patch|refactor)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    # Indonesian / Malay / mixed colloquial
-    re.compile(
-        r"\b(buat|bikin|buatkan|tambahkan|tambah|kembangkan|rancang|desain)\b.{0,40}\b"
-        r"(skill|skills|plugin|fitur|feature|kemampuan|kapabilitas|integrasi|integration|workflow|otomasi|automation)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|fitur|feature|kemampuan|kapabilitas|integrasi|integration|workflow|otomasi|automation)\b.{0,40}\b"
-        r"(baru|new|buat|bikin|tambahkan|kembangkan)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\bbuat\b.{0,16}\b(kemampuan|kapabilitas|integrasi|integration|fitur)\b.{0,16}\b(baru|kabot|api)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(update|edit|ubah|perbarui|modif|modifikasi|revisi|rapikan|improve)\b.{0,40}\b"
-        r"(skill|skills|plugin|fitur|feature|kemampuan|kapabilitas|integrasi|integration|workflow|otomasi|automation)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|fitur|feature|kemampuan|kapabilitas|integrasi|integration|workflow|otomasi|automation)\b.{0,40}\b"
-        r"(update|edit|ubah|perbarui|modif|modifikasi|revisi|rapikan|improve)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    # Thai
-    re.compile(r"(สร้าง|เพิ่ม).{0,20}(สกิล|ปลั๊กอิน|ความสามารถ|การเชื่อมต่อ|อินทิเกรชัน)", re.DOTALL),
-    re.compile(r"(สกิล|ปลั๊กอิน|ความสามารถ|การเชื่อมต่อ|อินทิเกรชัน).{0,20}(ใหม่|สร้าง|เพิ่ม)", re.DOTALL),
-    re.compile("(\u0E2D\u0E31\u0E1B\u0E40\u0E14\u0E15|\u0E41\u0E01\u0E49\u0E44\u0E02|\u0E1B\u0E23\u0E31\u0E1A\u0E1B\u0E23\u0E38\u0E07).{0,20}(\u0E2A\u0E01\u0E34\u0E25|\u0E1B\u0E25\u0E31\u0E4A\u0E01\u0E2D\u0E34\u0E19|\u0E04\u0E27\u0E32\u0E21\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16|\u0E01\u0E32\u0E23\u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D|\u0E2D\u0E34\u0E19\u0E17\u0E34\u0E40\u0E01\u0E23\u0E0A\u0E31\u0E19)", re.DOTALL),
-    re.compile("(\u0E2A\u0E01\u0E34\u0E25|\u0E1B\u0E25\u0E31\u0E4A\u0E01\u0E2D\u0E34\u0E19|\u0E04\u0E27\u0E32\u0E21\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16|\u0E01\u0E32\u0E23\u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D|\u0E2D\u0E34\u0E19\u0E17\u0E34\u0E40\u0E01\u0E23\u0E0A\u0E31\u0E19).{0,20}(\u0E2D\u0E31\u0E1B\u0E40\u0E14\u0E15|\u0E41\u0E01\u0E49\u0E44\u0E02|\u0E1B\u0E23\u0E31\u0E1A\u0E1B\u0E23\u0E38\u0E07)", re.DOTALL),
-    # Japanese
-    re.compile(r"(新しい|新規).{0,10}(スキル|プラグイン|機能)", re.DOTALL),
-    re.compile(r"(スキル|プラグイン|機能).{0,12}(作って|作成|追加|作る)", re.DOTALL),
-    re.compile(r"(作って|作成|追加|作る).{0,12}(スキル|プラグイン|機能)", re.DOTALL),
-    re.compile("(\u66F4\u65B0|\u4FEE\u6B63|\u6539\u5584|\u7DE8\u96C6).{0,12}(\u30B9\u30AD\u30EB|\u30D7\u30E9\u30B0\u30A4\u30F3|\u6A5F\u80FD)", re.DOTALL),
-    re.compile("(\u30B9\u30AD\u30EB|\u30D7\u30E9\u30B0\u30A4\u30F3|\u6A5F\u80FD).{0,12}(\u66F4\u65B0|\u4FEE\u6B63|\u6539\u5584|\u7DE8\u96C6)", re.DOTALL),
-    # Chinese
-    re.compile(r"(创建|新增|添加|做一个).{0,12}(技能|插件|能力|集成)", re.DOTALL),
-    re.compile(r"(技能|插件|能力|集成).{0,12}(创建|新增|添加|做一个|新的)", re.DOTALL),
-    re.compile("(\u66F4\u65B0|\u4FEE\u6539|\u7F16\u8F91|\u6539\u8FDB).{0,12}(\u6280\u80FD|\u63D2\u4EF6|\u80FD\u529B|\u96C6\u6210)", re.DOTALL),
-    re.compile("(\u6280\u80FD|\u63D2\u4EF6|\u80FD\u529B|\u96C6\u6210).{0,12}(\u66F4\u65B0|\u4FEE\u6539|\u7F16\u8F91|\u6539\u8FDB)", re.DOTALL),
+_SKILL_DOMAIN_KEYWORDS = frozenset({
+    "skill", "skills", "plugin", "plugins", "capability", "capabilities",
+    "integration", "integrations", "connector", "workflow", "automation",
+    "fitur", "feature", "kemampuan", "kapabilitas", "integrasi", "otomasi",
+})
+
+_SKILL_CREATE_UPDATE_KEYWORDS = frozenset({
+    "create", "build", "make", "add", "design", "draft", "generate", "new",
+    "update", "edit", "modify", "revise", "improve", "patch", "refactor",
+    "buat", "bikin", "buatkan", "tambahkan", "tambah", "kembangkan", "rancang",
+    "desain", "baru", "ubah", "perbarui", "modif", "modifikasi", "revisi",
+    "rapikan",
+})
+
+_SKILL_INSTALL_KEYWORDS = frozenset({
+    "install", "add", "download", "fetch", "sync", "upgrade", "update",
+    "pasang", "tambahkan", "unduh", "sinkron",
+})
+
+_SKILL_DISCOVERY_KEYWORDS = frozenset({
+    "list", "show", "what", "which", "available", "installable", "catalog",
+    "catalogue", "curated", "experimental", "recommend", "rekomendasi",
+    "daftar", "tampilkan", "lihat", "tersedia", "cocok", "apa", "mana",
+})
+
+_SKILL_SOURCE_KEYWORDS = frozenset({
+    "github", "repo", "repository", "url", "catalog", "catalogue",
+    "curated", "kurasi", "openai/skills",
+})
+
+_SKILL_USE_KEYWORDS = frozenset({
+    "use", "run", "follow", "apply", "gunakan", "pakai", "pake",
+    "jalankan", "ikuti",
+})
+
+_COMPACT_SKILL_DOMAIN_FRAGMENTS = (
+    "สกิล", "ปลั๊กอิน", "ความสามารถ", "การเชื่อมต่อ", "อินทิเกรชัน", "ทักษะ",
+    "スキル", "プラグイン", "機能",
+    "技能", "插件", "能力", "集成",
 )
 
-_SKILL_INSTALL_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # English install/list/update from source/catalog
-    re.compile(
-        r"\b(install|add|download|fetch|sync|upgrade|update|list|show)\b.{0,50}\b"
-        r"(skill|skills|plugin|plugins)\b.{0,50}\b"
-        r"(github|repo|repository|url|catalog|catalogue|curated|openai/skills)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(github|repo|repository|url|catalog|catalogue|curated|openai/skills)\b.{0,50}\b"
-        r"(skill|skills|plugin|plugins)\b.{0,50}\b"
-        r"(install|add|download|fetch|sync|upgrade|update)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(list|show|what)\b.{0,30}\b(installable|available|curated|experimental)\b.{0,30}\b"
-        r"(skill|skills|plugin|plugins)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    # Indonesian / Malay install/list/update from source/catalog
-    re.compile(
-        r"\b(install|pasang|tambahkan|unduh|download|sinkron|sync|upgrade|update|tampilkan|lihat|daftar)\b.{0,50}\b"
-        r"(skill|skills|plugin|plugins)\b.{0,50}\b"
-        r"(github|repo|repository|url|katalog|catalog|catalogue|curated|kurasi|openai/skills)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(github|repo|repository|url|katalog|catalog|catalogue|curated|kurasi|openai/skills)\b.{0,50}\b"
-        r"(skill|skills|plugin|plugins)\b.{0,50}\b"
-        r"(install|pasang|tambahkan|unduh|download|sinkron|sync|upgrade|update)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills|plugin|plugins)\b.{0,40}\b"
-        r"(yang tersedia|yang bisa diinstall|yang bisa dipasang|tersedia|installable|available|curated|experimental)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
+_COMPACT_CREATE_UPDATE_FRAGMENTS = (
+    "สร้าง", "เพิ่ม", "ใหม่", "อัปเดต", "แก้ไข", "ปรับปรุง",
+    "新しい", "新規", "作って", "作成", "追加", "作る", "更新", "修正", "改善", "編集",
+    "创建", "新增", "添加", "做一个", "更新", "修改", "编辑", "改进",
 )
 
-_SKILL_CATALOG_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # English
-    re.compile(
-        r"\b(what|which|show|list|available|installable|catalog|catalogue|recommend)\b.{0,40}\b"
-        r"(skill|skills)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills)\b.{0,40}\b"
-        r"(available|installable|list|show|catalog|catalogue|recommend|should i use)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    # Indonesian / Malay
-    re.compile(
-        r"\b(apa|mana|daftar|list|tampilkan|lihat|tersedia|rekomendasi|cocok)\b.{0,32}\b"
-        r"(skill|skills)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(skill|skills)\b.{0,32}\b"
-        r"(apa|mana|daftar|list|tampilkan|lihat|tersedia|rekomendasi|cocok)\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    # Thai
-    re.compile(r"(มี|รายการ|ลิสต์|แสดง|ดู|แนะนำ).{0,20}(สกิล|ทักษะ)", re.DOTALL),
-    re.compile(r"(สกิล|ทักษะ).{0,20}(อะไร|ไหน|มี|รายการ|ลิสต์|แสดง|ดู|แนะนำ)", re.DOTALL),
-    # Japanese
-    re.compile(r"(どんな|使える|一覧|見せて|教えて|おすすめ).{0,18}(スキル)", re.DOTALL),
-    re.compile(r"(スキル).{0,18}(どんな|使える|一覧|ありますか|見せて|教えて|おすすめ)", re.DOTALL),
-    # Chinese
-    re.compile(r"(有什么|有哪些|列出|显示|看看|推荐).{0,18}(技能)", re.DOTALL),
-    re.compile(r"(技能).{0,18}(有什么|有哪些|可以用|列表|列出|显示|推荐)", re.DOTALL),
+_COMPACT_INSTALL_FRAGMENTS = (
+    "ติดตั้ง", "インストール", "安装",
+)
+
+_COMPACT_CATALOG_FRAGMENTS = (
+    "มี", "รายการ", "ลิสต์", "แสดง", "ดู", "แนะนำ", "อะไร",
+    "どんな", "使える", "一覧", "見せて", "教えて", "おすすめ", "ありますか",
+    "有什么", "有哪些", "列出", "显示", "看看", "推荐", "可以用", "列表",
+)
+
+_COMPACT_USE_FRAGMENTS = (
+    "ใช้", "使って", "使う", "用这个",
 )
 
 _DIRECT_GITHUB_SKILL_URL_RE = re.compile(
@@ -185,17 +108,63 @@ _SKILL_INSTALL_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 
-_EXPLICIT_SKILL_USE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b(use|run|follow|apply)\b.{0,24}\b(skill|skills)\b", re.IGNORECASE | re.DOTALL),
-    re.compile(r"\b(skill|skills)\b.{0,24}\b(use|run|follow|apply)\b", re.IGNORECASE | re.DOTALL),
-    re.compile(r"\b(pakai|pake|gunakan|jalankan|ikuti)\b.{0,24}\b(skill|skills)\b", re.IGNORECASE | re.DOTALL),
-    re.compile(r"\b(skill|skills)\b.{0,24}\b(pakai|pake|gunakan|jalankan|ikuti)\b", re.IGNORECASE | re.DOTALL),
-)
+_SKILL_NAMEISH_RE = re.compile(r"\b[a-z0-9]+(?:[-_][a-z0-9]+){1,}\b", re.IGNORECASE)
 
 _SKILL_REFERENCE_DECORATION_RE = re.compile(
     r"\s+\[(?:NEEDS|MISSING|DISABLED|BLOCKED)(?::[^\]]*)?\]\s*$",
     re.IGNORECASE,
 )
+
+
+def _contains_any_fragment(text: str, fragments: tuple[str, ...]) -> bool:
+    lowered = str(text or "").lower()
+    return any(fragment.lower() in lowered for fragment in fragments)
+
+
+def _intent_tokens(text: str) -> set[str]:
+    normalized = re.sub(r"[^\w/+-]+", " ", str(text or "").lower(), flags=re.UNICODE)
+    return {token for token in normalized.split() if token}
+
+
+def _has_keyword_signal(text: str, keywords: frozenset[str]) -> bool:
+    return bool((_extract_keywords(text) | _intent_tokens(text)) & keywords)
+
+
+def _has_skill_domain_signal(text: str) -> bool:
+    return _has_keyword_signal(text, _SKILL_DOMAIN_KEYWORDS) or _contains_any_fragment(
+        text, _COMPACT_SKILL_DOMAIN_FRAGMENTS
+    )
+
+
+def _has_skill_create_or_update_signal(text: str) -> bool:
+    return _has_keyword_signal(text, _SKILL_CREATE_UPDATE_KEYWORDS) or _contains_any_fragment(
+        text, _COMPACT_CREATE_UPDATE_FRAGMENTS
+    )
+
+
+def _has_skill_install_signal(text: str) -> bool:
+    return _has_keyword_signal(text, _SKILL_INSTALL_KEYWORDS) or _contains_any_fragment(
+        text, _COMPACT_INSTALL_FRAGMENTS
+    )
+
+
+def _has_skill_discovery_signal(text: str) -> bool:
+    return _has_keyword_signal(text, _SKILL_DISCOVERY_KEYWORDS) or _contains_any_fragment(
+        text, _COMPACT_CATALOG_FRAGMENTS
+    )
+
+
+def _has_skill_source_signal(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    return any(keyword in lowered for keyword in _SKILL_SOURCE_KEYWORDS)
+
+
+def _has_explicit_skill_use_signal(text: str) -> bool:
+    return _has_keyword_signal(text, _SKILL_USE_KEYWORDS) or _contains_any_fragment(
+        text, _COMPACT_USE_FRAGMENTS
+    )
 
 
 def _naive_stem(word: str) -> str:
@@ -259,60 +228,62 @@ def _intent_alias_bonus(skill_name: str, message_lower: str) -> float:
 
 
 def looks_like_skill_creation_request(text: str) -> bool:
-    """Detect natural-language requests to create a new Kabot skill/capability.
+    """Detect requests to create or update a skill workflow.
 
-    The heuristic stays intentionally broad across languages, but still requires
-    a creation/build signal plus an artifact/domain signal so ordinary coding
-    requests do not get hijacked.
+    This intentionally stays structural: it looks for a skill-domain signal plus
+    a create/update action, instead of relying on long phrase buckets.
     """
-    content = str(text or "").strip().lower()
+    content = str(text or "").strip()
     if not content:
         return False
-    for pattern in _SKILL_CREATION_PATTERNS:
-        if pattern.search(content):
-            return True
-    return False
+    return _has_skill_domain_signal(content) and _has_skill_create_or_update_signal(content)
 
 
 def looks_like_skill_install_request(text: str) -> bool:
     """Detect natural-language requests to install/list/update external skills."""
-    content = str(text or "").strip().lower()
+    content = str(text or "").strip()
     if not content:
         return False
-    for pattern in _SKILL_INSTALL_PATTERNS:
-        if pattern.search(content):
-            return True
-    if _DIRECT_GITHUB_SKILL_URL_RE.search(content) and _SKILL_INSTALL_ACTION_RE.search(content):
+    has_install = _has_skill_install_signal(content)
+    has_domain = _has_skill_domain_signal(content)
+    has_source = _has_skill_source_signal(content)
+    has_discovery = _has_skill_discovery_signal(content)
+
+    if _DIRECT_GITHUB_SKILL_URL_RE.search(content) and (_SKILL_INSTALL_ACTION_RE.search(content) or has_discovery):
         return True
-    if _DIRECT_GITHUB_SKILL_PATH_RE.search(content) and _SKILL_INSTALL_ACTION_RE.search(content):
+    if _DIRECT_GITHUB_SKILL_PATH_RE.search(content) and (_SKILL_INSTALL_ACTION_RE.search(content) or has_discovery):
+        return True
+    if has_install and (has_domain or has_source):
+        return True
+    if has_domain and has_source and has_discovery:
         return True
     return False
 
 
 def looks_like_skill_catalog_request(text: str) -> bool:
     """Detect requests asking about the skill catalog itself, not using one skill."""
-    content = str(text or "").strip().lower()
+    content = str(text or "").strip()
     if not content:
         return False
-    for pattern in _SKILL_CATALOG_PATTERNS:
-        if pattern.search(content):
-            return True
-    return False
+    return _has_skill_domain_signal(content) and _has_skill_discovery_signal(content)
 
 
 def looks_like_explicit_skill_use_request(text: str) -> bool:
     """Detect prompts that explicitly ask to use a named skill."""
-    content = str(text or "").strip().lower()
+    content = str(text or "").strip()
     if not content:
         return False
     if looks_like_skill_catalog_request(content):
         return False
     if looks_like_skill_creation_request(content) or looks_like_skill_install_request(content):
         return False
-    for pattern in _EXPLICIT_SKILL_USE_PATTERNS:
-        if pattern.search(content):
-            return True
-    return False
+    if not _has_explicit_skill_use_signal(content):
+        return False
+    return _has_skill_domain_signal(content) or bool(
+        _DIRECT_GITHUB_SKILL_URL_RE.search(content)
+        or _DIRECT_GITHUB_SKILL_PATH_RE.search(content)
+        or _SKILL_NAMEISH_RE.search(content)
+    )
 
 
 def normalize_skill_reference_name(name: str) -> str:

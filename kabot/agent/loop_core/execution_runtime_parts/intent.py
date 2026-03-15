@@ -132,14 +132,23 @@ _LIVE_FINANCE_VALUE_RE = re.compile(
     r"terbaru|terkini|real[\s-]?time|live|open|close|closing|high|low"
     r")\b"
 )
-_LIVE_DATA_REFRESH_MARKER_RE = re.compile(
-    r"(?i)\b("
-    r"latest|current|newest|up[\s-]?to[\s-]?date|fresh(?:est)?|"
-    r"terbaru|terkini|paling baru|real[\s-]?time|live|"
-    r"use latest data|use current data|use real[\s-]?time data|"
-    r"pakai data terbaru|pakai data terkini|gunakan data terbaru|gunakan data terkini|"
-    r"pakai yang terbaru|pakai yang terkini"
-    r")\b"
+_LIVE_DATA_REFRESH_KEYWORDS = frozenset({
+    "latest", "current", "newest", "fresh", "freshest",
+    "terbaru", "terkini", "live",
+})
+_LIVE_DATA_REFRESH_PHRASES = (
+    "up to date",
+    "real time",
+    "paling baru",
+    "use latest data",
+    "use current data",
+    "use real time data",
+    "pakai data terbaru",
+    "pakai data terkini",
+    "gunakan data terbaru",
+    "gunakan data terkini",
+    "pakai yang terbaru",
+    "pakai yang terkini",
 )
 
 
@@ -565,7 +574,11 @@ def _looks_like_live_data_refresh_followup(text: str) -> bool:
         return False
     if len(normalized) > 120:
         return False
-    if not _LIVE_DATA_REFRESH_MARKER_RE.search(normalized):
+    refresh_tokens = {token for token in normalized.split() if token}
+    if not (
+        refresh_tokens & _LIVE_DATA_REFRESH_KEYWORDS
+        or any(phrase in normalized for phrase in _LIVE_DATA_REFRESH_PHRASES)
+    ):
         return False
     return _is_low_information_turn(raw, max_tokens=8, max_chars=120)
 
