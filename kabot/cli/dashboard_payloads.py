@@ -400,6 +400,60 @@ def _build_dashboard_recent_turn_snapshot(session_manager: Any) -> dict[str, Any
     return {}
 
 
+def _build_dashboard_memory_snapshot(agent: Any) -> dict[str, Any]:
+    """Return lightweight runtime memory backend details for operator visibility."""
+    memory = getattr(agent, "memory", None)
+    if memory is None:
+        return {}
+
+    stats: dict[str, Any] = {}
+    health: dict[str, Any] = {}
+
+    get_stats = getattr(memory, "get_stats", None)
+    if callable(get_stats):
+        try:
+            raw_stats = get_stats()
+        except Exception:
+            raw_stats = {}
+        if isinstance(raw_stats, dict):
+            stats = dict(raw_stats)
+
+    health_check = getattr(memory, "health_check", None)
+    if callable(health_check):
+        try:
+            raw_health = health_check()
+        except Exception:
+            raw_health = {}
+        if isinstance(raw_health, dict):
+            health = dict(raw_health)
+
+    backend = str(
+        stats.get("backend")
+        or health.get("backend")
+        or getattr(getattr(memory, "__class__", None), "__name__", "")
+    ).strip()
+    retrieval_mode = str(health.get("retrieval_mode") or stats.get("retrieval_mode") or "").strip()
+    embedding_provider = str(
+        health.get("embedding_provider") or stats.get("embedding_provider") or ""
+    ).strip()
+    embedding_model = str(
+        health.get("embedding_model") or stats.get("embedding_model") or ""
+    ).strip()
+
+    snapshot = {
+        "status": str(health.get("status") or "unknown").strip() or "unknown",
+        "backend": backend,
+        "retrieval_mode": retrieval_mode,
+        "embedding_provider": embedding_provider,
+        "embedding_model": embedding_model,
+    }
+    for key in ("lazy_probe", "hybrid_loaded"):
+        value = health.get(key, stats.get(key))
+        if isinstance(value, bool):
+            snapshot[key] = value
+    return snapshot
+
+
 def _build_dashboard_cost_payload(
     session_manager: Any,
     *,
@@ -824,6 +878,7 @@ def _build_dashboard_status_payload(
     command_surface = _build_dashboard_command_surface(agent, config)
     subagent_activity = _build_dashboard_subagent_activity(agent)
     git_log = _build_dashboard_git_log(config.workspace_path)
+    memory = _build_dashboard_memory_snapshot(agent)
 
     return {
         "status": "running",
@@ -844,6 +899,7 @@ def _build_dashboard_status_payload(
         "nodes": _build_dashboard_nodes(channels),
         "config": _build_dashboard_config_summary(config),
         "system": {"pid": os.getpid(), "memory_mb": 0},
+        "memory": memory,
         "skills": skills,
         "command_surface": command_surface,
         "subagent_activity": subagent_activity,
@@ -859,6 +915,7 @@ __all__ = [
     "_build_dashboard_cost_payload",
     "_build_dashboard_cron_snapshot",
     "_build_dashboard_git_log",
+    "_build_dashboard_memory_snapshot",
     "_build_dashboard_nodes",
     "_build_dashboard_skills_snapshot",
     "_build_dashboard_status_payload",

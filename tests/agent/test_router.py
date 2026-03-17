@@ -37,6 +37,26 @@ class _StructuredRouteProvider:
         return _Resp(self.content)
 
 
+class _FallbackRouteProvider:
+    def __init__(self) -> None:
+        self.chat_calls: list[str] = []
+        self.fallbacks = ["fallback-model"]
+
+    def get_default_model(self) -> str:
+        return "primary-model"
+
+    async def chat(self, *args, **kwargs):
+        model = str(kwargs.get("model") or "")
+        self.chat_calls.append(model)
+        if model == "primary-model":
+            raise Exception("429 rate limit")
+
+        class _Resp:
+            content = '{"profile":"CODING","turn_category":"action","is_complex":true,"workflow_intent":"skill_creator"}'
+
+        return _Resp()
+
+
 @pytest.mark.asyncio
 async def test_route_weather_query_uses_structured_model_decision_instead_of_fast_parser():
     provider = _StructuredRouteProvider(
@@ -174,3 +194,41 @@ async def test_route_multilingual_project_inspection_turn_sets_filesystem_ground
     assert decision.grounding_mode == "filesystem_inspection"
     assert decision.is_complex is True
     assert provider.chat_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_route_skill_creation_spec_turn_surfaces_semantic_workflow_intent():
+    provider = _StructuredRouteProvider(
+        '{"profile":"CODING","turn_category":"action","is_complex":true,"workflow_intent":"skill_creator"}'
+    )
+    router = IntentRouter(provider)
+
+    decision = await router.route(
+        "bikin skills scrape\n"
+        "url: https://arqstorecekid.vercel.app/api/game\n"
+        'json: {"endpoint":"/api/game/mlbb-ard","query":"?id=xxxx&zone=xxx"}'
+    )
+
+    assert decision.profile == "CODING"
+    assert decision.turn_category == "action"
+    assert decision.is_complex is True
+    assert getattr(decision, "workflow_intent", None) == "skill_creator"
+    assert provider.chat_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_route_skill_creation_spec_turn_uses_fallback_model_chain_when_primary_fails():
+    provider = _FallbackRouteProvider()
+    router = IntentRouter(provider, model="primary-model")
+
+    decision = await router.route(
+        "bikin skills scrape\n"
+        "url: https://arqstorecekid.vercel.app/api/game\n"
+        'json: {"endpoint":"/api/game/mlbb-ard","query":"?id=xxxx&zone=xxx"}'
+    )
+
+    assert decision.profile == "CODING"
+    assert decision.turn_category == "action"
+    assert decision.is_complex is True
+    assert getattr(decision, "workflow_intent", None) == "skill_creator"
+    assert provider.chat_calls[:2] == ["primary-model", "fallback-model"]

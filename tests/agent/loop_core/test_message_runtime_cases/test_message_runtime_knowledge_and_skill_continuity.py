@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from kabot.agent.loop_core.message_runtime import process_message
+from kabot.agent.loop_core.message_runtime_parts import response_runtime as response_runtime_module
 from kabot.bus.events import InboundMessage, OutboundMessage
 
 
@@ -158,6 +159,83 @@ async def test_process_message_language_switch_followup_no_longer_uses_indonesia
         sender_id="u1",
         chat_id="chat-1",
         content="pakai bahasa inggris",
+    )
+    await process_message(loop, msg)
+
+    loop._run_simple_response.assert_awaited_once()
+    loop._run_agent_loop.assert_not_called()
+    assert msg.metadata.get("required_tool") is None
+    context_builder.build_messages.assert_not_called()
+    assert session.metadata.get("pending_followup_tool") is None
+
+
+@pytest.mark.asyncio
+async def test_process_message_language_switch_followup_semantic_path_without_legacy_phrase(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        response_runtime_module,
+        "classify_language_followup_intent",
+        AsyncMock(return_value="language_switch"),
+    )
+    context_builder = MagicMock()
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_tool": {
+                "tool": "web_search",
+                "source": "harga saham bbca sekarang",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            },
+            "last_tool_context": {
+                "tool": "web_search",
+                "source": "harga saham bbca sekarang",
+                "updated_at": time.time(),
+            },
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="simple")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="please answer in english",
     )
     await process_message(loop, msg)
 

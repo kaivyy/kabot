@@ -156,9 +156,14 @@ def _looks_like_write_file_request(text: str, *, explicit_path: str | None = Non
 
 
 
-def infer_action_required_tool_for_loop(loop: Any, text: str) -> tuple[str | None, str | None]:
+def infer_action_required_tool_for_loop(
+    loop: Any,
+    text: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> tuple[str | None, str | None]:
     _sync_action_globals()
-    return _ACTION_INFER_ACTION_REQUIRED_TOOL_FOR_LOOP(loop, text)
+    return _ACTION_INFER_ACTION_REQUIRED_TOOL_FOR_LOOP(loop, text, metadata=metadata)
 
 
 

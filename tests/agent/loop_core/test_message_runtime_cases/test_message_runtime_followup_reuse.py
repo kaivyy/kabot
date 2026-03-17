@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from kabot.agent.loop_core.message_runtime_parts import process_flow as process_flow_module
+from kabot.agent.loop_core.message_runtime_parts import turn_metadata as turn_metadata_module
 from kabot.agent.loop_core.message_runtime import (
     process_message,
 )
@@ -949,7 +951,7 @@ async def test_process_message_option_ordinal_followup_reuses_recent_assistant_p
     effective_content = str(msg.metadata.get("effective_content") or "")
     assert "[Follow-up Context]" in effective_content
     assert "[Selection Note]" in effective_content
-    assert "option 3" in effective_content.lower()
+    assert "one option from the follow-up context above" in effective_content.lower()
 
 
 @pytest.mark.asyncio
@@ -1809,6 +1811,89 @@ async def test_process_message_short_followup_reuses_last_tool_execution_for_mcp
     loop._run_simple_response.assert_not_called()
     assert msg.metadata.get("required_tool") == "mcp__yahoo_finance__quote"
     assert msg.metadata.get("required_tool_query") == "^jkse"
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_contextual_followup_reuses_last_tool_execution_without_raw_markers(
+    monkeypatch,
+):
+    monkeypatch.setattr(process_flow_module, "_looks_like_contextual_followup_request", lambda _text: False)
+    monkeypatch.setattr(process_flow_module, "_looks_like_answer_reference_followup", lambda _text: False)
+    monkeypatch.setattr(process_flow_module, "_looks_like_short_confirmation", lambda _text: False)
+    monkeypatch.setattr(process_flow_module, "_is_short_context_followup", lambda _text: False)
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify whether the user's turn is continuing existing context." in prompt:
+            return _Resp('{"followup_intent":"contextual_followup"}')
+        return _Resp('{"followup_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_execution": {
+                "tool": "mcp__yahoo_finance__quote",
+                "source": "^jkse",
+                "args": {"symbol": "^JKSE"},
+                "result_preview": '{"symbol":"^JKSE","price":7210.31}',
+                "updated_at": time.time(),
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(return_value=SimpleNamespace(profile="CHAT", is_complex=False))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="lanjut")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") == "mcp__yahoo_finance__quote"
+    assert msg.metadata.get("required_tool_query") == "^jkse"
+    assert msg.metadata.get("continuity_source") == "tool_execution"
 
 
 @pytest.mark.asyncio
@@ -3225,3 +3310,847 @@ async def test_process_message_bare_send_file_request_keeps_message_tool_over_li
 
     loop._run_agent_loop.assert_awaited_once()
     assert msg.metadata.get("required_tool") == "message"
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_delivery_request_uses_message_without_parser_signal(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        process_flow_module,
+        "infer_action_required_tool_for_loop",
+        lambda *_args, **_kwargs: (None, None),
+    )
+    monkeypatch.setattr(
+        process_flow_module,
+        "classify_stateful_followup_intent",
+        AsyncMock(return_value="none"),
+    )
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify the user's primary filesystem or delivery action intent." in prompt:
+            return _Resp('{"action_intent":"message"}')
+        return _Resp('{"action_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "kirim file tes.md kesini"}]
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "list_dir",
+                "path": r"C:\\Users\\Arvy Kairi\\Desktop\\bot",
+                "source": r"C:\\Users\\Arvy Kairi\\Desktop\\bot",
+                "updated_at": time.time(),
+            },
+            "last_navigated_path": r"C:\\Users\\Arvy Kairi\\Desktop\\bot",
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=True,
+                    turn_category="action",
+                    grounding_mode="none",
+                    workflow_intent="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["message", "list_dir"],
+            has=lambda name: name in {"message", "list_dir"},
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="kirim file tes.md kesini")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "message"
+    assert msg.metadata.get("continuity_source") == "semantic_action_request"
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_directory_request_uses_list_dir_without_parser_signal(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        process_flow_module,
+        "infer_action_required_tool_for_loop",
+        lambda *_args, **_kwargs: (None, None),
+    )
+    monkeypatch.setattr(
+        process_flow_module,
+        "classify_stateful_followup_intent",
+        AsyncMock(return_value="none"),
+    )
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify the user's primary filesystem or delivery action intent." in prompt:
+            return _Resp('{"action_intent":"list_dir"}')
+        return _Resp('{"action_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "terus folder bot ada apa aja, 5 item aja"}]
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "list_dir",
+                "path": r"C:\Users\Arvy Kairi\Desktop",
+                "updated_at": time.time(),
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=True,
+                    turn_category="action",
+                    grounding_mode="none",
+                    workflow_intent="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["list_dir"],
+            has=lambda name: name == "list_dir",
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="terus folder bot ada apa aja, 5 item aja",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "list_dir"
+    assert msg.metadata.get("continuity_source") == "semantic_action_request"
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_read_file_request_uses_read_file_without_parser_signal(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        process_flow_module,
+        "infer_action_required_tool_for_loop",
+        lambda *_args, **_kwargs: (None, None),
+    )
+    monkeypatch.setattr(
+        process_flow_module,
+        "classify_stateful_followup_intent",
+        AsyncMock(return_value="none"),
+    )
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify the user's primary filesystem or delivery action intent." in prompt:
+            return _Resp('{"action_intent":"read_file"}')
+        return _Resp('{"action_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "baca file config.json"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=True,
+                    turn_category="action",
+                    grounding_mode="none",
+                    workflow_intent="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["read_file"],
+            has=lambda name: name == "read_file",
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="baca file config.json")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "read_file"
+    assert msg.metadata.get("continuity_source") == "semantic_action_request"
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_find_files_request_uses_find_files_without_parser_signal(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        process_flow_module,
+        "infer_action_required_tool_for_loop",
+        lambda *_args, **_kwargs: (None, None),
+    )
+    monkeypatch.setattr(
+        process_flow_module,
+        "classify_stateful_followup_intent",
+        AsyncMock(return_value="none"),
+    )
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify the user's primary filesystem or delivery action intent." in prompt:
+            return _Resp('{"action_intent":"find_files"}')
+        return _Resp('{"action_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "cari file report.pdf lalu kirim ke sini"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=True,
+                    turn_category="action",
+                    grounding_mode="none",
+                    workflow_intent="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["find_files", "message"],
+            has=lambda name: name in {"find_files", "message"},
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="cari file report.pdf lalu kirim ke sini",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "find_files"
+    assert msg.metadata.get("continuity_source") == "semantic_action_request"
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_assistant_offer_followup_reuses_pending_offer_without_markers(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        process_flow_module, "_looks_like_assistant_offer_context_followup", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(process_flow_module, "_looks_like_contextual_followup_request", lambda _text: False)
+    monkeypatch.setattr(process_flow_module, "_looks_like_short_confirmation", lambda _text: False)
+
+    captured: dict[str, str] = {}
+
+    def _build_messages(**kwargs):
+        captured["current_message"] = str(kwargs.get("current_message") or "")
+        return [{"role": "user", "content": captured["current_message"]}]
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify whether the user's turn is continuing existing context." in prompt:
+            return _Resp('{"followup_intent":"assistant_offer_accept"}')
+        return _Resp('{"followup_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.side_effect = _build_messages
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": "I can build that scraper skill next.",
+                "request_text": "Build a reusable scraper skill for the MLBB ID lookup API.",
+                "profile": "CODING",
+                "kind": "assistant_offer",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="action",
+                    grounding_mode="none",
+                    workflow_intent="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[], has=lambda _name: False),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="ya lanjut aja",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert "[Offer Request Context]" in captured["current_message"]
+    assert "Build a reusable scraper skill for the MLBB ID lookup API." in captured["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_file_context_followup_uses_recent_history_without_markers(
+    monkeypatch,
+):
+    monkeypatch.setattr(process_flow_module, "_looks_like_file_context_followup", lambda _text: False)
+    monkeypatch.setattr(process_flow_module, "_looks_like_contextual_followup_request", lambda _text: False)
+
+    captured: dict[str, str] = {}
+
+    def _build_messages(**kwargs):
+        captured["current_message"] = str(kwargs.get("current_message") or "")
+        return [{"role": "user", "content": captured["current_message"]}]
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify whether the user's turn is continuing existing context." in prompt:
+            return _Resp('{"followup_intent":"file_context"}')
+        return _Resp('{"followup_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.side_effect = _build_messages
+    context_builder.consume_last_truncation_summary.return_value = None
+    session = SimpleNamespace(metadata={})
+    history = [
+        {
+            "role": "user",
+            "content": r"C:\Users\Arvy Kairi\.kabot\workspace\landing_hacker.html font on this page",
+        }
+    ]
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: history),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="contextual_action",
+                    grounding_mode="filesystem_inspection",
+                    workflow_intent="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["read_file"], has=lambda name: name == "read_file"),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="open this html",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "read_file"
+    assert "landing_hacker.html" in str(msg.metadata.get("required_tool_query") or "")
+    assert "[System Note: Explicit file reference]" in captured["current_message"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_option_selection_followup_uses_recent_prompt_without_markers(
+    monkeypatch,
+):
+    monkeypatch.setattr(process_flow_module, "_looks_like_answer_reference_followup", lambda _text: False)
+    monkeypatch.setattr(process_flow_module, "_looks_like_contextual_followup_request", lambda _text: False)
+    monkeypatch.setattr(process_flow_module, "_looks_like_short_confirmation", lambda _text: False)
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify whether the user's turn is continuing existing context." in prompt:
+            return _Resp('{"followup_intent":"option_selection"}')
+        return _Resp('{"followup_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    history = [
+        {
+            "role": "assistant",
+            "content": "Siap, aku tunggu pilihanmu. Mau yang 1) ringkas, 2) detail, atau 3) tabel?",
+        }
+    ]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: history),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="CHAT",
+                    is_complex=False,
+                    turn_category="chat",
+                    grounding_mode="none",
+                    workflow_intent="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=[]),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="detail"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="simple")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="2")
+    await process_message(loop, msg)
+
+    effective_content = str(msg.metadata.get("effective_content") or "")
+    assert "[Follow-up Context]" in effective_content
+    assert "mau yang 1) ringkas, 2) detail, atau 3) tabel?" in effective_content.lower()
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_directory_context_followup_uses_last_directory_without_markers(
+    monkeypatch,
+):
+    monkeypatch.setattr(process_flow_module, "_looks_like_contextual_followup_request", lambda _text: False)
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify whether the user's turn is continuing existing context." in prompt:
+            return _Resp('{"followup_intent":"directory_context"}')
+        return _Resp('{"followup_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "list_dir",
+                "path": r"C:\Users\Arvy Kairi\Desktop",
+                "updated_at": time.time(),
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="contextual_action",
+                    grounding_mode="filesystem_inspection",
+                    workflow_intent="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(tool_names=["list_dir"], has=lambda name: name == "list_dir"),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="terus folder bot ada apa aja, 5 item aja",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "list_dir"
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_delivery_followup_prefers_message_without_markers(
+    monkeypatch,
+):
+    monkeypatch.setattr(process_flow_module, "_looks_like_contextual_followup_request", lambda _text: False)
+    monkeypatch.setattr(process_flow_module, "_looks_like_file_context_followup", lambda _text: False)
+    monkeypatch.setattr(process_flow_module, "_looks_like_message_delivery_request", lambda _text: False)
+    monkeypatch.setattr(turn_metadata_module, "_looks_like_message_delivery_request", lambda _text: False)
+
+    class _Resp:
+        def __init__(self, content: str):
+            self.content = content
+
+    async def _chat(*, messages, model=None, max_tokens=None, temperature=None):  # noqa: ARG001
+        prompt = str(messages[0]["content"] or "")
+        if "Classify this short user turn." in prompt:
+            return _Resp('{"turn_intent":"none"}')
+        if "Classify whether the user's turn is continuing existing context." in prompt:
+            return _Resp('{"followup_intent":"delivery_request"}')
+        return _Resp('{"followup_intent":"none"}')
+
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(
+        metadata={
+            "last_tool_context": {
+                "tool": "list_dir",
+                "path": r"C:\\Users\\Arvy Kairi\\Desktop\\bot",
+                "source": r"C:\\Users\\Arvy Kairi\\Desktop\\bot",
+                "updated_at": time.time(),
+            },
+            "last_navigated_path": r"C:\\Users\\Arvy Kairi\\Desktop\\bot",
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        provider=SimpleNamespace(chat=AsyncMock(side_effect=_chat)),
+        model="openai-codex/gpt-5.3-codex",
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=True,
+                    turn_category="action",
+                    grounding_mode="none",
+                    workflow_intent="none",
+                )
+            )
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["message", "list_dir"],
+            has=lambda name: name in {"message", "list_dir"},
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="kirim file tes.md")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    assert msg.metadata.get("required_tool") == "message"
+    assert msg.metadata.get("requires_message_delivery") is True

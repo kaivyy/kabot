@@ -494,7 +494,7 @@ async def process_tool_calls(loop: Any, msg: InboundMessage, messages: list, res
                     )
             continue
 
-        mismatch_reason = _tool_call_intent_mismatch_reason(loop, msg, tc.name)
+        mismatch_reason = _tool_call_intent_mismatch_reason(loop, msg, tc.name, tool_params)
         if mismatch_reason:
             blocked_result = (
                 "TOOL_CALL_BLOCKED_INTENT_MISMATCH: "

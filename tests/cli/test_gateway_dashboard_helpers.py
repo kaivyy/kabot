@@ -544,6 +544,65 @@ def test_build_dashboard_status_payload_includes_recent_turn_continuity_metadata
     assert payload["recent_turn"]["route_decision_snapshot"]["required_tool"] == "weather"
 
 
+def test_build_dashboard_status_payload_includes_memory_runtime_snapshot(tmp_path):
+    from kabot.cli import commands
+    from kabot.config.schema import Config
+
+    cfg = Config()
+
+    payload = commands._build_dashboard_status_payload(
+        gateway_started_at=1709800000,
+        runtime_model="gpt-4o-mini",
+        runtime_fallbacks=[],
+        runtime_host="127.0.0.1",
+        runtime_port=18790,
+        tailscale_mode="off",
+        session_manager=SimpleNamespace(
+            sessions_dir=tmp_path,
+            list_sessions=lambda: [],
+        ),
+        channels=SimpleNamespace(
+            enabled_channels=["telegram"],
+            get_status=lambda: {"telegram": {"running": True, "connected": True}},
+        ),
+        cron=SimpleNamespace(
+            status=lambda: {"enabled": True, "jobs": 0},
+            list_jobs=lambda include_disabled=False: [],
+            get_run_history=lambda job_id: [],
+        ),
+        config=cfg,
+        agent=SimpleNamespace(
+            memory=SimpleNamespace(
+                get_stats=lambda: {
+                    "backend": "hybrid",
+                    "retrieval_mode": "full_hybrid",
+                    "embedding_provider": "sentence",
+                    "embedding_model": "all-MiniLM-L6-v2",
+                    "lazy_probe": True,
+                    "hybrid_loaded": False,
+                },
+                health_check=lambda: {
+                    "status": "ok",
+                    "backend": "hybrid",
+                    "retrieval_mode": "full_hybrid",
+                    "embedding_provider": "sentence",
+                    "embedding_model": "all-MiniLM-L6-v2",
+                    "lazy_probe": True,
+                    "hybrid_loaded": False,
+                },
+            ),
+            subagents=SimpleNamespace(registry=SimpleNamespace(list_all=lambda: [])),
+        ),
+    )
+
+    assert payload["memory"]["backend"] == "hybrid"
+    assert payload["memory"]["retrieval_mode"] == "full_hybrid"
+    assert payload["memory"]["embedding_model"] == "all-MiniLM-L6-v2"
+    assert payload["memory"]["lazy_probe"] is True
+    assert payload["memory"]["hybrid_loaded"] is False
+    assert payload["memory"]["status"] == "ok"
+
+
 def test_build_dashboard_status_payload_includes_command_surface(monkeypatch, tmp_path):
     from kabot.cli import commands
     from kabot.config.schema import Config

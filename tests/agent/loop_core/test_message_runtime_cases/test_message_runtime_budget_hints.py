@@ -2613,6 +2613,223 @@ async def test_process_message_explicit_new_tool_request_clears_stale_update_fol
 
 
 @pytest.mark.asyncio
+async def test_process_message_semantic_cleanup_request_routes_without_parser_tool():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="action",
+                    grounding_mode="none",
+                )
+            )
+        ),
+        provider=SimpleNamespace(
+            chat=AsyncMock(return_value=SimpleNamespace(content='{"action_intent":"cleanup_system"}'))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["cleanup_system"],
+            has=lambda name: name == "cleanup_system",
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="tolong bersihkan cache dan file sementara sekarang",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") == "cleanup_system"
+    assert msg.metadata.get("continuity_source") == "semantic_action_request"
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_system_info_request_routes_without_parser_tool():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(metadata={})
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="GENERAL",
+                    is_complex=False,
+                    turn_category="action",
+                    grounding_mode="none",
+                )
+            )
+        ),
+        provider=SimpleNamespace(
+            chat=AsyncMock(return_value=SimpleNamespace(content='{"action_intent":"get_system_info"}'))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["get_system_info"],
+            has=lambda name: name == "get_system_info",
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="磁盘空间还剩多少？",
+    )
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") == "get_system_info"
+    assert msg.metadata.get("continuity_source") == "semantic_action_request"
+
+
+@pytest.mark.asyncio
+async def test_process_message_assistant_offer_followup_uses_semantic_classifier_after_continuity_enrichment():
+    context_builder = MagicMock()
+    context_builder.build_messages.return_value = [{"role": "user", "content": "ctx"}]
+    session = SimpleNamespace(
+        metadata={
+            "pending_followup_intent": {
+                "text": (
+                    "Kalau kamu mau, aku bisa cek langsung proses yang paling makan CPU/RAM "
+                    "di perangkat ini lalu kasih langkah spesifik. Aku lanjut cek sekarang?"
+                ),
+                "profile": "CHAT",
+                "kind": "assistant_offer",
+                "request_text": "kenapa cpu 100%?",
+                "updated_at": time.time(),
+                "expires_at": time.time() + 300,
+            }
+        }
+    )
+
+    loop = SimpleNamespace(
+        _active_turn_id=None,
+        runtime_performance=SimpleNamespace(fast_first_response=True),
+        _parse_approval_command=lambda _content: None,
+        command_router=SimpleNamespace(is_command=lambda _content: False),
+        _init_session=AsyncMock(return_value=session),
+        _cold_start_reported=True,
+        directive_parser=SimpleNamespace(
+            parse=lambda content: (
+                content,
+                SimpleNamespace(
+                    raw_directives=[],
+                    think=False,
+                    verbose=False,
+                    elevated=False,
+                    model=None,
+                ),
+            )
+        ),
+        memory=SimpleNamespace(get_conversation_context=lambda _key, max_messages=30: []),
+        router=SimpleNamespace(
+            route=AsyncMock(
+                return_value=SimpleNamespace(
+                    profile="CHAT",
+                    is_complex=False,
+                    turn_category="chat",
+                    grounding_mode="none",
+                )
+            )
+        ),
+        provider=SimpleNamespace(
+            chat=AsyncMock(return_value=SimpleNamespace(content='{"action_intent":"get_process_memory"}'))
+        ),
+        _resolve_context_for_message=lambda _msg: context_builder,
+        context=context_builder,
+        tools=SimpleNamespace(
+            tool_names=["get_process_memory", "server_monitor"],
+            has=lambda name: name in {"get_process_memory", "server_monitor"},
+        ),
+        _required_tool_for_query=lambda _text: None,
+        _run_simple_response=AsyncMock(return_value="simple"),
+        _run_agent_loop=AsyncMock(return_value="agent"),
+        _finalize_session=AsyncMock(
+            return_value=OutboundMessage(channel="telegram", chat_id="chat-1", content="agent")
+        ),
+        sessions=SimpleNamespace(save=lambda _session: None),
+        runtime_observability=None,
+    )
+
+    msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="ya")
+    await process_message(loop, msg)
+
+    loop._run_agent_loop.assert_awaited_once()
+    loop._run_simple_response.assert_not_called()
+    assert msg.metadata.get("required_tool") == "get_process_memory"
+    assert msg.metadata.get("continuity_source") == "semantic_action_request"
+    assert msg.metadata.get("turn_category") == "contextual_action"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "content",
     [

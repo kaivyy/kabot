@@ -14,9 +14,9 @@ _EXPLICIT_MCP_PROMPT_ALIAS_RE = re.compile(
     re.IGNORECASE,
 )
 _EXPLICIT_MCP_PROMPT_NATURAL_RE = re.compile(
-    r"\b(?:use|render|apply|show)\s+"
-    r"(?:prompt\s+)?(?P<prompt>[A-Za-z0-9_.-]+)\s+"
-    r"(?:from)\s+(?:server\s+)?(?P<server>[A-Za-z0-9_-]+)\b",
+    r"\b(?:use|render|apply|show|gunakan|pakai)?\s*"
+    r"(?:prompt\s+)(?P<prompt>[A-Za-z0-9_.-]+)\s+"
+    r"(?:from|dari)\s+(?:server\s+)?(?P<server>[A-Za-z0-9_-]+)\b",
     re.IGNORECASE,
 )
 _EXPLICIT_MCP_RESOURCE_ALIAS_RE = re.compile(
@@ -24,9 +24,9 @@ _EXPLICIT_MCP_RESOURCE_ALIAS_RE = re.compile(
     re.IGNORECASE,
 )
 _EXPLICIT_MCP_RESOURCE_NATURAL_RE = re.compile(
-    r"\b(?:read|use|show)\s+"
-    r"(?:resource\s+)?(?P<resource>(?:[A-Za-z][A-Za-z0-9+.-]*://[^\s]+|[A-Za-z0-9_.-]+))\s+"
-    r"(?:from)\s+(?:server\s+)?(?P<server>[A-Za-z0-9_-]+)\b",
+    r"\b(?:read|use|show|baca|gunakan|pakai)?\s*"
+    r"(?:resource\s+)(?P<resource>(?:[A-Za-z][A-Za-z0-9+.-]*://[^\s]+|[A-Za-z0-9_.-]+))\s+"
+    r"(?:from|dari)\s+(?:server\s+)?(?P<server>[A-Za-z0-9_-]+)\b",
     re.IGNORECASE,
 )
 

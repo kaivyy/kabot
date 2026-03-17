@@ -24,7 +24,7 @@ _OPTION_SELECTION_NUMERIC_RE = re.compile(
 )
 _OPTION_SELECTION_REFERENCE_RE = re.compile(
     r"\b(?:(?:option|number|the)\s+)?"
-    r"(?P<ref>first|second|third|fourth|fifth|\d{1,2})"
+    r"(?P<ref>first|second|third|fourth|fifth|pertama|kedua|ketiga|keempat|kelima|\d{1,2})"
     r"(?:\s+one)?\b",
     re.IGNORECASE,
 )
@@ -34,6 +34,11 @@ _OPTION_SELECTION_ORDINAL_MAP = {
     "third": "3",
     "fourth": "4",
     "fifth": "5",
+    "pertama": "1",
+    "kedua": "2",
+    "ketiga": "3",
+    "keempat": "4",
+    "kelima": "5",
     "一": "1",
     "二": "2",
     "三": "3",
@@ -52,33 +57,6 @@ _OPTION_SELECTION_THAI_NUMERIC_RE = re.compile("\\u0e02\\u0e49\\u0e2d\\s*(?P<ref
 _OPTION_SELECTION_THAI_ORDINAL_RE = re.compile(
     "(?:\\u0e02\\u0e49\\u0e2d\\s*)?(?:\\u0e17\\u0e35\\u0e48)?(?P<ref>\\u0e41\\u0e23\\u0e01|\\u0e2b\\u0e19\\u0e36\\u0e48\\u0e07|\\u0e2a\\u0e2d\\u0e07|\\u0e2a\\u0e32\\u0e21|\\u0e2a\\u0e35\\u0e48|\\u0e2b\\u0e49\\u0e32)"
 )
-_WEATHER_CONTEXT_SIGNAL_RE = re.compile(
-    r"(?i)\b("
-    r"forecast|hourly|"
-    r"weather|temp(?:erature)?|"
-    r"wind(?:y|speed| direction)?|"
-    r"cloudy|sunny|rain|"
-    r"humidity"
-    r")\b"
-)
-_WEATHER_CONTEXT_SIGNAL_FRAGMENTS = ("風", "风", "ลม", "天気", "天气", "อากาศ")
-_FILE_CONTEXT_DEICTIC_RE = re.compile(
-    r"(?i)\b(?:(?:this|that)\s+"
-    r"(?:file|html|css|config|json|yaml|toml|xml|website|webpage)"
-    r"|(?:file|html|css|config|json|yaml|toml|xml|website|webpage)\s+(?:this|that))\b"
-)
-_FILE_CONTEXT_ANALYSIS_RE = re.compile(
-    r"(?i)\b(?:font|content|read|open|check|show|display)\b"
-)
-_FILE_CONTEXT_COMPACT_FRAGMENTS = (
-    "这个文件",
-    "这个网页",
-    "このファイル",
-    "このサイト",
-    "ไฟล์นี้",
-)
-_FILE_CONTEXT_COMPACT_ANALYSIS_FRAGMENTS = ("字体", "フォント", "ฟอนต์")
-
 def _tokenize_context_tokens(text: str) -> set[str]:
     normalized = _normalize_text(text)
     if not normalized:
@@ -263,6 +241,36 @@ def _looks_like_contextual_followup_request(text: str) -> bool:
     return False
 
 
+def _looks_like_compact_context_turn(
+    text: str,
+    *,
+    max_tokens: int,
+    max_chars: int,
+) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    if len(normalized) > max_chars:
+        return False
+    tokens = [part for part in normalized.split() if part]
+    if len(tokens) == 0 or len(tokens) > max_tokens:
+        return False
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if _PATHLIKE_TEXT_RE.search(raw):
+        return False
+    if re.search(r"[@#]\w+", normalized):
+        return False
+    if re.search(r"\d{5,}", normalized):
+        return False
+    if any(ch in raw for ch in "{}[]=`\\/"):
+        return False
+    return True
+
+
 _WEB_SEARCH_DISABLE_PHRASES = (
     "dont", "don't", "do not", "without", "no",
 )
@@ -376,7 +384,7 @@ _SIDE_EFFECT_ACTION_RE = re.compile(
     r"(?i)\b(?:use\s+path|find|search|locate|look\s+for|"
     r"generate|create|build|make|setup|set\s+up|configure|"
     r"prepare|render|export|write|edit|modify|update|install|"
-    r"send|share|save|attach|upload)\b"
+    r"send|share|save|attach|upload|kirim|bagikan|lampirkan|unggah)\b"
 )
 _SIDE_EFFECT_ARTIFACT_RE = re.compile(
     r"(?i)\b(?:folder|directory|dir|path|desktop|downloads|documents|workspace|"
@@ -390,9 +398,9 @@ _SIDE_EFFECT_PROVIDER_RE = re.compile(
     r"(?i)\b(?:imagen|nanobanana|dall-?e|gemini|midjourney|stable\s+diffusion|sora|veo|runway|pika)\b"
 )
 _SIDE_EFFECT_DELIVERY_RE = re.compile(
-    r"(?i)\b(?:workspace|chat(?:\s+(?:this|here))?|"
+    r"(?i)\b(?:workspace|chat(?:\s+(?:this|here|ini))?|"
     r"send\s+it\s+here|save\s+it|save\s+to|"
-    r"export|attach|upload|download)\b|"
+    r"export|attach|upload|download|ke\s+sini|kesini|di\s+sini)\b|"
     r"\.(?:xlsx|csv|pdf|docx?|png|jpe?g|gif|mp4)\b"
 )
 _PLANNING_REQUEST_RE = re.compile(
@@ -403,7 +411,7 @@ _PLANNING_OUTPUT_RE = re.compile(
     r"save|send|attach|upload|download|export)\b"
 )
 _CODING_BUILD_ACTION_RE = re.compile(
-    r"(?i)\b(?:build|create|make|write|edit|modify|update|develop|implement|scaffold|fix|refactor|debug|"
+    r"(?i)\b(?:build|create|make|write|edit|modify|update|develop|implement|scaffold|fix|refactor|debug"
     r")\b"
 )
 _CODING_BUILD_ARTIFACT_RE = re.compile(
@@ -412,7 +420,7 @@ _CODING_BUILD_ARTIFACT_RE = re.compile(
     r"plugin|extension|api|endpoint|widget)\b"
 )
 _MESSAGE_DELIVERY_ACTION_RE = re.compile(
-    r"(?i)\b(?:send|share|attach|upload)\b"
+    r"(?i)\b(?:send|share|attach|upload|kirim|kirimkan|lampirkan|unggah)\b"
 )
 _MESSAGE_DELIVERY_FILE_RE = re.compile(
     r"(?i)\b(?:file|document|report|pdf|xlsx|csv|image|screenshot|screen\s+shot|"
@@ -647,10 +655,16 @@ def _looks_like_coding_build_request(text: str, *, route_profile: str | None = N
         has_code_path = Path(explicit_path).suffix.lower() in _CODING_BUILD_FILE_SUFFIXES
 
     has_action = bool(_CODING_BUILD_ACTION_RE.search(normalized))
-    has_artifact = has_code_path or bool(_CODING_BUILD_ARTIFACT_RE.search(normalized))
+    has_named_artifact = bool(_CODING_BUILD_ARTIFACT_RE.search(normalized))
+    has_artifact = has_code_path or has_named_artifact
     if not has_artifact:
         return False
-    if not has_action and profile != "CODING":
+    has_structural_coding_shape = bool(
+        has_named_artifact
+        and "?" not in raw
+        and len([part for part in normalized.split(" ") if part]) >= 6
+    )
+    if not has_action and profile != "CODING" and not has_structural_coding_shape:
         return False
     if has_code_path and _INLINE_CONTENT_MARKERS_RE.search(raw):
         return False
@@ -670,9 +684,15 @@ def _looks_like_message_delivery_request(text: str) -> bool:
     has_file_subject = bool(_extract_read_file_path_proxy(raw)) or bool(
         _MESSAGE_DELIVERY_FILE_RE.search(normalized)
     )
+    has_delivery_target = bool(_SIDE_EFFECT_DELIVERY_RE.search(normalized)) or "chat" in normalized or "channel" in normalized or bool(
+        re.search(r"(?i)\b(?:here|sini)\b", normalized)
+    )
     if not has_file_subject:
-        return False
-    has_delivery_target = bool(_SIDE_EFFECT_DELIVERY_RE.search(normalized)) or "chat" in normalized or "channel" in normalized
+        has_coding_artifact = bool(_CODING_BUILD_ARTIFACT_RE.search(normalized))
+        if not has_delivery_target or not has_coding_artifact:
+            return False
+        compact_tokens = [part for part in normalized.split(" ") if part]
+        return 0 < len(compact_tokens) <= 24 and len(normalized) <= 220
     return has_delivery_target or has_file_subject
 
 def _looks_like_closing_acknowledgement(text: str) -> bool:
@@ -733,17 +753,15 @@ def _looks_like_weather_context_followup(text: str) -> bool:
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    if normalized.startswith("/"):
+    if not _looks_like_compact_context_turn(raw, max_tokens=12, max_chars=120):
         return False
-    if len(raw.strip()) > 96:
+    if _extract_read_file_path_proxy(raw):
         return False
-    tokens = [part for part in normalized.split(" ") if part]
-    if len(tokens) > 8:
+    if _extract_option_selection_reference(raw):
         return False
-    return bool(
-        _WEATHER_CONTEXT_SIGNAL_RE.search(normalized)
-        or any(fragment in raw for fragment in _WEATHER_CONTEXT_SIGNAL_FRAGMENTS)
-    )
+    has_question_shape = any(mark in raw for mark in ("?", "？", "¿", "؟"))
+    has_numeric_shape = bool(re.search(r"\d", raw))
+    return bool(has_question_shape or has_numeric_shape)
 
 
 def _looks_like_file_context_followup(text: str) -> bool:
@@ -751,18 +769,10 @@ def _looks_like_file_context_followup(text: str) -> bool:
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    if normalized.startswith("/"):
-        return False
-    if len(raw.strip()) > 120:
+    if not _looks_like_compact_context_turn(raw, max_tokens=14, max_chars=140):
         return False
     if _extract_read_file_path_proxy(raw):
         return False
-    if _FILE_CONTEXT_DEICTIC_RE.search(normalized):
-        return True
-    if any(fragment in raw for fragment in _FILE_CONTEXT_COMPACT_FRAGMENTS):
-        return True
-    if not _FILE_CONTEXT_ANALYSIS_RE.search(normalized):
+    if _extract_option_selection_reference(raw):
         return False
-    if _FILELIKE_EXTENSION_RE.search(raw):
-        return True
-    return any(fragment in raw for fragment in _FILE_CONTEXT_COMPACT_ANALYSIS_FRAGMENTS)
+    return True

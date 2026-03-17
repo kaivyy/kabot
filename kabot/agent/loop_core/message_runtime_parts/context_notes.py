@@ -29,6 +29,7 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
 )
 from kabot.agent.loop_core.message_runtime_parts.reference_resolution import (
     _extract_assistant_followup_offer_text,
+    _extract_option_selection_reference,
     _looks_like_contextual_followup_request,
 )
 from kabot.bus.events import InboundMessage
@@ -58,6 +59,24 @@ _EXISTING_SKILL_ACTION_RE = re.compile(
     r"(?i)\b(?:use|run|continue)\b"
 )
 _EXISTING_SKILL_DEICTIC_RE = re.compile(r"(?i)\b(?:this|that)\b")
+_INLINE_ASSISTANT_OPTION_CHOICE_RE = re.compile(r"\b\d+\)")
+
+
+def _looks_like_assistant_option_prompt_candidate(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if len(_INLINE_ASSISTANT_OPTION_CHOICE_RE.findall(raw)) >= 2 and any(
+        punct in raw for punct in ("?", "？", ":", "：")
+    ):
+        return True
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    numbered_lines = [
+        line
+        for line in lines
+        if re.match(r"^\s*(?:[-*]\s*)?\d+[.)]\s+\S", line)
+    ]
+    return len(numbered_lines) >= 2
 
 
 def _looks_like_filesystem_location_query(text: str) -> bool:
@@ -451,7 +470,45 @@ def _infer_recent_assistant_option_prompt_from_history(history: list[dict[str, A
         prompt = _extract_assistant_followup_offer_text(content) or ""
         if prompt:
             return prompt
+        if _looks_like_assistant_option_prompt_candidate(content):
+            return content
     return ""
+
+
+def _infer_recent_option_dialog_active_from_history(history: list[dict[str, Any]]) -> bool:
+    recent_items = [item for item in (history or [])[-12:] if isinstance(item, dict)]
+    if not recent_items:
+        return False
+
+    prompt_index = -1
+    for index in range(len(recent_items) - 1, -1, -1):
+        item = recent_items[index]
+        role = str(item.get("role", "") or "").strip().lower()
+        if role != "assistant":
+            continue
+        content = str(item.get("content", "") or "").strip()
+        if not content:
+            continue
+        if _extract_assistant_followup_offer_text(content) or _looks_like_assistant_option_prompt_candidate(content):
+            prompt_index = index
+            break
+
+    if prompt_index < 0:
+        return False
+
+    saw_structured_choice = False
+    for item in recent_items[prompt_index + 1 :]:
+        role = str(item.get("role", "") or "").strip().lower()
+        content = str(item.get("content", "") or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            if _extract_option_selection_reference(content):
+                saw_structured_choice = True
+            continue
+        if role == "assistant" and saw_structured_choice:
+            return True
+    return False
 
 
 def _infer_recent_assistant_answer_from_history(history: list[dict[str, Any]]) -> str:
@@ -533,8 +590,6 @@ def _looks_like_skill_creation_approval(text: str) -> bool:
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    if _looks_like_short_confirmation(raw):
-        return True
     if len(normalized.split()) > 6:
         return False
     return bool(_SKILL_APPROVAL_ACTION_RE.search(normalized))
@@ -594,6 +649,29 @@ def _looks_like_skill_workflow_followup_detail(text: str) -> bool:
         if any(mark in raw for mark in ("\n", ",", ";", ":")):
             return True
     return False
+
+
+def _looks_like_structural_skill_workflow_followup(text: str) -> bool:
+    raw = str(text or "").strip()
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+    if normalized.startswith("/"):
+        return False
+    if re.search(r"(https?://|www\.)", normalized):
+        return False
+    if _PATHLIKE_TEXT_RE.search(raw):
+        return False
+    if re.search(r"\d{5,}", normalized):
+        return False
+    if any(ch in raw for ch in "{}[]=`\\"):
+        return False
+    tokens = [part for part in normalized.split(" ") if part]
+    if len(tokens) == 0 or len(tokens) > 8:
+        return False
+    if len(raw) > 120:
+        return False
+    return True
 
 
 def _assistant_response_looks_like_skill_plan(text: str) -> bool:

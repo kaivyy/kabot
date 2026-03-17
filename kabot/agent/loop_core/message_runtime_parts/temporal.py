@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta
+
+from kabot.i18n.locale import detect_locale
 
 _LOCALE_ALIASES = {
     "id": "id",
@@ -17,39 +18,34 @@ _LOCALE_ALIASES = {
 _WEEKDAY_NAMES = {
     "en": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
     "id": ("Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"),
-    "zh": ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"),
-    "ja": ("月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日"),
-    "th": ("วันจันทร์", "วันอังคาร", "วันพุธ", "วันพฤหัสบดี", "วันศุกร์", "วันเสาร์", "วันอาทิตย์"),
+    "zh": (
+        "\u661f\u671f\u4e00",
+        "\u661f\u671f\u4e8c",
+        "\u661f\u671f\u4e09",
+        "\u661f\u671f\u56db",
+        "\u661f\u671f\u4e94",
+        "\u661f\u671f\u516d",
+        "\u661f\u671f\u65e5",
+    ),
+    "ja": (
+        "\u6708\u66dc\u65e5",
+        "\u706b\u66dc\u65e5",
+        "\u6c34\u66dc\u65e5",
+        "\u6728\u66dc\u65e5",
+        "\u91d1\u66dc\u65e5",
+        "\u571f\u66dc\u65e5",
+        "\u65e5\u66dc\u65e5",
+    ),
+    "th": (
+        "\u0e27\u0e31\u0e19\u0e08\u0e31\u0e19\u0e17\u0e23\u0e4c",
+        "\u0e27\u0e31\u0e19\u0e2d\u0e31\u0e07\u0e04\u0e32\u0e23",
+        "\u0e27\u0e31\u0e19\u0e1e\u0e38\u0e18",
+        "\u0e27\u0e31\u0e19\u0e1e\u0e24\u0e2b\u0e31\u0e2a\u0e1a\u0e14\u0e35",
+        "\u0e27\u0e31\u0e19\u0e28\u0e38\u0e01\u0e23\u0e4c",
+        "\u0e27\u0e31\u0e19\u0e40\u0e2a\u0e32\u0e23\u0e4c",
+        "\u0e27\u0e31\u0e19\u0e2d\u0e32\u0e17\u0e34\u0e15\u0e22\u0e4c",
+    ),
 }
-
-_DAY_QUERY_RE = re.compile(
-    r"(?i)\b(what day|day is it)\b|"
-    r"星期几|星期幾|周几|周幾|何曜日|ตอนนี้วันอะไร|วันนี้วันอะไร"
-)
-_TOMORROW_DAY_RE = re.compile(
-    r"(?i)\b(tomorrow.*day|what day.*tomorrow)\b|明天星期|明日.*曜日|พรุ่งนี้.*วัน"
-)
-_YESTERDAY_DAY_RE = re.compile(
-    r"(?i)\b(yesterday.*day|what day.*yesterday)\b|昨天星期|昨日.*曜日|เมื่อวาน.*วัน"
-)
-_NEXT_WEEK_DAY_RE = re.compile(
-    r"(?i)\b(what day.*next week|next week.*day)\b|"
-    r"一周后|一週後|一週間|สัปดาห์หน้า.*วัน"
-)
-_TIME_QUERY_RE = re.compile(
-    r"(?i)\b(what time)\b|现在几点|現在幾點|何時|กี่โมง"
-)
-_DATE_QUERY_RE = re.compile(
-    r"(?i)\b(what date|date today)\b|今天几号|今天幾號|何日|วันที่เท่าไร"
-)
-_TIMEZONE_QUERY_RE = re.compile(
-    r"(?i)\b(timezone|time zone|utc\s*[+-]?\s*\d{1,2}(?::?\d{2})?)\b|"
-    r"时区|時區|タイムゾーン|เขตเวลา|โซนเวลา"
-)
-
-
-def _normalize_text(text: str) -> str:
-    return " ".join(str(text or "").strip().lower().split())
 
 
 def _resolve_locale(locale: str | None, text: str) -> str:
@@ -83,26 +79,34 @@ def _render_weekday_reply(locale: str, relation: str, target: datetime) -> str:
     weekday = _weekday_name(target, locale)
     if locale == "zh":
         templates = {
-            "today": f"今天是{weekday}。",
-            "tomorrow": f"明天是{weekday}。",
-            "yesterday": f"昨天是{weekday}。",
-            "next_week": f"从现在起一周后是{weekday}。",
+            "today": f"\u4eca\u5929\u662f{weekday}\u3002",
+            "tomorrow": f"\u660e\u5929\u662f{weekday}\u3002",
+            "yesterday": f"\u6628\u5929\u662f{weekday}\u3002",
+            "next_week": f"\u4ece\u73b0\u5728\u8d77\u4e00\u5468\u540e\u662f{weekday}\u3002",
         }
         return templates[relation]
     if locale == "ja":
         templates = {
-            "today": f"今日は{weekday}です。",
-            "tomorrow": f"明日は{weekday}です。",
-            "yesterday": f"昨日は{weekday}でした。",
-            "next_week": f"今から一週間後は{weekday}です。",
+            "today": f"\u4eca\u65e5\u306f{weekday}\u3067\u3059\u3002",
+            "tomorrow": f"\u660e\u65e5\u306f{weekday}\u3067\u3059\u3002",
+            "yesterday": f"\u6628\u65e5\u306f{weekday}\u3067\u3057\u305f\u3002",
+            "next_week": f"\u4eca\u304b\u3089\u4e00\u9031\u9593\u5f8c\u306f{weekday}\u3067\u3059\u3002",
         }
         return templates[relation]
     if locale == "th":
         templates = {
-            "today": f"วันนี้คือ{weekday}",
-            "tomorrow": f"พรุ่งนี้คือ{weekday}",
-            "yesterday": f"เมื่อวานคือ{weekday}",
-            "next_week": f"อีกหนึ่งสัปดาห์จากตอนนี้คือ{weekday}",
+            "today": f"\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49\u0e04\u0e37\u0e2d{weekday}",
+            "tomorrow": f"\u0e1e\u0e23\u0e38\u0e48\u0e07\u0e19\u0e35\u0e49\u0e04\u0e37\u0e2d{weekday}",
+            "yesterday": f"\u0e40\u0e21\u0e37\u0e48\u0e2d\u0e27\u0e32\u0e19\u0e04\u0e37\u0e2d{weekday}",
+            "next_week": f"\u0e2d\u0e35\u0e01\u0e2b\u0e19\u0e36\u0e48\u0e07\u0e2a\u0e31\u0e1b\u0e14\u0e32\u0e2b\u0e4c\u0e08\u0e32\u0e01\u0e15\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e04\u0e37\u0e2d{weekday}",
+        }
+        return templates[relation]
+    if locale == "id":
+        templates = {
+            "today": f"Hari ini {weekday}.",
+            "tomorrow": f"Besok {weekday}.",
+            "yesterday": f"Kemarin {weekday}.",
+            "next_week": f"Satu minggu lagi hari {weekday}.",
         }
         return templates[relation]
     templates = {
@@ -118,34 +122,64 @@ def _render_time_reply(locale: str, current: datetime) -> str:
     clock = current.strftime("%H:%M")
     timezone_label = _timezone_label(current)
     if locale == "zh":
-        return f"现在时间是 {clock}（{timezone_label}）。"
+        return f"\u73b0\u5728\u65f6\u95f4\u662f {clock}\uff08{timezone_label}\uff09\u3002"
     if locale == "ja":
-        return f"今の時刻は {clock}（{timezone_label}）です。"
+        return f"\u4eca\u306e\u6642\u523b\u306f {clock}\uff08{timezone_label}\uff09\u3067\u3059\u3002"
     if locale == "th":
-        return f"ตอนนี้เวลา {clock} ({timezone_label})"
+        return f"\u0e15\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e40\u0e27\u0e25\u0e32 {clock} ({timezone_label})"
+    if locale == "id":
+        return f"Sekarang pukul {clock} ({timezone_label})."
     return f"It is {clock} local time ({timezone_label})."
 
 
 def _render_date_reply(locale: str, current: datetime) -> str:
     date_text = current.strftime("%Y-%m-%d")
     if locale == "zh":
-        return f"今天的本地日期是 {date_text}。"
+        return f"\u4eca\u5929\u7684\u672c\u5730\u65e5\u671f\u662f {date_text}\u3002"
     if locale == "ja":
-        return f"今日の現地日付は {date_text} です。"
+        return f"\u4eca\u65e5\u306e\u73fe\u5730\u65e5\u4ed8\u306f {date_text} \u3067\u3059\u3002"
     if locale == "th":
-        return f"วันที่ท้องถิ่นตอนนี้คือ {date_text}"
+        return f"\u0e27\u0e31\u0e19\u0e17\u0e35\u0e48\u0e17\u0e49\u0e2d\u0e07\u0e16\u0e34\u0e48\u0e19\u0e15\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e04\u0e37\u0e2d {date_text}"
+    if locale == "id":
+        return f"Tanggal lokal hari ini {date_text}."
     return f"Today's local date is {date_text}."
 
 
 def _render_timezone_reply(locale: str, current: datetime) -> str:
     timezone_label = _timezone_label(current)
     if locale == "zh":
-        return f"我当前使用的本地时区是 {timezone_label}。"
+        return f"\u6211\u5f53\u524d\u4f7f\u7528\u7684\u672c\u5730\u65f6\u533a\u662f {timezone_label}\u3002"
     if locale == "ja":
-        return f"現在のローカルタイムゾーンは {timezone_label} です。"
+        return f"\u73fe\u5728\u306e\u30ed\u30fc\u30ab\u30eb\u30bf\u30a4\u30e0\u30be\u30fc\u30f3\u306f {timezone_label} \u3067\u3059\u3002"
     if locale == "th":
-        return f"เขตเวลาท้องถิ่นตอนนี้คือ {timezone_label}"
+        return f"\u0e40\u0e02\u0e15\u0e40\u0e27\u0e25\u0e32\u0e17\u0e49\u0e2d\u0e07\u0e16\u0e34\u0e48\u0e19\u0e15\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e04\u0e37\u0e2d {timezone_label}"
+    if locale == "id":
+        return f"Zona waktu lokal saat ini {timezone_label}."
     return f"My current local timezone is {timezone_label}."
+
+
+def _render_temporal_reply_for_intent(
+    intent: str,
+    *,
+    locale: str,
+    current: datetime,
+) -> str | None:
+    normalized_intent = str(intent or "").strip().lower()
+    if normalized_intent == "day_next_week":
+        return _render_weekday_reply(locale, "next_week", current + timedelta(days=7))
+    if normalized_intent == "day_tomorrow":
+        return _render_weekday_reply(locale, "tomorrow", current + timedelta(days=1))
+    if normalized_intent == "day_yesterday":
+        return _render_weekday_reply(locale, "yesterday", current - timedelta(days=1))
+    if normalized_intent == "day_today":
+        return _render_weekday_reply(locale, "today", current)
+    if normalized_intent == "time_now":
+        return _render_time_reply(locale, current)
+    if normalized_intent == "date_today":
+        return _render_date_reply(locale, current)
+    if normalized_intent == "timezone":
+        return _render_timezone_reply(locale, current)
+    return None
 
 
 def build_temporal_fast_reply(
@@ -153,29 +187,24 @@ def build_temporal_fast_reply(
     *,
     locale: str | None = None,
     now_local: datetime | None = None,
+    semantic_intent: str | None = None,
 ) -> str | None:
-    """Return a local deterministic reply for narrow temporal questions."""
+    """Render a deterministic temporal reply from semantic intent only."""
     raw = str(text or "").strip()
-    normalized = _normalize_text(raw)
-    if not normalized:
+    if not raw:
+        return None
+
+    normalized_intent = str(semantic_intent or "").strip().lower()
+    if not normalized_intent or normalized_intent == "none":
         return None
 
     current = now_local or datetime.now().astimezone()
     resolved_locale = _resolve_locale(locale, raw)
+    return _render_temporal_reply_for_intent(
+        normalized_intent,
+        locale=resolved_locale,
+        current=current,
+    )
 
-    if _NEXT_WEEK_DAY_RE.search(raw):
-        return _render_weekday_reply(resolved_locale, "next_week", current + timedelta(days=7))
-    if _TOMORROW_DAY_RE.search(raw):
-        return _render_weekday_reply(resolved_locale, "tomorrow", current + timedelta(days=1))
-    if _YESTERDAY_DAY_RE.search(raw):
-        return _render_weekday_reply(resolved_locale, "yesterday", current - timedelta(days=1))
-    if _DAY_QUERY_RE.search(raw):
-        return _render_weekday_reply(resolved_locale, "today", current)
-    if _TIME_QUERY_RE.search(raw):
-        return _render_time_reply(resolved_locale, current)
-    if _DATE_QUERY_RE.search(raw):
-        return _render_date_reply(resolved_locale, current)
-    if _TIMEZONE_QUERY_RE.search(raw) and ("?" in raw or "？" in raw or "what" in normalized):
-        return _render_timezone_reply(resolved_locale, current)
-    return None
-from kabot.i18n.locale import detect_locale
+
+__all__ = ["build_temporal_fast_reply"]

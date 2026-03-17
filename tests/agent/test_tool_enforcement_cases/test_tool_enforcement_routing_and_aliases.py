@@ -2396,6 +2396,49 @@ def test_infer_action_required_tool_for_loop_keeps_weak_check_for_explicit_path_
     )
 
 
+def test_infer_action_required_tool_for_loop_uses_session_directory_context_for_send_file():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            tool_names=["message", "list_dir"],
+            has=lambda name: name in {"message", "list_dir"},
+        )
+    )
+
+    assert infer_action_required_tool_for_loop(
+        loop,
+        "send file tes.md",
+        metadata={
+            "working_directory": r"C:\Users\Arvy Kairi\Desktop\bot",
+        },
+    ) == (
+        "message",
+        "send file tes.md",
+    )
+
+
+def test_infer_action_required_tool_for_loop_uses_session_directory_context_for_relative_folder_followup():
+    loop = SimpleNamespace(
+        tools=SimpleNamespace(
+            tool_names=["list_dir"],
+            has=lambda name: name == "list_dir",
+        )
+    )
+
+    assert infer_action_required_tool_for_loop(
+        loop,
+        "then folder bot, 5 items",
+        metadata={
+            "last_tool_context": {
+                "tool": "list_dir",
+                "path": r"C:\Users\Arvy Kairi\Desktop",
+            }
+        },
+    ) == (
+        "list_dir",
+        "then folder bot, 5 items",
+    )
+
+
 def test_extract_list_dir_path_does_not_treat_desktop_topic_as_special_directory_payload(monkeypatch):
     monkeypatch.setattr(tool_enforcement_module, "_filesystem_home_dir", lambda: tool_enforcement_module.Path("/Users/Arvy Kairi"))
 

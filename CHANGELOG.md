@@ -7,13 +7,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-03-17
+
 ### Fixed
+- Runtime memory observability is clearer and grounded:
+  - dashboard status payloads now expose the active memory backend, retrieval mode, embedding provider/model, and lazy-probe state,
+  - the runtime dashboard panel now renders a dedicated `Memory Runtime` block instead of leaving those details buried inside raw JSON,
+  - `kabot doctor` now includes a memory-stack diagnostic so `hybrid`, `sqlite_only`, and lazy-probe behavior can be verified without guessing from config alone,
+  - and `kabot status` now reports the active memory backend, retrieval mode, and embedding model directly from the runtime memory factory.
+- Memory recall and commit routing are more semantic and state-first:
+  - message runtime now uses a dedicated model-side memory intent classifier for `memory_recall` vs `memory_commit` instead of depending only on lexical marker buckets,
+  - explicit recall turns can now inject relevant memory facts in the user’s language even when older English-only recall regexes would miss,
+  - profile updates that actually changed stable session state (`user_profile_memory_dirty`) now ground `save_memory` directly from state, so the bot can persist the fact without waiting for parser-era phrasing,
+  - lean probe prompt-building now honors an explicit semantic/state `memory_context_required` budget hint instead of re-detecting memory recall from the raw message text,
+  - explicit skill-context questions now expose the skills summary from structural skill-context intent instead of depending only on a narrower catalog-question detector,
+  - and `semantic_intent.py` no longer lexically arbitrates memory-recall or advice/weather turns, leaving those decisions to the newer stateful semantic runtime layers.
+- Hybrid memory retrieval is now less parser-like and more reliably semantic:
+  - `SmartRouter` no longer uses language-specific keyword buckets to force `episodic` or `knowledge` search paths,
+  - hybrid memory now keeps BM25 and vector retrieval active together for all hybrid-backend queries instead of suppressing BM25 on explanatory/factual wording,
+  - and hybrid memory stats/health payloads now expose `backend`, retrieval mode, embedding provider, and embedding model so runtime verification can clearly distinguish `hybrid` from `sqlite_only`.
+- Semantic workflow and follow-up routing now survive missing explicit model names, active workflow-only turns, and history-only recovery better:
+  - semantic classifier fallback now still performs a provider chat call even when no explicit model name is available, instead of silently returning `none`,
+  - skill workflow classification now includes the active workflow state and a bounded recent-conversation excerpt, so detail-only turns like multiline ID/region input can stay in `skill_creator` even when the current message alone looks underspecified,
+  - stateful follow-up classification now includes active workflow request/stage/kind as real anchors, so questions like `jadi sekarang skill itu sudah selesai dibuat atau belum?` or `berikan isi skills nya` can remain inside the active skill workflow without relying on phrase buckets,
+  - active skill workflows now preserve their existing kind when the semantic follow-up is an `answer_reference`, `assistant_committed_action_followup`, or `option_selection`, so clarification/status turns no longer get reclassified into the wrong create-vs-install lane by leftover lexical detectors,
+  - active skill workflows with a pending assistant-offer anchor can now keep short status/content follow-ups on the workflow lane even when the semantic classifier and structural workflow helpers are unavailable, so turns like `udah ada skillsnya?` no longer fall back to generic chat just because parser-era helpers missed,
+  - workflow turns that are still in discovery/planning now persist a pending assistant-offer anchor directly from the real assistant response when no older offer extractor matches, so follow-up turns can stay attached to the active workflow without depending on parser-era offer markers,
+  - and existing external-skill follow-up offers now preserve `assistant_offer` continuity plus the updated grounded request text even when the assistant response is not recognized by older assistant-offer extractors.
+- Doctor CLI memory observability is now verified at the surface level too:
+  - CLI coverage now locks that `kabot doctor` renders the `Memory Stack` panel with backend, retrieval mode, and embedding model details instead of only verifying helper-layer payloads.
+- Skill workflow continuity now survives response-time model failures too:
+  - if `_run_agent_loop(...)` fails after a workflow lane has already been established, runtime now persists the current session state before re-raising the error,
+  - so follow-up turns after `/switch` or provider recovery can still continue the active skill workflow instead of falling back to generic capability chat because the workflow state was never saved.
 - Action-request continuity no longer falls into false "no tools executed" failures on short follow-up turns:
   - when a turn is in enforced tool-backed continuity mode (`continuity_source=action_request`) and parser inference is suppressed, runtime now reuses the committed required tool and committed query persisted in message/session metadata,
   - this allows short follow-ups such as `ya` / `lanjut` to continue real execution from prior committed action state instead of hard-failing with a no-execution verification error.
 - Exec safety guard no longer false-positives relative script paths that contain `/` separators:
   - commands like `python3 skills/stock-guardrail/scripts/fetch_price.py TLKM.JK --json` are now treated as workspace-relative paths instead of being misread as absolute `/stock-guardrail/...` paths,
   - absolute paths outside the active working directory are still blocked as before.
+- Skill-creation requests that include real API specs or JSON examples no longer get hijacked by unrelated installed skills before execution:
+  - runtime routing now supports semantic workflow intent (`skill_creator` / `skill_installer`) alongside route profile and complexity,
+  - when the main router does not surface that workflow intent, message runtime now asks a dedicated model-side workflow arbiter instead of falling back to noisy lexical skill overlap,
+  - skill-creation discovery/planning turns now disable tool calling and skip critic retries plus plan injection, so the assistant stays in approval/discovery mode instead of being pushed into premature execution or malformed function calls.
+- Vague follow-up recovery is more state-first and less parser-era:
+  - recent-user-intent tool recovery now stays behind action/contextual-action routes instead of reviving tools from ordinary chat turns,
+  - and the fallback no longer calls the legacy raw parser directly on old user messages, so short closers like `oke makasih ya` stop accidentally resurrecting stale tool work.
+- Low-information chat hygiene is less marker-driven:
+  - short turns can now go through a semantic low-info classifier for `closing_ack`, `greeting_smalltalk`, and `meta_feedback`,
+  - so multilingual short chat turns can clear stale continuity through model understanding instead of relying only on fixed phrase buckets.
+- Stateful follow-up routing is more semantic and session-first:
+  - short turns with pending offers, recent answers, last-tool context, or recent file context can now go through a dedicated model-side follow-up classifier instead of depending only on marker buckets,
+  - recent `last_tool_execution` state now also counts as a semantic follow-up anchor, so low-information turns can continue grounded tool-execution context even when raw follow-up markers are absent,
+  - continuity candidate routing now also accepts semantic follow-up intents directly, reducing dependence on parser-era raw follow-up marker booleans when semantic state already classifies the turn as continuation,
+  - continuity answer-reference context resolution now consumes merged semantic follow-up state (`is_*` + semantic intent) rather than raw marker flags alone, so semantic continuation can stay grounded even when lexical follow-up detectors miss,
+  - external-skill lane rehydration and grounded weather-skill adaptation now reuse the same merged follow-up state, avoiding stale parser-only contextual checks,
+  - and `message_runtime_parts` no longer carries `raw_is_*` routing flags in the core process-flow path, so continuity decisions now flow through merged structural+semantic state instead of parser-era raw marker booleans.
+  - and continuity history loading now starts from session/runtime anchors plus structural short-turn shape, so short context turns can still recover the right file or offer context even when older follow-up markers miss.
+- i18n/context fast paths now prefer semantic intent over hardcoded language phrases:
+  - temporal local fast replies now render strictly from model-side temporal intent labels (`day_today`, `time_now`, `timezone`, etc.) and no longer parse user text with keyword/regex fallback,
+  - knowledge-follow-up language-switch handling now uses a dedicated semantic classifier without the earlier Indonesian phrase fallback,
+  - low-information closure/greeting/meta handling in the main process-flow path is now semantic-first instead of parser-marker-first,
+  - and weather/file follow-up detection now relies on short-turn structural shape plus grounded runtime context anchors, rather than multilingual weather/file keyword buckets.
+- Action/delivery routing now relies more on grounded runtime structure and less on parser markers:
+  - message delivery requirement is now propagated as a runtime signal from structural/semantic context (`required_tool`, delivery-path grounding, follow-up continuity) into turn metadata, with legacy marker checks only as compatibility fallback,
+  - explicit path-based delivery/write requests now have structural fallback routing (`message` vs `write_file`) that works better for multilingual turns even when parser tool guesses are weak,
+  - side-effect turns that request creating an artifact and sending it (for example spreadsheet/report-to-chat flows) now keep the action lane even when no explicit delivery path is present yet, avoiding false fallback to generic chat,
+  - coding-build detection no longer has an empty-action regex false positive and now supports structural artifact-shape coding asks (for example website/landing-page build prompts) without requiring English action verbs,
+  - and coding-delivery shorthand follow-ups can now set delivery-required state from compact structural context even when no explicit file subject is present.
+- Transcript replay coverage now includes MLBB check-id first-use after skill creation:
+  - with an approved skill-creation flow and recent `SKILL.md` history context, transcript replay now locks that `cek id mlbb 46773944 2072` stays in the installed `mlbb-id-check` external-skill lane instead of drifting to generic chat.
+- Recent assistant option-list continuity is more grounded:
+  - plain assistant option prompts from history are now recoverable as active follow-up context even when no provider-side semantic classifier is available,
+  - semantic option-selection turns now stay in option-selection continuity instead of falling back into generic answer-reference drift,
+  - and approved post-creation skill follow-ups now preserve the offered next action while keeping the created skill active, instead of collapsing back into generic creation flow.
+- Action-request grounding is more session-first:
+  - `infer_action_required_tool_for_loop(...)` can now use `working_directory`, `last_navigated_path`, and `last_tool_context` when resolving `message` and `list_dir` actions,
+  - so short follow-ups like sending a known file or opening a relative folder no longer depend on raw path text alone.
+- Soft parser tool signals are now only adopted when their payload can be grounded from live session/runtime state:
+  - this keeps multilingual file-send turns on the `message` lane when a concrete delivery path can be resolved from active context,
+  - and avoids reviving broad parser buckets just to recover obvious session-grounded action requests.
+- Side-effect guard demotion is now safer for stateful filesystem/delivery actions:
+  - parser-selected action tools like `message` and `list_dir` are no longer dropped as "weak parser tools" when runtime context already provides grounded action evidence (delivery path, directory path, or explicit action shape).
+- Stateful filesystem and delivery turns now have a semantic action arbiter:
+  - when the route is action-like and session anchors are present, runtime can choose `message` or `list_dir` from model-side semantic classification plus grounded path resolution,
+  - so short multilingual follow-ups can stay on the right file-action lane even when legacy explicit action inference is disabled or misses.
+- The same semantic action arbiter now covers explicit file/action turns too:
+  - explicit `read_file` and `find_files` style requests can stay grounded through model-side action classification plus structural payload grounding even when legacy action inference is disabled,
+  - keeping file inspection and search-before-send flows on the correct tool lane without reintroducing keyword buckets.
+- Option-list continuity is less blind when no semantic provider classifier is available:
+  - recent option prompts are no longer revived just because the turn is short and the provider is missing,
+  - instead, runtime only keeps that option-list continuity alive when recent history shows a real option-dialogue thread, which prevents generic follow-ups like `apa itu` from being forced onto stale answer-reference or offer context,
+  - and structural option-dialogue follow-ups now keep a grounded selection note without pretending an exact item index was proven when the current wording did not ground one.
+- Direct delivery flows are more structural and runtime-safe:
+  - when a turn clearly needs delivery but only names a file/folder and no grounded path exists yet, execution now locates the artifact first (`find_files`) before trying to send it,
+  - and the execution loop now tolerates missing optional `context_guard` wiring instead of crashing before the direct tool path can run.
+- Tool-call guard decisions now consider grounded runtime payloads instead of only re-parsing raw user text:
+  - intent-mismatch checks can now allow a tool call when its arguments structurally ground the requested action, such as image generation prompts that overlap the user turn, finance tool calls whose symbol matches the current request, or reminder tool calls that carry a concrete scheduling payload,
+  - legacy finance tools are no longer blocked merely because an external finance skill exists somewhere in the workspace; they are only deferred when an external-skill lane is actually active for the current turn.
+- Direct execution fast-paths now honor the loop's runtime expected-tool resolver when message runtime metadata is absent:
+  - `run_agent_loop(...)` can now still take raw direct-tool paths such as `cleanup_system`, `weather`, or `get_process_memory` even in thin harnesses and compatibility flows where `required_tool` was not pre-seeded into message metadata,
+  - preventing direct deterministic turns from falling through into the generic LLM loop and failing on missing `_call_llm_with_fallback` wiring.
 
 ## [0.6.6-rc3] - 2026-03-15
 

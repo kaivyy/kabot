@@ -98,6 +98,7 @@ __all__ = [
     "_extract_referenced_answer_item",
     "_infer_recent_assistant_option_prompt_from_history",
     "_infer_recent_assistant_answer_from_history",
+    "_infer_recent_option_dialog_active_from_history",
     "_infer_recent_created_skill_name_from_path",
     "_extract_user_supplied_option_prompt_text",
     "_get_last_tool_execution",
@@ -110,6 +111,7 @@ __all__ = [
     "_looks_like_contextual_followup_request",
     "_looks_like_existing_skill_use_followup",
     "_looks_like_skill_workflow_followup_detail",
+    "_looks_like_structural_skill_workflow_followup",
     "_looks_like_web_search_demotion_followup",
     "_looks_like_memory_recall_turn",
     "_resolve_relevant_memory_facts",
@@ -635,9 +637,10 @@ async def _resolve_relevant_memory_facts(
     session_key: str,
     text: str,
     limit: int = 3,
+    semantic_memory_recall: bool = False,
 ) -> list[str]:
     """Return bounded fact-like snippets for explicit memory recall turns."""
-    if not _looks_like_memory_recall_turn(text):
+    if not semantic_memory_recall and not _looks_like_memory_recall_turn(text):
         return []
 
     max_items = max(1, int(limit or 3))
@@ -783,10 +786,12 @@ from kabot.agent.loop_core.message_runtime_parts.context_notes import (
     _get_skill_creation_flow,
     _infer_recent_assistant_answer_from_history,
     _infer_recent_assistant_option_prompt_from_history,
+    _infer_recent_option_dialog_active_from_history,
     _infer_recent_created_skill_name_from_path,
     _infer_recent_file_path_from_history,
     _looks_like_explicit_new_request,
     _looks_like_existing_skill_use_followup,
+    _looks_like_structural_skill_workflow_followup,
     _looks_like_filesystem_location_query,
     _looks_like_skill_creation_approval,
     _looks_like_skill_workflow_followup_detail,

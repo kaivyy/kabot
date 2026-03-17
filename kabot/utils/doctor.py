@@ -107,9 +107,64 @@ class KabotDoctor:
             "integrity": integrity,
             "bootstrap_parity": bootstrap_parity,
             "environment": self.check_environment_matrix(),
+            "memory": self._memory_diagnostic(),
             "dependencies": self.check_dependencies(),
             "connectivity": asyncio.run(self.check_connectivity()),
             "skills": self.check_skills(),
+        }
+
+    def _memory_diagnostic(self) -> dict[str, Any]:
+        """Inspect the configured memory backend and current retrieval mode."""
+        try:
+            from kabot.memory.memory_factory import MemoryFactory
+        except Exception as exc:
+            return {"status": "error", "detail": f"memory_factory_unavailable: {exc}"}
+
+        config = self.config
+        if config is None:
+            return {"status": "error", "detail": "config_unavailable"}
+
+        try:
+            config_dict = config.model_dump() if hasattr(config, "model_dump") else config.dict()
+        except Exception as exc:
+            return {"status": "error", "detail": f"config_dump_failed: {exc}"}
+
+        runtime_perf = getattr(getattr(config, "runtime", None), "performance", None)
+        lazy_probe = bool(getattr(runtime_perf, "defer_memory_warmup", False))
+        try:
+            memory = MemoryFactory.create(config_dict, self.workspace, lazy_probe=lazy_probe)
+        except Exception as exc:
+            return {"status": "error", "detail": f"memory_init_failed: {exc}"}
+
+        stats: dict[str, Any] = {}
+        health: dict[str, Any] = {}
+
+        get_stats = getattr(memory, "get_stats", None)
+        if callable(get_stats):
+            try:
+                raw_stats = get_stats()
+            except Exception:
+                raw_stats = {}
+            if isinstance(raw_stats, dict):
+                stats = dict(raw_stats)
+
+        health_check = getattr(memory, "health_check", None)
+        if callable(health_check):
+            try:
+                raw_health = health_check()
+            except Exception:
+                raw_health = {}
+            if isinstance(raw_health, dict):
+                health = dict(raw_health)
+
+        return {
+            "status": str(health.get("status") or "ok"),
+            "backend": str(stats.get("backend") or health.get("backend") or "").strip(),
+            "retrieval_mode": str(stats.get("retrieval_mode") or health.get("retrieval_mode") or "").strip(),
+            "embedding_provider": str(stats.get("embedding_provider") or health.get("embedding_provider") or "").strip(),
+            "embedding_model": str(stats.get("embedding_model") or health.get("embedding_model") or "").strip(),
+            "lazy_probe": bool(stats.get("lazy_probe", health.get("lazy_probe", False))),
+            "hybrid_loaded": bool(stats.get("hybrid_loaded", health.get("hybrid_loaded", False))),
         }
 
     def run_parity_diagnostic(self) -> dict[str, Any]:
@@ -140,26 +195,26 @@ class KabotDoctor:
         from kabot.bus.events import InboundMessage
 
         route_cases: list[tuple[str, str | None]] = [
-            ("berita iran us israel terbaru sekarang", "web_search"),
             ("news iran israel 2026 now", "web_search"),
-            ("carikan berita perang iran terbaru 2026", "web_search"),
-            ("cek suhu purwokerto jawa tengah sekarang", "weather"),
-            ("kalau suhu cilacap berapa sekarang", "weather"),
-            ("bbri bbca bmri adaro berapa now", "stock"),
-            ("harga btc terbaru", "crypto"),
-            ("harga ethereum sekarang", None),
-            ("\u0e2d\u0e32\u0e01\u0e32\u0e28\u0e01\u0e23\u0e38\u0e07\u0e40\u0e17\u0e1e\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49", "weather"),
-            ("\u4e24\u5206\u949f\u540e\u63d0\u9192\u6211\u5403\u996d", "cron"),
-            ("baca file config.json", None),
-            ("stop bahas saham", None),
-            ("bukan tentang berita", None),
-            ("halo apa kabar", None),
-            ("buatkan gambar mobil di hutan", None),
-            ("tolong bacakan teks ini jadi suara", None),
-            ("cek update kabot sekarang", "check_update"),
-            ("update kabot sekarang", "system_update"),
-            ("kapasitas ram berapa", "get_system_info"),
-            ("cek ram proses sekarang", "get_process_memory"),
+            ("latest war news iran israel now", "web_search"),
+            ("weather jakarta now", "weather"),
+            ("temperature cilacap now", "weather"),
+            ("BBRI.JK BBCA.JK BMRI.JK ADRO.JK", "stock"),
+            ("btc now", "crypto"),
+            ("eth price now", "crypto"),
+            ("remind me in 2 minutes to eat", "cron"),
+            ("check update kabot", "check_update"),
+            ("system update kabot", "system_update"),
+            ("ram capacity", "get_system_info"),
+            ("process memory now", "get_process_memory"),
+            ("cleanup temp files now", "cleanup_system"),
+            ("speedtest now", "speedtest"),
+            ("server monitor now", "server_monitor"),
+            ("read file config.json", None),
+            ("stop talking about stocks", None),
+            ("hello there", None),
+            ("make an image of a car in a forest", None),
+            ("read this text aloud", None),
         ]
 
         route_results: list[dict[str, Any]] = []
@@ -194,8 +249,8 @@ class KabotDoctor:
             ("stop bahas saham", "stock", True),
             ("halo", "cron", True),
             ("harga btc terbaru", "image_gen", True),
-            ("buatkan gambar mobil di hutan", "image_gen", False),
-            ("tolong bacakan teks ini jadi suara", "tts", False),
+            ("buatkan gambar mobil di hutan", "image_gen", True),
+            ("tolong bacakan teks ini jadi suara", "tts", True),
         ]
         guard_results: list[dict[str, Any]] = []
         for prompt, tool_name, should_block in guard_cases:
@@ -688,6 +743,18 @@ class KabotDoctor:
             color = "green" if item["status"] in {"OK", "INFO"} else "yellow"
             env_text += f"[{color}]- {item['status']}: {item['item']} -> {item['detail']}[/{color}]\n"
         console.print(Panel(env_text.strip(), title=" Environment Matrix ", border_style="dim", box=box.ROUNDED))
+
+        memory = report.get("memory", {}) if isinstance(report.get("memory"), dict) else {}
+        memory_text = (
+            f"- status: {memory.get('status', 'unknown')}\n"
+            f"- backend: {memory.get('backend', '')}\n"
+            f"- retrieval_mode: {memory.get('retrieval_mode', '')}\n"
+            f"- embedding_provider: {memory.get('embedding_provider', '')}\n"
+            f"- embedding_model: {memory.get('embedding_model', '')}\n"
+            f"- lazy_probe: {memory.get('lazy_probe', False)}\n"
+            f"- hybrid_loaded: {memory.get('hybrid_loaded', False)}"
+        )
+        console.print(Panel(memory_text, title=" Memory Stack ", border_style="dim", box=box.ROUNDED))
 
         skills_text = f"Eligible: {len(report['skills']['eligible'])}\n"
         skills_text += f"Missing: {len(report['skills']['missing'])}\n"

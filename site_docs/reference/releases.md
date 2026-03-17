@@ -1,5 +1,32 @@
 # Releases
 
+## v0.6.6
+
+Release date: 2026-03-17
+
+Status: Stable release
+
+### Highlights
+
+- Finalizes the `0.6.6` runtime continuity work from the release-candidate cycle into the stable package line.
+- Keeps Kabot grounded on real execution state for skill reuse, follow-up continuity, tool selection, and active runtime context.
+- Ships the Python-native MCP, hybrid memory, and state-first follow-up routing improvements with release-ready docs and package metadata.
+
+### Notable fixes
+
+- Promotes package metadata, docs references, and release guidance from `0.6.6-rc*` to the final `0.6.6` version.
+- Keeps action routing, follow-up semantics, and skill continuity aligned with the newer parser-light, state-first runtime direction.
+- Preserves RC history below while making the stable release the primary MkDocs release entry.
+
+### Validation snapshot
+
+- `mkdocs build --strict` succeeded for the final release docs.
+- `python -m build` produced `kabot-0.6.6.tar.gz` and `kabot-0.6.6-py3-none-any.whl`.
+- Targeted runtime continuity and budget-hint regression slices passed locally (`5 passed`, `11 passed`).
+- A broad `pytest` run in the current workspace did not complete cleanly, so this release entry only claims the verified slices above.
+
+See full details in root `CHANGELOG.md`.
+
 ## v0.6.6-rc3
 
 Release date: 2026-03-15

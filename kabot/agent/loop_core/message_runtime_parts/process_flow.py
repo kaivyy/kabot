@@ -43,6 +43,7 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _get_skill_creation_flow,
     _infer_recent_created_skill_name_from_path,
     _infer_recent_assistant_answer_from_history,
+    _infer_recent_option_dialog_active_from_history,
     _infer_recent_assistant_option_prompt_from_history,
     _infer_recent_file_path_from_history,
     _is_abort_request_text,
@@ -68,6 +69,7 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _looks_like_short_confirmation,
     _looks_like_short_greeting_smalltalk,
     _looks_like_skill_creation_approval,
+    _looks_like_structural_skill_workflow_followup,
     _looks_like_skill_workflow_followup_detail,
     _looks_like_temporal_context_query,
     _looks_like_web_search_demotion_followup,
@@ -96,6 +98,15 @@ from kabot.agent.loop_core.message_runtime_parts.continuity_runtime import (
 )
 from kabot.agent.loop_core.message_runtime_parts.contextual_followups import (
     arbitrate_contextual_followup,
+)
+from kabot.agent.loop_core.message_runtime_parts.followup_semantics import (
+    classify_stateful_followup_intent,
+)
+from kabot.agent.loop_core.message_runtime_parts.action_semantics import (
+    classify_stateful_action_intent,
+)
+from kabot.agent.loop_core.message_runtime_parts.memory_semantics import (
+    classify_semantic_memory_intent,
 )
 from kabot.agent.loop_core.directive_pipeline import (
     apply_directive_overrides,
@@ -126,6 +137,12 @@ from kabot.agent.loop_core.message_runtime_parts.user_profile import (
     persist_user_profile,
     sync_user_profile_memory,
 )
+from kabot.agent.loop_core.message_runtime_parts.workflow_semantics import (
+    classify_skill_workflow_intent,
+)
+from kabot.agent.loop_core.message_runtime_parts.low_info_semantics import (
+    classify_low_information_turn_intent,
+)
 from kabot.agent.loop_core.execution_runtime_parts.intent import (
     _build_source_constrained_web_search_query,
     _extract_direct_fetch_url_candidate,
@@ -136,6 +153,7 @@ from kabot.agent.loop_core.execution_runtime_parts.intent import (
 )
 from kabot.agent.loop_core.tool_enforcement import (
     _extract_list_dir_path,
+    _extract_message_delivery_path,
     _extract_read_file_path,
     infer_action_required_tool_for_loop,
     _query_has_tool_payload,
@@ -146,8 +164,6 @@ from kabot.agent.loop_core.tool_enforcement_parts.action_requests import (
 from kabot.agent.loop_core.quality_runtime import get_learned_execution_hints
 from kabot.agent.semantic_intent import arbitrate_semantic_intent
 from kabot.agent.skills import (
-    looks_like_skill_creation_request,
-    looks_like_skill_install_request,
     normalize_skill_reference_name,
 )
 from kabot.agent.skills_matching import (
@@ -276,6 +292,10 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     effective_content = clean_body or msg.content
     intent_source_for_followup = effective_content
     persist_user_profile(loop, session, effective_content, now_ts=time.time())
+    user_profile_memory_dirty = bool(
+        isinstance(getattr(session, "metadata", None), dict)
+        and getattr(session, "metadata", {}).get("user_profile_memory_dirty")
+    )
     try:
         await sync_user_profile_memory(loop, session, session_key=msg.session_key)
     except Exception as exc:
@@ -357,6 +377,17 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         "check_update",
         "system_update",
     }
+    semantic_runtime_tools = frozenset(
+        {
+            "cleanup_system",
+            "get_system_info",
+            "get_process_memory",
+            "server_monitor",
+            "check_update",
+            "system_update",
+            "speedtest",
+        }
+    )
     route_bypass_direct_tools = {
         "find_files",
         "read_file",
@@ -377,15 +408,66 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and required_tool in direct_tools
     )
     requires_live_data_honesty_note = False
+    pending_followup_tool_payload = _get_pending_followup_tool(session, now_ts)
+    pending_followup_tool = (
+        str(pending_followup_tool_payload.get("tool") or "").strip()
+        if isinstance(pending_followup_tool_payload, dict)
+        else None
+    )
+    pending_followup_source = (
+        str(pending_followup_tool_payload.get("source") or "").strip()
+        if isinstance(pending_followup_tool_payload, dict)
+        else ""
+    )
+    last_tool_context = _get_last_tool_context(session, now_ts)
+    action_context_last_tool = last_tool_context if isinstance(last_tool_context, dict) else None
+    if not action_context_last_tool and isinstance(getattr(session, "metadata", None), dict):
+        session_directory_anchor = str(
+            session.metadata.get("working_directory")
+            or session.metadata.get("last_navigated_path")
+            or ""
+        ).strip()
+        if session_directory_anchor:
+            action_context_last_tool = {
+                "tool": "list_dir",
+                "path": session_directory_anchor,
+            }
+    last_tool_execution = _get_last_tool_execution(session, now_ts)
+    pending_followup_intent = _get_pending_followup_intent(session, now_ts)
+    pending_followup_intent_text = (
+        str(pending_followup_intent.get("text") or "").strip()
+        if isinstance(pending_followup_intent, dict)
+        else ""
+    )
+    pending_followup_intent_kind = (
+        str(pending_followup_intent.get("kind") or "").strip().lower()
+        if isinstance(pending_followup_intent, dict)
+        else ""
+    )
+    pending_followup_intent_request_text = (
+        str(pending_followup_intent.get("request_text") or "").strip()
+        if isinstance(pending_followup_intent, dict)
+        else ""
+    )
+    has_stateful_followup_anchor = bool(
+        pending_followup_tool
+        or pending_followup_intent
+        or isinstance(last_tool_context, dict)
+        or isinstance(last_tool_execution, dict)
+    )
+    structural_followup_candidate = _is_low_information_turn(
+        effective_content,
+        max_tokens=18,
+        max_chars=220,
+    )
     should_load_history_for_continuity = bool(
         not _looks_like_explicit_new_request(effective_content)
-        and not _looks_like_closing_acknowledgement(effective_content)
-        and not _looks_like_short_greeting_smalltalk(effective_content)
-        and not _looks_like_non_action_meta_feedback(effective_content)
         and (
             _looks_like_answer_reference_followup(effective_content)
             or _looks_like_short_confirmation(effective_content)
             or _looks_like_contextual_followup_request(effective_content)
+            or has_stateful_followup_anchor
+            or structural_followup_candidate
         )
     )
 
@@ -433,6 +515,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         decision = SimpleNamespace(profile="GENERAL", is_complex=True)
     else:
         decision = await loop.router.route(effective_content)
+    route_workflow_intent = str(getattr(decision, "workflow_intent", "") or "").strip().lower() or "none"
+    semantic_workflow_intent = route_workflow_intent
     if (
         not required_tool
         and not bool(decision.is_complex)
@@ -473,54 +557,133 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     if route_grounding_mode == "filesystem_inspection" and not bool(getattr(decision, "is_complex", False)):
         decision.is_complex = True
 
-    pending_followup_tool_payload = _get_pending_followup_tool(session, now_ts)
-    pending_followup_tool = (
-        str(pending_followup_tool_payload.get("tool") or "").strip()
-        if isinstance(pending_followup_tool_payload, dict)
-        else None
-    )
-    pending_followup_source = (
-        str(pending_followup_tool_payload.get("source") or "").strip()
-        if isinstance(pending_followup_tool_payload, dict)
-        else ""
-    )
     recent_history_file_path = _infer_recent_file_path_from_history(conversation_history)
-    last_tool_context = _get_last_tool_context(session, now_ts)
-    last_tool_execution = _get_last_tool_execution(session, now_ts)
-    pending_followup_intent = _get_pending_followup_intent(session, now_ts)
-    pending_followup_intent_text = (
-        str(pending_followup_intent.get("text") or "").strip()
-        if isinstance(pending_followup_intent, dict)
-        else ""
-    )
-    pending_followup_intent_kind = (
-        str(pending_followup_intent.get("kind") or "").strip().lower()
-        if isinstance(pending_followup_intent, dict)
-        else ""
-    )
-    pending_followup_intent_request_text = (
-        str(pending_followup_intent.get("request_text") or "").strip()
-        if isinstance(pending_followup_intent, dict)
-        else ""
-    )
     committed_action_request_text = pending_followup_intent_request_text
     recent_assistant_option_prompt = _infer_recent_assistant_option_prompt_from_history(
         conversation_history
     )
+    recent_option_dialog_active = _infer_recent_option_dialog_active_from_history(
+        conversation_history
+    )
     recent_assistant_answer = _infer_recent_assistant_answer_from_history(conversation_history)
-    raw_is_answer_reference_followup = _looks_like_answer_reference_followup(effective_content)
-    raw_is_short_confirmation = _looks_like_short_confirmation(effective_content)
-    raw_is_contextual_followup_request = _looks_like_contextual_followup_request(effective_content)
-    is_answer_reference_followup = bool(not required_tool and raw_is_answer_reference_followup)
-    is_short_confirmation = bool(not required_tool and raw_is_short_confirmation)
-    is_closing_ack = _looks_like_closing_acknowledgement(effective_content)
-    is_short_greeting = _looks_like_short_greeting_smalltalk(effective_content)
-    is_non_action_feedback = _looks_like_non_action_meta_feedback(effective_content)
-    raw_is_explicit_new_request = _looks_like_explicit_new_request(effective_content)
+    current_skill_flow = _get_skill_creation_flow(session, now_ts)
+    current_skill_flow_kind = (
+        str((current_skill_flow or {}).get("kind") or "create").strip().lower() or "create"
+    )
+    explicit_file_path_candidate = str(_extract_read_file_path(effective_content) or "").strip()
+    def _extract_delivery_path_candidate(text: str) -> str:
+        return str(
+            _extract_message_delivery_path(
+                text,
+                last_tool_context=action_context_last_tool,
+            )
+            or ""
+        ).strip()
+
+    def _has_structural_delivery_intent(text: str) -> bool:
+        return bool(_extract_delivery_path_candidate(text))
+
+    def _looks_like_structural_write_file_update_request(text: str) -> bool:
+        explicit_path = str(_extract_read_file_path(text) or "").strip()
+        if not explicit_path:
+            return False
+        suffix = Path(explicit_path).suffix.lower()
+        if suffix and suffix not in {
+            ".txt",
+            ".md",
+            ".json",
+            ".yaml",
+            ".yml",
+            ".csv",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".py",
+            ".html",
+            ".css",
+            ".xml",
+            ".ini",
+            ".cfg",
+            ".toml",
+        }:
+            return False
+        raw = str(text or "").strip()
+        if not raw:
+            return False
+        lower_raw = raw.lower()
+        idx = lower_raw.find(explicit_path.lower())
+        if idx < 0:
+            return False
+        tail = raw[idx + len(explicit_path):].strip()
+        if len(tail) < 18:
+            return False
+        if "?" in tail:
+            return False
+        tail_tokens = [part for part in _normalize_text(tail).split(" ") if part]
+        if len(tail_tokens) < 4:
+            return False
+        has_content_shape = any(mark in tail for mark in (":", "=", "\n", "\"", "'", "`")) or len(tail_tokens) >= 4
+        return bool(has_content_shape)
+
+    resolved_delivery_path_candidate = _extract_delivery_path_candidate(effective_content)
+    resolved_list_dir_path_candidate = str(
+        _extract_list_dir_path(
+            effective_content,
+            last_tool_context=action_context_last_tool,
+        )
+        or ""
+    ).strip()
+
+    def _has_grounded_action_payload(tool_name: str | None, text: str) -> bool:
+        normalized_tool = str(tool_name or "").strip()
+        if not normalized_tool:
+            return False
+        try:
+            if _query_has_tool_payload(normalized_tool, text):
+                return True
+        except Exception:
+            pass
+        if normalized_tool == "message":
+            return bool(resolved_delivery_path_candidate)
+        if normalized_tool == "list_dir":
+            return bool(resolved_list_dir_path_candidate)
+        if normalized_tool in {"read_file", "write_file"}:
+            return bool(explicit_file_path_candidate)
+        if normalized_tool == "find_files":
+            return True
+        return False
+
+    structural_answer_reference_followup = _looks_like_answer_reference_followup(effective_content)
+    structural_short_confirmation = _looks_like_short_confirmation(effective_content)
+    structural_contextual_followup_request = _looks_like_contextual_followup_request(effective_content)
+    is_answer_reference_followup = bool(not required_tool and structural_answer_reference_followup)
+    is_short_confirmation = bool(not required_tool and structural_short_confirmation)
+    semantic_answer_reference_followup = False
+    semantic_contextual_followup_request = False
+    is_closing_ack = False
+    is_short_greeting = False
+    is_non_action_feedback = False
+    structural_explicit_new_request = _looks_like_explicit_new_request(effective_content)
+    raw_user_text = str(msg.content or "")
+    raw_user_tokens = [part for part in _normalize_text(raw_user_text).split(" ") if part]
+    stateful_skill_workflow_short_turn = bool(
+        _is_low_information_turn(raw_user_text, max_tokens=18, max_chars=220)
+        or (
+            any(mark in raw_user_text for mark in ("?", "？", "¿"))
+            and 0 < len(raw_user_tokens) <= 10
+            and len(_normalize_text(raw_user_text)) <= 120
+        )
+    )
     is_side_effect_request = bool(
         _looks_like_side_effect_request(effective_content)
         or route_turn_category in {"action", "contextual_action"}
     )
+    if not is_side_effect_request and _looks_like_coding_build_request(
+        effective_content,
+        route_profile=str(decision.profile),
+    ):
+        is_side_effect_request = True
     is_weather_context_followup = bool(
         _looks_like_weather_context_followup(effective_content)
         and (
@@ -541,7 +704,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         )
         and _looks_like_file_context_followup(effective_content)
     )
-    is_explicit_new_request = bool(raw_is_explicit_new_request and not is_weather_context_followup)
+    is_explicit_new_request = bool(
+        structural_explicit_new_request and not is_weather_context_followup
+    )
     is_assistant_offer_context_followup = bool(
         pending_followup_intent_kind == "assistant_offer"
         and _looks_like_assistant_offer_context_followup(
@@ -552,8 +717,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     is_assistant_committed_action_followup = bool(
         pending_followup_intent_kind == "assistant_committed_action"
         and (
-            raw_is_short_confirmation
-            or raw_is_contextual_followup_request
+            structural_short_confirmation
+            or structural_contextual_followup_request
             or _looks_like_assistant_offer_context_followup(
                 effective_content,
                 pending_followup_intent_request_text or pending_followup_intent_text,
@@ -561,18 +726,37 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         )
     )
     is_contextual_followup_request = bool(
-        not required_tool and raw_is_contextual_followup_request and not is_weather_context_followup
+        not required_tool
+        and structural_contextual_followup_request
+        and not is_weather_context_followup
+    )
+    option_prompt_continuity_candidate = bool(
+        not pending_followup_intent_text
+        and recent_assistant_option_prompt
+        and bool(re.search(r"[?:：？]", str(recent_assistant_option_prompt or "")))
+        and not is_explicit_new_request
+        and _is_low_information_turn(effective_content, max_tokens=10, max_chars=120)
+    )
+    provider_chat_available = callable(getattr(getattr(loop, "provider", None), "chat", None))
+    structural_option_dialog_followup = bool(
+        option_prompt_continuity_candidate
+        and recent_option_dialog_active
+        and not provider_chat_available
     )
     parser_required_tool_has_payload = False
     if required_tool and required_tool == parser_required_tool:
-        try:
-            parser_required_tool_has_payload = _query_has_tool_payload(required_tool, effective_content)
-        except Exception:
-            parser_required_tool_has_payload = False
+        parser_required_tool_has_payload = _has_grounded_action_payload(
+            required_tool,
+            effective_content,
+        )
     if (
-        not pending_followup_intent_text
-        and recent_assistant_option_prompt
-        and (raw_is_short_confirmation or raw_is_contextual_followup_request)
+        option_prompt_continuity_candidate
+        and (
+            structural_short_confirmation
+            or structural_contextual_followup_request
+            or _extract_option_selection_reference(effective_content)
+            or structural_option_dialog_followup
+        )
     ):
         pending_followup_intent = {
             "text": recent_assistant_option_prompt,
@@ -581,6 +765,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         }
         pending_followup_intent_text = recent_assistant_option_prompt
         pending_followup_intent_kind = "assistant_offer"
+        structural_contextual_followup_request = True
+        is_contextual_followup_request = bool(not required_tool)
     explicit_skill_use_request = looks_like_explicit_skill_use_request(effective_content)
     semantic_hint = arbitrate_semantic_intent(
         effective_content,
@@ -597,10 +783,240 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         pending_followup_source=pending_followup_source,
         last_tool_context=last_tool_context,
     )
+    semantic_memory_intent = "none"
     meta_skill_reference_turn = (
         looks_like_meta_skill_or_workflow_prompt(effective_content)
         and not explicit_skill_use_request
     )
+    if (
+        not required_tool
+        and not meta_skill_reference_turn
+    ):
+        semantic_low_info_intent = await classify_low_information_turn_intent(
+            loop,
+            effective_content,
+            route_profile=str(getattr(decision, "profile", "") or ""),
+            turn_category=route_turn_category,
+        )
+        if semantic_low_info_intent == "closing_ack":
+            is_closing_ack = True
+        elif semantic_low_info_intent == "greeting_smalltalk":
+            is_short_greeting = True
+        elif semantic_low_info_intent == "meta_feedback":
+            is_non_action_feedback = True
+        elif (
+            semantic_low_info_intent == "none"
+            and not provider_chat_available
+            and route_turn_category in {"chat", ""}
+            and not has_stateful_followup_anchor
+            and not recent_assistant_answer
+            and not recent_history_file_path
+            and not structural_answer_reference_followup
+            and not structural_contextual_followup_request
+            and _looks_like_non_action_meta_feedback(effective_content)
+            and not structural_explicit_new_request
+        ):
+            # Structural no-provider fallback: only clear continuity on grounded
+            # hostile/meta feedback, not on ordinary short follow-up questions.
+            is_non_action_feedback = True
+    if (
+        not required_tool
+        and not is_non_action_feedback
+        and _looks_like_non_action_meta_feedback(effective_content)
+    ):
+        is_non_action_feedback = True
+    if (
+        not required_tool
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not meta_skill_reference_turn
+    ):
+        semantic_memory_intent = await classify_semantic_memory_intent(
+            loop,
+            effective_content,
+            route_profile=str(getattr(decision, "profile", "") or ""),
+            turn_category=route_turn_category,
+            conversation_history=conversation_history,
+            user_profile=(
+                (getattr(session, "metadata", {}) or {}).get("user_profile")
+                if isinstance(getattr(session, "metadata", None), dict)
+                else None
+            ),
+        )
+    semantic_followup_intent = "none"
+    if (
+        not required_tool
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not meta_skill_reference_turn
+        and (
+            pending_followup_tool
+            or pending_followup_intent
+            or recent_assistant_answer
+            or recent_history_file_path
+            or isinstance(last_tool_context, dict)
+            or isinstance(last_tool_execution, dict)
+            or current_skill_flow
+        )
+    ):
+        semantic_followup_intent = await classify_stateful_followup_intent(
+            loop,
+            effective_content,
+            route_profile=str(getattr(decision, "profile", "") or ""),
+            turn_category=route_turn_category,
+            pending_followup_kind=pending_followup_intent_kind,
+            pending_followup_text=pending_followup_intent_text,
+            pending_followup_request_text=pending_followup_intent_request_text,
+            pending_followup_tool=str(pending_followup_tool or ""),
+            pending_followup_source=pending_followup_source,
+            last_tool_context=last_tool_context if isinstance(last_tool_context, dict) else None,
+            last_tool_execution=last_tool_execution if isinstance(last_tool_execution, dict) else None,
+            recent_assistant_answer=recent_assistant_answer,
+            recent_history_file_path=recent_history_file_path,
+            current_workflow_kind=current_skill_flow_kind,
+            current_workflow_stage=str((current_skill_flow or {}).get("stage") or ""),
+            current_workflow_request_text=str((current_skill_flow or {}).get("request_text") or ""),
+        )
+    if semantic_followup_intent == "none" and structural_option_dialog_followup:
+        semantic_followup_intent = "option_selection"
+    if semantic_followup_intent == "answer_reference":
+        semantic_answer_reference_followup = True
+        is_side_effect_request = False
+        is_explicit_new_request = False
+    elif semantic_followup_intent == "assistant_offer_accept":
+        if pending_followup_intent_kind == "assistant_offer":
+            is_assistant_offer_context_followup = True
+            is_side_effect_request = False
+            is_explicit_new_request = False
+    elif semantic_followup_intent == "assistant_committed_action_followup":
+        if pending_followup_intent_kind == "assistant_committed_action":
+            is_assistant_committed_action_followup = True
+            is_side_effect_request = False
+            is_explicit_new_request = False
+    elif semantic_followup_intent == "contextual_followup":
+        semantic_contextual_followup_request = True
+        is_side_effect_request = False
+        is_explicit_new_request = False
+    elif semantic_followup_intent == "option_selection":
+        semantic_contextual_followup_request = True
+        is_side_effect_request = False
+        is_explicit_new_request = False
+        if pending_followup_intent_kind == "assistant_offer":
+            is_assistant_offer_context_followup = True
+        elif (
+            not pending_followup_intent
+            and recent_assistant_option_prompt
+            and bool(re.search(r"[?:：？]", str(recent_assistant_option_prompt or "")))
+        ):
+            pending_followup_intent = {
+                "text": recent_assistant_option_prompt,
+                "profile": "CHAT",
+                "kind": "assistant_offer",
+            }
+            pending_followup_intent_text = recent_assistant_option_prompt
+            pending_followup_intent_kind = "assistant_offer"
+            is_assistant_offer_context_followup = True
+    elif semantic_followup_intent == "file_context":
+        is_file_context_followup = True
+        semantic_contextual_followup_request = True
+        is_side_effect_request = False
+        is_explicit_new_request = False
+    elif semantic_followup_intent == "directory_context":
+        semantic_contextual_followup_request = True
+        is_side_effect_request = False
+        is_explicit_new_request = False
+        if (
+            not required_tool
+            and isinstance(last_tool_context, dict)
+            and str(last_tool_context.get("tool") or "").strip() == "list_dir"
+            and _tool_registry_has(loop, "list_dir")
+        ):
+            required_tool = "list_dir"
+            required_tool_query = effective_content
+            semantic_tool_override = True
+            continuity_source = "directory_context"
+            decision.is_complex = True
+    elif semantic_followup_intent == "delivery_request":
+        is_side_effect_request = False
+        is_explicit_new_request = False
+        if not required_tool and _tool_registry_has(loop, "message"):
+            required_tool = "message"
+            required_tool_query = effective_content
+            semantic_tool_override = True
+            continuity_source = "delivery_followup"
+            decision.is_complex = True
+    elif semantic_followup_intent == "weather_context":
+        is_weather_context_followup = True
+        semantic_contextual_followup_request = True
+        is_side_effect_request = False
+        is_explicit_new_request = False
+    stateful_skill_workflow_followup_candidate = bool(
+        current_skill_flow
+        and pending_followup_intent_kind == "assistant_offer"
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not is_weather_context_followup
+        and not is_file_context_followup
+        and not _looks_like_filesystem_location_query(effective_content)
+        and not _looks_like_temporal_context_query(effective_content)
+        and semantic_memory_intent not in {"memory_commit", "memory_recall"}
+        and not _looks_like_memory_commit_turn(effective_content)
+        and not _looks_like_memory_recall_turn(effective_content)
+        and not _looks_like_live_research_query(effective_content)
+        and stateful_skill_workflow_short_turn
+    )
+    if stateful_skill_workflow_followup_candidate:
+        structural_explicit_new_request = False
+        is_explicit_new_request = False
+        semantic_contextual_followup_request = True
+        is_assistant_offer_context_followup = True
+        is_side_effect_request = False
+    any_answer_reference_followup = bool(
+        structural_answer_reference_followup or semantic_answer_reference_followup
+    )
+    any_contextual_followup_request = bool(
+        structural_contextual_followup_request or semantic_contextual_followup_request
+    )
+    is_answer_reference_followup = bool(
+        not required_tool and any_answer_reference_followup
+    )
+    is_contextual_followup_request = bool(
+        not required_tool
+        and any_contextual_followup_request
+        and not is_weather_context_followup
+    )
+    if (
+        semantic_workflow_intent == "none"
+        and not required_tool
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not meta_skill_reference_turn
+    ):
+        semantic_context_builder = None
+        resolve_context_builder = getattr(loop, "_resolve_context_for_message", None)
+        if callable(resolve_context_builder):
+            try:
+                semantic_context_builder = resolve_context_builder(msg)
+            except Exception as exc:
+                logger.debug(f"Semantic workflow context resolution failed: {exc}")
+        if semantic_context_builder is None:
+            semantic_context_builder = getattr(loop, "context", None)
+        semantic_skills_loader = getattr(semantic_context_builder, "skills", None)
+        semantic_workflow_intent = await classify_skill_workflow_intent(
+            loop,
+            effective_content,
+            route_profile=str(getattr(decision, "profile", "") or ""),
+            turn_category=str(getattr(decision, "turn_category", "") or ""),
+            skills_loader=semantic_skills_loader,
+            conversation_history=conversation_history,
+            current_workflow_request_text=str((current_skill_flow or {}).get("request_text") or ""),
+            current_workflow_stage=str((current_skill_flow or {}).get("stage") or ""),
+            current_workflow_kind=current_skill_flow_kind,
+        )
     if semantic_hint.kind in {
         "advice_turn",
         "meta_feedback",
@@ -632,16 +1048,29 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         required_tool = None
         required_tool_query = effective_content
         continuity_source = None
+    if semantic_memory_intent == "memory_recall":
+        required_tool = None
+        required_tool_query = effective_content
+        continuity_source = None
+    elif (
+        (semantic_memory_intent == "memory_commit" or user_profile_memory_dirty)
+        and _tool_registry_has(loop, "save_memory")
+    ):
+        required_tool = "save_memory"
+        required_tool_query = effective_content
+        continuity_source = "semantic_memory" if semantic_memory_intent == "memory_commit" else "profile_memory"
+    extracted_weather_location = str(extract_weather_location(effective_content) or "").strip()
+    grounded_weather_location = bool(
+        extracted_weather_location
+        and _normalize_text(extracted_weather_location) != _normalize_text(effective_content)
+    )
     explicit_weather_request = bool(
         not required_tool
         and not meta_skill_reference_turn
         and not is_weather_context_followup
         and _tool_registry_has(loop, "weather")
-        and _looks_like_weather_context_followup(effective_content)
-        and (
-            bool(extract_weather_location(effective_content))
-            or parser_required_tool == "weather"
-        )
+        and parser_required_tool == "weather"
+        and grounded_weather_location
     )
     if explicit_weather_request:
         required_tool = "weather"
@@ -669,13 +1098,179 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             "Weather context follow-up overrode parser tool "
             f"for '{_normalize_text(effective_content)[:120]}'"
         )
+    if (
+        not required_tool
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and route_turn_category in {"action", "contextual_action", "command"}
+    ):
+        semantic_action_tool = await classify_stateful_action_intent(
+            loop,
+            effective_content,
+            route_profile=str(getattr(decision, "profile", "") or ""),
+            turn_category=route_turn_category or "action",
+            working_directory=str(
+                (
+                    getattr(session, "metadata", {}).get("working_directory")
+                    if isinstance(getattr(session, "metadata", None), dict)
+                    else ""
+                )
+                or ""
+            ).strip(),
+            pending_followup_tool=str(pending_followup_tool or ""),
+            pending_followup_source=pending_followup_source,
+            last_tool_context=action_context_last_tool,
+            recent_history_file_path=recent_history_file_path,
+            explicit_file_path=explicit_file_path_candidate,
+            resolved_delivery_path=resolved_delivery_path_candidate,
+            resolved_list_dir_path=resolved_list_dir_path_candidate,
+        )
+        if (
+            semantic_action_tool != "none"
+            and _tool_registry_has(loop, semantic_action_tool)
+            and (
+                _has_grounded_action_payload(semantic_action_tool, effective_content)
+                or semantic_action_tool == "find_files"
+                or semantic_action_tool in semantic_runtime_tools
+            )
+        ):
+            required_tool = semantic_action_tool
+            required_tool_query = effective_content
+            continuity_source = continuity_source or "semantic_action_request"
+            decision.is_complex = True
+            logger.info(
+                "Semantic action routing adopted grounded tool: "
+                f"'{_normalize_text(effective_content)[:120]}' -> required_tool={required_tool}"
+            )
+            fast_direct_context = bool(
+                perf_cfg
+                and bool(getattr(perf_cfg, "fast_first_response", True))
+                and required_tool in direct_tools
+            )
+    if (
+        not required_tool
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+    ):
+        explicit_action_tool, explicit_action_query = infer_action_required_tool_for_loop(
+            loop,
+            effective_content,
+            metadata=session.metadata if isinstance(getattr(session, "metadata", None), dict) else None,
+        )
+        if explicit_action_tool:
+            required_tool = explicit_action_tool
+            required_tool_query = str(
+                explicit_action_query or effective_content
+            ).strip()
+            continuity_source = continuity_source or "action_request"
+            decision.is_complex = True
+            logger.info(
+                "Explicit action inference: "
+                f"'{_normalize_text(effective_content)[:120]}' -> required_tool={explicit_action_tool}"
+            )
+            fast_direct_context = bool(
+                perf_cfg
+                and bool(getattr(perf_cfg, "fast_first_response", True))
+                and required_tool in direct_tools
+            )
+    if (
+        not required_tool
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not meta_skill_reference_turn
+    ):
+        structural_delivery_path = _extract_delivery_path_candidate(effective_content)
+        if structural_delivery_path:
+            if (
+                _tool_registry_has(loop, "write_file")
+                and _looks_like_structural_write_file_update_request(effective_content)
+            ):
+                required_tool = "write_file"
+                required_tool_query = effective_content
+                continuity_source = continuity_source or "action_request"
+                decision.is_complex = True
+                logger.info(
+                    "Structural write-file routing adopted grounded tool: "
+                    f"'{_normalize_text(effective_content)[:120]}' -> required_tool=write_file"
+                )
+                fast_direct_context = bool(
+                    perf_cfg
+                    and bool(getattr(perf_cfg, "fast_first_response", True))
+                    and required_tool in direct_tools
+                )
+            elif (
+                _tool_registry_has(loop, "message")
+                and _looks_like_message_send_file_request(
+                    effective_content,
+                    explicit_path=structural_delivery_path,
+                )
+            ):
+                required_tool = "message"
+                required_tool_query = effective_content
+                continuity_source = continuity_source or "action_request"
+                decision.is_complex = True
+                logger.info(
+                    "Structural delivery routing adopted grounded tool: "
+                    f"'{_normalize_text(effective_content)[:120]}' -> required_tool=message"
+                )
+                fast_direct_context = bool(
+                    perf_cfg
+                    and bool(getattr(perf_cfg, "fast_first_response", True))
+                    and required_tool in direct_tools
+                )
+    if (
+        not required_tool
+        and parser_required_tool
+        and _tool_registry_has(loop, parser_required_tool)
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and (
+            _has_grounded_action_payload(parser_required_tool, effective_content)
+            or str(parser_required_tool).strip() in semantic_runtime_tools
+        )
+    ):
+        required_tool = str(parser_required_tool).strip()
+        required_tool_query = effective_content
+        grounded_parser_tool = str(parser_required_tool).strip()
+        if grounded_parser_tool in {"message", "list_dir", "read_file", "write_file", "find_files"}:
+            continuity_source = continuity_source or "action_request"
+        elif grounded_parser_tool == "weather" or grounded_parser_tool in semantic_runtime_tools:
+            continuity_source = continuity_source or "parser"
+        else:
+            continuity_source = continuity_source or "grounded_action_request"
+        decision.is_complex = True
+        logger.info(
+            "Grounded parser tool adopted from session/runtime context: "
+            f"'{_normalize_text(effective_content)[:120]}' -> required_tool={required_tool}"
+        )
+        fast_direct_context = bool(
+            perf_cfg
+            and bool(getattr(perf_cfg, "fast_first_response", True))
+            and required_tool in direct_tools
+        )
     is_non_action_feedback = bool(is_non_action_feedback or semantic_hint.kind == "meta_feedback")
+    preserve_stateful_action_parser_tool = bool(
+        required_tool in {"message", "list_dir", "read_file", "write_file", "find_files"}
+        and (
+            required_tool == "find_files"
+            or bool(resolved_delivery_path_candidate)
+            or bool(resolved_list_dir_path_candidate)
+            or bool(explicit_file_path_candidate)
+            or _has_structural_delivery_intent(effective_content)
+            or semantic_followup_intent == "delivery_request"
+        )
+    )
     if (
         is_side_effect_request
         and required_tool
         and required_tool != "save_memory"
         and required_tool == parser_required_tool
         and not parser_required_tool_has_payload
+        and not preserve_stateful_action_parser_tool
         and not semantic_tool_override
         and not explicit_mcp_tool_routing
         and not meta_skill_reference_turn
@@ -722,8 +1317,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and pending_followup_tool
         and required_tool != pending_followup_tool
         and not is_short_confirmation
-        and not raw_is_short_confirmation
-        and not raw_is_contextual_followup_request
+        and not structural_short_confirmation
+        and not any_contextual_followup_request
         and not is_assistant_offer_context_followup
         and not is_assistant_committed_action_followup
         and not is_closing_ack
@@ -760,19 +1355,33 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         pending_followup_intent_request_text = ""
         committed_action_request_text = ""
 
+    semantic_continuity_followup = bool(
+        semantic_followup_intent in {
+            "assistant_offer_accept",
+            "assistant_committed_action_followup",
+            "answer_reference",
+            "option_selection",
+            "file_context",
+            "directory_context",
+            "delivery_request",
+            "weather_context",
+            "contextual_followup",
+        }
+    )
     continuity_candidate_turn = bool(
         not is_closing_ack
         and not is_short_greeting
         and not is_non_action_feedback
         and not is_explicit_new_request
         and (
-            raw_is_answer_reference_followup
-            or raw_is_short_confirmation
+            any_answer_reference_followup
+            or structural_short_confirmation
             or (
                 _is_short_context_followup(effective_content)
                 and not _looks_like_meaning_followup(effective_content)
             )
-            or raw_is_contextual_followup_request
+            or any_contextual_followup_request
+            or semantic_continuity_followup
         )
     )
     parser_required_tool_active = bool(
@@ -783,15 +1392,15 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     )
     parser_required_tool_has_payload = False
     if parser_required_tool_active:
-        try:
-            parser_required_tool_has_payload = _query_has_tool_payload(required_tool, effective_content)
-        except Exception:
-            parser_required_tool_has_payload = False
+        parser_required_tool_has_payload = _has_grounded_action_payload(
+            required_tool,
+            effective_content,
+        )
 
     if continuity_candidate_turn:
         continuity_overrode_routing = False
         if (
-            raw_is_answer_reference_followup
+            any_answer_reference_followup
             and recent_assistant_answer
             and not is_weather_context_followup
             and (not required_tool or (parser_required_tool_active and not parser_required_tool_has_payload))
@@ -825,7 +1434,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                     and bool(getattr(perf_cfg, "fast_first_response", True))
                     and required_tool in direct_tools
                 )
-            elif not required_tool or (parser_required_tool_active and not parser_required_tool_has_payload):
+            elif (
+                (not required_tool or (parser_required_tool_active and not parser_required_tool_has_payload))
+                and (
+                    route_turn_category in {"action", "contextual_action", "command"}
+                    or str(decision.profile or "").strip().upper() in {"CODING", "RESEARCH"}
+                )
+            ):
                 inferred_tool, inferred_source = _infer_required_tool_from_recent_user_intent(
                     loop,
                     effective_content,
@@ -847,10 +1462,14 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                         and required_tool in direct_tools
                     )
         if continuity_overrode_routing:
-            is_answer_reference_followup = bool(not required_tool and raw_is_answer_reference_followup)
-            is_short_confirmation = bool(not required_tool and raw_is_short_confirmation)
+            is_answer_reference_followup = bool(
+                not required_tool
+                and any_answer_reference_followup
+            )
+            is_short_confirmation = bool(not required_tool and structural_short_confirmation)
             is_contextual_followup_request = bool(
-                not required_tool and raw_is_contextual_followup_request
+                not required_tool
+                and any_contextual_followup_request
             )
 
     user_supplied_option_prompt_text = ""
@@ -884,7 +1503,11 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not is_non_action_feedback
         and not (
             recent_assistant_answer
-            and (raw_is_answer_reference_followup or raw_is_contextual_followup_request)
+            and (
+                any_answer_reference_followup
+                or any_contextual_followup_request
+                or semantic_continuity_followup
+            )
         )
         and not _looks_like_filesystem_location_query(effective_content)
         and _tool_registry_has(loop, "list_dir")
@@ -895,13 +1518,22 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             effective_content,
             last_tool_context=last_tool_context,
         )
-        action_tool_hint, _ = infer_action_required_tool_for_loop(loop, effective_content)
-        action_tool_conflict = str(action_tool_hint or "").strip() in {
-            "message",
-            "read_file",
-            "write_file",
-            "find_files",
-        }
+        action_tool_hint, _ = infer_action_required_tool_for_loop(
+            loop,
+            effective_content,
+            metadata=session.metadata if isinstance(getattr(session, "metadata", None), dict) else None,
+        )
+        action_tool_conflict = (
+            str(action_tool_hint or "").strip() in {
+                "message",
+                "read_file",
+                "write_file",
+                "find_files",
+            }
+            or str(parser_required_tool or "").strip() == "message"
+            or _has_structural_delivery_intent(effective_content)
+            or semantic_followup_intent == "delivery_request"
+        )
         if list_dir_followup_path and not action_tool_conflict:
             required_tool = "list_dir"
             required_tool_query = effective_content
@@ -1260,8 +1892,6 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         pending_followup_source=pending_followup_source,
         committed_action_request_text=committed_action_request_text,
         recent_assistant_answer=recent_assistant_answer,
-        raw_is_contextual_followup_request=raw_is_contextual_followup_request,
-        raw_is_answer_reference_followup=raw_is_answer_reference_followup,
         is_answer_reference_followup=is_answer_reference_followup,
         is_short_confirmation=is_short_confirmation,
         is_assistant_offer_context_followup=is_assistant_offer_context_followup,
@@ -1279,6 +1909,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         recent_answer_option_selection_reference=None,
         recent_answer_referenced_item=None,
         conversation_history=conversation_history,
+        semantic_followup_intent=semantic_followup_intent,
     )
     _apply_continuity_runtime(continuity_state)
     effective_content = continuity_state.effective_content
@@ -1300,22 +1931,73 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
     )
     recent_answer_referenced_item = continuity_state.recent_answer_referenced_item
 
-    current_skill_flow = _get_skill_creation_flow(session, now_ts)
-    current_skill_flow_kind = str((current_skill_flow or {}).get("kind") or "create").strip().lower() or "create"
     recent_created_skill_name = _infer_recent_created_skill_name_from_path(
         recent_history_file_path
+    )
+    semantic_skill_workflow_followup = bool(
+        current_skill_flow
+        and semantic_followup_intent in {
+            "assistant_offer_accept",
+            "assistant_committed_action_followup",
+            "answer_reference",
+            "option_selection",
+            "contextual_followup",
+        }
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+    )
+    structural_skill_workflow_followup = bool(
+        current_skill_flow
+        and _looks_like_structural_skill_workflow_followup(msg.content)
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not is_weather_context_followup
+        and not is_file_context_followup
+        and not _looks_like_filesystem_location_query(effective_content)
+        and not _looks_like_temporal_context_query(effective_content)
+        and semantic_memory_intent not in {"memory_commit", "memory_recall"}
+        and not _looks_like_memory_commit_turn(effective_content)
+        and not _looks_like_memory_recall_turn(effective_content)
+        and not _looks_like_live_research_query(effective_content)
+    )
+    stateful_skill_workflow_followup = bool(
+        current_skill_flow
+        and pending_followup_intent_kind == "assistant_offer"
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not is_explicit_new_request
+        and not is_weather_context_followup
+        and not is_file_context_followup
+        and not _looks_like_filesystem_location_query(msg.content)
+        and not _looks_like_temporal_context_query(msg.content)
+        and semantic_memory_intent not in {"memory_commit", "memory_recall"}
+        and not _looks_like_memory_commit_turn(msg.content)
+        and not _looks_like_memory_recall_turn(msg.content)
+        and not _looks_like_live_research_query(msg.content)
+        and stateful_skill_workflow_short_turn
     )
     existing_created_skill_followup = bool(
         current_skill_flow
         and str((current_skill_flow or {}).get("stage") or "").strip().lower() == "approved"
         and recent_created_skill_name
         and (
+            (
+                pending_followup_intent_kind == "assistant_offer"
+                and semantic_followup_intent in {"assistant_offer_accept", "contextual_followup"}
+            )
+            or
             _looks_like_existing_skill_use_followup(
                 msg.content,
                 assistant_offer_text=pending_followup_intent_text,
             )
+            or semantic_skill_workflow_followup
+            or stateful_skill_workflow_followup
+            or structural_skill_workflow_followup
             or (
-                not is_explicit_new_request
+                (not is_explicit_new_request or structural_skill_workflow_followup)
                 and (
                     is_short_confirmation
                     or _is_short_context_followup(msg.content)
@@ -1325,10 +2007,11 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not is_closing_ack
         and not is_short_greeting
         and not is_non_action_feedback
-        and not is_explicit_new_request
+        and (not is_explicit_new_request or structural_skill_workflow_followup)
     )
     skill_workflow_detail_followup = bool(
         current_skill_flow
+        and semantic_memory_intent not in {"memory_commit", "memory_recall"}
         and _looks_like_skill_workflow_followup_detail(msg.content)
         and not is_closing_ack
         and not is_short_greeting
@@ -1342,6 +2025,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not is_non_action_feedback
         and (
             skill_workflow_detail_followup
+            or semantic_skill_workflow_followup
+            or stateful_skill_workflow_followup
+            or structural_skill_workflow_followup
             or (
                 not is_explicit_new_request
                 and (
@@ -1349,6 +2035,16 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                     or _looks_like_skill_creation_approval(msg.content)
                 )
             )
+        )
+    )
+    semantic_skill_workflow_approval = bool(
+        semantic_followup_intent == "assistant_offer_accept"
+        or (
+            current_skill_flow
+            and str((current_skill_flow or {}).get("stage") or "").strip().lower() == "planning"
+            and not is_explicit_new_request
+            and is_short_confirmation
+            and len([part for part in _normalize_text(msg.content).split(" ") if part]) >= 2
         )
     )
     skill_install_followup = bool(
@@ -1359,6 +2055,25 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not is_non_action_feedback
         and (
             skill_workflow_detail_followup
+            or semantic_skill_workflow_followup
+            or stateful_skill_workflow_followup
+            or structural_skill_workflow_followup
+            or (
+                not is_explicit_new_request
+                and (
+                    is_short_confirmation
+                    or _looks_like_skill_creation_approval(msg.content)
+                )
+            )
+        )
+    )
+    active_skill_workflow_followup = bool(
+        current_skill_flow
+        and (
+            skill_workflow_detail_followup
+            or semantic_skill_workflow_followup
+            or stateful_skill_workflow_followup
+            or structural_skill_workflow_followup
             or (
                 not is_explicit_new_request
                 and (
@@ -1369,13 +2084,27 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         )
     )
     skill_creation_intent = bool(
-        looks_like_skill_creation_request(effective_content) or skill_creation_followup
+        (current_skill_flow_kind != "install" and active_skill_workflow_followup)
+        or semantic_workflow_intent == "skill_creator"
+        or skill_creation_followup
     )
     skill_install_intent = bool(
-        looks_like_skill_install_request(effective_content) or skill_install_followup
+        (current_skill_flow_kind == "install" and active_skill_workflow_followup)
+        or semantic_workflow_intent == "skill_installer"
+        or skill_install_followup
     )
     if skill_install_intent:
         skill_creation_intent = False
+    if semantic_workflow_intent == "skill_creator" and not skill_creation_followup:
+        logger.info(
+            "Semantic workflow route selected skill-creator: "
+            f"'{_normalize_text(effective_content)[:120]}'"
+        )
+    elif semantic_workflow_intent == "skill_installer" and not skill_install_followup:
+        logger.info(
+            "Semantic workflow route selected skill-installer: "
+            f"'{_normalize_text(effective_content)[:120]}'"
+        )
     forced_skill_names: list[str] | None = None
     external_skill_lane = False
     requires_real_skill_execution = False
@@ -1416,8 +2145,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             or str(pending_followup_intent_request_text or "").strip()
             or str(effective_content or "").strip()
         )
-        required_tool = None
-        required_tool_query = ""
+        if not required_tool:
+            required_tool_query = ""
         skill_creation_intent = False
         skill_install_intent = False
         forced_skill_names = [recent_created_skill_name]
@@ -1456,7 +2185,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 if skill_creation_request_text and "[Follow-up Context]" not in effective_content
                 else effective_content
             )
-        if skill_creation_stage == "planning" and _looks_like_skill_creation_approval(msg.content):
+        if skill_creation_stage == "planning" and (
+            semantic_skill_workflow_approval or _looks_like_skill_creation_approval(msg.content)
+        ):
             skill_creation_stage = "approved"
             skill_creation_approved = True
         if not decision.is_complex:
@@ -1478,7 +2209,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             stage=skill_creation_stage,
             kind=skill_workflow_kind,
         )
-    elif current_skill_flow and is_explicit_new_request and not skill_workflow_detail_followup:
+    elif (
+        current_skill_flow
+        and is_explicit_new_request
+        and not skill_workflow_detail_followup
+        and not semantic_skill_workflow_followup
+        and not structural_skill_workflow_followup
+    ):
         _clear_skill_creation_flow(session)
 
     unavailable_required_tool = str(required_tool or "").strip()
@@ -1662,7 +2399,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             (
                 not is_explicit_new_request
                 and (
-                    raw_is_contextual_followup_request
+                    any_contextual_followup_request
                     or _is_short_context_followup(effective_content)
                     or pending_followup_tool == "web_search"
                     or _looks_like_web_source_selection_followup(effective_content)
@@ -1767,7 +2504,25 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 }
             )
 
-        if len(eligible_external_matches) == 1 and explicit_skill_use_request:
+        primary_unavailable_skill = (
+            unavailable_external_matches[0] if len(unavailable_external_matches) == 1 else None
+        )
+        explicit_or_named_skill_use_request = bool(explicit_skill_use_request)
+        if not explicit_or_named_skill_use_request:
+            lowered_effective_content = str(effective_content or "").strip().lower()
+            for skill_detail in [*eligible_external_matches, *unavailable_external_matches]:
+                skill_name = str(skill_detail.get("name") or "").strip().lower()
+                if (
+                    skill_name
+                    and re.search(
+                        rf"(?<![a-z0-9]){re.escape(skill_name)}(?![a-z0-9])",
+                        lowered_effective_content,
+                    )
+                ):
+                    explicit_or_named_skill_use_request = True
+                    break
+
+        if len(eligible_external_matches) == 1 and explicit_or_named_skill_use_request:
             primary_skill = eligible_external_matches[0]
             forced_skill_names = [primary_skill["name"]]
             external_skill_lane = True
@@ -1789,7 +2544,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 "External skill execution latch: "
                 f"'{_normalize_text(effective_content)[:120]}' -> skill={primary_skill['name']}"
             )
-        elif len(unavailable_external_matches) == 1 and explicit_skill_use_request:
+        elif len(unavailable_external_matches) == 1 and explicit_or_named_skill_use_request:
             primary_skill = unavailable_external_matches[0]
             forced_skill_names = [primary_skill["name"]]
             external_skill_lane = True
@@ -1814,9 +2569,6 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 f"missing={primary_skill['missing_reason']}"
             )
 
-        primary_unavailable_skill = (
-            unavailable_external_matches[0] if len(unavailable_external_matches) == 1 else None
-        )
         single_unavailable_skill_prefers_grounded_diagnostics = bool(
             primary_unavailable_skill
             and bool(primary_unavailable_skill.get("adapt_grounded_diagnostics"))
@@ -1834,13 +2586,14 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         auto_external_setup_turn = bool(
             not forced_skill_names
             and not required_tool
-            and not explicit_skill_use_request
+            and not explicit_or_named_skill_use_request
             and primary_unavailable_skill is not None
             and str(primary_unavailable_skill.get("source") or "").strip().lower() != "builtin"
             and not looks_like_meta_skill_or_workflow_prompt(effective_content)
             and (
                 _looks_like_live_research_query(effective_content)
                 or route_grounding_mode == "filesystem_inspection"
+                or route_grounding_mode == "web_live_data"
                 or str(decision.profile or "").strip().upper() in {"CODING", "RESEARCH"}
                 or single_unavailable_skill_prefers_grounded_diagnostics
                 or single_unavailable_external_action_workflow
@@ -1876,7 +2629,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         single_skill_is_grounded_weather = bool(
             primary_skill
             and str(primary_skill.get("name") or "").strip().lower() == "weather"
-            and not raw_is_contextual_followup_request
+            and not any_contextual_followup_request
             and not is_answer_reference_followup
         )
         single_skill_is_creator_workflow = bool(
@@ -1929,11 +2682,12 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             and not skill_creation_intent
             and not skill_install_intent
             and not required_tool
-            and not explicit_skill_use_request
+            and not explicit_or_named_skill_use_request
             and primary_skill is not None
             and (
                 _looks_like_live_research_query(effective_content)
                 or route_grounding_mode == "filesystem_inspection"
+                or route_grounding_mode == "web_live_data"
                 or str(decision.profile or "").strip().upper() in {"CODING", "RESEARCH"}
                 or single_skill_is_grounded_weather
                 or single_skill_prefers_grounded_diagnostics
@@ -2001,6 +2755,102 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             llm_current_message = f"{llm_current_message}\n\n{weather_skill_note}".strip()
 
     if (
+        not required_tool
+        and not skill_creation_intent
+        and not skill_install_intent
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and (
+            str(getattr(decision, "turn_category", "") or "").strip().lower()
+            in {"action", "contextual_action", "command"}
+            or is_contextual_followup_request
+            or is_short_confirmation
+            or pending_followup_intent_kind in {"assistant_offer", "assistant_committed_action"}
+        )
+    ):
+        late_semantic_action_tool = await classify_stateful_action_intent(
+            loop,
+            effective_content,
+            route_profile=str(getattr(decision, "profile", "") or ""),
+            turn_category=str(getattr(decision, "turn_category", "") or "action"),
+            working_directory=str(
+                (
+                    getattr(session, "metadata", {}).get("working_directory")
+                    if isinstance(getattr(session, "metadata", None), dict)
+                    else ""
+                )
+                or ""
+            ).strip(),
+            pending_followup_tool=str(pending_followup_tool or ""),
+            pending_followup_source=pending_followup_source,
+            last_tool_context=action_context_last_tool,
+            recent_history_file_path=recent_history_file_path,
+            explicit_file_path=explicit_file_path_candidate,
+            resolved_delivery_path=resolved_delivery_path_candidate,
+            resolved_list_dir_path=resolved_list_dir_path_candidate,
+        )
+        if (
+            not required_tool
+            and late_semantic_action_tool != "none"
+            and _tool_registry_has(loop, late_semantic_action_tool)
+            and (
+                _has_grounded_action_payload(late_semantic_action_tool, effective_content)
+                or late_semantic_action_tool == "find_files"
+                or late_semantic_action_tool in semantic_runtime_tools
+            )
+        ):
+            required_tool = late_semantic_action_tool
+            required_tool_query = effective_content
+            continuity_source = continuity_source or "semantic_action_request"
+            semantic_tool_override = True
+            if not decision.is_complex:
+                decision.is_complex = True
+                logger.info(
+                    "Late semantic action routing adopted grounded tool: "
+                    f"'{_normalize_text(effective_content)[:120]}' -> required_tool={required_tool}"
+                )
+    if (
+        not required_tool
+        and not skill_creation_intent
+        and not skill_install_intent
+        and not is_closing_ack
+        and not is_short_greeting
+        and not is_non_action_feedback
+        and not meta_skill_reference_turn
+    ):
+        late_structural_delivery_path = _extract_delivery_path_candidate(effective_content)
+        if late_structural_delivery_path:
+            if (
+                _tool_registry_has(loop, "write_file")
+                and _looks_like_structural_write_file_update_request(effective_content)
+            ):
+                required_tool = "write_file"
+                required_tool_query = effective_content
+                continuity_source = continuity_source or "action_request"
+                if not decision.is_complex:
+                    decision.is_complex = True
+                logger.info(
+                    "Late structural write-file routing adopted grounded tool: "
+                    f"'{_normalize_text(effective_content)[:120]}' -> required_tool=write_file"
+                )
+            elif (
+                _tool_registry_has(loop, "message")
+                and _looks_like_message_send_file_request(
+                    effective_content,
+                    explicit_path=late_structural_delivery_path,
+                )
+            ):
+                required_tool = "message"
+                required_tool_query = effective_content
+                continuity_source = continuity_source or "action_request"
+                if not decision.is_complex:
+                    decision.is_complex = True
+                logger.info(
+                    "Late structural delivery routing adopted grounded tool: "
+                    f"'{_normalize_text(effective_content)[:120]}' -> required_tool=message"
+                )
+    if (
         is_side_effect_request
         and not skill_creation_intent
         and not skill_install_intent
@@ -2011,6 +2861,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         action_required_tool, action_required_tool_query = infer_action_required_tool_for_loop(
             loop,
             effective_content,
+            metadata=session.metadata if isinstance(getattr(session, "metadata", None), dict) else None,
         )
         if action_required_tool:
             find_then_send_workflow = bool(
@@ -2018,8 +2869,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 and _tool_registry_has(loop, "find_files")
                 and _tool_registry_has(loop, "message")
                 and (
-                    _looks_like_message_delivery_request(effective_content)
-                    or _looks_like_message_delivery_request(intent_source_for_followup)
+                    _has_structural_delivery_intent(effective_content)
+                    or _has_structural_delivery_intent(intent_source_for_followup)
+                    or semantic_followup_intent == "delivery_request"
                 )
             )
             weak_parser_action_override = bool(
@@ -2032,6 +2884,9 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
                 and not meta_skill_reference_turn
             )
             if find_then_send_workflow:
+                if required_tool == "find_files":
+                    required_tool = None
+                    required_tool_query = effective_content
                 continuity_source = continuity_source or "action_request"
                 if not decision.is_complex:
                     decision.is_complex = True
@@ -2088,6 +2943,22 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         and not is_short_greeting
         and not is_non_action_feedback
         and not coding_build_request
+        and (
+            route_turn_category in {"action", "contextual_action", "command"}
+            or semantic_followup_intent
+            in {
+                "assistant_offer_accept",
+                "assistant_committed_action_followup",
+                "contextual_followup",
+                "delivery_request",
+                "file_context",
+                "directory_context",
+            }
+            or _has_structural_delivery_intent(effective_content)
+            or _looks_like_structural_write_file_update_request(effective_content)
+            or _looks_like_message_delivery_request(effective_content)
+            or _looks_like_message_delivery_request(intent_source_for_followup)
+        )
     ):
         if not decision.is_complex:
             decision.is_complex = True
@@ -2134,6 +3005,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         session_key=msg.session_key,
         text=effective_content,
         limit=3,
+        semantic_memory_recall=semantic_memory_intent == "memory_recall",
     )
     if relevant_memory_facts and not required_tool:
         memory_note_lines = "\n".join(f"- {fact}" for fact in relevant_memory_facts)
@@ -2184,8 +3056,8 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             continuity_note_candidate
             and (
                 route_turn_category in {"action", "contextual_action"}
-                or raw_is_contextual_followup_request
-                or raw_is_short_confirmation
+                or any_contextual_followup_request
+                or structural_short_confirmation
                 or is_file_context_followup
                 or bool(pending_followup_tool)
                 or pending_followup_intent_kind in {"assistant_offer", "assistant_committed_action"}
@@ -2254,7 +3126,13 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
 
         if not mcp_context_note:
             explicit_file_path = _extract_read_file_path(intent_source_for_followup)
-            if explicit_file_path and not is_side_effect_request:
+            if (
+                explicit_file_path
+                and not is_side_effect_request
+                and str(parser_required_tool or "").strip() != "message"
+                and not _has_structural_delivery_intent(effective_content)
+                and semantic_followup_intent != "delivery_request"
+            ):
                 file_analysis_path = explicit_file_path
                 explicit_file_analysis_note = _build_explicit_file_analysis_note(explicit_file_path)
                 if explicit_file_analysis_note:
@@ -2327,16 +3205,39 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         if message_send_request_followup:
             preserved_pending_kind = "assistant_committed_action"
             preserved_pending_request_text = followup_request_hint
+        followup_profile = str(decision.profile)
+        if required_tool and str(followup_profile or "").strip().upper() == "CHAT":
+            followup_profile = "GENERAL"
         _set_pending_followup_intent(
             session,
             intent_source_for_followup,
-            str(decision.profile),
+            followup_profile,
             now_ts,
             kind=preserved_pending_kind,
             request_text=preserved_pending_request_text,
         )
     elif not _looks_like_short_confirmation(intent_source_for_followup):
         _clear_pending_followup_intent(session)
+
+    effective_delivery_path = _extract_delivery_path_candidate(effective_content)
+    intent_delivery_path = _extract_delivery_path_candidate(intent_source_for_followup)
+    committed_delivery_request = bool(
+        committed_action_request_text
+        and _looks_like_message_send_file_request(
+            committed_action_request_text,
+            explicit_path=_extract_read_file_path(committed_action_request_text),
+        )
+    )
+    requires_message_delivery = bool(
+        required_tool == "message"
+        or semantic_followup_intent == "delivery_request"
+        or continuity_source in {"delivery_followup"}
+        or bool(effective_delivery_path)
+        or bool(intent_delivery_path)
+        or committed_delivery_request
+        or _looks_like_message_delivery_request(effective_content)
+        or _looks_like_message_delivery_request(intent_source_for_followup)
+    )
 
     metadata_state = SimpleNamespace(
         loop=loop,
@@ -2375,6 +3276,7 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
         skill_workflow_kind=skill_workflow_kind,
         skill_creation_request_text=skill_creation_request_text,
         requires_real_skill_execution=requires_real_skill_execution,
+        requires_message_delivery=requires_message_delivery,
         observed_turn_category=None,
         observed_continuity_source=None,
         runtime_locale=None,
@@ -2427,11 +3329,14 @@ async def process_message(loop: Any, msg: InboundMessage) -> OutboundMessage | N
             external_skill_lane=external_skill_lane,
             turn_id=turn_id,
             intent_source_for_followup=intent_source_for_followup,
+            pending_followup_intent_text=pending_followup_intent_text,
+            pending_followup_intent_kind=pending_followup_intent_kind,
             pending_followup_intent_request_text=pending_followup_intent_request_text,
             committed_action_request_text=committed_action_request_text,
             fast_direct_context=fast_direct_context,
             is_non_action_feedback=is_non_action_feedback,
             is_contextual_followup_request=is_contextual_followup_request,
+            semantic_memory_intent=semantic_memory_intent,
             turn_started=turn_started,
         )
     )

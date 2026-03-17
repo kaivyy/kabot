@@ -78,11 +78,26 @@ def _finalize_turn_metadata(state: Any) -> None:
         if isinstance(session_metadata, dict):
             session_metadata["last_turn_category"] = state.observed_turn_category
         state.msg.metadata["layered_context_sources"] = list(layered_context_sources)
+        runtime_delivery_signal = bool(
+            getattr(state, "requires_message_delivery", False)
+        )
         state.msg.metadata["requires_message_delivery"] = bool(
-            _looks_like_message_delivery_request(state.intent_source_for_followup)
+            runtime_delivery_signal
+            or str(getattr(state, "required_tool", "") or "").strip() == "message"
+            or str(getattr(state, "continuity_source", "") or "").strip()
+            in {"delivery_followup"}
+            or (
+                str(getattr(state, "continuity_source", "") or "").strip()
+                in {"committed_action", "committed_coding_action"}
+                and str(getattr(state, "committed_action_request_text", "") or "").strip()
+            )
+            or _looks_like_message_delivery_request(state.intent_source_for_followup)
             or _looks_like_message_delivery_request(state.effective_content)
-            or state.continuity_source in {"committed_action", "committed_coding_action"}
-            and _looks_like_message_delivery_request(state.committed_action_request_text)
+            or (
+                str(getattr(state, "continuity_source", "") or "").strip()
+                in {"committed_action", "committed_coding_action"}
+                and _looks_like_message_delivery_request(state.committed_action_request_text)
+            )
         )
         state.msg.metadata["runtime_locale"] = state.runtime_locale
         state.msg.metadata["effective_content"] = state.effective_content

@@ -70,8 +70,8 @@ PROCESS_RAM_KEYWORDS = (
 )
 
 SYSTEM_INFO_KEYWORDS = (
-    "spec", "specs", "specification",
     "hardware", "cpu", "gpu",
+    "pc specs", "computer specs", "hardware specs",
     "your pc", "your computer",
     "check pc",
     "system info", "sysinfo",
@@ -352,7 +352,6 @@ _RAM_CAPACITY_MARKERS = (
     "installed ram",
     "memory capacity",
     "ram capacity",
-    "spec",
 )
 _RAM_USAGE_MARKERS = (
     "usage",

@@ -11,6 +11,7 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
     _clear_pending_followup_tool,
     _extract_option_selection_reference,
     _extract_referenced_answer_item,
+    _is_short_context_followup,
     _looks_like_coding_build_request,
     _looks_like_side_effect_request,
     _normalize_text,
@@ -27,6 +28,37 @@ from kabot.agent.loop_core.tool_enforcement import infer_action_required_tool_fo
 def _apply_continuity_runtime(state: Any) -> None:
     """Mutate the provided turn state with answer-reference and follow-up context."""
 
+    session_action_metadata = (
+        getattr(state.session, "metadata", None)
+        if hasattr(state, "session")
+        else None
+    )
+    if not isinstance(session_action_metadata, dict):
+        session_action_metadata = None
+    semantic_followup_intent = str(
+        getattr(state, "semantic_followup_intent", "") or ""
+    ).strip().lower()
+    semantic_recent_answer_followup = semantic_followup_intent in {
+        "answer_reference",
+        "contextual_followup",
+        "option_selection",
+    }
+    answer_reference_followup = bool(
+        getattr(state, "is_answer_reference_followup", False)
+        or semantic_followup_intent == "answer_reference"
+    )
+    contextual_followup_request = bool(
+        getattr(state, "is_contextual_followup_request", False)
+        or semantic_followup_intent
+        in {
+            "contextual_followup",
+            "option_selection",
+            "file_context",
+            "directory_context",
+            "delivery_request",
+            "weather_context",
+        }
+    )
     allow_explicit_path_hint_for_committed_delivery = bool(
         state.pending_followup_intent_kind == "assistant_committed_action"
         and state.required_tool == "list_dir"
@@ -34,8 +66,9 @@ def _apply_continuity_runtime(state: Any) -> None:
     recent_answer_context_candidate = bool(
         state.recent_assistant_answer
         and (
-            state.raw_is_answer_reference_followup
-            or state.raw_is_contextual_followup_request
+            answer_reference_followup
+            or contextual_followup_request
+            or semantic_recent_answer_followup
         )
     )
     recent_answer_option_selection_reference = (
@@ -61,8 +94,53 @@ def _apply_continuity_runtime(state: Any) -> None:
         if recent_answer_context_candidate
         else None
     )
+    semantic_option_selection_without_pending_offer = bool(
+        not state.required_tool
+        and semantic_followup_intent == "option_selection"
+        and not (
+            state.pending_followup_intent
+            and state.pending_followup_intent_kind in {
+                "assistant_offer",
+                "assistant_committed_action",
+            }
+        )
+        and recent_answer_context_candidate
+        and not state.is_closing_ack
+        and not state.is_short_greeting
+        and not state.is_non_action_feedback
+        and not state.is_explicit_new_request
+    )
+    if semantic_option_selection_without_pending_offer:
+        sections = [state.effective_content]
+        sections.append(
+            "[Follow-up Context]\n"
+            f"{state.recent_assistant_answer}\n\n"
+            "[Option Selection Note]\n"
+            "The user is selecting or asking about one option from the recent assistant answer above. "
+            "Continue from that option list directly instead of treating this as a brand-new request."
+        )
+        if recent_answer_option_selection_reference:
+            sections.append(
+                "[Selection Note]\n"
+                f"The user appears to be referring to option {recent_answer_option_selection_reference} "
+                "from the follow-up context above. Interpret their reply as selecting or asking about "
+                "that specific option."
+            )
+        if recent_answer_referenced_item:
+            sections.append(
+                "[Referenced Item Context]\n"
+                f"{recent_answer_referenced_item}\n\n"
+                "[Referenced Item Note]\n"
+                "Prefer answering from that specific item directly instead of repeating the whole list."
+            )
+        state.effective_content = "\n\n".join(section for section in sections if section).strip()
+        state.continuity_source = "option_selection"
+        logger.info(
+            f"Semantic option-selection context continued: '{_normalize_text(state.effective_content)[:120]}'"
+        )
     if (
         not state.required_tool
+        and not semantic_option_selection_without_pending_offer
         and not (
             state.pending_followup_intent
             and state.pending_followup_intent_kind in {
@@ -151,9 +229,17 @@ def _apply_continuity_runtime(state: Any) -> None:
     pending_intent_kind = str(
         ((state.pending_followup_intent or {}).get("kind") if state.pending_followup_intent else "") or ""
     ).strip().lower()
+    generic_short_context_followup = bool(
+        _is_short_context_followup(state.effective_content)
+        and not state.is_answer_reference_followup
+        and not state.is_explicit_new_request
+    )
     generic_pending_intent_followup = bool(
         pending_intent_kind not in {"assistant_offer", "assistant_committed_action"}
-        and state.is_short_confirmation
+        and (
+            state.is_short_confirmation
+            or generic_short_context_followup
+        )
     )
     skill_managed_pending_intent_followup = bool(
         pending_intent_kind in {"assistant_offer", "assistant_committed_action"}
@@ -216,6 +302,18 @@ def _apply_continuity_runtime(state: Any) -> None:
             and not answer_reference_followup
         ):
             inferred_tool = _resolve_grounded_required_tool(state.loop, intent_text)
+            allow_parser_hint_revival = bool(
+                intent_profile in {"RESEARCH", "CODING"}
+                or str(getattr(state, "pending_followup_tool", "") or "").strip().lower()
+                in {"web_search", "web_fetch"}
+            )
+            if not inferred_tool and allow_parser_hint_revival:
+                parser_hint_resolver = getattr(state.loop, "_required_tool_for_query", None)
+                if callable(parser_hint_resolver):
+                    try:
+                        inferred_tool = parser_hint_resolver(intent_text)
+                    except Exception:
+                        inferred_tool = None
         if intent_kind == "assistant_committed_action":
             committed_task_text = intent_request_text or intent_text
             state.committed_action_request_text = (
@@ -265,6 +363,7 @@ def _apply_continuity_runtime(state: Any) -> None:
                     ) = infer_action_required_tool_for_loop(
                         state.loop,
                         committed_task_text,
+                        metadata=session_action_metadata,
                     )
                 if inferred_committed_tool:
                     override_list_dir_with_committed_delivery = bool(
@@ -309,6 +408,23 @@ def _apply_continuity_runtime(state: Any) -> None:
                 and bool(getattr(state.perf_cfg, "fast_first_response", True))
                 and state.required_tool in state.direct_tools
             )
+        elif (
+            intent_kind not in {"assistant_offer", "assistant_committed_action"}
+            and generic_short_context_followup
+            and intent_profile == "GENERAL"
+        ):
+            logger.info(
+                "Dropping stale generic pending intent reuse for "
+                f"'{_normalize_text(state.effective_content)[:120]}'"
+            )
+            _clear_pending_followup_intent(state.session)
+            state.pending_followup_intent = None
+            state.pending_followup_intent_text = ""
+            state.pending_followup_intent_kind = ""
+            state.pending_followup_intent_request_text = ""
+            _clear_pending_followup_tool(state.session)
+            state.pending_followup_tool = None
+            state.pending_followup_source = ""
         else:
             state.effective_content = (
                 f"{state.effective_content}\n\n[Follow-up Context]\n{intent_text}"
@@ -320,6 +436,31 @@ def _apply_continuity_runtime(state: Any) -> None:
                 offer_request_is_coding = False
                 offer_request_is_side_effect = False
                 offer_action_context_text = ""
+                offered_next_action_tool = None
+                offered_next_action_query = None
+                if intent_text and not state.required_tool:
+                    offered_next_action_tool = _resolve_grounded_required_tool(
+                        state.loop,
+                        intent_text,
+                    )
+                    offered_next_action_query = intent_text if offered_next_action_tool else None
+                    if not offered_next_action_tool:
+                        (
+                            offered_next_action_tool,
+                            offered_next_action_query,
+                        ) = infer_action_required_tool_for_loop(
+                            state.loop,
+                            intent_text,
+                            metadata=session_action_metadata,
+                        )
+                    if offered_next_action_tool:
+                        state.required_tool = offered_next_action_tool
+                        state.required_tool_query = str(
+                            offered_next_action_query or intent_text
+                        ).strip()
+                        state.continuity_source = "action_request"
+                        state.decision.is_complex = True
+                        offer_action_context_text = intent_text
                 if offer_request_text:
                     state.effective_content = (
                         f"{state.effective_content}\n\n"
@@ -337,6 +478,7 @@ def _apply_continuity_runtime(state: Any) -> None:
                     ) = infer_action_required_tool_for_loop(
                         state.loop,
                         offer_request_text,
+                        metadata=session_action_metadata,
                     )
                     offer_request_is_coding = _looks_like_coding_build_request(
                         offer_request_text,
@@ -359,7 +501,8 @@ def _apply_continuity_runtime(state: Any) -> None:
                     elif offer_request_is_side_effect:
                         state.continuity_source = state.continuity_source or "action_request"
                         state.decision.is_complex = True
-                    offer_action_context_text = offer_request_text
+                    if not offer_action_context_text:
+                        offer_action_context_text = offer_request_text
                 if intent_text:
                     merged_offer_action_context = "\n".join(
                         part
@@ -388,6 +531,7 @@ def _apply_continuity_runtime(state: Any) -> None:
                             ) = infer_action_required_tool_for_loop(
                                 state.loop,
                                 merged_offer_action_context,
+                                metadata=session_action_metadata,
                             )
                         if offer_intent_action_tool:
                             state.required_tool = offer_intent_action_tool
@@ -464,6 +608,15 @@ def _apply_continuity_runtime(state: Any) -> None:
                     "from the follow-up context above. Interpret their reply as selecting or "
                     "asking about that option. Continue naturally and do not simply repeat "
                     "the option number back."
+                )
+            elif str(getattr(state, "semantic_followup_intent", "") or "").strip().lower() == "option_selection":
+                state.effective_content = (
+                    f"{state.effective_content}\n\n"
+                    "[Selection Note]\n"
+                    "The user appears to be asking about one option from the follow-up context "
+                    "above. Keep the reply grounded in that recent option list and resolve the "
+                    "intended item from the current wording and recent conversation state instead "
+                    "of treating this as a brand-new request."
                 )
             if not state.decision.is_complex and str(state.decision.profile).upper() == "CHAT":
                 state.decision.profile = intent_profile if intent_profile else state.decision.profile

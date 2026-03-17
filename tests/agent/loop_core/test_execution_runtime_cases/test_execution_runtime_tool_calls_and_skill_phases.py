@@ -1225,6 +1225,20 @@ async def test_run_agent_loop_uses_executing_and_verified_phases_for_approved_sk
         _plan_task=AsyncMock(return_value=None),
         _apply_think_mode=lambda m, _s: m,
         _execute_required_tool_fallback=AsyncMock(return_value=raw_result),
+        _call_llm_with_fallback=AsyncMock(return_value=(LLMResponse(content="unused"), None)),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(10, "ok")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, msgs, _resp, _sess: msgs),
+        context=SimpleNamespace(
+            add_assistant_message=lambda msgs, content, tool_calls=None, reasoning_content=None: [
+                *msgs,
+                {"role": "assistant", "content": content},
+            ]
+        ),
+        context_guard=SimpleNamespace(check_overflow=lambda _m, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        tools=SimpleNamespace(has=lambda _name: _name == "read_file"),
         provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="unused"))),
         bus=SimpleNamespace(publish_outbound=AsyncMock(side_effect=_publish)),
     )
@@ -1236,6 +1250,8 @@ async def test_run_agent_loop_uses_executing_and_verified_phases_for_approved_sk
         content="oke lanjut implementasi",
         metadata={
             "runtime_locale": "en",
+            "required_tool": "read_file",
+            "required_tool_query": "oke lanjut implementasi",
             "skill_creation_guard": {
                 "active": True,
                 "stage": "approved",
@@ -1254,6 +1270,72 @@ async def test_run_agent_loop_uses_executing_and_verified_phases_for_approved_sk
     assert "executing" in phases
     assert "verified" in phases
     assert "tool" in phases
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_skill_creation_discovery_skips_plan_and_critic_retries():
+    response = LLMResponse(
+        content=(
+            "I can turn that API into a Kabot skill. "
+            "I just need your approval before I scaffold files in the workspace skills folder."
+        )
+    )
+    loop = SimpleNamespace(
+        max_iterations=1,
+        _resolve_models_for_message=lambda _msg: ["openai-codex/gpt-5.3-codex"],
+        _required_tool_for_query=lambda _q: None,
+        _is_weak_model=lambda _model: False,
+        _plan_task=AsyncMock(return_value="1. Ask for approval\n2. Scaffold the skill"),
+        _apply_think_mode=lambda m, _s: m,
+        _call_llm_with_fallback=AsyncMock(return_value=(response, None)),
+        _self_evaluate=lambda _q, _a: (True, None),
+        _critic_evaluate=AsyncMock(return_value=(2, "retry")),
+        _log_lesson=AsyncMock(),
+        _process_tool_calls=AsyncMock(side_effect=lambda _msg, msgs, _resp, _sess: msgs),
+        context=SimpleNamespace(
+            add_assistant_message=lambda msgs, content, tool_calls=None, reasoning_content=None: [
+                *msgs,
+                {"role": "assistant", "content": content},
+            ]
+        ),
+        context_guard=SimpleNamespace(check_overflow=lambda _m, _model: False),
+        compactor=SimpleNamespace(compact=AsyncMock()),
+        tools=SimpleNamespace(has=lambda _name: False),
+        provider=SimpleNamespace(),
+        bus=SimpleNamespace(publish_outbound=AsyncMock(return_value=None)),
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        chat_id="chat-1",
+        sender_id="user",
+        content="bikin skill scrape untuk endpoint game checker ini",
+        metadata={
+            "runtime_locale": "en",
+            "route_profile": "CODING",
+            "skill_creation_guard": {
+                "active": True,
+                "stage": "discovery",
+                "approved": False,
+                "request_text": "bikin skill scrape untuk endpoint game checker ini",
+            },
+        },
+    )
+    session = SimpleNamespace(metadata={})
+
+    result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
+
+    assert result == response.content
+    assert msg.metadata.get("directive_no_tools") is True
+    loop._plan_task.assert_not_awaited()
+    loop._critic_evaluate.assert_not_awaited()
+    call_messages = loop._call_llm_with_fallback.await_args.kwargs.get("messages") or []
+    assert not any(
+        "Now execute this plan step by step." in str(message.get("content") or "")
+        for message in call_messages
+        if isinstance(message, dict)
+    )
+
 
 @pytest.mark.asyncio
 async def test_run_agent_loop_direct_process_memory_returns_raw_without_summary_chat():

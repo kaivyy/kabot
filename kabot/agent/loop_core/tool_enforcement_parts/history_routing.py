@@ -7,9 +7,15 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
-from kabot.agent.cron_fallback_nlp import required_tool_for_query
+from kabot.agent.cron_fallback_nlp import (
+    looks_like_meta_skill_or_workflow_prompt,
+    required_tool_for_query,
+)
 from kabot.agent.cron_fallback_nlp import build_group_id as nlp_build_group_id
 from kabot.agent.cron_fallback_nlp import make_unique_schedule_title as nlp_make_unique_schedule_title
+from kabot.agent.cron_fallback_parts.intent_scoring import (
+    _looks_like_large_file_scan_request,
+)
 from kabot.agent.loop_core.tool_enforcement_parts.action_requests import (
     infer_action_required_tool_for_loop,
 )
@@ -81,7 +87,8 @@ _EXPLICIT_CRON_MANAGEMENT_RE = re.compile(
 )
 _EXPLICIT_SYSTEM_INFO_RE = re.compile(
     r"(?i)\b("
-    r"system info|sysinfo|specs?|specification|hardware|cpu|gpu"
+    r"system info|sysinfo|hardware|cpu|gpu|"
+    r"free space|disk space|disk usage|storage|ssd|hdd"
     r")\b"
 )
 _EXPLICIT_PROCESS_MEMORY_RE = re.compile(
@@ -252,11 +259,15 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
     cases (URLs, filesystem targets, reminders, system ops), while leaving
     generic knowledge/live-data turns to later skill/live-research latches.
     """
+    if looks_like_meta_skill_or_workflow_prompt(question):
+        return None
     if loop.tools.has("web_fetch") and _looks_like_direct_page_fetch_request(question):
         return "web_fetch"
     action_tool, _ = infer_action_required_tool_for_loop(loop, question)
     if action_tool:
         return action_tool
+    if _looks_like_large_file_scan_request(question):
+        return None
     if (
         loop.tools.has("list_dir")
         and not _extract_read_file_path(question)
@@ -265,25 +276,30 @@ def required_tool_for_query_for_loop(loop: Any, question: str) -> str | None:
         return "list_dir"
     if loop.tools.has("read_file") and _looks_like_explicit_read_file_request(question):
         return "read_file"
+    if loop.tools.has("cron") and _looks_like_explicit_cron_request(question):
+        return "cron"
+    if loop.tools.has("cleanup_system") and _looks_like_explicit_cleanup_request(question):
+        return "cleanup_system"
+    if loop.tools.has("get_process_memory") and _looks_like_explicit_process_memory_request(question):
+        return "get_process_memory"
+    if loop.tools.has("server_monitor") and _looks_like_explicit_server_monitor_request(question):
+        return "server_monitor"
+    if loop.tools.has("speedtest") and _looks_like_explicit_speedtest_request(question):
+        return "speedtest"
+    if loop.tools.has("get_system_info") and _looks_like_explicit_system_info_request(question):
+        return "get_system_info"
+    if (
+        _looks_like_explicit_update_request(question)
+        and (loop.tools.has("check_update") or loop.tools.has("system_update"))
+    ):
+        resolved_update_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+        if resolved_update_tool in {"check_update", "system_update"}:
+            return resolved_update_tool
 
-    resolved_tool = None
-    if _looks_like_explicit_cron_request(question):
-        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
-    elif _looks_like_explicit_system_info_request(question):
-        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
-    elif _looks_like_explicit_process_memory_request(question):
-        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
-    elif _looks_like_explicit_server_monitor_request(question):
-        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
-    elif _looks_like_explicit_speedtest_request(question):
-        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
-    elif _looks_like_explicit_cleanup_request(question):
-        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
-    elif _looks_like_explicit_update_request(question):
-        resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
+    resolved_tool = _resolve_parser_tool_hint_for_loop(loop, question)
     if resolved_tool == "read_file":
         return "read_file" if loop.tools.has("read_file") and _looks_like_explicit_read_file_request(question) else None
-    if resolved_tool in _DETERMINISTIC_PARSER_TOOL_WHITELIST:
+    if resolved_tool in {"save_memory"}:
         return resolved_tool
     # Keep parser-scored weather/news/finance lookups available as soft signals
     # inside the runtime, but stop forcing them through deterministic routing.

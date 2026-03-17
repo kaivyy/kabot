@@ -98,9 +98,11 @@ class DashboardMixin:
             return unauthorized
         status = self._read_dashboard_status()
         recent_turn = status.get("recent_turn") if isinstance(status.get("recent_turn"), dict) else {}
+        memory = status.get("memory") if isinstance(status.get("memory"), dict) else {}
         extra = {k: v for k, v in status.items() if k not in {"status", "uptime_seconds", "channels_enabled", "cron_jobs", "model"}}
         pretty = html.escape(json.dumps(extra or {}, ensure_ascii=False, indent=2))
         recent_turn_block = ""
+        memory_block = ""
         if recent_turn:
             route_decision_snapshot = recent_turn.get("route_decision_snapshot")
             if not isinstance(route_decision_snapshot, dict):
@@ -129,11 +131,27 @@ class DashboardMixin:
                 "</table>"
                 "</div>"
             )
+        if memory:
+            memory_block = (
+                "<div style='margin:0 0 12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:rgba(15,23,42,.04);'>"
+                "<div style='font-size:11px;color:var(--muted);margin-bottom:8px;'>Memory Runtime</div>"
+                "<table class='mono' style='width:100%;font-size:11px;border-collapse:collapse;'>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Status</th><td>{html.escape(str(memory.get('status') or 'unknown'))}</td></tr>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Backend</th><td>{html.escape(str(memory.get('backend') or ''))}</td></tr>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Retrieval Mode</th><td>{html.escape(str(memory.get('retrieval_mode') or ''))}</td></tr>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Embedding Provider</th><td>{html.escape(str(memory.get('embedding_provider') or ''))}</td></tr>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Embedding Model</th><td>{html.escape(str(memory.get('embedding_model') or ''))}</td></tr>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Lazy Probe</th><td>{html.escape(str(memory.get('lazy_probe') if 'lazy_probe' in memory else ''))}</td></tr>"
+                f"<tr><th style='text-align:left;padding:4px 8px 4px 0;'>Hybrid Loaded</th><td>{html.escape(str(memory.get('hybrid_loaded') if 'hybrid_loaded' in memory else ''))}</td></tr>"
+                "</table>"
+                "</div>"
+            )
         fragment = (
             "<div style='padding:18px;'>"
             "<h2 style='margin:0 0 12px;font-size:15px;font-weight:600;'>Runtime Details</h2>"
             "<div style='font-size:11px;color:var(--muted);margin-bottom:8px;'>Structured payload from runtime status provider.</div>"
             f"{recent_turn_block}"
+            f"{memory_block}"
             f"<pre class='mono' style='font-size:11px;max-height:250px;overflow:auto;'>{pretty}</pre>"
             "</div>"
         )

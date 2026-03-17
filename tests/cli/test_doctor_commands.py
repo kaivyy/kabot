@@ -120,6 +120,39 @@ def test_doctor_routing_mode_uses_routing_renderer(monkeypatch, runner):
     assert called["routing"] is True
 
 
+def test_doctor_health_report_renders_memory_stack_surface(monkeypatch, runner):
+    from kabot.cli.commands import app
+
+    def _fake_run_full_diagnostic(self, fix: bool = False, sync_bootstrap: bool = False):
+        _ = self, fix, sync_bootstrap
+        return {
+            "integrity": [{"item": "Workspace", "status": "OK", "detail": "Path: C:/tmp/workspace"}],
+            "bootstrap_parity": [],
+            "environment": [{"item": "Runtime", "status": "OK", "detail": "desktop"}],
+            "memory": {
+                "status": "ok",
+                "backend": "hybrid",
+                "retrieval_mode": "full_hybrid",
+                "embedding_provider": "sentence-transformers",
+                "embedding_model": "all-MiniLM-L6-v2",
+                "lazy_probe": False,
+                "hybrid_loaded": True,
+            },
+            "dependencies": [],
+            "connectivity": [],
+            "skills": {"eligible": [], "missing": []},
+        }
+
+    monkeypatch.setattr("kabot.utils.doctor.KabotDoctor.run_full_diagnostic", _fake_run_full_diagnostic)
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "Memory Stack" in result.output
+    assert "- backend: hybrid" in result.output
+    assert "- retrieval_mode: full_hybrid" in result.output
+    assert "- embedding_model: all-MiniLM-L6-v2" in result.output
+
+
 def test_doctor_smoke_agent_invokes_smoke_matrix_with_threshold_args(monkeypatch, runner):
     from kabot.cli.commands import app
 

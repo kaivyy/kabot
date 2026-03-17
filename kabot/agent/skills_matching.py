@@ -240,12 +240,13 @@ def looks_like_skill_install_request(text: str) -> bool:
     has_domain = _has_skill_domain_signal(content)
     has_source = _has_skill_source_signal(content)
     has_discovery = _has_skill_discovery_signal(content)
+    has_named_skill_reference = bool(_SKILL_NAMEISH_RE.search(content))
 
     if _DIRECT_GITHUB_SKILL_URL_RE.search(content) and not looks_like_skill_catalog_request(content):
         return True
     if _DIRECT_GITHUB_SKILL_PATH_RE.search(content) and not looks_like_skill_catalog_request(content):
         return True
-    if has_install and (has_domain or has_source):
+    if has_install and has_domain and (has_source or has_named_skill_reference):
         return True
     if has_domain and has_source and has_discovery:
         return True

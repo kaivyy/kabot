@@ -13,12 +13,14 @@ from dataclasses import dataclass
 from typing import Literal
 
 from kabot.providers.base import LLMProvider
+from kabot.agent.semantic_llm import call_semantic_llm_with_fallback
 
 logger = logging.getLogger(__name__)
 
 IntentType = Literal["CODING", "CHAT", "RESEARCH", "GENERAL"]
 TurnCategory = Literal["chat", "action", "contextual_action", "command"]
 GroundingMode = Literal["none", "filesystem_inspection"]
+WorkflowIntent = Literal["none", "skill_creator", "skill_installer"]
 
 _ROUTE_CATEGORY_RE = re.compile(r"\b(CODING|CHAT|RESEARCH|GENERAL)\b", re.IGNORECASE)
 _ROUTE_TURN_CATEGORY_RE = re.compile(r"\b(chat|action|contextual_action|command)\b", re.IGNORECASE)
@@ -33,6 +35,7 @@ class RouteDecision:
     is_complex: bool
     turn_category: TurnCategory = "chat"
     grounding_mode: GroundingMode = "none"
+    workflow_intent: WorkflowIntent = "none"
 
 
 class IntentRouter:
@@ -65,6 +68,13 @@ class IntentRouter:
     def _normalize_grounding_mode(value: str | None) -> GroundingMode | None:
         normalized = str(value or "").strip().lower()
         if normalized in {"none", "filesystem_inspection"}:
+            return normalized  # type: ignore[return-value]
+        return None
+
+    @staticmethod
+    def _normalize_workflow_intent(value: str | None) -> WorkflowIntent | None:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"none", "skill_creator", "skill_installer"}:
             return normalized  # type: ignore[return-value]
         return None
 
@@ -116,6 +126,9 @@ class IntentRouter:
             grounding_mode = self._normalize_grounding_mode(
                 str(parsed_payload.get("grounding_mode") or "")
             )
+            workflow_intent = self._normalize_workflow_intent(
+                str(parsed_payload.get("workflow_intent") or "")
+            )
             is_complex = self._parse_bool(parsed_payload.get("is_complex"))
             if profile:
                 resolved_turn_category = turn_category or (
@@ -142,6 +155,7 @@ class IntentRouter:
                     is_complex=resolved_is_complex,
                     turn_category=resolved_turn_category,
                     grounding_mode=resolved_grounding_mode,
+                    workflow_intent=workflow_intent or "none",
                 )
 
         profile_match = _ROUTE_CATEGORY_RE.search(raw)
@@ -159,6 +173,10 @@ class IntentRouter:
         grounding_mode_match = re.search(r"\b(none|filesystem_inspection)\b", raw, re.IGNORECASE)
         grounding_mode = self._normalize_grounding_mode(
             grounding_mode_match.group(1) if grounding_mode_match else ""
+        )
+        workflow_match = re.search(r"\b(skill_creator|skill_installer|none)\b", raw, re.IGNORECASE)
+        workflow_intent = self._normalize_workflow_intent(
+            workflow_match.group(1) if workflow_match else ""
         )
         resolved_grounding_mode = grounding_mode or "none"
         if resolved_grounding_mode == "filesystem_inspection" and turn_category == "chat":
@@ -178,6 +196,7 @@ class IntentRouter:
             is_complex=is_complex,
             turn_category=turn_category,
             grounding_mode=resolved_grounding_mode,
+            workflow_intent=workflow_intent or "none",
         )
 
     async def route(self, content: str) -> RouteDecision:
@@ -221,7 +240,7 @@ class IntentRouter:
         prompt = f"""Classify this user turn for runtime routing.
 
 Return ONLY one JSON object with this schema:
-{{"profile":"CODING|CHAT|RESEARCH|GENERAL","turn_category":"chat|action|contextual_action|command","is_complex":true|false,"grounding_mode":"none|filesystem_inspection"}}
+{{"profile":"CODING|CHAT|RESEARCH|GENERAL","turn_category":"chat|action|contextual_action|command","is_complex":true|false,"grounding_mode":"none|filesystem_inspection","workflow_intent":"none|skill_creator|skill_installer"}}
 
 Definitions:
 - CODING: code, debugging, app/site/script/config implementation, or technical build work.
@@ -232,24 +251,30 @@ Definitions:
 - contextual_action: a short follow-up that depends on prior task context and should continue the same work.
 - command: slash or command-style control input.
 - filesystem_inspection: the user wants grounded local filesystem evidence before you explain what a folder, repo, project, app, codebase, local config, or workspace docs/bootstrap files contain, configure, or imply about behavior.
+- skill_creator: the user wants to create or update a skill/capability/workflow, especially when they provide API docs, endpoints, JSON examples, schemas, or trigger/output requirements for a new skill.
+- skill_installer: the user wants to install, list, update, or sync external skills.
 
 Important:
 - Understand the user's actual language. Do not rely on fixed English, Indonesian, Japanese, or Chinese keywords.
 - If the user is asking to continue/open/read/send/create/edit/run/check something in any language, prefer action or contextual_action.
 - If the user is asking what a local folder, repo, project, app, or codebase is, how it is structured, what it contains, how it is configured, or what local docs/config/bootstrap files say about behavior, prefer grounding_mode=filesystem_inspection.
+- Use workflow_intent=skill_creator or skill_installer only when that workflow is the primary request. Otherwise use workflow_intent=none.
 - If the user is mainly asking for an explanation or casual answer, prefer chat.
 
 User message:
 \"\"\"{preview}\"\"\""""
 
-        try:
-            response = await self.provider.chat(
-                messages=[{"role": "user", "content": prompt}],
-                model=self.model,
-                max_tokens=120,
-                temperature=0.0,
-            )
+        response = await call_semantic_llm_with_fallback(
+            provider=self.provider,
+            messages=[{"role": "user", "content": prompt}],
+            primary_model=self.model,
+            max_tokens=120,
+            temperature=0.0,
+        )
+        if response is not None:
             return self._parse_route_response(str(response.content or ""), content)
+        try:
+            raise RuntimeError("semantic route classification exhausted fallback chain")
         except Exception as e:
             logger.warning(f"Structured route classification failed: {e}. Falling back.")
             return None
@@ -273,12 +298,15 @@ User message:
 Reply with ONLY the category name (e.g. CODING). Do not add punctuation or explanation."""
 
         try:
-            response = await self.provider.chat(
+            response = await call_semantic_llm_with_fallback(
+                provider=self.provider,
                 messages=[{"role": "user", "content": prompt}],
-                model=self.model,
+                primary_model=self.model,
                 max_tokens=10,
                 temperature=0.0,
             )
+            if response is None:
+                raise RuntimeError("semantic profile classification exhausted fallback chain")
 
             intent = response.content.strip().upper()
             match = re.search(r"\b(CODING|CHAT|RESEARCH|GENERAL)\b", intent)

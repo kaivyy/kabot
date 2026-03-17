@@ -288,6 +288,7 @@ def cron_runs(
 def status():
     """Show kabot status."""
     from kabot.config.loader import get_config_path, load_config
+    from kabot.memory.memory_factory import MemoryFactory
 
     config_path = get_config_path()
     config = load_config()
@@ -302,6 +303,20 @@ def status():
         from kabot.providers.registry import PROVIDERS
 
         console.print(f"Model: {config.agents.defaults.model}")
+        try:
+            memory = MemoryFactory.create(
+                config.model_dump() if hasattr(config, "model_dump") else config.dict(),
+                workspace,
+                lazy_probe=False,
+            )
+            memory_stats = memory.get_stats() if hasattr(memory, "get_stats") else {}
+        except Exception:
+            memory_stats = {}
+
+        if isinstance(memory_stats, dict) and memory_stats:
+            console.print(f"Memory Backend: {memory_stats.get('backend', '')}")
+            console.print(f"Memory Mode: {memory_stats.get('retrieval_mode', '')}")
+            console.print(f"Embedding Model: {memory_stats.get('embedding_model', '')}")
 
         # Check API keys from registry
         for spec in PROVIDERS:

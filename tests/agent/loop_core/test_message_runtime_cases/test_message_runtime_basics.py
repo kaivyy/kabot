@@ -640,7 +640,7 @@ async def test_process_message_temporal_query_uses_local_fast_reply(monkeypatch)
     monkeypatch.setattr(
         message_runtime_module,
         "build_temporal_fast_reply",
-        lambda text, *, locale=None, now_local=None: "Hari ini Senin.",
+        lambda text, *, locale=None, now_local=None, semantic_intent=None: "Hari ini Senin.",
     )
 
     msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="hari apa sekarang")

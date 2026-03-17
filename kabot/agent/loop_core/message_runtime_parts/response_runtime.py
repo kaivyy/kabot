@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from contextlib import suppress
 from typing import Any
@@ -33,7 +32,13 @@ from kabot.agent.loop_core.message_runtime_parts.helpers import (
 from kabot.agent.loop_core.message_runtime_parts.bootstrap_onboarding import (
     update_bootstrap_onboarding_state,
 )
+from kabot.agent.loop_core.message_runtime_parts.language_semantics import (
+    classify_language_followup_intent,
+)
 from kabot.agent.loop_core.message_runtime_parts.temporal import build_temporal_fast_reply
+from kabot.agent.loop_core.message_runtime_parts.temporal_semantics import (
+    classify_temporal_fast_intent,
+)
 from kabot.agent.loop_core.message_runtime_parts.turn_helpers import (
     _build_answer_reference_fast_reply,
 )
@@ -69,15 +74,35 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
     external_skill_lane = bool(getattr(state, "external_skill_lane", False))
     turn_id = state.turn_id
     intent_source_for_followup = state.intent_source_for_followup
+    pending_followup_intent_text = state.pending_followup_intent_text
+    pending_followup_intent_kind = state.pending_followup_intent_kind
     pending_followup_intent_request_text = state.pending_followup_intent_request_text
     committed_action_request_text = state.committed_action_request_text
     fast_direct_context = state.fast_direct_context
     is_non_action_feedback = state.is_non_action_feedback
     is_contextual_followup_request = state.is_contextual_followup_request
+    semantic_memory_intent = str(getattr(state, "semantic_memory_intent", "") or "").strip().lower()
     turn_started = state.turn_started
+    final_content: str | None = None
+    response_error: Exception | None = None
+
+    def _persist_session_state_on_error() -> None:
+        if msg.session_key.startswith("background:"):
+            return
+        refresh_snapshot = getattr(session, "refresh_durable_history_snapshot", None)
+        if callable(refresh_snapshot):
+            try:
+                refresh_snapshot()
+            except Exception as exc:
+                logger.warning(f"Session snapshot refresh failed for {msg.session_key}: {exc}")
+        try:
+            loop.sessions.save(session)
+        except Exception as exc:
+            logger.warning(f"Session save failed for {msg.session_key}: {exc}")
 
     accuracy_context_required = bool(
         is_non_action_feedback
+        or semantic_memory_intent in {"memory_commit", "memory_recall"}
         or _looks_like_temporal_context_query(effective_content)
         or _looks_like_memory_commit_turn(effective_content)
         or _looks_like_memory_recall_turn(effective_content)
@@ -105,21 +130,34 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
         and not explicit_file_analysis_note
         and not mcp_context_note
     ):
+        semantic_temporal_intent = await classify_temporal_fast_intent(
+            loop,
+            effective_content,
+            locale_hint=runtime_locale or "",
+        )
         temporal_fast_reply = grounded_followup_fast_reply or build_temporal_fast_reply(
             effective_content,
             locale=runtime_locale,
+            semantic_intent=semantic_temporal_intent,
         )
 
-    raw_turn_text = str(getattr(msg, "content", "") or "").strip().lower()
-    language_switch_followup = bool(
-        re.fullmatch(r"pakai\s+bahasa\s+inggris|dalam\s+bahasa\s+inggris", raw_turn_text)
-    )
-    knowledge_followup_fast_path = bool(
+    knowledge_followup_candidate = bool(
         continuity_source == "knowledge_followup"
         and "[Knowledge-First Note]" in str(effective_content or "")
-        and language_switch_followup
         and not decision.is_complex
         and not required_tool
+    )
+    semantic_language_intent = "none"
+    if knowledge_followup_candidate:
+        semantic_language_intent = await classify_language_followup_intent(
+            loop,
+            str(getattr(msg, "content", "") or ""),
+            context_label="knowledge_followup",
+        )
+    language_switch_followup = bool(semantic_language_intent == "language_switch")
+    knowledge_followup_fast_path = bool(
+        knowledge_followup_candidate
+        and language_switch_followup
     )
     fast_simple_context = bool(
         perf_cfg
@@ -155,7 +193,8 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
             "message, and do not claim delivery unless the result was actually sent."
         )
 
-    queue_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
+    msg_meta = msg.metadata if isinstance(msg.metadata, dict) else {}
+    queue_meta = msg_meta
     queue_info = queue_meta.get("queue") if isinstance(queue_meta.get("queue"), dict) else {}
     dropped_count = int(queue_info.get("dropped_count", 0) or 0)
     dropped_preview = queue_info.get("dropped_preview", [])
@@ -288,6 +327,8 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
                     token_mode=token_mode,
                     probe_mode=probe_mode,
                 )
+                if semantic_memory_intent == "memory_recall":
+                    budget_hints["memory_context_required"] = True
                 if mcp_context_note:
                     budget_hints["mcp_context_mode"] = True
                     budget_hints["compact_system_prompt"] = True
@@ -295,19 +336,31 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
                     budget_hints["compact_system_prompt"] = True
                 if external_skill_lane and forced_skill_names:
                     budget_hints["summary_only_requested_skills"] = True
-                messages = await asyncio.to_thread(
-                    context_builder.build_messages,
-                    history=conversation_history,
-                    current_message=llm_current_message,
-                    skill_names=forced_skill_names,
-                    media=msg.media if hasattr(msg, "media") else None,
-                    channel=msg.channel,
-                    chat_id=msg.chat_id,
-                    profile=decision.profile,
-                    tool_names=loop.tools.tool_names,
-                    untrusted_context=untrusted_context,
-                    budget_hints=budget_hints,
+                direct_pending_tool_replay = bool(
+                    required_tool
+                    and observed_continuity_source == "pending_followup_intent"
+                    and not forced_skill_names
+                    and not accuracy_context_required
+                    and not mcp_context_note
+                    and not filesystem_location_context_note
+                    and not explicit_file_analysis_note
                 )
+                if direct_pending_tool_replay:
+                    messages = list(conversation_history or [])
+                else:
+                    messages = await asyncio.to_thread(
+                        context_builder.build_messages,
+                        history=conversation_history,
+                        current_message=llm_current_message,
+                        skill_names=forced_skill_names,
+                        media=msg.media if hasattr(msg, "media") else None,
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        profile=decision.profile,
+                        tool_names=loop.tools.tool_names,
+                        untrusted_context=untrusted_context,
+                        budget_hints=budget_hints,
+                    )
                 truncation_summary = None
                 consume_summary = getattr(context_builder, "consume_last_truncation_summary", None)
                 if callable(consume_summary):
@@ -348,6 +401,8 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
                         done_status if final_content else error_status,
                         "done" if final_content else "error",
                     )
+        except Exception as exc:
+            response_error = exc
 
         finally:
             keepalive_stop.set()
@@ -369,6 +424,16 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
             now_ts=time.time(),
         )
         followup_offer_text = _extract_assistant_followup_offer_text(final_content or "")
+        skill_guard = msg_meta.get("skill_creation_guard")
+        workflow_followup_request_text = ""
+        workflow_followup_active = False
+        workflow_followup_approved = False
+        if isinstance(skill_guard, dict):
+            workflow_followup_active = bool(skill_guard.get("active"))
+            workflow_followup_approved = bool(skill_guard.get("approved"))
+            workflow_followup_request_text = str(
+                skill_guard.get("request_text") or ""
+            ).strip()
         if followup_offer_text:
             followup_intent_kind = _classify_assistant_followup_intent_kind(followup_offer_text)
             followup_request_text = None
@@ -397,6 +462,46 @@ async def _run_turn_response(state: Any) -> OutboundMessage | None:
                 kind=followup_intent_kind,
                 request_text=followup_request_text,
             )
+        elif (
+            workflow_followup_active
+            and not workflow_followup_approved
+            and str(final_content or "").strip()
+        ):
+            followup_request_text = (
+                workflow_followup_request_text
+                or pending_followup_intent_request_text
+                or committed_action_request_text
+                or intent_source_for_followup
+            )
+            _set_pending_followup_intent(
+                session,
+                str(final_content or "").strip(),
+                str(decision.profile),
+                time.time(),
+                kind="assistant_offer",
+                request_text=followup_request_text,
+            )
+        elif (
+            pending_followup_intent_kind == "assistant_offer"
+            and continuity_source in {"existing_skill_followup", "external_skill_followup"}
+            and str(pending_followup_intent_text or "").strip()
+        ):
+            followup_request_text = (
+                pending_followup_intent_request_text
+                or committed_action_request_text
+                or intent_source_for_followup
+            )
+            _set_pending_followup_intent(
+                session,
+                pending_followup_intent_text,
+                str(decision.profile),
+                time.time(),
+                kind="assistant_offer",
+                request_text=followup_request_text,
+            )
+        if response_error is not None:
+            _persist_session_state_on_error()
+            raise response_error
 
     first_response_ms = int((time.perf_counter() - turn_started) * 1000)
     logger.info(f"turn_id={turn_id} first_response_ms={first_response_ms}")

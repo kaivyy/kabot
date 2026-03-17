@@ -544,15 +544,15 @@ def test_context_builder_skips_disable_model_invocation_skills_from_summary(tmp_
     assert "internal-ledger" not in prompt
 
 
-def test_context_builder_probe_mode_still_includes_memory_for_recall_turn(tmp_path: Path):
+def test_context_builder_probe_mode_still_includes_memory_when_runtime_requires_it(tmp_path: Path):
     builder = ContextBuilder(tmp_path)
     builder.memory.get_memory_context = lambda: "VERY LARGE MEMORY BLOCK"  # type: ignore[assignment]
 
     prompt = builder.build_messages(
         history=[],
-        current_message="ingat preferensi saya apa?",
+        current_message="apa keputusan kita tadi",
         profile="GENERAL",
-        budget_hints={"probe_mode": True},
+        budget_hints={"probe_mode": True, "memory_context_required": True},
     )[0]["content"]
 
     assert "VERY LARGE MEMORY BLOCK" in prompt

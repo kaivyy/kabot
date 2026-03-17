@@ -238,3 +238,41 @@ def test_doctor_routing_diagnostic_has_expected_sanity_matrix(tmp_path):
     assert guard["total"] == 6
     assert routing["failed"] == 0
     assert guard["failed"] == 0
+
+
+def test_doctor_full_diagnostic_includes_memory_stack_summary(monkeypatch, tmp_path):
+    from kabot.config.schema import Config
+    from kabot.utils.doctor import KabotDoctor
+
+    doctor = KabotDoctor(agent_id="main")
+    doctor.global_dir = tmp_path / "global"
+    doctor.agent_dir = doctor.global_dir / "agents" / "main"
+    doctor.workspace = doctor.agent_dir / "workspace"
+    doctor.workspace.mkdir(parents=True, exist_ok=True)
+    doctor.config = Config()
+
+    async def _fake_connectivity():
+        return []
+
+    monkeypatch.setattr(doctor, "check_skills", lambda: {"eligible": [], "missing": []})
+    monkeypatch.setattr(doctor, "check_dependencies", lambda: [])
+    monkeypatch.setattr(doctor, "check_connectivity", _fake_connectivity)
+    monkeypatch.setattr(
+        doctor,
+        "_memory_diagnostic",
+        lambda: {
+            "status": "ok",
+            "backend": "hybrid",
+            "retrieval_mode": "full_hybrid",
+            "embedding_provider": "sentence",
+            "embedding_model": "all-MiniLM-L6-v2",
+            "lazy_probe": True,
+            "hybrid_loaded": False,
+        },
+    )
+
+    report = doctor.run_full_diagnostic(fix=False)
+
+    assert report["memory"]["backend"] == "hybrid"
+    assert report["memory"]["retrieval_mode"] == "full_hybrid"
+    assert report["memory"]["embedding_model"] == "all-MiniLM-L6-v2"

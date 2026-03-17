@@ -148,6 +148,50 @@ class TestHybridMemoryManager:
 
         assert any("Maha Raja" in row["content"] for row in results)
 
+    @pytest.mark.asyncio
+    async def test_hybrid_search_keeps_bm25_for_explanatory_queries(self, tmp_path, monkeypatch):
+        manager = _make_fake_manager(tmp_path, monkeypatch)
+        manager.create_session("s1", "telegram", "123")
+
+        assert await manager.remember_fact(
+            "Explain how DNS works with recursive resolvers",
+            category="knowledge",
+            session_id="s1",
+        )
+
+        calls: list[str] = []
+        original = manager._perform_bm25_search
+
+        def _spy(query: str, limit: int = 5) -> list[dict]:
+            calls.append(query)
+            return original(query, limit=limit)
+
+        manager._perform_bm25_search = _spy
+
+        results = await manager.search_memory("explain how DNS works", session_id="s1", limit=5)
+
+        assert results
+        assert calls == ["explain how DNS works"]
+
+    def test_get_stats_surfaces_backend_and_retrieval_mode(self, tmp_path, monkeypatch):
+        manager = _make_fake_manager(tmp_path, monkeypatch)
+
+        stats = manager.get_stats()
+
+        assert stats["backend"] == "hybrid"
+        assert stats["retrieval_mode"] == "full_hybrid"
+
+    def test_health_check_surfaces_backend_mode_and_embedding_model(self, tmp_path, monkeypatch):
+        manager = _make_fake_manager(tmp_path, monkeypatch)
+
+        health = manager.health_check()
+
+        assert health["status"] == "ok"
+        assert health["backend"] == "hybrid"
+        assert health["retrieval_mode"] == "full_hybrid"
+        assert health["embedding_provider"] == "sentence"
+        assert health["embedding_model"] == "all-MiniLM-L6-v2"
+
     def test_backward_compat_alias(self):
         from kabot.memory import ChromaMemoryManager
         assert ChromaMemoryManager is HybridMemoryManager

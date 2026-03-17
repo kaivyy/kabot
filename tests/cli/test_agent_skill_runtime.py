@@ -236,7 +236,7 @@ def test_agent_cli_repairs_mojibake_message_before_runtime(monkeypatch, tmp_path
     assert any(message.get("content") == clean_prompt for message in user_messages)
 
 
-def test_agent_cli_temporal_query_uses_local_fast_reply_without_provider(monkeypatch, tmp_path):
+def test_agent_cli_temporal_query_uses_semantic_classification_then_local_fast_reply(monkeypatch, tmp_path):
     from kabot.cli.commands import app
 
     runner = CliRunner()
@@ -260,7 +260,7 @@ def test_agent_cli_temporal_query_uses_local_fast_reply_without_provider(monkeyp
     monkeypatch.setattr("kabot.cli.commands._inject_skill_env", lambda config: None)
     monkeypatch.setattr(
         "kabot.agent.loop_core.message_runtime.build_temporal_fast_reply",
-        lambda text, *, locale=None, now_local=None: "Sekarang hari Senin.",
+        lambda text, *, locale=None, now_local=None, semantic_intent=None: "Sekarang hari Senin.",
     )
 
     result = runner.invoke(
@@ -270,4 +270,5 @@ def test_agent_cli_temporal_query_uses_local_fast_reply_without_provider(monkeyp
 
     assert result.exit_code == 0
     assert "Sekarang hari Senin." in result.output
-    assert len(provider.calls) <= 1
+    assert len(provider.calls) >= 1
+    assert len(provider.calls) <= 6

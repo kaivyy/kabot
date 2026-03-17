@@ -125,6 +125,37 @@ async def test_process_message_memory_commit_persists_user_address_and_routes_sa
 
 
 @pytest.mark.asyncio
+async def test_process_message_semantic_memory_commit_routes_save_memory_without_parser_phrase(tmp_path: Path):
+    ensure_workspace_templates(tmp_path)
+    session = SimpleNamespace(metadata={})
+    remember_fact = AsyncMock(return_value=True)
+    loop = _build_loop(
+        workspace=tmp_path,
+        session=session,
+        response="Siap, nanti aku ingat itu.",
+        memory=SimpleNamespace(
+            get_conversation_context=lambda _key, max_messages=30: [],
+            remember_fact=remember_fact,
+        ),
+    )
+    loop.provider = SimpleNamespace(
+        chat=AsyncMock(
+            return_value=SimpleNamespace(content='{"memory_intent":"memory_commit"}')
+        )
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="tolong simpan ini buat nanti",
+    )
+    await process_message(loop, msg)
+
+    assert msg.metadata.get("required_tool") == "save_memory"
+
+
+@pytest.mark.asyncio
 async def test_process_message_call_me_preference_persists_profile_without_explicit_save_memory(tmp_path: Path):
     ensure_workspace_templates(tmp_path)
     session = SimpleNamespace(metadata={})
@@ -187,6 +218,58 @@ async def test_process_message_self_identity_recall_uses_profile_memory_context(
     assert response.content == "Maha Raja"
     context_builder.build_messages.assert_called_once()
     assert "User prefers to be addressed as: Maha Raja" in captured["current_message"]
+    loop._run_simple_response.assert_awaited_once()
+    loop._run_agent_loop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_message_semantic_memory_recall_in_user_language_injects_memory_context(tmp_path: Path):
+    ensure_workspace_templates(tmp_path)
+    captured: dict[str, str] = {}
+
+    def _build_messages(**kwargs):
+        captured["current_message"] = str(kwargs.get("current_message") or "")
+        return [{"role": "user", "content": captured["current_message"]}]
+
+    async def _search_memory(*, query: str, session_id: str | None = None, limit: int = 5):
+        return [
+            {
+                "role": "system",
+                "content": "[decision] Kita sepakat fokus ke fitur memory hybrid penuh.",
+            }
+        ]
+
+    session = SimpleNamespace(metadata={})
+    context_builder = MagicMock()
+    context_builder.build_messages.side_effect = _build_messages
+    context_builder.consume_last_truncation_summary.return_value = None
+    loop = _build_loop(
+        workspace=tmp_path,
+        session=session,
+        response="Kita sepakat fokus ke fitur memory hybrid penuh.",
+        context_builder=context_builder,
+        memory=SimpleNamespace(
+            get_conversation_context=lambda _key, max_messages=30: [],
+            search_memory=_search_memory,
+            remember_fact=AsyncMock(return_value=True),
+        ),
+    )
+    loop.provider = SimpleNamespace(
+        chat=AsyncMock(
+            return_value=SimpleNamespace(content='{"memory_intent":"memory_recall"}')
+        )
+    )
+
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u1",
+        chat_id="chat-1",
+        content="apa keputusan kita tadi",
+    )
+    response = await process_message(loop, msg)
+
+    assert response is not None
+    assert "[decision] Kita sepakat fokus ke fitur memory hybrid penuh." in captured["current_message"]
     loop._run_simple_response.assert_awaited_once()
     loop._run_agent_loop.assert_not_awaited()
 

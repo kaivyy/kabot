@@ -732,7 +732,11 @@ def _resolve_expected_tool_for_query(loop: Any, msg: InboundMessage) -> str | No
     try:
         from kabot.agent.loop_core.tool_enforcement import infer_action_required_tool_for_loop
 
-        action_tool, _action_query = infer_action_required_tool_for_loop(loop, query_text)
+        action_tool, _action_query = infer_action_required_tool_for_loop(
+            loop,
+            query_text,
+            metadata=metadata if isinstance(metadata, dict) else None,
+        )
     except Exception:
         action_tool = None
     if action_tool:
@@ -745,9 +749,96 @@ def _resolve_expected_tool_for_query(loop: Any, msg: InboundMessage) -> str | No
         expected = required_tool_for_query_for_loop(loop, query_text)
     except Exception:
         expected = None
+    if not expected:
+        required_tool_hook = getattr(loop, "_required_tool_for_query", None)
+        if callable(required_tool_hook):
+            try:
+                expected = required_tool_hook(query_text)
+            except Exception:
+                expected = None
     if expected:
         metadata["_expected_tool_for_guard"] = expected
     return expected
+
+
+def _iter_tool_argument_strings(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        result: list[str] = []
+        for nested in value.values():
+            result.extend(_iter_tool_argument_strings(nested))
+        return result
+    if isinstance(value, (list, tuple, set)):
+        result: list[str] = []
+        for nested in value:
+            result.extend(_iter_tool_argument_strings(nested))
+        return result
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _alignment_tokens(text: str) -> set[str]:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return set()
+    return {
+        token
+        for token in re.findall(r"\w+", normalized, flags=re.UNICODE)
+        if len(token) >= 2
+    }
+
+
+def _tool_call_has_grounded_argument_support(
+    tool_name: str,
+    query_text: str,
+    tool_args: dict[str, Any] | None,
+) -> bool:
+    normalized_tool = str(tool_name or "").strip().lower()
+    if not normalized_tool or not isinstance(tool_args, dict) or not tool_args:
+        return False
+
+    query_normalized = _normalize_text(query_text)
+    query_tokens = _alignment_tokens(query_text)
+    arg_strings = _iter_tool_argument_strings(tool_args)
+    if not arg_strings:
+        return False
+    arg_text = " ".join(arg_strings)
+    arg_tokens = _alignment_tokens(arg_text)
+    token_overlap = query_tokens & arg_tokens
+
+    if normalized_tool in {"stock", "stock_analysis"}:
+        symbol = str(tool_args.get("symbol") or tool_args.get("ticker") or "").strip().upper()
+        if not symbol:
+            return False
+        if "." in symbol:
+            _left, right = symbol.split(".", 1)
+            if right in _NON_MARKET_DOTTED_SUFFIXES:
+                return False
+        symbol_root = symbol.split(".", 1)[0].strip().lower()
+        symbol_full = symbol.lower()
+        return bool(
+            symbol_root and symbol_root in query_normalized
+            or symbol_full and symbol_full in query_normalized
+        )
+
+    if normalized_tool == "crypto":
+        asset = str(tool_args.get("symbol") or tool_args.get("asset") or tool_args.get("id") or "").strip().lower()
+        return bool(asset and asset in query_normalized)
+
+    if _is_image_like_tool(normalized_tool):
+        prompt = str(tool_args.get("prompt") or tool_args.get("description") or "").strip()
+        return bool(prompt and token_overlap)
+
+    if normalized_tool == "cron":
+        action = str(tool_args.get("action") or "").strip().lower()
+        if action not in {"add", "create", "schedule", "set"}:
+            return False
+        has_structured_payload = any(
+            str(tool_args.get(field) or "").strip()
+            for field in ("title", "message", "task", "when", "time", "schedule")
+        )
+        return bool(has_structured_payload and len(query_normalized) >= 5)
+
+    return False
 
 
 def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> bool:
@@ -818,7 +909,12 @@ def _query_has_explicit_payload_for_tool(tool_name: str, query_text: str) -> boo
     return False
 
 
-def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name: str) -> str | None:
+def _tool_call_intent_mismatch_reason(
+    loop: Any,
+    msg: InboundMessage,
+    tool_name: str,
+    tool_args: dict[str, Any] | None = None,
+) -> str | None:
     normalized_tool = str(tool_name or "").strip().lower()
     query_text = _resolve_query_text_from_message(msg)
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
@@ -898,7 +994,18 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
         try:
             from kabot.agent.loop_core.tool_enforcement import infer_action_required_tool_for_loop
 
-            action_tool, _action_query = infer_action_required_tool_for_loop(loop, query_text)
+            action_tool, _action_query = infer_action_required_tool_for_loop(
+                loop,
+                query_text,
+                metadata=(
+                    {
+                        **session_meta,
+                        **metadata,
+                    }
+                    if isinstance(session_meta, dict) and isinstance(metadata, dict)
+                    else (metadata if isinstance(metadata, dict) else session_meta if isinstance(session_meta, dict) else None)
+                ),
+            )
         except Exception:
             action_tool = None
         if action_tool:
@@ -907,11 +1014,19 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
         return None
 
     if normalized_tool in {"stock", "stock_analysis", "crypto"}:
-        if _should_defer_live_research_latch_to_skill(
+        active_external_skill_lane = bool(
+            metadata.get("external_skill_lane")
+            or (
+                isinstance(session_meta, dict)
+                and session_meta.get("external_skill_lane")
+            )
+        )
+        if active_external_skill_lane and _should_defer_live_research_latch_to_skill(
             loop,
             query_text,
             profile="GENERAL",
             message_metadata=metadata if isinstance(metadata, dict) else None,
+            session_metadata=session_meta if isinstance(session_meta, dict) else None,
         ):
             return "prefer active or explicit external skill over legacy finance tool"
 
@@ -920,6 +1035,9 @@ def _tool_call_intent_mismatch_reason(loop: Any, msg: InboundMessage, tool_name:
     if expected_tool and expected_tool != normalized_tool:
         return f"expected '{expected_tool}'"
     if expected_tool and expected_tool == normalized_tool:
+        return None
+
+    if _tool_call_has_grounded_argument_support(normalized_tool, query_text, tool_args):
         return None
 
     if _query_has_explicit_payload_for_tool(normalized_tool, query_text):

@@ -18,7 +18,7 @@
 
 > **Kabot** is a _personal AI assistant_ engineered for **resilience**, **complex task execution**, and **long-term memory**. It isn't just a chatbot; it's an autonomous agent that runs on your own hardware, remembering context across restarts and methodically planning its actions.
 > 
-> It bridges the gap between simple chatbots and autonomous software engineers. While typical agents operate blindly, Kabot implements a **Methodical Engineering Workflow** (Brainstorm → Plan → Execute) and relies on a proprietary **Hybrid Memory Architecture** (Smart Routing + LLM Episodic Extraction + Vector) to handle long-running projects with hyper-efficient token usage and zero "amnesia".
+> It bridges the gap between simple chatbots and autonomous software engineers. While typical agents operate blindly, Kabot implements a **Methodical Engineering Workflow** (Brainstorm → Plan → Execute) and relies on a proprietary **Hybrid Memory Architecture** (SQLite + BM25 + vector embeddings + reranking) to handle long-running projects with hyper-efficient token usage and zero "amnesia".
 
 If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
 
@@ -26,7 +26,7 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
-## What's New In v0.6.6-rc3
+## What's New In v0.6.6
 
 - **OpenClaw-style routing** with model-first, skill-first, workspace/cwd-first, and session continuity-first behavior across ordinary chat, skill workflows, and file navigation.
 - **Much lighter parser dependence** in active runtime paths, especially around follow-up reuse, live research, filesystem grounding, temporal fast paths, and Indonesian keyword buckets.
@@ -73,7 +73,7 @@ If you are new, follow this exact flow:
 
 No need to clone repo for normal usage.
 
-Recommended optional step for `v0.6.6-rc3`:
+Recommended optional step for `v0.6.6`:
 
 5. **Inspect MCP availability** (`kabot mcp status`)
 
@@ -160,7 +160,7 @@ kabot mcp status   # inspect configured MCP servers
 
 ### Python-Native MCP Quickstart
 
-Kabot `0.6.6-rc3` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
+Kabot `0.6.6` ships a Python-native MCP runtime. That means MCP is no longer just an instruction trick; Kabot can attach real MCP servers per session and expose only the capabilities that actually exist.
 
 Useful commands:
 
@@ -327,10 +327,11 @@ That balance matters more than "always use tools" or "never use tools". Kabot is
 
 ### 💾 **Hybrid Memory Architecture**
 Unlike typical stateless agents, Kabot is completely **stateful** and amnesia-proof, employing a military-grade memory system that exceeds standard solutions like Mem0.
-*   **Two-Tier Persistence**: Blends a relational SQLite database for episodic memory (maintaining exact parent-child conversation trees, auto-extracted facts, and metacognitive lessons) with a ChromaDB vector store for semantic knowledge.
-*   **Smart Routing & Retrieval**: Uses a query-intent classifier to route to the correct memory store (episodic/knowledge/hybrid) and fuses vector search with BM25 keyword-matching.
+*   **Two-Tier Persistence**: Blends a relational SQLite database for exact conversation chains, extracted facts, lessons, and metadata with a ChromaDB vector store for semantic retrieval.
+*   **Full Hybrid Retrieval**: Hybrid mode keeps semantic embeddings, BM25 lexical search, reciprocal-rank fusion, temporal decay, and reranking active for every query instead of relying on keyword buckets to decide which half of memory to use.
+*   **Configurable Modes**: Switch between `hybrid` for full semantic memory or `sqlite_only` for lightweight exact search, depending on your hardware and latency budget.
 *   **Reranker & Token Guard**: Employs a rigorous three-stage filtering pipeline (Threshold ≥0.6, Top-K, and Hard Token Limit) to reduce context window bloat by up to 72% and eliminate hallucinations.
-*   **Self-Maintenance**: Asynchronous `EpisodicExtractor` automatically mines preferences and facts post-chat, while a scheduled `MemoryPruner` performs garbage collection on stale data (>30 days).
+*   **Subprocess Embeddings**: The default `all-MiniLM-L6-v2` embedding model runs in a separate worker process, so RAM is actually returned to the OS after unload instead of lingering inside the main Python process.
 
 ### 🔌 **Universal Connectivity**
 One brain, many bodies. Kabot acts as a central control plane.

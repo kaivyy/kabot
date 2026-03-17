@@ -19,21 +19,21 @@ from kabot.agent.loop_core.tool_enforcement_parts.filesystem_paths import (
 )
 
 _WRITE_FILE_ACTION_RE = re.compile(
-    r"(?i)\b(?:generate|create|write|save)\s+file\b"
+    r"(?i)\b(?:generate|create|write|save|buat|bikin|tulis|simpan)\s+file\b"
 )
 _WRITE_FILE_CONTENT_RE = re.compile(
-    r"(?i)\b(?:content(?:s)?|containing|with\s+content)\b"
+    r"(?i)\b(?:content(?:s)?|containing|with\s+content|berisi|dengan\s+isi|isinya?)\b"
 )
 _WRITE_FILE_EMPTY_RE = re.compile(r"(?i)\b(?:blank|empty)\b")
 _FIND_FILE_ACTION_RE = re.compile(
-    r"(?i)\b(?:find|search(?:\s+for)?|locate|look\s+for)\b"
+    r"(?i)\b(?:find|search(?:\s+for)?|locate|look\s+for|cari|carikan|temukan)\b"
 )
 _FIND_FILE_DIR_SUBJECT_RE = re.compile(r"(?i)\b(?:folder|directory|dir)\b")
 _FIND_FILE_FILE_SUBJECT_RE = re.compile(
     r"(?i)\b(?:file|document|config|pdf|csv|xlsx|docx)\b"
 )
 _SEND_FILE_ACTION_RE = re.compile(
-    r"(?i)\b(?:send|share|attach|upload)\b"
+    r"(?i)\b(?:send|share|attach|upload|kirim|kirimkan|bagikan|lampirkan|unggah)\b"
 )
 _SEND_FILE_DELIVERY_RE = re.compile(
     r"(?i)(?:\b(?:chat|channel)\s+(?:here|this)\b|"
@@ -62,7 +62,7 @@ _ACTION_PROVIDER_RE = re.compile(
     r"(?i)\b(?:imagen|nanobanana|dall-?e|gemini|midjourney|stable\s+diffusion|sora|veo|runway|pika)\b"
 )
 _WRITE_FILE_CONTENT_INLINE_RE = re.compile(
-    r"(?i)\b(?:content(?:s)?|containing|with content)\b\s*(?:[:=-]\s*)?(?:(?P<double>\"[^\"]+\")|(?P<single>'[^']+')|(?P<backtick>`[^`]+`)|(?P<plain>.+))"
+    r"(?i)\b(?:content(?:s)?|containing|with content|berisi|dengan isi|isinya?)\b\s*(?:[:=-]\s*)?(?:(?P<double>\"[^\"]+\")|(?P<single>'[^']+')|(?P<backtick>`[^`]+`)|(?P<plain>.+))"
 )
 _ACTION_TOOL_EXCLUDE_NAMES = {
     "read_file",
@@ -175,12 +175,16 @@ def _looks_like_find_files_request(text: str, *, explicit_path: str | None = Non
     return False
 
 
-def _looks_like_list_dir_request(text: str) -> bool:
+def _looks_like_list_dir_request(
+    text: str,
+    *,
+    resolved_path: str | None = None,
+) -> bool:
     raw = str(text or "").strip()
     normalized = _normalize_text(raw)
     if not normalized:
         return False
-    list_path = _extract_list_dir_path(raw)
+    list_path = str(resolved_path or "").strip() or _extract_list_dir_path(raw)
     if not list_path:
         return False
     if _has_explicit_delivery_intent(raw):
@@ -198,6 +202,23 @@ def _looks_like_list_dir_request(text: str) -> bool:
         tokens = [token for token in _normalize_text(str(query or "")).split() if token]
         return 0 < len(tokens) <= 3
     return False
+
+
+def _build_action_context_last_tool_context(
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+    raw_last_tool_context = metadata.get("last_tool_context")
+    if isinstance(raw_last_tool_context, dict):
+        return raw_last_tool_context
+    working_directory = str(metadata.get("working_directory") or "").strip()
+    if working_directory:
+        return {"tool": "list_dir", "path": working_directory}
+    last_navigated_path = str(metadata.get("last_navigated_path") or "").strip()
+    if last_navigated_path:
+        return {"tool": "list_dir", "path": last_navigated_path}
+    return None
 
 
 def _looks_like_message_send_file_request(text: str, *, explicit_path: str | None = None) -> bool:
@@ -232,6 +253,10 @@ def _looks_like_message_send_file_request(text: str, *, explicit_path: str | Non
         or "channel" in normalized
     )
     imperative_send = bool(re.match(r"(?i)^\s*(?:send|share|attach|upload)\b", raw))
+    if not imperative_send:
+        imperative_send = bool(
+            re.match(r"(?i)^\s*(?:kirim|kirimkan|bagikan|lampirkan|unggah)\b", raw)
+        )
     return delivery_marker or imperative_send
 
 
@@ -424,11 +449,15 @@ def _trim_write_content_candidate(value: str) -> str:
     if not candidate:
         return ""
     candidate = re.split(
-        r"(?i)\s+(?:then|afterwards?)\s+(?:send|attach|upload|export|save)\b",
+        r"(?i)\s+(?:then|afterwards?|lalu|kemudian)\s+(?:send|attach|upload|export|save|kirim|kirimkan|bagikan|lampirkan|unggah)\b",
         candidate,
         maxsplit=1,
     )[0].strip()
-    candidate = re.split(r"(?i)\s+(?:then|afterwards?)\b", candidate, maxsplit=1)[0].strip()
+    candidate = re.split(
+        r"(?i)\s+(?:then|afterwards?|lalu|kemudian)\b",
+        candidate,
+        maxsplit=1,
+    )[0].strip()
     return candidate.rstrip(" .,:;")
 
 
@@ -505,13 +534,27 @@ def _select_best_action_tool(loop: Any, text: str, *, kind: str) -> str | None:
     return best_name if best_score >= 6 else None
 
 
-def infer_action_required_tool_for_loop(loop: Any, text: str) -> tuple[str | None, str | None]:
+def infer_action_required_tool_for_loop(
+    loop: Any,
+    text: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> tuple[str | None, str | None]:
     raw = str(text or "").strip()
     normalized = _normalize_text(raw)
     if not raw or not normalized:
         return None, None
 
+    action_last_tool_context = _build_action_context_last_tool_context(metadata)
     explicit_path = _extract_read_file_path(raw)
+    delivery_path = _extract_message_delivery_path(
+        raw,
+        last_tool_context=action_last_tool_context,
+    )
+    list_dir_path = _extract_list_dir_path(
+        raw,
+        last_tool_context=action_last_tool_context,
+    )
     if _tool_name_available(loop, "write_file") and _looks_like_write_file_request(
         raw,
         explicit_path=explicit_path,
@@ -520,11 +563,14 @@ def infer_action_required_tool_for_loop(loop: Any, text: str) -> tuple[str | Non
 
     if _tool_name_available(loop, "message") and _looks_like_message_send_file_request(
         raw,
-        explicit_path=explicit_path,
+        explicit_path=str(delivery_path or explicit_path or "").strip() or None,
     ):
         return "message", raw
 
-    if _tool_name_available(loop, "list_dir") and _looks_like_list_dir_request(raw):
+    if _tool_name_available(loop, "list_dir") and _looks_like_list_dir_request(
+        raw,
+        resolved_path=list_dir_path,
+    ):
         return "list_dir", raw
 
     if _tool_name_available(loop, "find_files") and _looks_like_find_files_request(

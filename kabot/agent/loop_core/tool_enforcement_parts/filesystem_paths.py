@@ -486,6 +486,7 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
     if not candidate:
         return None
     candidate = _RELATIVE_DIRECTORY_SUFFIX_RE.sub("", candidate).strip(" ,.;:!?")
+    candidate = re.split(r"[,;:!?]", candidate, maxsplit=1)[0].strip()
     candidate = candidate.rstrip("\\/").strip()
     candidate = re.sub(
         r"(?i)\s+(?:in|inside|within|under)\s+"
@@ -502,6 +503,14 @@ def _extract_relative_directory_candidate(text: str) -> str | None:
         return None
     tokens = [token for token in normalized.split() if token]
     if len(tokens) > 3:
+        head_candidate = tokens[0] if tokens else ""
+        if (
+            head_candidate
+            and not head_candidate.isdigit()
+            and re.fullmatch(r"[A-Za-z0-9._-]+", head_candidate)
+            and head_candidate not in _FILESYSTEM_TARGET_MARKERS
+        ):
+            return head_candidate
         return None
     if any(
         token in {

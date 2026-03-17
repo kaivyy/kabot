@@ -193,13 +193,6 @@ def _infer_required_tool_from_recent_user_intent(
             if _is_low_information_turn(candidate, max_tokens=3, max_chars=24):
                 continue
             inferred = _resolve_grounded_required_tool(loop, candidate)
-            if not inferred:
-                parser_hint = getattr(loop, "_required_tool_for_query", None)
-                if callable(parser_hint):
-                    try:
-                        inferred = parser_hint(candidate)
-                    except Exception:
-                        inferred = None
             if inferred:
                 inferred_tool = inferred
                 inferred_source = candidate

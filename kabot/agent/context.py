@@ -23,24 +23,9 @@ from kabot.agent.skills import (
 from kabot.utils.workspace_templates import ensure_workspace_templates
 
 _SPACE_RE = re.compile(r"\s+")
-_MEMORY_RECALL_RE = re.compile(
-    r"(?i)\b("
-    r"memory|remember|recall|preference|"
-    r"my name|who am i|past conversation|"
-    r"what was the code you just remembered|"
-    r"what do you know about me"
-    r")\b"
-)
 _EXPLICIT_SKILL_TURN_RE = re.compile(
     r"(?i)\b(skill|skills)\b|スキル|技能|技術|สกิล"
 )
-_LIGHT_PROBE_GENERAL_RE = re.compile(
-    r"(?i)\b("
-    r"day|date|time|timezone|utc|"
-    r"today|tomorrow|yesterday|now|week"
-    r")\b|星期|วันนี้|เมื่อวาน|พรุ่งนี้|เวลา|今日|明日|昨日"
-)
-
 
 def _strip_appended_system_notes(message: str) -> str:
     raw = str(message or "").strip()
@@ -444,11 +429,12 @@ Always check platform before writing scripts."""
                 logger.info(f"Auto-selected skill candidates: {new_matches}")
 
         # 3. Available skills: summary-first skill prompting.
-        wants_skill_help = bool(
-            isinstance(current_message, str)
-            and looks_like_skill_catalog_request(current_message)
-        )
         summary_skill_names = list(dict.fromkeys([*requested_skills, *new_matches]))
+        explicit_skill_context_requested = bool(
+            isinstance(current_message, str)
+            and self._message_needs_explicit_skill_context(current_message)
+        )
+        wants_skill_help = explicit_skill_context_requested and not bool(summary_skill_names)
         include_skills_summary = (
             not is_heartbeat_task
             and (
@@ -769,7 +755,7 @@ If you are performing a multi-step task, start the first step NOW."""
         normalized = _SPACE_RE.sub(" ", raw.lower()).strip()
         if not normalized:
             return False
-        if self._message_needs_memory_context(raw):
+        if bool(budget_hints.get("memory_context_required")):
             return False
         if self._message_needs_explicit_skill_context(raw):
             return False
@@ -779,15 +765,9 @@ If you are performing a multi-step task, start the first step NOW."""
             return False
 
         token_count = len([part for part in normalized.split(" ") if part])
-        if token_count > 12:
+        if token_count == 0 or token_count > 12:
             return False
-        return bool(_LIGHT_PROBE_GENERAL_RE.search(raw))
-
-    def _message_needs_memory_context(self, message: str) -> bool:
-        raw = _strip_appended_system_notes(message)
-        if not raw:
-            return False
-        return bool(_MEMORY_RECALL_RE.search(raw))
+        return True
 
     def _message_needs_explicit_skill_context(self, message: str) -> bool:
         raw = _strip_appended_system_notes(message)

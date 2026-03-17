@@ -283,7 +283,7 @@ Kabot now includes sophisticated backend systems that prevent common AI agent fa
 - **Auto-Compaction**: Summarizes old messages when context overflows (keeps recent 10 exchanges)
 - **Result Truncation**: Caps tool results at 30% of context window to prevent bloat
 
-### Runtime Continuity And Anti-Hallucination Upgrades (v0.6.6-rc3)
+### Runtime Continuity And Anti-Hallucination Upgrades (v0.6.6)
 
 - **Committed action continuity:** if Kabot says it will create, send, or upgrade something, replies like `ya`, `yes continue`, and `lanjut` are much more likely to continue that exact task.
 - **Answer-reference continuity:** follow-ups like `yang kedua`, `lebih singkat`, or `maksudnya apa` can stay attached to the latest real answer.
@@ -419,10 +419,11 @@ Kabot supports three memory backends that you can switch between via `kabot conf
 **Features:**
 - Semantic search using vector embeddings
 - Hybrid ranking (combines semantic + keyword scores)
-- Smart routing (automatically chooses episodic vs knowledge search)
+- Full hybrid retrieval by default (semantic + BM25 stay active together)
 - Reranking for optimal result quality
 - Temporal decay (prefers recent memories)
 - MMR diversity (avoids redundant results)
+- Default embedding model: `all-MiniLM-L6-v2` running in a subprocess worker for cleaner RAM unload
 
 **Configuration:**
 ```json

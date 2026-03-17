@@ -134,6 +134,9 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     session_metadata = getattr(session, "metadata", None)
     if not isinstance(session_metadata, dict):
         session_metadata = {}
+    action_inference_metadata = dict(session_metadata)
+    if isinstance(message_metadata, dict):
+        action_inference_metadata.update(message_metadata)
     tools_registry = getattr(loop, "tools", None)
     has_tool = getattr(tools_registry, "has", None)
     resolved_required_tool = str(message_metadata.get("required_tool") or "").strip()
@@ -152,6 +155,22 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             required_tool = resolved_required_tool
     elif suppress_required_tool_inference:
         required_tool = None
+    elif not required_tool:
+        runtime_expected_tool = str(_resolve_expected_tool_for_query(loop, msg) or "").strip()
+        if runtime_expected_tool:
+            runtime_tool_available = True
+            if callable(has_tool):
+                try:
+                    runtime_tool_available = bool(has_tool(runtime_expected_tool))
+                except Exception:
+                    runtime_tool_available = True
+            elif not callable(getattr(loop, "_execute_required_tool_fallback", None)):
+                runtime_tool_available = False
+            if runtime_tool_available:
+                required_tool = runtime_expected_tool
+                if isinstance(message_metadata, dict):
+                    message_metadata.setdefault("required_tool", runtime_expected_tool)
+                    message_metadata.setdefault("required_tool_query", question_text)
 
     committed_required_tool = str(
         message_metadata.get("committed_required_tool")
@@ -191,6 +210,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         and not suppress_required_tool_inference
     ):
         requested_delivery_file = str(_extract_read_file_path(question_text) or "").strip()
+        requested_delivery_dir = str(_extract_list_dir_path(question_text) or "").strip()
         explicit_find_search_request = bool(
             _query_has_explicit_payload_for_tool("find_files", question_text)
             and re.search(r"(?i)\b(find|search|locate|look for)\b", question_text)
@@ -200,6 +220,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             explicit_delivery_action_tool, _delivery_action_query = infer_action_required_tool_for_loop(
                 loop,
                 question_text,
+                metadata=action_inference_metadata,
             )
         except Exception:
             explicit_delivery_action_tool = None
@@ -241,6 +262,23 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             message_tool_available = False
         else:
             message_tool_available = message_payload_available
+        unresolved_delivery_subject = str(
+            requested_delivery_file or requested_delivery_dir or ""
+        ).strip()
+        if (
+            not message_tool_available
+            and unresolved_delivery_subject
+            and not delivery_context_available
+            and callable(has_tool)
+        ):
+            try:
+                if has_tool("find_files"):
+                    required_tool = "find_files"
+                    if isinstance(message_metadata, dict):
+                        message_metadata.setdefault("required_tool", "find_files")
+                        message_metadata.setdefault("required_tool_query", question_text)
+            except Exception:
+                pass
         if callable(has_tool):
             try:
                 message_tool_available = bool(message_tool_available and has_tool("message"))
@@ -291,7 +329,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         )
         return result_text
     if enforce_toolbacked_action and not required_tool:
-        inferred_action_tool, inferred_action_query = infer_action_required_tool_for_loop(loop, question_text)
+        inferred_action_tool, inferred_action_query = infer_action_required_tool_for_loop(
+            loop,
+            question_text,
+            metadata=action_inference_metadata,
+        )
         if inferred_action_tool:
             required_tool = inferred_action_tool
             if isinstance(message_metadata, dict):
@@ -305,7 +347,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             )
     artifact_required_tool = str(required_tool or message_metadata.get("required_tool") or "").strip()
     if not artifact_required_tool and enforce_toolbacked_action:
-        inferred_artifact_tool, _ = infer_action_required_tool_for_loop(loop, question_text)
+        inferred_artifact_tool, _ = infer_action_required_tool_for_loop(
+            loop,
+            question_text,
+            metadata=action_inference_metadata,
+        )
         artifact_required_tool = str(inferred_artifact_tool or "").strip()
     artifact_verification_required = bool(
         enforce_toolbacked_action
@@ -458,15 +504,41 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
                 pass
 
         last_tool_context = _message_last_tool_context() or _session_last_tool_context()
+        active_working_directory = str(message_metadata.get("working_directory") or "").strip()
+        if not active_working_directory:
+            session_metadata = getattr(session, "metadata", None)
+            if isinstance(session_metadata, dict):
+                active_working_directory = str(session_metadata.get("working_directory") or "").strip()
         explicit_dir_path = _extract_list_dir_path(
             question_text,
             last_tool_context=last_tool_context if isinstance(last_tool_context, dict) else None,
         )
         if explicit_dir_path:
-            return str(_resolve_delivery_path(loop, explicit_dir_path))
+            resolved_explicit_dir = str(_resolve_delivery_path(loop, explicit_dir_path))
+            if active_working_directory:
+                try:
+                    resolved_active_working_directory = str(
+                        Path(active_working_directory).expanduser().resolve()
+                    )
+                except Exception:
+                    resolved_active_working_directory = active_working_directory
+                try:
+                    explicit_name = Path(resolved_explicit_dir).name.lower()
+                    active_name = Path(resolved_active_working_directory).name.lower()
+                except Exception:
+                    explicit_name = ""
+                    active_name = ""
+                if (
+                    resolved_active_working_directory
+                    and active_name
+                    and explicit_name
+                    and explicit_name == active_name
+                ):
+                    return resolved_active_working_directory
+            return resolved_explicit_dir
 
         candidate_roots = [
-            str(message_metadata.get("working_directory") or "").strip(),
+            active_working_directory,
         ]
         session_metadata = getattr(session, "metadata", None)
         if isinstance(session_metadata, dict):
@@ -614,11 +686,20 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
             )
             return normalized.startswith(humanized_error_prefixes)
         return False
+    skill_creation_phase = _skill_creation_status_phase(message_metadata)
+    skill_workflow_needs_approval = skill_creation_phase in {"discovery", "planning"}
+    if skill_workflow_needs_approval:
+        message_metadata.setdefault("directive_no_tools", True)
+
     # Fast-turn responsiveness: skip expensive critic retries for short/chat/required-tool turns.
+    # Discovery/planning turns for skill creation are allowed to end with
+    # approval-seeking questions or a plan, so critic retries only push the
+    # model toward premature execution.
     skip_critic_for_speed = (
         bool(message_metadata.get("skip_critic_for_speed", False))
         or
         bool(required_tool)
+        or skill_workflow_needs_approval
         or (raw_user_word_count <= 12 and not coding_execution_context)
         or (question_word_count <= 10 and not coding_execution_context)
         or (_looks_like_short_confirmation(raw_user_text) and not coding_execution_context)
@@ -654,7 +735,6 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     critic_threshold = 5 if is_weak_model else 7
 
     first_score = None
-    skill_creation_phase = _skill_creation_status_phase(message_metadata)
     progress_runtime = TurnProgressRuntime(
         loop=loop,
         msg=msg,
@@ -1223,6 +1303,7 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         not is_background_task
         and (
             bool(required_tool)
+            or skill_workflow_needs_approval
             or continuity_source in (toolbacked_continuity_sources | coding_execution_continuity_sources)
             or (raw_user_word_count <= 12 and not coding_execution_context)
             or (_looks_like_short_confirmation(raw_user_text) and not coding_execution_context)
@@ -1237,6 +1318,11 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
     else:
         if required_tool:
             logger.info(f"Skipping plan for immediate-action task: required_tool={required_tool}")
+        elif skill_workflow_needs_approval:
+            logger.info(
+                "Skipping plan injection while skill workflow is awaiting approval: "
+                f"phase={skill_creation_phase}"
+            )
         elif continuity_source in toolbacked_continuity_sources:
             logger.info(
                 "Skipping plan for immediate-action continuity: "
@@ -1251,12 +1337,14 @@ async def run_agent_loop(loop: Any, msg: InboundMessage, messages: list, session
         iteration += 1
         messages = await progress_runtime.inject_pending_interrupts(messages)
 
-        if loop.context_guard.check_overflow(messages, model):
+        context_guard = getattr(loop, "context_guard", None)
+        check_overflow = getattr(context_guard, "check_overflow", None)
+        if callable(check_overflow) and check_overflow(messages, model):
             logger.warning("Context overflow detected, compacting history")
             messages = await loop.compactor.compact(
                 messages, loop.provider, model, keep_recent=10
             )
-            if loop.context_guard.check_overflow(messages, model):
+            if callable(check_overflow) and check_overflow(messages, model):
                 logger.warning("Context still over limit after compaction")
 
         response, error = await loop._call_llm_with_fallback(messages, models_to_try)

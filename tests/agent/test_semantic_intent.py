@@ -66,25 +66,25 @@ dari sini hitung hr zona saya umur 25 tahun""",
         parser_tool="weather",
     )
 
-    assert hint.kind == "advice_turn"
+    assert hint.kind == "none"
     assert hint.required_tool is None
 
 
-def test_semantic_intent_clears_stale_parser_tool_for_memory_recall_turn():
+def test_semantic_intent_leaves_memory_recall_to_stateful_runtime_classifier():
     hint = arbitrate_semantic_intent(
         "what name did you store for me?",
         parser_tool="stock",
     )
 
-    assert hint.kind == "memory_recall"
+    assert hint.kind == "none"
     assert hint.required_tool is None
 
 
-def test_semantic_intent_treats_prior_decision_recall_as_memory_recall_turn():
+def test_semantic_intent_does_not_lexically_route_prior_decision_recall():
     hint = arbitrate_semantic_intent(
         "what did we decide earlier?",
         parser_tool="weather",
     )
 
-    assert hint.kind == "memory_recall"
+    assert hint.kind == "none"
     assert hint.required_tool is None

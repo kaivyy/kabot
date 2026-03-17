@@ -288,6 +288,43 @@ async def test_dashboard_runtime_partial_renders_route_decision_snapshot(aiohttp
     assert "weather" in body
     assert "answer_reference" in body
 
+
+@pytest.mark.asyncio
+async def test_dashboard_runtime_partial_renders_memory_runtime_snapshot(aiohttp_client):
+    from kabot.gateway.webhook_server import WebhookServer
+
+    mock_bus = MagicMock()
+    mock_bus.publish_inbound = AsyncMock()
+
+    server = WebhookServer(
+        bus=mock_bus,
+        auth_token="test-token|operator.read",
+        status_provider=lambda: {
+            "status": "running",
+            "memory": {
+                "status": "ok",
+                "backend": "hybrid",
+                "retrieval_mode": "full_hybrid",
+                "embedding_provider": "sentence",
+                "embedding_model": "all-MiniLM-L6-v2",
+                "lazy_probe": True,
+                "hybrid_loaded": False,
+            },
+        },
+    )
+    client = await aiohttp_client(server.app)
+
+    resp = await client.get(
+        "/dashboard/partials/runtime",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status == 200
+    body = await resp.text()
+    assert "Memory Runtime" in body
+    assert "full_hybrid" in body
+    assert "all-MiniLM-L6-v2" in body
+    assert "hybrid" in body
+
 @pytest.mark.asyncio
 async def test_dashboard_shell_includes_subagent_and_git_panels(aiohttp_client):
     from kabot.gateway.webhook_server import WebhookServer

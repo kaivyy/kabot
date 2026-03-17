@@ -43,6 +43,7 @@ class HybridMemoryManager(MemoryBackend):
         self.enable_hybrid_memory = enable_hybrid_memory
         self.enable_graph_memory = bool(enable_graph_memory)
         self.graph_injection_limit = max(1, int(graph_injection_limit))
+        self._embedding_provider_name = embedding_provider
 
         self.router = SmartRouter()
         self.reranker = Reranker(threshold=0.6, top_k=3, max_tokens=500)
@@ -50,6 +51,7 @@ class HybridMemoryManager(MemoryBackend):
         # Initialize embedding provider (sentence-transformers or ollama)
         if embedding_provider == "sentence":
             model = embedding_model or "all-MiniLM-L6-v2"
+            self._embedding_model_name = model
             self.embeddings = SentenceEmbeddingProvider(
                 model,
                 auto_unload_seconds=auto_unload_seconds
@@ -57,6 +59,7 @@ class HybridMemoryManager(MemoryBackend):
             logger.info(f"Using Sentence-Transformers with model: {model}")
         elif embedding_provider == "ollama":
             model = embedding_model or "nomic-embed-text"
+            self._embedding_model_name = model
             self.embeddings = OllamaEmbeddingProvider("http://localhost:11434", model)
             logger.info(f"Using Ollama with model: {model}")
         else:
@@ -568,30 +571,13 @@ class HybridMemoryManager(MemoryBackend):
             # 2. Run BM25 Search
             bm25_results = []
             if self.enable_hybrid_memory:
-                if route == "episodic":
-                    # Explicit intention to hit episodic DB
-                    logger.debug("Executing episodic-only search (BM25 exact match)")
+                logger.debug("Executing full hybrid retrieval (semantic + BM25)")
 
-                    if not self._bm25_built:
-                        self._build_bm25_index()
+                if not self._bm25_built:
+                    self._build_bm25_index()
 
-                    if self.bm25 and self.bm25_documents:
-                        bm25_results = self._perform_bm25_search(query, limit=limit)
-                elif route == "hybrid":
-                    logger.debug("Executing hybrid search (Semantic + BM25)")
-
-                    # Lazy BM25 building
-                    if not self._bm25_built:
-                        self._build_bm25_index()
-
-                    # Execute BM25 search
-                    if self.bm25 and self.bm25_documents:
-                        bm25_results = self._perform_bm25_search(query, limit=limit)
-                elif route != "knowledge": # For other routes, if hybrid is enabled, do BM25
-                    if not self._bm25_built:
-                        self._build_bm25_index()
-                    if self.bm25 and self.bm25_documents:
-                        bm25_results = self._perform_bm25_search(query, limit=limit)
+                if self.bm25 and self.bm25_documents:
+                    bm25_results = self._perform_bm25_search(query, limit=limit)
 
 
             # Filter BM25 results by session_id if needed
@@ -909,6 +895,10 @@ class HybridMemoryManager(MemoryBackend):
     def get_stats(self) -> dict:
         """Get memory system statistics."""
         stats = self.metadata.get_stats()
+        stats["backend"] = "hybrid"
+        stats["retrieval_mode"] = "full_hybrid" if self.enable_hybrid_memory else "semantic_only"
+        stats["embedding_provider"] = self._embedding_provider_name
+        stats["embedding_model"] = self._embedding_model_name
 
         if self._chroma_client:
             try:
@@ -925,9 +915,13 @@ class HybridMemoryManager(MemoryBackend):
     def health_check(self) -> dict:
         """Check memory system health."""
         provider_info = {
+            "status": "ok",
+            "backend": "hybrid",
+            "retrieval_mode": "full_hybrid" if self.enable_hybrid_memory else "semantic_only",
             "sqlite_connected": self.metadata is not None,
             "chroma_initialized": self._chroma_client is not None,
             "embedding_available": self.embeddings.check_connection(),
+            "embedding_provider": self._embedding_provider_name,
             "embedding_model": getattr(self.embeddings, 'model_name', getattr(self.embeddings, 'model', 'unknown')),
             "embedding_dimensions": self.embeddings.dimensions
         }

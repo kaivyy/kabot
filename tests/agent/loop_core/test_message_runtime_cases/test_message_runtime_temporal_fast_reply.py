@@ -15,17 +15,24 @@ def _fixed_wib_now() -> datetime:
 
 
 @pytest.mark.parametrize(
-    ("query", "expected_fragment"),
+    ("query", "semantic_intent", "expected_fragment"),
     [
-        ("what day is it?", "Monday"),
-        ("what day is it tomorrow?", "Tuesday"),
-        ("今天星期几？", "星期一"),
-        ("今日は何曜日？", "月曜日"),
-        ("ตอนนี้วันอะไร", "วันจันทร์"),
+        ("what day is it?", "day_today", "Monday"),
+        ("what day is it tomorrow?", "day_tomorrow", "Tuesday"),
+        ("what day was it yesterday?", "day_yesterday", "Sunday"),
+        ("what day one week from now?", "day_next_week", "Monday"),
     ],
 )
-def test_build_temporal_fast_reply_handles_multilingual_queries(query, expected_fragment):
-    reply = build_temporal_fast_reply(query, now_local=_fixed_wib_now())
+def test_build_temporal_fast_reply_handles_semantic_intents(
+    query,
+    semantic_intent,
+    expected_fragment,
+):
+    reply = build_temporal_fast_reply(
+        query,
+        now_local=_fixed_wib_now(),
+        semantic_intent=semantic_intent,
+    )
 
     assert reply is not None
     assert expected_fragment in reply
@@ -40,13 +47,34 @@ def test_build_temporal_fast_reply_ignores_non_question_feedback():
     assert reply is None
 
 
-def test_build_temporal_fast_reply_prioritizes_day_query_over_timezone_hint():
+def test_build_temporal_fast_reply_prioritizes_semantic_day_intent():
     reply = build_temporal_fast_reply(
         "what day is it? answer briefly and use WIB.",
         now_local=_fixed_wib_now(),
+        semantic_intent="day_today",
     )
 
     assert reply == "Today is Monday."
+
+
+def test_build_temporal_fast_reply_no_longer_uses_keyword_parser_fallback():
+    reply = build_temporal_fast_reply(
+        "what day is it?",
+        now_local=_fixed_wib_now(),
+    )
+
+    assert reply is None
+
+
+def test_build_temporal_fast_reply_accepts_semantic_intent_override():
+    reply = build_temporal_fast_reply(
+        "lanjut",
+        now_local=_fixed_wib_now(),
+        semantic_intent="time_now",
+    )
+
+    assert reply is not None
+    assert "14:05" in reply
 
 
 @pytest.mark.asyncio
@@ -96,7 +124,7 @@ async def test_process_message_temporal_fast_reply_skips_context_and_llm(monkeyp
     monkeypatch.setattr(
         message_runtime_module,
         "build_temporal_fast_reply",
-        lambda text, *, locale=None, now_local=None: "Today is Monday.",
+        lambda text, *, locale=None, now_local=None, semantic_intent=None: "Today is Monday.",
     )
 
     msg = InboundMessage(channel="telegram", sender_id="u1", chat_id="chat-1", content="what day is it?")
