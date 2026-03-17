@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-03-17
+
+### Added
+- Setup wizard now supports selecting fallbacks and reordering the fallback chain.
+
+### Changed
+- Normalized OpenRouter model identifiers and provider routing to reduce invalid requests.
+- Telegram slash command handling now supports bot mention suffixes and `/model` directives.
+- Failover classification patterns updated with expanded tests.
+
 ## [0.6.6] - 2026-03-17
 
 ### Fixed
