@@ -1,6 +1,6 @@
 # Releases
 
-## v0.6.7
+## v0.6.8
 
 Release date: 2026-03-17
 
@@ -8,18 +8,13 @@ Status: Stable release
 
 ### Highlights
 
-- Adds fallback selection and ordering to the setup wizard.
-- Normalizes OpenRouter model identifiers and provider routing to reduce invalid requests.
-- Expands Telegram slash command handling to support bot mention suffixes and `/model` directives.
-
-### Notable changes
-
-- Updates failover classification patterns with expanded tests.
+- Align direct-send workflow test expectations with verified delivery messaging.
+- Fix cross-platform CI expectations for message delivery verification.
 
 ### Validation snapshot
 
 - `mkdocs build --strict` succeeded for the updated release docs.
-- `python -m build` produced `kabot-0.6.7.tar.gz` and `kabot-0.6.7-py3-none-any.whl`.
+- `python -m build` produced `kabot-0.6.8.tar.gz` and `kabot-0.6.8-py3-none-any.whl`.
 
 See full details in root `CHANGELOG.md`.
 
