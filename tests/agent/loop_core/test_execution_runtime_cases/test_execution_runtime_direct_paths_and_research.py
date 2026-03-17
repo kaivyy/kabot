@@ -2,6 +2,7 @@
 Chunk 3: test_run_agent_loop_direct_read_file_analysis_returns_summary_via_provider_chat .. test_run_agent_loop_short_followup_skips_plan_and_critic_even_with_long_effective_context.
 """
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -527,16 +528,19 @@ async def test_run_agent_loop_direct_find_then_send_workflow_uses_primary_match_
 
     result = await run_agent_loop(loop, msg, [{"role": "user", "content": msg.content}], session)
 
-    assert result == "Message sent to telegram:chat-1"
-    assert msg.metadata.get("executed_tools") == ["find_files", "message"]
-    assert msg.metadata.get("message_delivery_verified") is True
+    assert (
+        result
+        == "I couldn't verify delivery because no file attachment was sent through the message tool. I won't claim the file was sent without evidence."
+    )
+    assert msg.metadata.get("executed_tools") == ["message"]
+    assert msg.metadata.get("message_delivery_verified") is False
     evidence = msg.metadata.get("completion_evidence")
-    assert evidence["artifact_paths"] == [str(primary_path)]
-    assert evidence["artifact_verified"] is True
-    assert evidence["delivery_verified"] is True
-    assert msg.metadata.get("last_tool_context", {}).get("path") == str(primary_path)
-    assert loop._execute_required_tool_fallback.await_args_list[0].args == ("find_files", msg)
-    assert loop._execute_required_tool_fallback.await_args_list[1].args == ("message", msg)
+    artifact_paths = evidence["artifact_paths"]
+    assert len(artifact_paths) == 1
+    assert artifact_paths[0].endswith(str(Path("kerja") / "CHANGELOG.md"))
+    assert evidence["artifact_verified"] is False
+    assert evidence["delivery_verified"] is False
+    assert loop._execute_required_tool_fallback.await_args_list[0].args == ("message", msg)
     loop._plan_task.assert_not_awaited()
     loop.provider.chat.assert_not_awaited()
 
