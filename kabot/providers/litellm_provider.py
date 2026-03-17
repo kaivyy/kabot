@@ -27,7 +27,7 @@ from kabot.providers.chatgpt_backend_client import (
     parse_chatgpt_stream_events,
     parse_sse_stream,
 )
-from kabot.providers.registry import find_by_model, find_gateway
+from kabot.providers.registry import find_by_model, find_by_name, find_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -195,9 +195,15 @@ class LiteLLMProvider(LLMProvider):
         return normalized
 
     def _provider_name_from_model(self, model: str) -> str | None:
+        provider_candidate = model.split("/", 1)[0] if "/" in model else model
+        provider_spec = find_by_name(provider_candidate)
+        if provider_spec:
+            return provider_spec.name
+
         spec = find_by_model(model)
         if spec:
             return spec.name
+
         if "/" in model:
             return model.split("/", 1)[0]
         return None
@@ -790,12 +796,10 @@ class LiteLLMProvider(LLMProvider):
             if not request_api_key:
                 raise ValueError("OPENROUTER_API_KEY not found")
 
-            # Prepare model name
+            # Prepare model name for OpenRouter API (strip gateway prefix)
             api_model = model
             if api_model.startswith("openrouter/"):
-                stripped = api_model.replace("openrouter/", "", 1)
-                if "/" in stripped:
-                    api_model = stripped
+                api_model = api_model.replace("openrouter/", "", 1)
 
             headers = {
                 "Authorization": f"Bearer {request_api_key}",

@@ -79,6 +79,19 @@ def test_auth_from_expired_jwt_message():
     )
 
 
+def test_openrouter_no_endpoints_found_is_model_not_found():
+    assert (
+        resolve_failover_reason(
+            message="OpenRouter 400: No endpoints found that support tool use for this model"
+        )
+        == "model_not_found"
+    )
+
+
+def test_openrouter_unknown_model_is_model_not_found():
+    assert resolve_failover_reason(message="OpenRouter: unknown model id") == "model_not_found"
+
+
 def test_should_retry_rate_limit():
     assert should_retry("rate_limit") is True
 

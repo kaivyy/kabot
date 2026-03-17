@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from kabot.config.schema import AgentModelConfig
+
 from rich.console import Console
 
 console = Console()
@@ -97,11 +99,47 @@ def _model_allowed_by_provider_credentials(self, model_id: str, allowed_provider
 
 def _current_model_display(self) -> str:
     """Return concise current primary model label for UI."""
+    primary, _fallbacks = self._current_model_chain()
+    return primary
+
+
+def _current_model_chain(self) -> tuple[str, list[str]]:
+    """Return current model chain as (primary, fallbacks)."""
     current = self.config.agents.defaults.model
-    primary = getattr(current, "primary", None)
-    if isinstance(primary, str) and primary.strip():
-        return primary
-    return str(current)
+    if isinstance(current, AgentModelConfig):
+        primary = str(current.primary or "").strip()
+        if not primary:
+            primary = "openai-codex/gpt-5.3-codex"
+        fallbacks = [
+            str(model).strip()
+            for model in (current.fallbacks or [])
+            if str(model).strip() and str(model).strip() != primary
+        ]
+        return primary, fallbacks
+
+    primary = str(current or "").strip() or "openai-codex/gpt-5.3-codex"
+    return primary, []
+
+
+def _set_model_chain(self, primary: str, fallbacks: list[str]) -> None:
+    """Persist model chain while deduplicating and keeping order."""
+    normalized_primary = str(primary or "").strip() or "openai-codex/gpt-5.3-codex"
+    deduped_fallbacks: list[str] = []
+    seen: set[str] = {normalized_primary}
+    for model in fallbacks or []:
+        model_id = str(model or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        deduped_fallbacks.append(model_id)
+
+    if deduped_fallbacks:
+        self.config.agents.defaults.model = AgentModelConfig(
+            primary=normalized_primary,
+            fallbacks=deduped_fallbacks,
+        )
+    else:
+        self.config.agents.defaults.model = normalized_primary
 
 def _provider_model_prefixes(self, provider_id: str) -> list[str]:
     """Map auth provider IDs to model ID prefixes used in the registry."""
@@ -199,23 +237,17 @@ def _apply_model_chain_from_provider_selections(
     provider_order: list[str],
 ) -> bool:
     """Apply selected provider-model chain to config without hardcoded fallbacks."""
-    from kabot.config.schema import AgentModelConfig
-
     chain = self._build_model_chain_from_provider_selections(provider_models, provider_order)
     if not chain:
         return False
 
     primary = chain[0]
     fallbacks = chain[1:]
-    current = self.config.agents.defaults.model
-
-    if isinstance(current, AgentModelConfig):
-        if current.primary == primary and list(current.fallbacks or []) == fallbacks:
-            return False
-    elif current == primary and not fallbacks:
+    current_primary, current_fallbacks = self._current_model_chain()
+    if current_primary == primary and current_fallbacks == fallbacks:
         return False
 
-    self.config.agents.defaults.model = AgentModelConfig(primary=primary, fallbacks=fallbacks)
+    self._set_model_chain(primary, fallbacks)
     return True
 
 def _apply_post_login_defaults(self, provider_id: str) -> bool:
@@ -248,15 +280,7 @@ def _apply_auto_default_model_chain(self) -> bool:
 
 def _show_auto_model_chain_summary(self, updated: bool) -> None:
     """Render concise summary for user-selected model chain."""
-    from kabot.config.schema import AgentModelConfig
-
-    model = self.config.agents.defaults.model
-    if isinstance(model, AgentModelConfig):
-        primary = model.primary
-        fallbacks = list(model.fallbacks or [])
-    else:
-        primary = str(model)
-        fallbacks = []
+    primary, fallbacks = self._current_model_chain()
 
     status = "updated" if updated else "kept"
     console.print(f"|  [green]Model chain {status} from user selections.[/green]")

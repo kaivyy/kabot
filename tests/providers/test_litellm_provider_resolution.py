@@ -294,3 +294,107 @@ async def test_chat_does_not_print_debug_message_keys_to_stdout(monkeypatch, cap
     assert result.content == "ok"
     assert "Last message keys sent to LLM" not in captured.out
 
+
+def test_provider_name_from_model_keeps_openrouter_prefix():
+    provider = LiteLLMProvider(
+        api_key="test-key",
+        default_model="openrouter/auto",
+    )
+
+    assert provider._provider_name_from_model("openrouter/anthropic/claude-sonnet-4-5") == "openrouter"
+
+
+def test_provider_name_from_model_keeps_gateway_prefixes():
+    provider = LiteLLMProvider(
+        api_key="test-key",
+        default_model="openrouter/auto",
+    )
+
+    assert provider._provider_name_from_model("together/meta-llama/Llama-3.3-70B-Instruct-Turbo") == "together"
+    assert provider._provider_name_from_model("vercel-ai-gateway/anthropic/claude-sonnet-4-5") == "vercel-ai-gateway"
+    assert provider._provider_name_from_model("cloudflare-ai-gateway/openai/gpt-4o") == "cloudflare-ai-gateway"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_auto_model_is_stripped_before_request(monkeypatch):
+    provider = LiteLLMProvider(
+        api_key="test-key",
+        default_model="openrouter/auto",
+    )
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+
+    def _fake_post(*, url, headers, data):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["data"] = json.loads(data)
+        return _FakeResponse()
+
+    monkeypatch.setattr(litellm_provider_mod.requests, "post", _fake_post)
+
+    result = await provider._chat_openrouter(
+        messages=[{"role": "user", "content": "hello"}],
+        tools=None,
+        model="openrouter/auto",
+        max_tokens=128,
+        temperature=0.1,
+    )
+
+    assert result.content == "ok"
+    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert captured["data"]["model"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_vendor_model_prefix_is_stripped_before_request(monkeypatch):
+    provider = LiteLLMProvider(
+        api_key="test-key",
+        default_model="openrouter/auto",
+    )
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+
+    def _fake_post(*, url, headers, data):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["data"] = json.loads(data)
+        return _FakeResponse()
+
+    monkeypatch.setattr(litellm_provider_mod.requests, "post", _fake_post)
+
+    result = await provider._chat_openrouter(
+        messages=[{"role": "user", "content": "hello"}],
+        tools=None,
+        model="openrouter/anthropic/claude-sonnet-4-5",
+        max_tokens=128,
+        temperature=0.1,
+    )
+
+    assert result.content == "ok"
+    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert captured["data"]["model"] == "anthropic/claude-sonnet-4-5"
+

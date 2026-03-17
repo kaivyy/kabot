@@ -181,6 +181,150 @@ def test_current_model_display_uses_primary_for_agent_model_config():
     assert wizard._current_model_display() == "groq/meta-llama/llama-4-scout-17b-16e-instruct"
 
 
+def test_current_model_chain_and_set_model_chain_normalize_state():
+    wizard = SetupWizard()
+
+    primary, fallbacks = wizard._current_model_chain()
+    assert primary
+    assert fallbacks == []
+
+    wizard._set_model_chain(
+        "openai/gpt-4o",
+        ["groq/llama3-70b-8192", "openai/gpt-4o", "groq/llama3-70b-8192", "moonshot/kimi-k2.5"],
+    )
+
+    assert isinstance(wizard.config.agents.defaults.model, AgentModelConfig)
+    assert wizard.config.agents.defaults.model.primary == "openai/gpt-4o"
+    assert wizard.config.agents.defaults.model.fallbacks == [
+        "groq/llama3-70b-8192",
+        "moonshot/kimi-k2.5",
+    ]
+
+
+def test_confirm_and_set_model_can_add_model_as_fallback(monkeypatch):
+    wizard = SetupWizard()
+    wizard.config.agents.defaults.model = AgentModelConfig(
+        primary="openai/gpt-4o",
+        fallbacks=["groq/llama3-70b-8192"],
+    )
+
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.model_auth.ClackUI.clack_select",
+        lambda *args, **kwargs: "fallback",
+    )
+    monkeypatch.setattr(wizard, "_reorder_fallbacks", lambda: None)
+
+    changed = wizard._confirm_and_set_model("moonshot/kimi-k2.5", apply_selection=True)
+
+    assert changed is True
+    assert isinstance(wizard.config.agents.defaults.model, AgentModelConfig)
+    assert wizard.config.agents.defaults.model.primary == "openai/gpt-4o"
+    assert wizard.config.agents.defaults.model.fallbacks == [
+        "groq/llama3-70b-8192",
+        "moonshot/kimi-k2.5",
+    ]
+
+
+def test_confirm_and_set_model_can_promote_model_to_primary(monkeypatch):
+    wizard = SetupWizard()
+    wizard.config.agents.defaults.model = AgentModelConfig(
+        primary="openai/gpt-4o",
+        fallbacks=["groq/llama3-70b-8192"],
+    )
+
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.model_auth.ClackUI.clack_select",
+        lambda *args, **kwargs: "primary",
+    )
+
+    changed = wizard._confirm_and_set_model("moonshot/kimi-k2.5", apply_selection=True)
+
+    assert changed is True
+    assert isinstance(wizard.config.agents.defaults.model, AgentModelConfig)
+    assert wizard.config.agents.defaults.model.primary == "moonshot/kimi-k2.5"
+    assert wizard.config.agents.defaults.model.fallbacks == ["groq/llama3-70b-8192"]
+
+
+def test_confirm_and_set_model_cancel_keeps_existing_chain(monkeypatch):
+    wizard = SetupWizard()
+    wizard.config.agents.defaults.model = AgentModelConfig(
+        primary="openai/gpt-4o",
+        fallbacks=["groq/llama3-70b-8192"],
+    )
+
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.model_auth.ClackUI.clack_select",
+        lambda *args, **kwargs: "cancel",
+    )
+
+    changed = wizard._confirm_and_set_model("moonshot/kimi-k2.5", apply_selection=True)
+
+    assert changed is False
+    assert isinstance(wizard.config.agents.defaults.model, AgentModelConfig)
+    assert wizard.config.agents.defaults.model.primary == "openai/gpt-4o"
+    assert wizard.config.agents.defaults.model.fallbacks == ["groq/llama3-70b-8192"]
+
+
+def test_reorder_fallbacks_moves_items_with_up_and_down(monkeypatch):
+    wizard = SetupWizard()
+    wizard.config.agents.defaults.model = AgentModelConfig(
+        primary="openai/gpt-4o",
+        fallbacks=["a/model", "b/model", "c/model"],
+    )
+
+    actions = iter(["down", "down", "up", "done"])
+
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.model_auth.ClackUI.clack_select",
+        lambda *args, **kwargs: next(actions),
+    )
+
+    reordered = wizard._reorder_fallbacks()
+
+    assert reordered == ["b/model", "a/model", "c/model"]
+    assert isinstance(wizard.config.agents.defaults.model, AgentModelConfig)
+    assert wizard.config.agents.defaults.model.fallbacks == ["b/model", "a/model", "c/model"]
+
+
+def test_manage_fallbacks_uses_checkbox_selection_and_triggers_reorder(monkeypatch):
+    wizard = SetupWizard()
+    wizard.config.agents.defaults.model = AgentModelConfig(
+        primary="openai/gpt-4o",
+        fallbacks=["groq/llama3-70b-8192"],
+    )
+    wizard.config.providers.openai.api_key = "sk-openai"
+
+    sample_models = [
+        ModelMetadata(id="openai/gpt-4o", name="GPT-4o", provider="openai"),
+        ModelMetadata(id="openai/gpt-5.2-codex", name="GPT-5.2 Codex", provider="openai"),
+        ModelMetadata(id="groq/llama3-70b-8192", name="Llama", provider="groq"),
+    ]
+    monkeypatch.setattr(wizard.registry, "list_models", lambda: sample_models)
+
+    class _DummyCheckbox:
+        def ask(self):
+            return ["openai/gpt-5.2-codex", "groq/llama3-70b-8192"]
+
+    monkeypatch.setattr(
+        "kabot.cli.wizard.sections.model_auth.questionary.checkbox",
+        lambda *args, **kwargs: _DummyCheckbox(),
+    )
+
+    reordered_calls: list[bool] = []
+    monkeypatch.setattr(wizard, "_reorder_fallbacks", lambda: reordered_calls.append(True))
+
+    result = wizard._manage_fallbacks(allowed_provider_ids=["openai", "groq"])
+
+    assert result == ["openai/gpt-5.2-codex", "groq/llama3-70b-8192"]
+    assert reordered_calls == [True]
+    assert isinstance(wizard.config.agents.defaults.model, AgentModelConfig)
+    assert wizard.config.agents.defaults.model.primary == "openai/gpt-4o"
+    assert wizard.config.agents.defaults.model.fallbacks == [
+        "openai/gpt-5.2-codex",
+        "groq/llama3-70b-8192",
+    ]
+
+
 def test_configure_model_uses_saved_credentials_when_selected(monkeypatch):
     wizard = SetupWizard()
     wizard.config.providers.groq.api_key = "gsk-test"
@@ -229,8 +373,9 @@ def test_configure_model_uses_saved_credentials_when_selected(monkeypatch):
     wizard._configure_model()
 
     assert manager.called is False
-    assert isinstance(wizard.config.agents.defaults.model, AgentModelConfig)
-    assert wizard.config.agents.defaults.model.primary == "groq/llama3-70b-8192"
+    primary, fallbacks = wizard._current_model_chain()
+    assert primary == "groq/llama3-70b-8192"
+    assert fallbacks == []
     assert state["user_selections"]["provider_models"]["groq"] == "groq/llama3-70b-8192"
 
 
@@ -283,8 +428,9 @@ def test_configure_model_allows_relogin_when_credentials_exist(monkeypatch):
     wizard._configure_model()
 
     assert manager.called is True
-    assert isinstance(wizard.config.agents.defaults.model, AgentModelConfig)
-    assert wizard.config.agents.defaults.model.primary == "openai/gpt-4o"
+    primary, fallbacks = wizard._current_model_chain()
+    assert primary == "openai/gpt-4o"
+    assert fallbacks == []
     assert state["user_selections"]["provider_models"]["openai"] == "openai/gpt-4o"
 
 

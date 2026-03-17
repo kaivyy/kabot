@@ -23,6 +23,8 @@ from kabot.cli.wizard.sections.model_auth_helpers import (  # noqa: E402,I001
     _providers_with_saved_credentials,
     _model_allowed_by_provider_credentials,
     _current_model_display,
+    _current_model_chain,
+    _set_model_chain,
     _provider_model_prefixes,
     _model_matches_provider,
     _normalize_scoped_manual_model_input,
@@ -68,12 +70,16 @@ def _configure_model(self):
 
     while True:
         login_label = "Provider Login (Setup API Keys/OAuth + Pick Model)"
-        picker_label = "Select Default Model (Optional manual override)" if self.setup_mode == "simple" else "Select Default Model (Browse Registry)"
+        picker_label = "Select Model (Primary/Fallback)"
+        fallback_label = "Manage Fallbacks (Select with Space)"
+        reorder_label = "Edit Fallback Order (Up/Down)"
         choice = ClackUI.clack_select(
             "Select an option:",
             choices=[
                 questionary.Choice(login_label, value="login"),
                 questionary.Choice(picker_label, value="picker"),
+                questionary.Choice(fallback_label, value="fallbacks"),
+                questionary.Choice(reorder_label, value="reorder"),
                 questionary.Choice("Back", value="back"),
             ]
         )
@@ -139,6 +145,10 @@ def _configure_model(self):
 
         elif choice == "picker":
             self._model_picker(allowed_provider_ids=self._providers_with_saved_credentials())
+        elif choice == "fallbacks":
+            self._manage_fallbacks(allowed_provider_ids=self._providers_with_saved_credentials())
+        elif choice == "reorder":
+            self._reorder_fallbacks()
 
     # Save configured providers and mark as completed
     self._save_setup_state("auth", completed=True,
@@ -515,6 +525,155 @@ def _manual_model_entry(
 
     return None
 
+def _manage_fallbacks(
+    self,
+    allowed_provider_ids: Optional[list[str] | set[str]] = None,
+):
+    """Interactively choose fallback models with multi-select."""
+    normalized_allowed_provider_ids = [
+        str(pid).strip()
+        for pid in (allowed_provider_ids or [])
+        if str(pid).strip()
+    ]
+
+    if not normalized_allowed_provider_ids:
+        normalized_allowed_provider_ids = self._providers_with_saved_credentials()
+
+    if not normalized_allowed_provider_ids:
+        console.print("|  [yellow]No providers with saved credentials found.[/yellow]")
+        console.print("|  [dim]Login provider first via Provider Login (API key/OAuth).[/dim]")
+        return None
+
+    primary, current_fallbacks = self._current_model_chain()
+    all_models = [
+        m for m in self.registry.list_models()
+        if self._model_allowed_by_provider_credentials(m.id, normalized_allowed_provider_ids)
+        and m.id != primary
+    ]
+    all_models.sort(key=lambda m: (not m.is_premium, m.id))
+
+    if not all_models and not current_fallbacks:
+        console.print("|  [yellow]No fallback candidates found for authenticated providers.[/yellow]")
+        return None
+
+    console.print("|")
+    console.print("|  [bold]Select fallback models[/bold] (Space to toggle, Enter to confirm)")
+
+    choices: list[questionary.Choice] = []
+    known_ids = {m.id for m in all_models}
+    for fallback_id in current_fallbacks:
+        if fallback_id not in known_ids:
+            choices.append(
+                questionary.Choice(
+                    f"{fallback_id} (custom)",
+                    value=fallback_id,
+                    checked=True,
+                )
+            )
+
+    for model in all_models:
+        label = model.id
+        if model.name:
+            label = f"{model.id} ({model.name})"
+        choices.append(
+            questionary.Choice(
+                label,
+                value=model.id,
+                checked=model.id in current_fallbacks,
+            )
+        )
+
+    selected = questionary.checkbox(
+        "*  Choose fallback models",
+        choices=choices,
+        style=questionary.Style(
+            [
+                ("qmark", "fg:cyan bold"),
+                ("question", "bold"),
+                ("pointer", "fg:cyan bold noinherit"),
+                ("text", "fg:white noinherit"),
+                ("highlighted", "fg:cyan bold noinherit"),
+                ("selected", "fg:cyan bold noinherit"),
+                ("answer", "fg:white bold noinherit"),
+            ]
+        ),
+    ).ask()
+
+    if selected is None:
+        console.print("|  [yellow]Cancelled[/yellow]")
+        return None
+
+    fallback_chain = [str(model_id).strip() for model_id in selected if str(model_id).strip()]
+    self._set_model_chain(primary, fallback_chain)
+    console.print(f"|  [green]OK Updated fallbacks ({len(fallback_chain)})[/green]")
+
+    if fallback_chain:
+        self._reorder_fallbacks()
+
+    return fallback_chain
+
+
+def _reorder_fallbacks(self):
+    """Interactively reorder fallback chain using move up/down controls."""
+    primary, fallbacks = self._current_model_chain()
+    if len(fallbacks) <= 1:
+        console.print("|  [dim]Need at least two fallback models to reorder.[/dim]")
+        return None
+
+    ordered = list(fallbacks)
+    cursor = 0
+
+    while True:
+        console.print("|")
+        console.print("|  [bold]Fallback order[/bold] (priority top -> bottom):")
+        for idx, model_id in enumerate(ordered, start=1):
+            marker = "=>" if idx - 1 == cursor else "  "
+            console.print(f"|  {marker} {idx}. {model_id}")
+
+        action = ClackUI.clack_select(
+            "Reorder action",
+            choices=[
+                questionary.Choice("Move up", value="up"),
+                questionary.Choice("Move down", value="down"),
+                questionary.Choice("Select item", value="select"),
+                questionary.Choice("Done", value="done"),
+            ],
+            default="done",
+        )
+
+        if action in {None, "done"}:
+            break
+
+        if action == "select":
+            select_choices = [
+                questionary.Choice(f"{idx + 1}. {model_id}", value=idx)
+                for idx, model_id in enumerate(ordered)
+            ]
+            selected_index = ClackUI.clack_select(
+                "Choose fallback to move",
+                choices=select_choices,
+                default=cursor,
+            )
+            if selected_index is not None:
+                cursor = int(selected_index)
+            continue
+
+        if action == "up" and cursor > 0:
+            ordered[cursor - 1], ordered[cursor] = ordered[cursor], ordered[cursor - 1]
+            cursor -= 1
+        elif action == "down" and cursor < len(ordered) - 1:
+            ordered[cursor + 1], ordered[cursor] = ordered[cursor], ordered[cursor + 1]
+            cursor += 1
+
+    if ordered != fallbacks:
+        self._set_model_chain(primary, ordered)
+        console.print("|  [green]OK Fallback order updated[/green]")
+    else:
+        console.print("|  [dim]Fallback order unchanged.[/dim]")
+
+    return ordered
+
+
 def _confirm_and_set_model(self, model_id: str, apply_selection: bool = True) -> bool:
     """Confirm model selection and set if approved."""
     from kabot.providers.model_status import get_model_status, get_status_indicator
@@ -535,7 +694,30 @@ def _confirm_and_set_model(self, model_id: str, apply_selection: bool = True) ->
         console.print("|  [dim]If you encounter issues, try a working model[/dim]")
 
     if apply_selection:
-        self.config.agents.defaults.model = model_id
+        current_primary, current_fallbacks = self._current_model_chain()
+        if current_primary and model_id != current_primary:
+            action = ClackUI.clack_select(
+                "Model already configured. Choose action",
+                choices=[
+                    questionary.Choice("Set as primary", value="primary"),
+                    questionary.Choice("Add as fallback", value="fallback"),
+                    questionary.Choice("Cancel", value="cancel"),
+                ],
+                default="primary",
+            )
+            if action in {None, "cancel"}:
+                console.print("|  [yellow]Cancelled[/yellow]")
+                return False
+            if action == "fallback":
+                if model_id in current_fallbacks:
+                    console.print(f"|  [dim]Model already exists in fallback chain: {model_id}[/dim]")
+                else:
+                    self._set_model_chain(current_primary, [*current_fallbacks, model_id])
+                    console.print(f"|  [green]OK Added fallback: {model_id}[/green]")
+                    self._reorder_fallbacks()
+                return True
+
+        self._set_model_chain(model_id, current_fallbacks)
         console.print(f"|  [green]OK Model set to {model_id}[/green]")
     else:
         console.print(f"|  [green]OK Selected model: {model_id}[/green]")
@@ -776,6 +958,8 @@ def bind_model_auth_sections(cls):
     cls._providers_with_saved_credentials = _providers_with_saved_credentials
     cls._model_allowed_by_provider_credentials = _model_allowed_by_provider_credentials
     cls._current_model_display = _current_model_display
+    cls._current_model_chain = _current_model_chain
+    cls._set_model_chain = _set_model_chain
     cls._provider_model_prefixes = _provider_model_prefixes
     cls._model_matches_provider = _model_matches_provider
     cls._normalize_scoped_manual_model_input = _normalize_scoped_manual_model_input
@@ -790,6 +974,8 @@ def bind_model_auth_sections(cls):
     cls._model_picker = _model_picker
     cls._model_browser = _model_browser
     cls._manual_model_entry = _manual_model_entry
+    cls._manage_fallbacks = _manage_fallbacks
+    cls._reorder_fallbacks = _reorder_fallbacks
     cls._confirm_and_set_model = _confirm_and_set_model
     cls._show_alias_help = _show_alias_help
     cls._validate_api_key = _validate_api_key

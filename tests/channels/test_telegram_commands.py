@@ -132,6 +132,76 @@ async def test_telegram_routes_registered_router_command_via_generic_handler():
     reply_text.assert_awaited_once_with("Status OK")
 
 
+@pytest.mark.asyncio
+async def test_telegram_routes_registered_router_command_with_bot_mention_suffix():
+    config = TelegramConfig(token="test_token", enabled=True)
+    bus = MessageBus()
+    router = CommandRouter()
+
+    async def dummy_handler(ctx):
+        assert ctx.message == "/switch groq/llama3-70b-8192"
+        assert ctx.chat_id == "123456"
+        assert ctx.args == ["groq/llama3-70b-8192"]
+        return "Switched OK"
+
+    router.register("/switch", dummy_handler, "Switch model")
+    channel = TelegramChannel(config, bus, command_router=router)
+
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        message=SimpleNamespace(
+            text="/switch@kancabot groq/llama3-70b-8192",
+            chat_id=123456,
+            chat=SimpleNamespace(type="private"),
+            reply_text=reply_text,
+        ),
+        effective_user=SimpleNamespace(
+            id=777,
+            username="maharaja",
+            first_name="Maha Raja",
+        ),
+    )
+
+    await channel._on_router_command(update, None)
+
+    reply_text.assert_awaited_once_with("Switched OK")
+
+
+@pytest.mark.asyncio
+async def test_telegram_forwards_model_directive_command_to_agent_pipeline():
+    config = TelegramConfig(token="test_token", enabled=True)
+    bus = MessageBus()
+    channel = TelegramChannel(config, bus)
+    channel._handle_message = AsyncMock()
+
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        message=SimpleNamespace(
+            text="/model openrouter/auto halo",
+            message_id=99,
+            chat_id=123456,
+            chat=SimpleNamespace(type="group"),
+            reply_text=reply_text,
+        ),
+        effective_user=SimpleNamespace(
+            id=777,
+            username="maharaja",
+            first_name="Maha Raja",
+        ),
+    )
+
+    await channel._on_router_command(update, None)
+
+    channel._handle_message.assert_awaited_once()
+    kwargs = channel._handle_message.await_args.kwargs
+    assert kwargs["sender_id"] == "777|maharaja"
+    assert kwargs["chat_id"] == "123456"
+    assert kwargs["content"] == "/model openrouter/auto halo"
+    assert kwargs["metadata"]["message_id"] == 99
+    assert kwargs["metadata"]["is_group"] is True
+    reply_text.assert_not_awaited()
+
+
 def test_telegram_includes_workspace_skill_commands_in_menu(tmp_path):
     config = TelegramConfig(token="test_token", enabled=True)
     bus = MessageBus()

@@ -109,7 +109,16 @@ def resolve_failover_reason(
         ]
     ):
         return "auth"
-    if any(keyword in msg_lower for keyword in ["model not found", "model does not exist"]):
+    if any(
+        keyword in msg_lower
+        for keyword in [
+            "model not found",
+            "model does not exist",
+            "unknown model",
+            "unknown model id",
+            "no endpoints found",
+        ]
+    ):
         return "model_not_found"
     if any(keyword in msg_lower for keyword in ["invalid request", "bad request", "malformed"]):
         return "format"

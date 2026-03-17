@@ -30,6 +30,7 @@ from kabot.core.command_surfaces import (
     list_workspace_skill_command_specs,
 )
 from kabot.core.command_router import CommandContext
+from kabot.core.directives import DirectiveParser
 from kabot.utils.helpers import get_data_path
 from kabot.utils.text_safety import ensure_utf8_text
 
@@ -916,6 +917,15 @@ class TelegramChannel(BaseChannel):
             return
 
         command_name = self._normalize_telegram_command_name(message_text)
+        command_parts = message_text.split(maxsplit=1)
+        command_token = command_parts[0] if command_parts else message_text
+        command_token_no_mention = command_token.split("@", 1)[0]
+        normalized_message_text = (
+            f"{command_token_no_mention} {command_parts[1]}".strip()
+            if len(command_parts) > 1
+            else command_token_no_mention
+        )
+
         if command_name in {cmd.command for cmd in self.BOT_COMMANDS}:
             return
 
@@ -926,11 +936,11 @@ class TelegramChannel(BaseChannel):
         chat_id = str(update.message.chat_id)
         self._chat_ids[sender_id] = update.message.chat_id
 
-        if self.command_router and self.command_router.is_command(message_text):
+        if self.command_router and self.command_router.is_command(normalized_message_text):
             result = await self.command_router.route(
-                message_text,
+                normalized_message_text,
                 CommandContext(
-                    message=message_text,
+                    message=normalized_message_text,
                     args=[],
                     sender_id=sender_id,
                     channel=self.name,
@@ -984,6 +994,21 @@ class TelegramChannel(BaseChannel):
                 chat_id=chat_id,
                 content=content,
                 metadata=metadata,
+            )
+            return
+
+        if DirectiveParser().parse(message_text)[1].raw_directives:
+            await self._handle_message(
+                sender_id=sender_id,
+                chat_id=chat_id,
+                content=message_text,
+                metadata={
+                    "message_id": update.message.message_id,
+                    "user_id": user.id,
+                    "username": user.username,
+                    "first_name": user.first_name,
+                    "is_group": update.message.chat.type != "private",
+                },
             )
             return
 
