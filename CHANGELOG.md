@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-03-17
+### Changed
+- Align direct-send workflow test expectations with verified delivery messaging.
+- Fix cross-platform CI expectations for message delivery verification.
+
 ## [0.6.7] - 2026-03-17
 
 ### Added

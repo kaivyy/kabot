@@ -1,4 +1,4 @@
-def test_version_is_0_6_7():
+def test_version_is_0_6_8():
     import os
     import sys
 
@@ -7,4 +7,4 @@ def test_version_is_0_6_7():
 
     import kabot
 
-    assert kabot.__version__ == "0.6.7"
+    assert kabot.__version__ == "0.6.8"

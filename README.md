@@ -26,16 +26,10 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
-## What's New In v0.6.7
+## What's New In v0.6.8
 
-- **OpenRouter normalization** for model identifiers and provider routing to reduce invalid requests.
-- **Telegram slash command handling** now supports bot mention suffixes and `/model` directives.
-- **Setup wizard fallback ordering** now supports selecting and reordering fallback chains.
-- **Failover classification hardening** with expanded patterns and tests.
-
-If you are upgrading from `0.6.6`, the two most important changes are:
-- OpenRouter model identifiers and provider routing are now normalized to reduce invalid requests.
-- Telegram slash commands now support bot mention suffixes and `/model` directives.
+- Align direct-send workflow test expectations with verified delivery messaging.
+- Fix cross-platform CI expectations for message delivery verification.
 
 ---
 
