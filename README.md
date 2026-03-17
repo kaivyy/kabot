@@ -26,16 +26,16 @@ If you want a personal, single-user assistant that feels local, fast, and always
 
 ---
 
-## What's New In v0.6.6
+## What's New In v0.6.7
 
-- **OpenClaw-style routing** with model-first, skill-first, workspace/cwd-first, and session continuity-first behavior across ordinary chat, skill workflows, and file navigation.
-- **Much lighter parser dependence** in active runtime paths, especially around follow-up reuse, live research, filesystem grounding, temporal fast paths, and Indonesian keyword buckets.
-- **Stronger external skill and workflow grounding** for skill creation, GitHub skill install, repo inspection, and API/script-based execution flows.
-- **Grounded skill execution continuity** so approved skill workflows, newly created skills, and active stock/finance skill lanes now stay evidence-based instead of drifting into generic fallback replies.
+- **OpenRouter normalization** for model identifiers and provider routing to reduce invalid requests.
+- **Telegram slash command handling** now supports bot mention suffixes and `/model` directives.
+- **Setup wizard fallback ordering** now supports selecting and reordering fallback chains.
+- **Failover classification hardening** with expanded patterns and tests.
 
-If you are upgrading from `0.6.4`, the two most important changes are:
-- Kabot now treats session/runtime state as the primary anchor for file work, so separate chat turns and one-shot CLI runs stay much more coherent.
-- Delivery, navigation, and artifact follow-ups are now more evidence-based and much less likely to drift into stale parser-era path reuse.
+If you are upgrading from `0.6.6`, the two most important changes are:
+- OpenRouter model identifiers and provider routing are now normalized to reduce invalid requests.
+- Telegram slash commands now support bot mention suffixes and `/model` directives.
 
 ---
 
