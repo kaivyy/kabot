@@ -1,6 +1,6 @@
-﻿---
+---
 name: discord
-description: Control Discord via the discord tool: manage messages, reactions, polls, channels, and bot presence.
+description: "Control Discord via the discord tool. Use when sending messages, managing reactions, creating polls, moderating channels, or setting bot presence."
 metadata: {"kabot":{"emoji":"ðŸŽ®","requires":{"config":["channels.discord"]}}}
 ---
 
